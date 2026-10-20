@@ -91,9 +91,10 @@ These distinctions are load-bearing:
   Relevant/Recent grounding before inference. Engraphis recall supplies Think candidates; Graphiti
   Entity search plus exact `ABOUT` reads supplies Know candidates; Jev ranks the bounded provider
   candidates. TypeScript does not search or rank prose.
-- Thinks faithfully steelman the user's current idea. One valid Know is one atomic two-sided Graphiti
-  episode: a cited **For** and cited **Against**, each with its own compact body, optional **More** detail,
-  and citations. A one-sided cited statement is not projected as a Know.
+- Thinks faithfully steelman the user's current idea. One valid Know is one first-class Graphiti object with
+  one sourced observation, one bounded interpretation, one inspectable citation, and one exact Entity
+  attachment. Supporting, challenging, contextual and neutral Knows are separate valid records; research
+  coverage and later synthesis provide balance rather than forcing two sides into every Know.
 - The Entity inspector defaults to KnowGraph when both authorities exist. It shows at most two current
   provider-projected attached Thinks or Knows; it has no current Search/Results control or Relevant/Recent
   switch. Agent grounding and inspector presentation are separate contracts.
@@ -104,10 +105,12 @@ These distinctions are load-bearing:
 - The visible **Think** and **Know** color-key labels select isolated provider views; an empty-canvas click
   returns the one combined view. View settings remain in the graph inspector.
 - KnowGraph owns sourced research and Graphiti persistence; Thinks are framing, never evidence.
-- KnowGraph writes through queued `graphiti.add_memory_to_entity`, which records one exact structural
-  `ABOUT` attachment, leaves `MENTIONS` independent, updates Graphiti communities by default, and may join
-  a continuing research-thread Saga. Python rails requires and encodes both cited sides as one `know.v1`
-  episode before calling Graphiti. Queue acceptance is not materialization proof.
+- KnowGraph writes through queued `graphiti.add_know`, which stores a typed `Episodic:Know`, records one exact
+  structural `ABOUT` attachment, leaves extracted `MENTIONS` independent, updates Graphiti communities by
+  default, and may join a continuing research-thread Saga. Python rails verifies the citation before passing
+  it as typed fields; Graphiti keeps plain-text episode content for extraction and hybrid retrieval. Processing
+  acceptance supplies an exact Know UUID/content hash but is not materialization proof; `graphiti.get_know`
+  provides the exact readback.
 
 ### Approved direction, not current behavior
 

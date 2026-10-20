@@ -61,7 +61,7 @@ describe('useCardActiveAgentCounts', () => {
         ok: true,
         result: body.cardId === 'card_knowgraph'
           ? { cardId: body.cardId, state: 'running', activeWorkers: 2 }
-          : { cardId: body.cardId, state: 'running', activeWorkers: 0 },
+          : { cardId: body.cardId, state: 'running', activeWorkers: null },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     });
 

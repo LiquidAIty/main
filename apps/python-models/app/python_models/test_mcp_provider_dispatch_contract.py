@@ -466,7 +466,48 @@ def test_graphiti_add_memory_dispatch_preserves_provider_arguments(monkeypatch):
     }
 
 
-def test_entity_know_projection_verifies_and_queues_one_atomic_episode(
+def test_graphiti_know_projection_inlines_live_mcp_v2_definitions():
+    payload = {
+        "inputSchema": {
+            "$defs": {
+                "KnowCitation": {
+                    "type": "object",
+                    "properties": {"url": {"type": "string"}},
+                    "required": ["url"],
+                    "additionalProperties": False,
+                },
+                "KnowDirection": {
+                    "type": "object",
+                    "properties": {"relation": {"enum": ["supports"]}},
+                    "required": ["relation"],
+                    "additionalProperties": False,
+                },
+            },
+            "type": "object",
+            "properties": {
+                "citation": {"$ref": "#/$defs/KnowCitation"},
+                "direction": {
+                    "anyOf": [
+                        {"$ref": "#/$defs/KnowDirection"},
+                        {"type": "null"},
+                    ],
+                },
+            },
+        },
+    }
+
+    mcp_provider_operations._inline_graphiti_know_schema(payload)
+
+    schema = payload["inputSchema"]
+    assert "$defs" not in schema
+    assert schema["properties"]["citation"]["required"] == ["url"]
+    assert schema["properties"]["direction"]["anyOf"][0]["required"] == [
+        "relation",
+    ]
+    assert "$ref" not in json.dumps(schema)
+
+
+def test_entity_know_dispatch_preserves_grounded_citation_and_typed_fields(
     monkeypatch, clear_live_provider_operations,
 ):
     import asyncio
@@ -480,56 +521,36 @@ def test_entity_know_projection_verifies_and_queues_one_atomic_episode(
         return {"episode_uuid": "episode-one", "entity_uuid": "entity-one"}
 
     monkeypatch.setattr(mcp_provider_operations, "call_graphiti_operation", call)
-    monkeypatch.setattr(
-        mcp_provider_operations,
-        "verify_source_document",
-        lambda source: {
-            **source,
-            "resolvedUrl": source["url"],
-            "retrievedAt": "2026-10-20T08:00:00Z",
-            "documentTitle": source["title"],
-            "contentFingerprint": "a" * 64,
-        },
-    )
-    async def not_persisted(_project_id: str, _episode_uuid: str) -> bool:
-        return False
-    monkeypatch.setattr(
-        mcp_provider_operations, "_persisted_atomic_know", not_persisted,
-    )
     provider_tool = Tool(
-        name="add_memory_to_entity",
-        description="Generic exact Entity episode.",
+        name="add_know",
+        description="Add one first-class Know to one Entity.",
         inputSchema={
             "type": "object",
             "properties": {
                 "entity_name": {"type": "string"},
+                "entity_uuid": {"type": "string"},
                 "name": {"type": "string"},
-                "episode_body": {"type": "string"},
-                "source_description": {"type": "string"},
-                "source": {"type": "string"},
-                "uuid": {"type": "string"},
+                "observation": {"type": "string"},
+                "interpretation": {"type": "string"},
+                "citation": {"type": "object"},
+                "direction": {"type": "object"},
                 "reference_time": {"type": "string"},
                 "group_id": {"type": "string"},
                 "update_communities": {"type": "boolean"},
             },
             "required": [
-                "entity_name", "name", "episode_body", "source_description",
+                "entity_name", "name", "observation", "interpretation", "citation",
             ],
+            "additionalProperties": False,
         },
     )
     projected = mcp_provider_operations.namespace_provider_tools(
         "graphiti", [provider_tool],
     )[0]
-    assert projected.input_schema["required"] == [
-        "entity_name", "name", "observation", "interpretation", "source",
-    ]
-    assert "episode_body" not in projected.input_schema["properties"]
-    assert "source_description" not in projected.input_schema["properties"]
-    assert "uuid" not in projected.input_schema["properties"]
-    assert "reference_time" not in projected.input_schema["properties"]
+    assert projected.input_schema == provider_tool.input_schema
 
     mcp_provider_operations.register_graphiti_catalog([projected])
-    definition = operation_definition("graphiti.add_memory_to_entity")
+    definition = operation_definition("graphiti.add_know")
     assert definition is not None
     result = asyncio.run(definition.handler(
         _authenticatedProjectId="project-one",
@@ -537,7 +558,7 @@ def test_entity_know_projection_verifies_and_queues_one_atomic_episode(
         name="Launch demand",
         observation="Rocket Lab reported a source-backed demand result.",
         interpretation="The result informs demand but does not remove execution risk.",
-        source={
+        citation={
             "url": "https://example.test/result",
             "title": "Rocket Lab result",
             "publisher": "Rocket Lab",
@@ -552,89 +573,78 @@ def test_entity_know_projection_verifies_and_queues_one_atomic_episode(
     ))
 
     assert result["episode_uuid"] == "episode-one"
-    assert calls[0][0] == "add_memory_to_entity"
+    assert calls[0][0] == "add_know"
     arguments = calls[0][1]
     assert arguments["group_id"] == "liquidaity-project-one"
-    assert arguments["source"] == "json"
-    body = json.loads(arguments["episode_body"])
-    assert body["schemaVersion"] == "know.v2"
-    assert body["observation"] == "Rocket Lab reported a source-backed demand result."
-    assert body["interpretation"] == (
+    assert arguments["observation"] == "Rocket Lab reported a source-backed demand result."
+    assert arguments["interpretation"] == (
         "The result informs demand but does not remove execution risk."
     )
-    assert body["direction"]["relation"] == "supports"
-    assert body["source"]["resolvedUrl"] == "https://example.test/result"
-    assert json.loads(arguments["source_description"]) == [
-        "https://example.test/result",
-    ]
+    assert arguments["direction"]["relation"] == "supports"
+    assert arguments["citation"] == {
+        "url": "https://example.test/result",
+        "title": "Rocket Lab result",
+        "publisher": "Rocket Lab",
+        "evidence": "Rocket Lab reported the exact source-backed demand result.",
+        "publishedAt": "2026-10-19",
+    }
     assert arguments["reference_time"] == "2026-10-19"
-    assert len(arguments["uuid"]) == 36
-    assert "observation" not in arguments
-    assert "interpretation" not in arguments
-    assert "direction" not in arguments
+    assert "episode_body" not in arguments
+    assert "source_description" not in arguments
 
 
-def test_entity_know_projection_deduplicates_an_already_persisted_episode(
+def test_entity_know_dispatch_leaves_idempotence_to_graphiti_core(
     monkeypatch, clear_live_provider_operations,
 ):
     import asyncio
     from mcp.types import Tool
     from app.python_models.tool_registry import operation_definition
 
-    monkeypatch.setattr(
-        mcp_provider_operations,
-        "verify_source_document",
-        lambda source: {
-            **source,
-            "resolvedUrl": source["url"],
-            "retrievedAt": "2026-10-20T08:00:00Z",
-            "contentFingerprint": "b" * 64,
-        },
-    )
-    async def persisted(_project_id: str, _episode_uuid: str) -> bool:
-        return True
-    monkeypatch.setattr(mcp_provider_operations, "_persisted_atomic_know", persisted)
-    monkeypatch.setattr(
-        mcp_provider_operations,
-        "call_graphiti_operation",
-        lambda *_args, **_kwargs: pytest.fail("duplicate must not be queued"),
-    )
+    calls: list[tuple[str, dict]] = []
+    async def call(name: str, arguments: dict):
+        calls.append((name, arguments))
+        return {"message": "accepted"}
+    monkeypatch.setattr(mcp_provider_operations, "call_graphiti_operation", call)
     provider_tool = Tool(
-        name="add_memory_to_entity",
+        name="add_know",
         inputSchema={
             "type": "object",
             "properties": {
                 "entity_name": {"type": "string"},
                 "name": {"type": "string"},
-                "episode_body": {"type": "string"},
-                "source_description": {"type": "string"},
+                "observation": {"type": "string"},
+                "interpretation": {"type": "string"},
+                "citation": {"type": "object"},
                 "group_id": {"type": "string"},
             },
-            "required": ["entity_name", "name", "episode_body", "source_description"],
+            "required": [
+                "entity_name", "name", "observation", "interpretation", "citation",
+            ],
         },
     )
     projected = mcp_provider_operations.namespace_provider_tools(
         "graphiti", [provider_tool],
     )[0]
     mcp_provider_operations.register_graphiti_catalog([projected])
-    definition = operation_definition("graphiti.add_memory_to_entity")
+    definition = operation_definition("graphiti.add_know")
     assert definition is not None
 
-    result = asyncio.run(definition.handler(
-        _authenticatedProjectId="project-one",
-        entity_name="Rocket Lab",
-        name="Repeated source",
-        observation="One exact observation.",
-        interpretation="One bounded interpretation.",
-        source={
+    arguments = {
+        "_authenticatedProjectId": "project-one",
+        "entity_name": "Rocket Lab",
+        "name": "Repeated source",
+        "observation": "One exact observation.",
+        "interpretation": "One bounded interpretation.",
+        "citation": {
             "url": "https://example.test/result",
             "title": "Rocket Lab result",
             "publisher": "Rocket Lab",
             "evidence": "Rocket Lab reported the exact source-backed demand result.",
         },
-    ))
+    }
+    asyncio.run(definition.handler(**arguments))
+    asyncio.run(definition.handler(**arguments))
 
-    payload = json.loads(result.content[0].text)
-    assert payload["status"] == "already_persisted"
-    assert payload["queued"] is False
-    assert payload["persisted"] is True
+    assert [name for name, _arguments in calls] == ["add_know", "add_know"]
+    assert calls[0][1] == calls[1][1]
+    assert "uuid" not in calls[0][1]

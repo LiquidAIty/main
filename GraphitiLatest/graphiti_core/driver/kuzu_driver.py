@@ -106,12 +106,6 @@ SCHEMA_QUERIES = """
         group_id STRING,
         created_at TIMESTAMP
     );
-    CREATE REL TABLE IF NOT EXISTS ABOUT(
-        FROM Episodic TO Entity,
-        uuid STRING,
-        group_id STRING,
-        created_at TIMESTAMP
-    );
     CREATE REL TABLE IF NOT EXISTS HAS_MEMBER(
         FROM Community TO Entity,
         FROM Community TO Community,

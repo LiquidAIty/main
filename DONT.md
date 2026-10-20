@@ -78,13 +78,13 @@ the rejected generic TypeScript child-Card executor, or substitute a regex-first
 approval state, shadow graph, direct model edge writer, second extractor, or database-side semantic shortcut.
 KnowGraph retains actual sourced research through its existing owner. Its dedicated queued Entity write
 records one exact structural `ABOUT` attachment; `MENTIONS` remains extraction output, not attachment authority.
-One current Know is one atomic `know.v2` episode: one verified source document and exact passage, one
+One current Know is one first-class `Episodic:Know`: one verified source document and exact passage, one
 self-contained observation, one separately labeled bounded interpretation, and optional direction relative to
-an explicit proposition. Do not bundle several sources into one Know, repeat the same source-backed finding,
-or attach one Know to multiple Entities. Balance belongs across research coverage and synthesis, not as a
-mandatory positive/negative pair inside every record. Historical paired `know.v1` records remain readable
-only as explicit legacy records. Only Entities are visible Project graph nodes; episodes and sources remain
-attached evidence/provenance.
+an explicit proposition. Its typed citation properties and plain-text episode content must remain durable and
+searchable. Do not bundle several sources into one Know, repeat the same source-backed finding, or attach one
+Know to multiple Entities. Balance belongs across research coverage and synthesis, not as a mandatory
+positive/negative pair inside every record. Only Entities are visible Project graph nodes; Knows and citations
+remain attached evidence/provenance.
 
 Current agent grounding is one most Relevant plus one distinct most Recent record from each authority by
 default. Provider owners produce candidates and Jev ranks them; TypeScript must not rank prose, substitute

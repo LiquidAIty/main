@@ -5,7 +5,7 @@ import { requireOwnedProject } from './projectAccess';
 import { resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
 
 const router = Router();
-const actions = new Set(['state', 'display', 'properties', 'new', 'select', 'edit', 'save', 'reopen']);
+const actions = new Set(['state', 'display', 'properties', 'new', 'select', 'edit', 'author', 'save', 'reopen']);
 
 router.all('/:projectId/:action', async (req, res) => {
   const action = String(req.params.action);

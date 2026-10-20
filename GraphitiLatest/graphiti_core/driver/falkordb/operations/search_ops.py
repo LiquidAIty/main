@@ -384,7 +384,7 @@ class FalkorSearchOperations(SearchOperations):
         self,
         executor: QueryExecutor,
         query: str,
-        search_filter: SearchFilters,  # noqa: ARG002
+        search_filter: SearchFilters,
         group_ids: list[str] | None = None,
         limit: int = 10,
     ) -> list[EpisodicNode]:
@@ -392,7 +392,12 @@ class FalkorSearchOperations(SearchOperations):
         if fuzzy_query == '':
             return []
 
-        filter_params: dict[str, Any] = {}
+        filter_queries, filter_params = node_search_filter_query_constructor(
+            search_filter,
+            GraphProvider.FALKORDB,
+            node_alias='e',
+        )
+        node_filter_query = ''.join(f'\nAND {item}' for item in filter_queries)
         group_filter_query = ''
         if group_ids is not None:
             group_filter_query += '\nAND e.group_id IN $group_ids'
@@ -407,6 +412,7 @@ class FalkorSearchOperations(SearchOperations):
             MATCH (e:Episodic)
             WHERE e.uuid = episode.uuid
             """
+            + node_filter_query
             + group_filter_query
             + """
             RETURN

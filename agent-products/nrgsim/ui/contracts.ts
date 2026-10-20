@@ -1,5 +1,19 @@
 // Entity: Building Workspace
 // Relationship: These read-only transport types describe SDK projections and application references, never an editable engineering model.
+export type MaterialInput = Readonly<{
+  value: number | string | null; unit?: string; minimum?: number; minimumInclusive?: boolean;
+  maximum?: number | null; choices?: readonly string[]; isDefaulted?: boolean;
+}>;
+export type ConstructionEditor = Readonly<{
+  surface: Readonly<{ handle: string; name: string }>;
+  construction: Readonly<{ handle: string; name: string }>;
+  editable: boolean; isConstructionDefaulted: boolean; layerOrder: 'outside-to-inside';
+  layers: readonly Readonly<{
+    index: number; handle: string; name: string; type: string; editable: boolean;
+    properties: Readonly<Record<string, MaterialInput>>;
+  }>[];
+}>;
+
 export type ModelObject = Readonly<{
   handle: string;
   name: string;
@@ -11,12 +25,56 @@ export type ModelObject = Readonly<{
   space?: string | null;
   surface?: string | null;
   construction?: string | null;
+  constructionDefaults?: Readonly<Record<string, string>>;
+  constructionEditor?: ConstructionEditor | null;
+  isConstructionDefaulted?: boolean;
+  isOpaque?: boolean;
+  isFenestration?: boolean;
   floorArea?: number;
   grossArea?: number;
   netArea?: number;
   surfaceType?: string;
   outsideBoundaryCondition?: string;
+  adjacentSurface?: string | null;
+  northAxis?: number;
+  elevation?: number | null;
+  height?: number | null;
+  floors?: readonly (readonly (readonly [number, number, number])[])[];
+  vertices?: readonly (readonly [number, number, number])[];
+  windowToWallRatio?: number;
+  thickness?: number;
+  conductivity?: number;
+  density?: number | null;
+  specificHeat?: number;
+  roughness?: string;
+  definition?: string;
+  schedule?: string | null;
+  spaceType?: string | null;
+  activityLevel?: number | null;
+  airLoop?: string | null;
+  thermostat?: string | null;
+  hasEquipment?: boolean;
+  heating?: number | null;
+  cooling?: number | null;
+  multiplier?: number;
 }>;
+
+export type DrawMode = 'select' | 'rectangle' | 'polygon';
+export type Point = readonly [number, number];
+export type DrawingSettings = {
+  mode: DrawMode;
+  name: string;
+  story: string;
+  height: number;
+  thermalZone: string;
+  snap: number;
+};
+export type AuthoringOperation = {
+  operation: string;
+  handle?: string;
+  type?: string;
+  [key: string]: unknown;
+};
 
 export type WorkspaceState = Readonly<{
   projectId: string;

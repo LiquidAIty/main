@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from graphiti_core.driver.driver import GraphDriver, GraphProvider
 from graphiti_core.edges import CommunityEdge
 from graphiti_core.embedder import EmbedderClient
-from graphiti_core.graphiti_types import GraphitiClients, generate_prompt_response
 from graphiti_core.helpers import semaphore_gather
 from graphiti_core.llm_client import LLMClient
 from graphiti_core.models.nodes.node_db_queries import COMMUNITY_NODE_RETURN
@@ -139,28 +138,16 @@ def label_propagation(projection: dict[str, list[Neighbor]]) -> list[list[str]]:
     return clusters
 
 
-async def summarize_pair(
-    llm_client: LLMClient,
-    summary_pair: tuple[str, str],
-    *,
-    clients: GraphitiClients | None = None,
-) -> str:
-    """Summarize a pair of node summaries.
-
-    clients: optional bundle that selects prompt overrides and model routes.
-    """
+async def summarize_pair(llm_client: LLMClient, summary_pair: tuple[str, str]) -> str:
     # Prepare context for LLM
     context = {
         'node_summaries': [{'summary': summary} for summary in summary_pair],
     }
 
-    llm_response = await generate_prompt_response(
-        llm_client,
-        'summarize_nodes.summarize_pair',
-        prompt_library.summarize_nodes.summarize_pair,
-        context,
-        clients=clients,
+    llm_response = await llm_client.generate_response(
+        prompt_library.summarize_nodes.summarize_pair(context),
         response_model=Summary,
+        prompt_name='summarize_nodes.summarize_pair',
     )
 
     pair_summary = llm_response.get('summary', '')
@@ -168,27 +155,15 @@ async def summarize_pair(
     return truncate_at_sentence(pair_summary, MAX_SUMMARY_CHARS)
 
 
-async def generate_summary_description(
-    llm_client: LLMClient,
-    summary: str,
-    *,
-    clients: GraphitiClients | None = None,
-) -> str:
-    """Generate a description for a community summary.
-
-    clients: optional bundle that selects prompt overrides and model routes.
-    """
+async def generate_summary_description(llm_client: LLMClient, summary: str) -> str:
     context = {
         'summary': summary,
     }
 
-    llm_response = await generate_prompt_response(
-        llm_client,
-        'summarize_nodes.summary_description',
-        prompt_library.summarize_nodes.summary_description,
-        context,
-        clients=clients,
+    llm_response = await llm_client.generate_response(
+        prompt_library.summarize_nodes.summary_description(context),
         response_model=SummaryDescription,
+        prompt_name='summarize_nodes.summary_description',
     )
 
     description = llm_response.get('description', '')
@@ -197,15 +172,8 @@ async def generate_summary_description(
 
 
 async def build_community(
-    llm_client: LLMClient,
-    community_cluster: list[EntityNode],
-    *,
-    clients: GraphitiClients | None = None,
+    llm_client: LLMClient, community_cluster: list[EntityNode]
 ) -> tuple[CommunityNode, list[CommunityEdge]]:
-    """Build one community from its nodes.
-
-    clients: optional bundle that selects prompt overrides and model routes.
-    """
     summaries = [entity.summary for entity in community_cluster]
     length = len(summaries)
     while length > 1:
@@ -216,11 +184,7 @@ async def build_community(
         new_summaries: list[str] = list(
             await semaphore_gather(
                 *[
-                    summarize_pair(
-                        llm_client,
-                        (str(left_summary), str(right_summary)),
-                        clients=clients,
-                    )
+                    summarize_pair(llm_client, (str(left_summary), str(right_summary)))
                     for left_summary, right_summary in zip(
                         summaries[: int(length / 2)], summaries[int(length / 2) :], strict=False
                     )
@@ -233,7 +197,7 @@ async def build_community(
         length = len(summaries)
 
     summary = truncate_at_sentence(summaries[0], MAX_SUMMARY_CHARS)
-    name = await generate_summary_description(llm_client, summary, clients=clients)
+    name = await generate_summary_description(llm_client, summary)
     now = utc_now()
     community_node = CommunityNode(
         name=name,
@@ -253,20 +217,14 @@ async def build_communities(
     driver: GraphDriver,
     llm_client: LLMClient,
     group_ids: list[str] | None,
-    *,
-    clients: GraphitiClients | None = None,
 ) -> tuple[list[CommunityNode], list[CommunityEdge]]:
-    """Build communities for the requested groups.
-
-    clients: optional bundle that selects prompt overrides and model routes.
-    """
     community_clusters = await get_community_clusters(driver, group_ids)
 
     semaphore = asyncio.Semaphore(MAX_COMMUNITY_BUILD_CONCURRENCY)
 
     async def limited_build_community(cluster):
         async with semaphore:
-            return await build_community(llm_client, cluster, clients=clients)
+            return await build_community(llm_client, cluster)
 
     communities: list[tuple[CommunityNode, list[CommunityEdge]]] = list(
         await semaphore_gather(
@@ -384,24 +342,14 @@ async def update_community(
     llm_client: LLMClient,
     embedder: EmbedderClient,
     entity: EntityNode,
-    *,
-    clients: GraphitiClients | None = None,
 ) -> tuple[list[CommunityNode], list[CommunityEdge]]:
-    """Update the community that contains an entity.
-
-    clients: optional bundle that selects prompt overrides and model routes.
-    """
     community, is_new = await determine_entity_community(driver, entity)
 
     if community is None:
         return [], []
 
-    new_summary = await summarize_pair(
-        llm_client,
-        (entity.summary, community.summary),
-        clients=clients,
-    )
-    new_name = await generate_summary_description(llm_client, new_summary, clients=clients)
+    new_summary = await summarize_pair(llm_client, (entity.summary, community.summary))
+    new_name = await generate_summary_description(llm_client, new_summary)
 
     community.summary = new_summary
     community.name = new_name

@@ -14,16 +14,19 @@ from app.python_models.operation_definition import OperationDefinition
 
 
 _GRAPHITI_READ_OPERATIONS = frozenset({
+    "graphiti.get_know",
+    "graphiti.get_entity_knows",
     "graphiti.get_entity_edge",
     "graphiti.get_episode_entities",
     "graphiti.get_episodes",
     "graphiti.get_status",
     "graphiti.search_memory_facts",
+    "graphiti.search_knows",
     "graphiti.search_nodes",
 })
 _GRAPHITI_WRITE_OPERATIONS = frozenset({
+    "graphiti.add_know",
     "graphiti.add_memory",
-    "graphiti.add_memory_to_entity",
     "graphiti.add_triplet",
     "graphiti.build_communities",
     "graphiti.clear_graph",

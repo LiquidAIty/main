@@ -32,6 +32,8 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
             'CREATE INDEX FOR (n:Entity) ON (n.uuid, n.group_id, n.name, n.created_at)',
             # Episodic node
             'CREATE INDEX FOR (n:Episodic) ON (n.uuid, n.group_id, n.created_at, n.valid_at)',
+            # First-class Know episode
+            'CREATE INDEX FOR (n:Know) ON (n.uuid, n.group_id, n.content_hash)',
             # Community node
             'CREATE INDEX FOR (n:Community) ON (n.uuid)',
             # Saga node
@@ -46,6 +48,8 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
             'CREATE INDEX FOR ()-[e:HAS_EPISODE]-() ON (e.uuid, e.group_id)',
             # NEXT_EPISODE edge
             'CREATE INDEX FOR ()-[e:NEXT_EPISODE]-() ON (e.uuid, e.group_id)',
+            # ABOUT edge
+            'CREATE INDEX FOR ()-[e:ABOUT]-() ON (e.uuid, e.group_id)',
         ]
 
     if provider == GraphProvider.KUZU:
@@ -54,6 +58,7 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
     return [
         'CREATE INDEX entity_uuid IF NOT EXISTS FOR (n:Entity) ON (n.uuid)',
         'CREATE INDEX episode_uuid IF NOT EXISTS FOR (n:Episodic) ON (n.uuid)',
+        'CREATE INDEX know_content_hash IF NOT EXISTS FOR (n:Know) ON (n.group_id, n.content_hash)',
         'CREATE INDEX community_uuid IF NOT EXISTS FOR (n:Community) ON (n.uuid)',
         'CREATE INDEX saga_uuid IF NOT EXISTS FOR (n:Saga) ON (n.uuid)',
         'CREATE INDEX relation_uuid IF NOT EXISTS FOR ()-[e:RELATES_TO]-() ON (e.uuid)',
@@ -61,6 +66,7 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
         'CREATE INDEX has_member_uuid IF NOT EXISTS FOR ()-[e:HAS_MEMBER]-() ON (e.uuid)',
         'CREATE INDEX has_episode_uuid IF NOT EXISTS FOR ()-[e:HAS_EPISODE]-() ON (e.uuid)',
         'CREATE INDEX next_episode_uuid IF NOT EXISTS FOR ()-[e:NEXT_EPISODE]-() ON (e.uuid)',
+        'CREATE INDEX about_uuid IF NOT EXISTS FOR ()-[e:ABOUT]-() ON (e.uuid)',
         'CREATE INDEX entity_group_id IF NOT EXISTS FOR (n:Entity) ON (n.group_id)',
         'CREATE INDEX episode_group_id IF NOT EXISTS FOR (n:Episodic) ON (n.group_id)',
         'CREATE INDEX community_group_id IF NOT EXISTS FOR (n:Community) ON (n.group_id)',
@@ -69,6 +75,7 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
         'CREATE INDEX mention_group_id IF NOT EXISTS FOR ()-[e:MENTIONS]-() ON (e.group_id)',
         'CREATE INDEX has_episode_group_id IF NOT EXISTS FOR ()-[e:HAS_EPISODE]-() ON (e.group_id)',
         'CREATE INDEX next_episode_group_id IF NOT EXISTS FOR ()-[e:NEXT_EPISODE]-() ON (e.group_id)',
+        'CREATE INDEX about_group_id IF NOT EXISTS FOR ()-[e:ABOUT]-() ON (e.group_id)',
         'CREATE INDEX name_entity_index IF NOT EXISTS FOR (n:Entity) ON (n.name)',
         'CREATE INDEX saga_name IF NOT EXISTS FOR (n:Saga) ON (n.name)',
         'CREATE INDEX created_at_entity_index IF NOT EXISTS FOR (n:Entity) ON (n.created_at)',
@@ -95,15 +102,27 @@ def get_fulltext_indices(provider: GraphProvider) -> list[LiteralString]:
         return cast(
             list[LiteralString],
             [
-                f"""CREATE FULLTEXT INDEX FOR (n:Episodic)
-                ON (n.content, n.source, n.source_description, n.group_id)
-                OPTIONS {{stopwords: {stopwords_str}}}""",
-                f"""CREATE FULLTEXT INDEX FOR (n:Entity)
-                ON (n.name, n.summary, n.group_id)
-                OPTIONS {{stopwords: {stopwords_str}}}""",
-                f"""CREATE FULLTEXT INDEX FOR (n:Community)
-                ON (n.name, n.group_id)
-                OPTIONS {{stopwords: {stopwords_str}}}""",
+                f"""CALL db.idx.fulltext.createNodeIndex(
+                                                {{
+                                                    label: 'Episodic',
+                                                    stopwords: {stopwords_str}
+                                                }},
+                                                'content', 'source', 'source_description', 'group_id'
+                                                )""",
+                f"""CALL db.idx.fulltext.createNodeIndex(
+                                                {{
+                                                    label: 'Entity',
+                                                    stopwords: {stopwords_str}
+                                                }},
+                                                'name', 'summary', 'group_id'
+                                                )""",
+                f"""CALL db.idx.fulltext.createNodeIndex(
+                                                {{
+                                                    label: 'Community',
+                                                    stopwords: {stopwords_str}
+                                                }},
+                                                'name', 'group_id'
+                                                )""",
                 """CREATE FULLTEXT INDEX FOR ()-[e:RELATES_TO]-() ON (e.name, e.fact, e.group_id)""",
             ],
         )

@@ -6,6 +6,7 @@ threading without requiring a live database or LLM. They run as part of the
 default (non-integration) suite.
 """
 
+import asyncio
 import inspect
 import sys
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock
 import pytest
 from graphiti_core import Graphiti
 from graphiti_core.edges import EntityEdge
+from graphiti_core.knows import KnowCitation, KnowDirection
 from graphiti_core.nodes import EntityNode
 from graphiti_core.search.search_filters import ComparisonOperator, SearchFilters
 
@@ -30,7 +32,6 @@ from config.schema import (  # noqa: E402
 from models.edge_types import EDGE_TYPES  # noqa: E402
 from models.entity_types import ENTITY_TYPES  # noqa: E402
 from services.queue_service import QueueService  # noqa: E402
-import graphiti_mcp_server as graphiti_mcp_server_module  # noqa: E402
 from utils.type_config import (  # noqa: E402
     build_edge_type_map,
     build_edge_types,
@@ -184,8 +185,6 @@ class TestQueueServiceThreading:
             update_communities=True,
             saga='my-saga',
             saga_previous_episode_uuid='saga-prev',
-            entity_uuid='entity-uuid',
-            entity_name='Exact Entity',
         )
 
         # The worker runs the queued coroutine in the background; wait for it.
@@ -202,8 +201,6 @@ class TestQueueServiceThreading:
         assert kwargs['update_communities'] is True
         assert kwargs['saga'] == 'my-saga'
         assert kwargs['saga_previous_episode_uuid'] == 'saga-prev'
-        assert kwargs['entity_uuid'] == 'entity-uuid'
-        assert kwargs['entity_name'] == 'Exact Entity'
         assert kwargs['uuid'] == 'ep-uuid'
 
     @pytest.mark.asyncio
@@ -228,63 +225,88 @@ class TestQueueServiceThreading:
         kwargs = client.add_episode.await_args.kwargs
         assert before <= kwargs['reference_time'] <= after
 
-
-class TestEntityMemoryTool:
     @pytest.mark.asyncio
-    async def test_add_memory_to_entity_generates_exact_ids_and_queues_once(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        queue = SimpleNamespace(add_episode=AsyncMock())
-        graphiti_service = SimpleNamespace(entity_types=None, edge_types=None, edge_type_map=None)
-        monkeypatch.setattr(graphiti_mcp_server_module, 'queue_service', queue)
-        monkeypatch.setattr(graphiti_mcp_server_module, 'graphiti_service', graphiti_service)
-        monkeypatch.setattr(
-            graphiti_mcp_server_module,
-            'config',
-            SimpleNamespace(graphiti=SimpleNamespace(group_id='group-1')),
-            raising=False,
+    async def test_back_to_back_same_group_submissions_use_one_worker(self):
+        first_release = asyncio.Event()
+        started: list[str] = []
+        active = 0
+        max_active = 0
+
+        async def add_episode(**kwargs):
+            nonlocal active, max_active
+            started.append(kwargs['name'])
+            active += 1
+            max_active = max(max_active, active)
+            if kwargs['name'] == 'first':
+                await first_release.wait()
+            active -= 1
+
+        service = QueueService()
+        await service.initialize(SimpleNamespace(add_episode=add_episode))
+
+        common = {
+            'group_id': 'g1',
+            'content': 'body',
+            'source_description': 'desc',
+            'episode_type': 'text',
+            'entity_types': None,
+            'uuid': None,
+        }
+        await service.add_episode(name='first', **common)
+        await service.add_episode(name='second', **common)
+        await asyncio.sleep(0)
+
+        assert started == ['first']
+        assert max_active == 1
+        first_release.set()
+        await service._episode_queues['g1'].join()
+        assert started == ['first', 'second']
+        assert max_active == 1
+
+    @pytest.mark.asyncio
+    async def test_add_know_forwards_episode_saga_and_exact_entity_params(self):
+        client = AsyncMock(spec=Graphiti)
+        service = QueueService()
+        await service.initialize(client)
+        reference_time = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        citation = KnowCitation(
+            url='https://example.com/report',
+            title='Example report',
+            publisher='Example Corp',
+            evidence='The report states that revenue increased during the period.',
+        )
+        direction = KnowDirection(
+            proposition='Example Corp is improving',
+            relation='supports',
         )
 
-        result = await graphiti_mcp_server_module.add_memory_to_entity(
-            entity_name='Rocket Lab',
-            name='Launch cadence',
-            episode_body='{"body":"Cadence improved.","citations":[]}',
-            source_description='["https://example.test/source"]',
-            source='json',
+        await service.add_know(
+            group_id='g1',
+            name='Revenue observation',
+            entity_name='Example Corp',
+            entity_uuid='entity-1',
+            observation='Revenue increased.',
+            interpretation='Demand may be improving.',
+            citation=citation,
+            direction=direction,
+            entity_types={'Preference': ENTITY_TYPES['Preference']},
+            uuid='know-1',
+            reference_time=reference_time,
+            update_communities=True,
+            saga='company-thesis',
+            saga_previous_episode_uuid='know-0',
         )
+        await service._episode_queues['g1'].join()
 
-        assert result['episode_uuid']
-        assert result['entity_uuid']
-        queue.add_episode.assert_awaited_once()
-        kwargs = queue.add_episode.await_args.kwargs
-        assert kwargs['uuid'] == result['episode_uuid']
-        assert kwargs['entity_uuid'] == result['entity_uuid']
-        assert kwargs['entity_name'] == 'Rocket Lab'
+        client.add_know.assert_awaited_once()
+        kwargs = client.add_know.await_args.kwargs
+        assert kwargs['entity_uuid'] == 'entity-1'
+        assert kwargs['citation'] is citation
+        assert kwargs['direction'] is direction
+        assert kwargs['reference_time'] == reference_time
         assert kwargs['update_communities'] is True
-
-    @pytest.mark.asyncio
-    async def test_add_memory_to_entity_requires_source_description(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.setattr(
-            graphiti_mcp_server_module,
-            'queue_service',
-            SimpleNamespace(add_episode=AsyncMock()),
-        )
-        monkeypatch.setattr(
-            graphiti_mcp_server_module,
-            'graphiti_service',
-            SimpleNamespace(entity_types=None, edge_types=None, edge_type_map=None),
-        )
-
-        result = await graphiti_mcp_server_module.add_memory_to_entity(
-            entity_name='Rocket Lab',
-            name='Uncited Know',
-            episode_body='No source.',
-            source_description='',
-        )
-
-        assert result == {'error': 'source_description is required'}
+        assert kwargs['saga'] == 'company-thesis'
+        assert kwargs['saga_previous_episode_uuid'] == 'know-0'
 
 
 class TestCoreSignatureCompatibility:
@@ -308,19 +330,9 @@ class TestCoreSignatureCompatibility:
             'update_communities',
             'saga',
             'saga_previous_episode_uuid',
-            'entity_uuid',
-            'entity_name',
             'uuid',
         }
         assert sent <= params
-
-    def test_entity_tool_enables_communities_without_changing_add_memory_default(self):
-        ordinary = inspect.signature(graphiti_mcp_server_module.add_memory).parameters
-        attached = inspect.signature(
-            graphiti_mcp_server_module.add_memory_to_entity
-        ).parameters
-        assert ordinary['update_communities'].default is False
-        assert attached['update_communities'].default is True
 
     def test_core_exposes_parity_methods(self):
         # The new tools depend on these methods; guard against being pointed at a
@@ -331,6 +343,10 @@ class TestCoreSignatureCompatibility:
             'build_communities',
             'add_triplet',
             'get_nodes_and_edges_by_episode',
+            'add_know',
+            'get_know',
+            'search_knows',
+            'get_entity_knows',
         ):
             assert hasattr(Graphiti, method), f'graphiti-core is missing {method}'
 

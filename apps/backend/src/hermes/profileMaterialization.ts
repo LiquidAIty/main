@@ -53,7 +53,7 @@ export type HermesProfileState = {
 
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ESSENTIAL_SKILLS = new Set(['hermes-agent']);
-const TEAM_CARD_IDS = new Set(['card_team', 'card_knowgraph']);
+const TEAM_CARD_IDS = new Set(['card_team']);
 const CARD_PROFILE_MCP_SERVER = 'liquidaity';
 const PROFILE_OWNER_META_KEY = 'hermes-bots';
 

@@ -249,7 +249,7 @@ describe('Hermes profile owner and request-context materialization', () => {
     expect(mutation).not.toHaveBeenCalled();
   });
 
-  it('materializes AutoTeam only for the saved Team and KnowGraph identities', async () => {
+  it('clears Team mode from KnowGraph and materializes it only for the saved Team identity', async () => {
     const ownerRef = createHash('sha256').update('user-owner-one').digest('hex');
     const knowCard: DeckCard = {
       ...card,
@@ -278,7 +278,7 @@ describe('Hermes profile owner and request-context materialization', () => {
       name: 'knowgraph',
       soul: 'Saved KnowGraph prompt',
       mcp_servers: [],
-      task_mode: null,
+      task_mode: 'team',
       ui_meta: {
         'hermes-bots': {
           title: 'KnowGraph',
@@ -299,7 +299,7 @@ describe('Hermes profile owner and request-context materialization', () => {
       if (method === 'mcp.servers.list') return { servers: [] } as T;
       if (method === 'profiles.configure') {
         configured.push(structuredClone(params));
-        current = { ...current, task_mode: params.task_mode as 'team' };
+        current = { ...current, task_mode: params.task_mode as 'team' | null };
         return { ok: true, applied: { task_mode: true } } as T;
       }
       if (method === 'profiles.describe') return current as T;
@@ -314,13 +314,50 @@ describe('Hermes profile owner and request-context materialization', () => {
       [],
     );
 
-    expect(result.task_mode).toBe('team');
+    expect(result.task_mode).toBeNull();
     expect(configured).toHaveLength(1);
     expect(configured[0]).toMatchObject({
       name: 'knowgraph',
-      task_mode: 'team',
+      task_mode: null,
     });
     expect(configured[0]).not.toHaveProperty('enabled_toolsets');
+
+    const teamCard: DeckCard = {
+      ...knowCard,
+      id: 'card_team',
+      title: 'Team',
+      prompt: 'Saved Team prompt',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'team' },
+    };
+    current = {
+      ...current,
+      name: 'team',
+      soul: 'Saved Team prompt',
+      task_mode: null,
+      ui_meta: {
+        'hermes-bots': {
+          title: 'Team',
+          owner_ref: ownerRef,
+          owner_scoped: true,
+        },
+      },
+    };
+    configured.length = 0;
+
+    const teamResult = await materializeSavedCardProfile(
+      request,
+      teamCard,
+      'user-owner-one',
+      current,
+      [],
+    );
+
+    expect(teamResult.task_mode).toBe('team');
+    expect(configured).toHaveLength(1);
+    expect(configured[0]).toMatchObject({
+      name: 'team',
+      task_mode: 'team',
+    });
   });
 
   it('refuses a profile-scoped tool before changing an ordinary Card profile', async () => {

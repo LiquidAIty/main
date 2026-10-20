@@ -86,6 +86,32 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
             }, 0)
         self.session.raw.assert_not_called()
 
+    async def test_cancelled_human_caller_keeps_edit_serialized_until_readback(self):
+        self.session.state["selection"] = "zone"
+        self.session._checkpoint = AsyncMock()
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def raw(name, arguments):
+            calls.append(name)
+            entered.set()
+            await release.wait()
+            return result({"ok": True, "properties": {"multiplier": {"value": 2}}})
+
+        self.session.raw = raw
+        arguments = {"object_type": "ThermalZone", "property_name": "multiplier", "object_handle": "zone", "value": 2}
+        first = asyncio.create_task(self.session.human("edit", arguments, 0))
+        await entered.wait()
+        first.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await first
+        second = asyncio.create_task(self.session.human("edit", arguments, 0))
+        await asyncio.sleep(0)
+        self.assertEqual(calls, ["set_object_property"])
+        release.set()
+        await second
+        self.assertEqual(calls, ["set_object_property", "get_object_fields", "set_object_property", "get_object_fields"])
+
     async def test_shared_material_edit_not_exposed_as_local_exception(self):
         self.session.raw = AsyncMock()
         with self.assertRaisesRegex(ValueError, "property_not_supported"):
@@ -121,6 +147,17 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_failed_result_is_not_success(self):
         with self.assertRaisesRegex(RuntimeError, "actual engineering failure"):
             module.checked(result({"ok": False, "error": "actual engineering failure"}))
+
+    async def test_unsafe_upstream_space_introspection_is_refused_without_mutation(self):
+        self.session.tools["get_object_fields"] = Tool(
+            name="get_object_fields", inputSchema={"type": "object", "properties": {}})
+        self.session.raw = AsyncMock()
+        for kind in ("Space", "OS:Space", "OS_Space"):
+            with self.assertRaisesRegex(ValueError, "mutates Space"):
+                await self.session.call("get_object_fields", {
+                    "object_type": kind, "object_handle": "selected",
+                }, actor="development-proof")
+        self.session.raw.assert_not_called()
 
     async def test_project_path_is_not_caller_filesystem_path(self):
         with self.assertRaises(ValueError):

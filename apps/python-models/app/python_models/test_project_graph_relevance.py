@@ -3,7 +3,7 @@
 # Entity: ThinkGraph
 # Relationship: This file verifies bounded Engraphis candidates exclude the distinct recent Think before relevance ranking.
 # Entity: KnowGraph
-# Relationship: This file verifies Graphiti search hydrates only exact ABOUT-linked atomic Knows for matched Entities.
+# Relationship: This file verifies Graphiti search hydrates only exact ABOUT-linked first-class Knows for matched Entities.
 # Entity: Jev Decisions
 # Relationship: This file verifies Jev ranks complete provider records against current context without rewarding mere recency.
 
@@ -25,10 +25,10 @@ def _know(identifier: str) -> dict:
     return {
         "graphitiEpisodeId": identifier,
         "graphitiEntityId": f"entity-{identifier}",
-        "schemaVersion": "know.v2",
+        "kind": "Know",
         "observation": f"Observation {identifier}",
         "interpretation": f"Interpretation {identifier}",
-        "source": {
+        "citation": {
             "url": f"https://example.test/source/{identifier}",
             "title": f"Source {identifier}",
             "publisher": "Example",
@@ -147,7 +147,7 @@ def test_jev_rates_provider_candidates_by_current_context_without_recency_reward
     assert "one verified observation" in captured["questions"]["knowgraph_relevance"][
         "instructions"
     ]
-    assert captured["state"]["candidates"]["knowgraph"][0]["source"]["title"] == "Source a"
+    assert captured["state"]["candidates"]["knowgraph"][0]["citation"]["title"] == "Source a"
     assert [item["relevanceRank"] for item in result["thinkgraph"]["records"]] == [1]
     assert result["thinkgraph"]["records"][0]["engraphisMemoryId"] == "b"
     assert result["knowgraph"]["records"][0]["graphitiEpisodeId"] == "b"

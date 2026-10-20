@@ -18,11 +18,6 @@ from typing import Any
 from mcp.types import CallToolResult, TextContent, Tool
 
 from app import mcp_cbm_provider, mcp_graphiti_provider
-from app.python_models.knowgraph_know_contract import (
-    encode_know_payload,
-    know_episode_uuid,
-)
-from app.python_models.knowgraph_source_verification import verify_source_document
 from app.python_models.operation_definition import OperationDefinition
 from app.python_models.tool_registry import (
     graphiti_operation_policy,
@@ -54,17 +49,20 @@ _CARD_CATALOG_PROVIDER_TOOL_NAMES = {
         "trace_path",
     }),
     "graphiti": frozenset({
+        "add_know",
         "add_memory",
-        "add_memory_to_entity",
         "build_communities",
         "clear_graph",
         "delete_entity_edge",
         "delete_episode",
+        "get_know",
+        "get_entity_knows",
         "get_entity_edge",
         "get_episode_entities",
         "get_episodes",
         "get_status",
         "search_memory_facts",
+        "search_knows",
         "search_nodes",
         "summarize_saga",
     }),
@@ -82,17 +80,20 @@ _PROVIDER_TOOL_TITLES = {
         "trace_path": "Trace a CodeGraph path",
     },
     "graphiti": {
+        "add_know": "Add a Know to an Entity",
         "add_memory": "Add a KnowGraph memory episode",
-        "add_memory_to_entity": "Add a Know to an Entity",
         "build_communities": "Build KnowGraph communities",
         "clear_graph": "Clear KnowGraph data",
         "delete_entity_edge": "Delete a KnowGraph relationship",
         "delete_episode": "Delete a KnowGraph episode",
+        "get_know": "Read an exact Know",
+        "get_entity_knows": "Read an Entity's Knows",
         "get_entity_edge": "Read a KnowGraph relationship",
         "get_episode_entities": "Read episode entities and relationships",
         "get_episodes": "List KnowGraph episodes",
         "get_status": "Read KnowGraph status",
         "search_memory_facts": "Search KnowGraph facts",
+        "search_knows": "Search Knows",
         "search_nodes": "Search KnowGraph entities",
         "summarize_saga": "Summarize a KnowGraph saga",
     },
@@ -101,141 +102,47 @@ _GRAPHITI_SERVER_INJECTED_ARGUMENTS = frozenset({"group_id", "group_ids"})
 _GRAPHITI_PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def _know_source_input_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "description": (
-            "The one retrieved source document for this observation. The evidence must be an "
-            "exact passage from that document; acceptance re-fetches and verifies it."
-        ),
-        "properties": {
-            "url": {"type": "string", "minLength": 1, "maxLength": 2048},
-            "title": {"type": "string", "minLength": 1, "maxLength": 1000},
-            "publisher": {"type": "string", "minLength": 1, "maxLength": 1000},
-            "evidence": {"type": "string", "minLength": 20, "maxLength": 12000},
-            "locator": {"type": "string", "minLength": 1, "maxLength": 1000},
-            "publishedAt": {"type": "string", "minLength": 4, "maxLength": 1000},
-            "eventAt": {"type": "string", "minLength": 4, "maxLength": 1000},
-        },
-        "required": ["url", "title", "publisher", "evidence"],
-        "additionalProperties": False,
-    }
-
-
-def _project_entity_know_tool(payload: dict[str, Any]) -> None:
-    """Expose Graphiti's exact attachment as LiquidAIty's one atomic Know write."""
+def _inline_graphiti_know_schema(payload: dict[str, Any]) -> None:
+    """Inline MCP-v2 definitions before projecting through the v1 Tool model."""
 
     schema = copy.deepcopy(payload.get("inputSchema") or {})
-    properties = schema.setdefault("properties", {})
-    for field in (
-        "episode_body", "source_description", "source", "uuid", "reference_time",
-    ):
-        properties.pop(field, None)
-    properties.update({
-        "observation": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 8000,
-            "description": "One self-contained factual observation supported by the quoted passage.",
-        },
-        "interpretation": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 8000,
-            "description": (
-                "A short, explicitly interpretive explanation. Do not present it as source text."
-            ),
-        },
-        "source": _know_source_input_schema(),
-        "direction": {
-            "type": "object",
-            "description": (
-                "Optional relevance to one explicit proposition; omit for a useful neutral finding."
-            ),
-            "properties": {
-                "proposition": {"type": "string", "minLength": 1, "maxLength": 4000},
-                "relation": {
-                    "type": "string",
-                    "enum": ["supports", "challenges", "context"],
-                },
-            },
-            "required": ["proposition", "relation"],
-            "additionalProperties": False,
-        },
-    })
-    schema["required"] = [
-        "entity_name", "name", "observation", "interpretation", "source",
-    ]
-    schema["additionalProperties"] = False
+    definitions = schema.pop("$defs", {})
+    properties = schema.get("properties")
+    if not isinstance(definitions, dict) or not isinstance(properties, dict):
+        payload["inputSchema"] = schema
+        return
+
+    citation = definitions.get("KnowCitation")
+    if isinstance(citation, dict) and properties.get("citation") == {
+        "$ref": "#/$defs/KnowCitation",
+    }:
+        properties["citation"] = copy.deepcopy(citation)
+
+    direction = properties.get("direction")
+    if isinstance(direction, dict) and isinstance(direction.get("anyOf"), list):
+        direction["anyOf"] = [
+            copy.deepcopy(definitions["KnowDirection"])
+            if item == {"$ref": "#/$defs/KnowDirection"}
+            and isinstance(definitions.get("KnowDirection"), dict)
+            else item
+            for item in direction["anyOf"]
+        ]
     payload["inputSchema"] = schema
-    payload["title"] = "Add Know to Entity"
-    payload["description"] = (
-        "Verify and queue one atomic sourced observation with an exact Entity attachment. "
-        "The source passage is mechanically checked before Graphiti receives it. Optional "
-        "direction describes relevance to one explicit proposition; balance belongs across "
-        "research coverage, not inside every Know. Graphiti keeps its queued extraction, "
-        "provenance, time, relationship, Community, and Saga behavior."
-    )
 
 
 async def _entity_know_provider_arguments(
     arguments: dict[str, Any],
     project_id: str,
-) -> tuple[dict[str, Any], str]:
+) -> dict[str, Any]:
     provider_arguments = dict(arguments)
-    observation = provider_arguments.pop("observation", None)
-    interpretation = provider_arguments.pop("interpretation", None)
-    raw_source = provider_arguments.pop("source", None)
-    direction = provider_arguments.pop("direction", None)
-    verified_source = await asyncio.to_thread(verify_source_document, raw_source)
-    episode_body, source_description, dedupe_key = encode_know_payload(
-        observation,
-        verified_source,
-        interpretation,
-        direction,
-    )
+    raw_citation = provider_arguments.get("citation")
     entity_name = str(provider_arguments.get("entity_name") or "").strip()
-    if not project_id or not entity_name:
+    if not project_id or not entity_name or not isinstance(raw_citation, dict):
         raise ValueError("know_project_and_entity_required")
-    provider_arguments.update({
-        "episode_body": episode_body,
-        "source_description": source_description,
-        "source": "json",
-        "uuid": know_episode_uuid(project_id, entity_name, dedupe_key),
-    })
-    reference_time = verified_source.get("eventAt") or verified_source.get("publishedAt")
+    reference_time = raw_citation.get("eventAt") or raw_citation.get("publishedAt")
     if reference_time:
         provider_arguments["reference_time"] = reference_time
-    return provider_arguments, dedupe_key
-
-
-async def _persisted_atomic_know(
-    project_id: str,
-    episode_uuid: str,
-) -> bool:
-    """Check exact Graphiti persistence before spending another queue/extraction pass."""
-
-    from app.python_models.knowgraph_exact_reads import read_knowgraph_episodes_exact
-
-    records = await asyncio.to_thread(
-        read_knowgraph_episodes_exact,
-        project_id,
-        [episode_uuid],
-    )
-    return bool(records)
-
-
-def _duplicate_atomic_know_result(episode_uuid: str, dedupe_key: str) -> CallToolResult:
-    return CallToolResult(content=[TextContent(
-        type="text",
-        text=json.dumps({
-            "status": "already_persisted",
-            "episode_uuid": episode_uuid,
-            "dedupe_key": dedupe_key,
-            "queued": False,
-            "persisted": True,
-        }, separators=(",", ":")),
-    )])
+    return provider_arguments
 
 
 def is_provider_operation_name(name: str) -> bool:
@@ -281,8 +188,8 @@ def namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
             "connectionKind": "external-mcp",
         }
         payload["_meta"] = meta
-        if provider == "graphiti" and provider_tool_name == "add_memory_to_entity":
-            _project_entity_know_tool(payload)
+        if provider == "graphiti" and provider_tool_name == "add_know":
+            _inline_graphiti_know_schema(payload)
         if provider == "graphiti" and provider_tool_name == "get_episodes":
             schema = copy.deepcopy(payload.get("inputSchema") or {})
             properties = schema.setdefault("properties", {})
@@ -395,19 +302,13 @@ def register_graphiti_catalog(tools: list[Tool]) -> None:
             **arguments: Any,
         ) -> Any:
             provider_arguments = dict(arguments)
-            if _provider_tool_name == "add_memory_to_entity":
+            if _provider_tool_name == "add_know":
                 if not _authenticatedProjectId:
                     raise RuntimeError("know_project_context_required")
-                provider_arguments, dedupe_key = await _entity_know_provider_arguments(
+                provider_arguments = await _entity_know_provider_arguments(
                     provider_arguments,
                     _authenticatedProjectId,
                 )
-                episode_uuid = str(provider_arguments["uuid"])
-                if await _persisted_atomic_know(
-                    _authenticatedProjectId,
-                    episode_uuid,
-                ):
-                    return _duplicate_atomic_know_result(episode_uuid, dedupe_key)
             include_body = bool(provider_arguments.pop("include_body", False))
             preview_chars = max(0, min(
                 2000, int(provider_arguments.pop("body_preview_chars", 400)),

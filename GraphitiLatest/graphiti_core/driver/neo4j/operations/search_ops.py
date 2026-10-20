@@ -400,7 +400,7 @@ class Neo4jSearchOperations(SearchOperations):
         self,
         executor: QueryExecutor,
         query: str,
-        search_filter: SearchFilters,  # noqa: ARG002
+        search_filter: SearchFilters,
         group_ids: list[str] | None = None,
         limit: int = 10,
     ) -> list[EpisodicNode]:
@@ -408,7 +408,12 @@ class Neo4jSearchOperations(SearchOperations):
         if fuzzy_query == '':
             return []
 
-        filter_params: dict[str, Any] = {}
+        filter_queries, filter_params = node_search_filter_query_constructor(
+            search_filter,
+            GraphProvider.NEO4J,
+            node_alias='e',
+        )
+        node_filter_query = ''.join(f'\nAND {item}' for item in filter_queries)
         group_filter_query = ''
         if group_ids is not None:
             group_filter_query += '\nAND e.group_id IN $group_ids'
@@ -421,6 +426,7 @@ class Neo4jSearchOperations(SearchOperations):
             MATCH (e:Episodic)
             WHERE e.uuid = episode.uuid
             """
+            + node_filter_query
             + group_filter_query
             + """
             RETURN

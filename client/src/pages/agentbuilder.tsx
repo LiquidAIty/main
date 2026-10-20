@@ -38,6 +38,7 @@ import {
   type CanonicalEntityFocusTarget,
 } from '../components/builder/canonicalEntityLinks';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
+import ModelWorkspaceBoundary from '../../../agent-products/nrgsim/ui/ModelWorkspaceBoundary';
 import WorldSignalSurface, {
   type WorldSignalsInspectorBridge,
   type WorldSignalsInspectorSection,
@@ -486,7 +487,6 @@ export default function AgentBuilder(): React.ReactElement {
   }, [workspaceView, worldViewBridge, worldViewCard?.id]);
   const {
     handleSend,
-    requestMainText,
     messages,
     addressableAgents,
     sessionActive,
@@ -1518,9 +1518,9 @@ export default function AgentBuilder(): React.ReactElement {
       onOpenAddAgent={handleOpenSavedCardChooser}
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
-      onShowModelingWorkspace={modelingAgents.length ? () => {
+      onShowModelingWorkspace={modelingAgents.length ? async () => {
+        if (!(await closeInspectorDrawer())) return;
         setWorkspaceView('nrgsim');
-        closeInspectorDrawer();
         const params = new URLSearchParams(window.location.search);
         params.set('workspace', 'nrgsim');
         window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
@@ -1532,14 +1532,12 @@ export default function AgentBuilder(): React.ReactElement {
   const workspaceCompanionSurfaceHost = (
     <CompanionSurfaceHost
       workspaceView={workspaceView}
-      nrgsimSurface={modelingAgents.length ? <Suspense fallback={<p>Loading building workspace…</p>}>
-        <ModelWorkspace projectId={canvasProjectId || null}
-          agents={modelingAgents}
-          onAgentRequest={requestMainText}
-          agentBusy={sessionActive || sessionConnecting} />
-      </Suspense> : <p style={{ padding: 24 }}>
-        This Project has no connected modeling Card. Open Building Energy Modeler and configure its saved Modeler through Builder.
-      </p>}
+      nrgsimSurface={modelingAgents.length ? <ModelWorkspaceBoundary key={canvasProjectId}>
+        <Suspense fallback={null}>
+          <ModelWorkspace projectId={canvasProjectId || null}
+            agentBusy={sessionActive || sessionConnecting} />
+        </Suspense>
+      </ModelWorkspaceBoundary> : null}
       knowledgeSurface={
         renderKnowledgeGraphSurface({
           minHeight: 420,

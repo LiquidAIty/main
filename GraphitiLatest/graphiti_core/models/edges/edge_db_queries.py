@@ -305,25 +305,6 @@ COMMUNITY_EDGE_RETURN = """
 """
 
 
-ABOUT_EDGE_SAVE = """
-    MATCH (episode:Episodic {uuid: $episode_uuid})
-    MATCH (entity:Entity {uuid: $entity_uuid})
-    MERGE (episode)-[e:ABOUT {uuid: $uuid}]->(entity)
-    SET
-        e.group_id = $group_id,
-        e.created_at = $created_at
-    RETURN e.uuid AS uuid
-"""
-
-ABOUT_EDGE_RETURN = """
-    e.uuid AS uuid,
-    e.group_id AS group_id,
-    n.uuid AS source_node_uuid,
-    m.uuid AS target_node_uuid,
-    e.created_at AS created_at
-"""
-
-
 HAS_EPISODE_EDGE_SAVE = """
     MATCH (saga:Saga {uuid: $saga_uuid})
     MATCH (episode:Episodic {uuid: $episode_uuid})

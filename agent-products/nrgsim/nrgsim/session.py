@@ -16,8 +16,9 @@ import os
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from mcp import Client, StdioServerParameters
+from mcp import Client
 from mcp.types import CallToolResult, Tool
+from .launch import host_path, server_parameters, tool_arguments
 
 PRODUCT_ROOT = Path(__file__).resolve().parents[1]
 INSTALLATION = Path(os.environ.get(
@@ -39,7 +40,7 @@ READ_TOOLS = frozenset({
     "get_run_period", "get_simulation_control", "validate_model",
     "list_weather_files", "get_run_status", "get_run_logs", "get_run_artifacts",
     "extract_summary_metrics", "extract_simulation_errors", "list_output_variables",
-    "query_timeseries", "get_skill", "list_skills",
+    "query_timeseries", "get_skill", "list_skills", "list_custom_measures", "list_measure_arguments",
 })
 WRITE_TOOLS = frozenset({
     "create_new_building", "create_baseline_osm", "create_bar_building",
@@ -50,7 +51,7 @@ WRITE_TOOLS = frozenset({
     "assign_construction_to_surface", "add_layer_to_construction",
     "set_run_period", "set_simulation_control", "add_output_variable", "add_output_meter",
     "change_building_location", "add_design_day", "save_osm_model", "load_osm_model",
-    "run_simulation",
+    "run_simulation", "apply_measure",
 })
 
 
@@ -114,17 +115,9 @@ class ProjectSession:
             raise RuntimeError(self.startup_error)
 
     async def _own_client(self):
-        # Do not forward host credentials into engineering subprocesses.
-        env = {key: os.environ[key] for key in (
-            "PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "USERPROFILE",
-            "APPDATA", "LOCALAPPDATA",
-        ) if key in os.environ}
-        env.update(NRGSIM_OPENSTUDIO_ROOT=str(INSTALLATION), NRGSIM_PROJECT_ROOT=str(self.root))
         try:
-            async with Client(StdioServerParameters(
-                command=str(PYTHON), args=[str(Path(__file__).with_name("launch.py"))],
-                cwd=str(INSTALLATION), env=env,
-            ), mode="legacy", read_timeout_seconds=600) as client:
+            async with Client(server_parameters(self.root),
+                              mode="legacy", read_timeout_seconds=600) as client:
                 self.client = client
                 page = await client.list_tools()
                 self.tools = {tool.name: Tool.model_validate(tool) for tool in page.tools}
@@ -150,8 +143,9 @@ class ProjectSession:
     async def raw(self, name: str, arguments: dict) -> CallToolResult:
         if self.client is None or self.startup_error:
             raise RuntimeError("openstudio_session_unavailable")
+        translated = tool_arguments(self.root, arguments)
         try:
-            return await self.client.call_tool(name, arguments, read_timeout_seconds=600)
+            return await self.client.call_tool(name, translated, read_timeout_seconds=600)
         except Exception as error:
             # The tool may still be executing upstream after a lost response.
             # Refuse further operations rather than guessing that it rolled back.
@@ -171,6 +165,11 @@ class ProjectSession:
         await self.start()
         if name not in self.tools or name not in READ_TOOLS | WRITE_TOOLS:
             raise ValueError("openstudio_operation_not_available")
+        if name == "get_object_fields" and arguments.get("object_type") in ("Space", "OS:Space", "OS_Space"):
+            raise ValueError(
+                "OpenStudio MCP 1.2.1 get_object_fields mutates Space surface relationships. "
+                "Use get_space_details or list_spaces for read-only Space inspection."
+            )
         operation = asyncio.create_task(self._call_serialized(name, arguments, actor))
         self.operations.add(operation)
         operation.add_done_callback(self._operation_finished)
@@ -211,31 +210,100 @@ class ProjectSession:
     async def view(self):
         await self.start()
         async with self.lock:
-            if not self.state["activeModel"]:
-                return {**self.state, "projection": None}
-            manifest = self.root / "display.json"
-            revision_path = self.root / "display-revision.txt"
-            if not manifest.exists() or not revision_path.exists() or revision_path.read_text() != str(self.state["revision"]):
-                proc = await asyncio.create_subprocess_exec(
-                    str(PYTHON), str(Path(__file__).with_name("projection.py")),
-                    str(self.working), str(self.root / "display.gltf"), str(manifest),
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                )
-                _, stderr = await proc.communicate()
-                if proc.returncode:
-                    raise RuntimeError("openstudio_projection_failed:" + stderr.decode(errors="replace")[-3000:])
-                revision_path.write_text(str(self.state["revision"]))
-            projection = json.loads(manifest.read_text("utf-8"))
-            if self.state["selection"] not in projection["objects"]:
-                self.state["selection"] = None
-                self.persist()
-            return {**self.state, "projection": projection}
+            return await self._view_locked()
+
+    async def _view_locked(self):
+        if not self.state["activeModel"]:
+            return {**self.state, "projection": None}
+        manifest = self.root / "display.json"
+        revision_path = self.root / "display-revision.txt"
+        projection_source = Path(__file__).with_name("projection.py")
+        source_hash = hashlib.sha256(projection_source.read_bytes()
+                                    + Path(__file__).with_name("constructions.py").read_bytes()).hexdigest()
+        display_revision = f'{self.state["revision"]}:{source_hash}'
+        if not manifest.exists() or not revision_path.exists() or revision_path.read_text() != display_revision:
+            proc = await asyncio.create_subprocess_exec(
+                str(PYTHON), str(Path(__file__).with_name("projection.py")),
+                str(self.working), str(self.root / "display.gltf"), str(manifest),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode:
+                raise RuntimeError("openstudio_projection_failed:" + stderr.decode(errors="replace")[-3000:])
+            revision_path.write_text(display_revision)
+        projection = json.loads(manifest.read_text("utf-8"))
+        if self.state["selection"] not in projection["objects"]:
+            self.state["selection"] = None
+            self.persist()
+        return {**self.state, "projection": projection}
 
     async def human(self, action: str, args: dict, revision: int | None):
         await self.start()
+        operation = asyncio.create_task(self._human_serialized(action, args, revision))
+        self.operations.add(operation)
+        operation.add_done_callback(self._operation_finished)
+        return await asyncio.shield(operation)
+
+    async def _human_serialized(self, action: str, args: dict, revision: int | None):
         async with self.lock:
             if revision is not None and revision != self.state["revision"]:
                 raise ValueError("model_changed_refresh_before_edit")
+            if action == "author":
+                if not isinstance(revision, int) or isinstance(revision, bool):
+                    raise ValueError("model_revision_required")
+                if not self.state["activeModel"]:
+                    raise ValueError("Create a new Building before drawing")
+                if not isinstance(args, dict) or not isinstance(args.get("operation"), str):
+                    raise ValueError("building_operation_required")
+                if args["operation"] not in {"create_story", "draw_space"}:
+                    if args.get("handle") != self.state["selection"]:
+                        raise ValueError("inspector_selection_changed")
+                source = Path(__file__).with_name("authoring.py")
+                measure_entry = PRODUCT_ROOT / "measures" / "building_authoring" / "measure.py"
+                digest = hashlib.sha256(source.read_bytes() + measure_entry.read_bytes()
+                                        + Path(__file__).with_name("constructions.py").read_bytes()
+                                        + Path(__file__).with_name("__init__.py").read_bytes()).hexdigest()
+                definition = self.state.get("authoringMeasure") or {}
+                if definition.get("sha256") != digest or not Path(definition.get("path", "")).is_dir():
+                    destination = self.root / "measures" / "local" / "custom" / f"building_authoring_{digest[:12]}"
+                    proc = await asyncio.create_subprocess_exec(
+                        str(PYTHON), str(Path(__file__).with_name("package_measure.py")), str(destination),
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    )
+                    _, stderr = await proc.communicate()
+                    if proc.returncode or not (destination / "measure.py").is_file():
+                        raise RuntimeError("Measure packaging failed: " + stderr.decode(errors="replace")[-2000:])
+                    definition = {"path": str(destination), "sha256": digest}
+                    self.state["authoringMeasure"] = definition
+                    self.persist()
+                result = await self.raw("apply_measure", {
+                    "measure_dir": definition["path"],
+                    "arguments": {"operation_json": json.dumps(args, allow_nan=False)},
+                })
+                data = payload(result)
+                self.audit("apply_measure", args, data, "human")
+                checked(result)
+                messages = data.get("runner_messages") or {}
+                if messages.get("result") != "Success":
+                    raise RuntimeError("OpenStudio did not confirm the model edit")
+                run_dir = host_path(self.root, data.get("run_dir", ""))
+                if not run_dir.is_relative_to(self.root.resolve()) or not (run_dir / "run" / "in.osm").is_file():
+                    raise RuntimeError("OpenStudio did not produce an edited model")
+                outcome = json.loads(messages.get("final_condition", ""))
+                if outcome.get("operation") != args["operation"]:
+                    raise RuntimeError("OpenStudio edit readback did not match the requested operation")
+                self.state["selection"] = outcome["handle"]
+                await self._checkpoint()
+                # Upstream 1.2.1 get_object_fields introspects no-argument methods,
+                # including Space.unmatchSurfaces(). It is not a safe readback.
+                # Read explicit fields from the exact OSM saved by the active MCP
+                # session, using the existing read-only SDK projection instead.
+                view = await self._view_locked()
+                readback = view["projection"]["objects"].get(outcome["handle"])
+                if readback is None:
+                    raise RuntimeError("Edited object was absent from the saved OpenStudio model")
+                return {"ok": True, "outcome": outcome, "readback": readback,
+                        "revision": self.state["revision"], "runDir": str(run_dir)}
             if action == "new":
                 if self.state["activeModel"]:
                     previous = self.working.parent / f'{self.state["activeModel"]}.osm'
@@ -259,7 +327,7 @@ class ProjectSession:
                 await self._checkpoint()
                 return dict(self.state)
             if action == "select":
-                if (self.root / "display-revision.txt").read_text() != str(self.state["revision"]):
+                if (self.root / "display-revision.txt").read_text().split(":", 1)[0] != str(self.state["revision"]):
                     raise ValueError("display_binding_stale_refresh_model")
                 manifest = json.loads((self.root / "display.json").read_text("utf-8"))
                 handle = args.get("handle")

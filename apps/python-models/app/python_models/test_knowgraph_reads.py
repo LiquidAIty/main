@@ -122,31 +122,17 @@ def _attached_know_rows() -> list[dict]:
     return [{
         "entity_id": "entity-a",
         "episode_id": f"know-{index}",
-        "episode_labels": ["Episodic"],
+        "episode_labels": ["Episodic", "Know"],
         "episode_props": {
             "name": f"Know {index}",
-            "content": json.dumps({
-                "schemaVersion": "know.v1",
-                "idea": {
-                    "body": f"Compact For {index}.",
-                    "detail": "Supporting detail.",
-                    "citations": [{
-                        "url": f"https://example.test/for-{index}",
-                        "supports": f"Supports For {index}.",
-                    }],
-                },
-                "counterIdea": {
-                    "body": f"Compact Against {index}.",
-                    "citations": [{
-                        "url": f"https://example.test/against-{index}",
-                        "supports": f"Supports Against {index}.",
-                    }],
-                },
-            }),
-            "source_description": json.dumps([
-                f"https://example.test/for-{index}",
-                f"https://example.test/against-{index}",
-            ]),
+            "content": f"Observation: Compact finding {index}.",
+            "observation": f"Compact finding {index}.",
+            "interpretation": "Bounded interpretation.",
+            "citation_url": f"https://example.test/source-{index}",
+            "citation_title": f"Primary source {index}",
+            "citation_publisher": "Example",
+            "citation_evidence": f"Exact evidence passage {index}.",
+            "content_hash": str(index) * 64,
             "created_at": f"2026-10-0{index}T12:00:00Z",
             "valid_at": f"2026-10-0{index}T00:00:00Z",
         },
@@ -159,28 +145,19 @@ def _atomic_know_row() -> dict:
         "episode_id": "know-atomic",
         "episode_props": {
             "name": "Atomic Know",
-            "content": json.dumps({
-                "schemaVersion": "know.v2",
-                "observation": "Rocket Lab reported one source-backed result.",
-                "interpretation": "The result informs demand without deciding the thesis.",
-                "source": {
-                    "url": "https://example.test/result",
-                    "resolvedUrl": "https://example.test/archive/result",
-                    "title": "Rocket Lab result",
-                    "publisher": "Rocket Lab",
-                    "evidence": "Rocket Lab reported one source-backed result.",
-                    "retrievedAt": "2026-10-20T08:00:00Z",
-                    "contentFingerprint": "a" * 64,
-                },
-                "direction": {
-                    "proposition": "Rocket Lab can compound launch revenue.",
-                    "relation": "supports",
-                },
-                "dedupeKey": "b" * 64,
-            }),
-            "source_description": json.dumps([
-                "https://example.test/archive/result",
-            ]),
+            "content": "Observation: Rocket Lab reported one source-backed result.",
+            "observation": "Rocket Lab reported one source-backed result.",
+            "interpretation": "The result informs demand without deciding the thesis.",
+            "citation_url": "https://example.test/result",
+            "citation_resolved_url": "https://example.test/archive/result",
+            "citation_title": "Rocket Lab result",
+            "citation_publisher": "Rocket Lab",
+            "citation_evidence": "Rocket Lab reported one source-backed result.",
+            "citation_retrieved_at": "2026-10-20T08:00:00Z",
+            "citation_content_fingerprint": "a" * 64,
+            "proposition": "Rocket Lab can compound launch revenue.",
+            "direction": "supports",
+            "content_hash": "b" * 64,
             "created_at": "2026-10-20T08:00:00Z",
             "valid_at": "2026-10-19T00:00:00Z",
         },
@@ -293,12 +270,7 @@ def test_knowgraph_projection_keeps_citation_urls_inside_knows_not_graph_nodes(
     attached = next(
         node for node in projection["nodes"] if node["id"] == "entity-a"
     )["properties"]["evidence"]
-    assert attached[0]["idea"]["citations"][0]["url"] == (
-        "https://example.test/for-3"
-    )
-    assert attached[0]["counterIdea"]["citations"][0]["url"] == (
-        "https://example.test/against-3"
-    )
+    assert attached[0]["citation"]["url"] == "https://example.test/source-3"
 
 
 def test_knowgraph_entity_directory_excludes_citation_url_entities(
@@ -379,7 +351,7 @@ def test_knowgraph_projection_attaches_only_two_exact_about_knows_to_owner(
     evidence = nodes["entity-a"]["properties"]["evidence"]
     assert [item["graphitiEpisodeId"] for item in evidence] == ["know-3", "know-2"]
     assert all(item["graphitiEntityId"] == "entity-a" for item in evidence)
-    assert nodes["entity-a"]["properties"]["attachedWordCount"] == 24
+    assert nodes["entity-a"]["properties"]["attachedWordCount"] == 15
     assert all("body" not in item and "content" not in item and "properties" not in item
                for item in evidence)
     assert "evidence" not in nodes["entity-b"]["properties"]
@@ -411,7 +383,7 @@ def test_knowgraph_projection_refuses_non_entity_provider_rows(
     assert driver.closed is True
 
 
-def test_exact_entity_know_read_returns_one_literal_two_sided_know_and_ids(
+def test_exact_entity_know_read_returns_first_class_knows_and_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     driver = _FakeNeo4jDriver([[{
@@ -429,21 +401,19 @@ def test_exact_entity_know_read_returns_one_literal_two_sided_know_and_ids(
 
     assert [know["graphitiEpisodeId"] for know in knows] == ["know-3", "know-2"]
     assert all(know["graphitiEntityId"] == "entity-a" for know in knows)
-    assert knows[0]["idea"]["body"] == "Compact For 3."
-    assert knows[0]["idea"]["citations"] == [{
-        "url": "https://example.test/for-3",
-        "supports": "Supports For 3.",
-    }]
-    assert knows[0]["counterIdea"]["body"] == "Compact Against 3."
-    assert knows[0]["counterIdea"]["citations"] == [{
-        "url": "https://example.test/against-3",
-        "supports": "Supports Against 3.",
-    }]
+    assert knows[0]["kind"] == "Know"
+    assert knows[0]["observation"] == "Compact finding 3."
+    assert knows[0]["citation"] == {
+        "url": "https://example.test/source-3",
+        "title": "Primary source 3",
+        "publisher": "Example",
+        "evidence": "Exact evidence passage 3.",
+    }
     assert "ABOUT" in driver.calls[0][0]
     assert driver.calls[0][1]["limit"] == 2
 
 
-def test_exact_entity_know_read_returns_atomic_source_and_direction(
+def test_exact_entity_know_read_returns_citation_and_direction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     row = _atomic_know_row()
@@ -463,10 +433,10 @@ def test_exact_entity_know_read_returns_atomic_source_and_direction(
     assert knows == [{
         "graphitiEpisodeId": "know-atomic",
         "graphitiEntityId": "entity-a",
-        "schemaVersion": "know.v2",
+        "kind": "Know",
         "observation": "Rocket Lab reported one source-backed result.",
         "interpretation": "The result informs demand without deciding the thesis.",
-        "source": {
+        "citation": {
             "url": "https://example.test/result",
             "resolvedUrl": "https://example.test/archive/result",
             "title": "Rocket Lab result",
@@ -479,11 +449,11 @@ def test_exact_entity_know_read_returns_atomic_source_and_direction(
             "proposition": "Rocket Lab can compound launch revenue.",
             "relation": "supports",
         },
-        "dedupeKey": "b" * 64,
+        "contentHash": "b" * 64,
         "validFrom": "2026-10-19T00:00:00Z",
         "ingestedAt": "2026-10-20T08:00:00Z",
     }]
-    assert "know.v2" in driver.calls[0][0]
+    assert "episode:Episodic:Know" in driver.calls[0][0]
 
 
 def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance(

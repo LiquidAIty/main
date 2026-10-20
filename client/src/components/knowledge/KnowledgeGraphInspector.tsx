@@ -6,7 +6,7 @@
  * Relationship: This file presents bounded Think summaries, details, relationships, timestamps, probabilities, and removal actions for the exact selected Engraphis Entity.
  *
  * Entity: KnowGraph
- * Relationship: This file presents bounded atomic Knows, explicit historical paired records, and safe HTTPS provenance for the exact selected Graphiti Entity without rendering sources as graph nodes.
+ * Relationship: This file presents bounded first-class Knows and safe HTTPS citation provenance for the exact selected Graphiti Entity without rendering citations as graph nodes.
  *
  * Entity: CodeGraph
  * Relationship: This file presents exact CBM File/Symbol identity, source-owned Feature contributions, bounded structural neighbors, and explicitly loaded source without creating another Inspector.
@@ -223,20 +223,9 @@ function uniqueRecordSources(records: KnowInspectorRecord[]): SourceLinkView[] {
   const sources = new Map<string, SourceLinkView>();
   for (const record of records) {
     const candidates: Record<string, unknown>[] = [record.episode];
-    for (const possibleSource of [record.know.source, record.episode.source]) {
+    for (const possibleSource of [record.know.citation, record.episode.citation]) {
       if (possibleSource && typeof possibleSource === 'object' && !Array.isArray(possibleSource)) {
         candidates.push(possibleSource as Record<string, unknown>);
-      }
-    }
-    for (const sideKey of ['idea', 'counterIdea'] as const) {
-      const side = record.episode[sideKey];
-      if (!side || typeof side !== 'object' || Array.isArray(side)) continue;
-      const citations = (side as Record<string, unknown>).citations;
-      if (!Array.isArray(citations)) continue;
-      for (const citation of citations) {
-        if (citation && typeof citation === 'object' && !Array.isArray(citation)) {
-          candidates.push(citation as Record<string, unknown>);
-        }
       }
     }
     for (const candidate of candidates) {
@@ -251,46 +240,6 @@ function uniqueRecordSources(records: KnowInspectorRecord[]): SourceLinkView[] {
   return [...sources.values()];
 }
 
-function KnowSide({
-  label,
-  side,
-}: {
-  label: 'Supporting record' | 'Counter record';
-  side: Record<string, unknown>;
-}) {
-  const body = typeof side.body === 'string' ? side.body.trim() : '';
-  if (!body) return null;
-  const detail = typeof side.detail === 'string' ? side.detail.trim() : '';
-  const citations = Array.isArray(side.citations)
-    ? side.citations.flatMap((candidate): Array<{
-        link: SourceLinkView;
-        supports: string;
-      }> => {
-        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
-        const citation = candidate as Record<string, unknown>;
-        return sourceLinks(citation).map(link => ({
-          link,
-          supports: typeof citation.supports === 'string' ? citation.supports.trim() : '',
-        }));
-      })
-    : [];
-  return <div className="graph-know-side">
-    <strong>{label}</strong>
-    <p>{body}</p>
-    {detail && detail !== body ? <details>
-      <summary>More</summary>
-      <p>{detail}</p>
-    </details> : null}
-    {citations.length ? <ul className="graph-know-citations">
-      {citations.map(({ link, supports }, index) => <li key={`${link.url}:${index}`}>
-        <a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
-        <small>{link.publisher}</small>
-        {supports ? <p>{supports}</p> : null}
-      </li>)}
-    </ul> : null}
-  </div>;
-}
-
 export function KnowGraphKnow({
   record,
   heading,
@@ -303,12 +252,10 @@ export function KnowGraphKnow({
   onRemove?: () => void;
 }) {
   const { episodeId, know } = record;
-  const atomic = know.schemaVersion === 'know.v2'
-    || (typeof know.observation === 'string' && know.observation.trim());
-  const source = know.source
-    && typeof know.source === 'object'
-    && !Array.isArray(know.source)
-    ? know.source as Record<string, unknown>
+  const citation = know.citation
+    && typeof know.citation === 'object'
+    && !Array.isArray(know.citation)
+    ? know.citation as Record<string, unknown>
     : {};
   const direction = know.direction
     && typeof know.direction === 'object'
@@ -319,12 +266,12 @@ export function KnowGraphKnow({
   const interpretation = typeof know.interpretation === 'string'
     ? know.interpretation.trim()
     : '';
-  const evidence = typeof source.evidence === 'string' ? source.evidence.trim() : '';
-  const entryTime = graphEntryTime(source.retrievedAt ?? know.observedAt);
+  const evidence = typeof citation.evidence === 'string' ? citation.evidence.trim() : '';
+  const entryTime = graphEntryTime(citation.retrievedAt ?? know.observedAt);
   const sourceDate = graphEntryTime(
-    source.eventAt ?? source.publishedAt ?? know.sourceDate,
+    citation.eventAt ?? citation.publishedAt ?? know.sourceDate,
   );
-  const links = sourceLinks(source);
+  const links = sourceLinks(citation);
   const relation = typeof direction.relation === 'string'
     ? direction.relation.trim()
     : '';
@@ -333,7 +280,7 @@ export function KnowGraphKnow({
     : '';
   return <section className="graph-note graph-know" data-episode-id={episodeId}>
     <div className="graph-think-heading"><h5>{String(know.title || heading)}</h5></div>
-    {atomic ? <>
+    <>
       {observation ? <div className="graph-know-finding">
         <strong>Finding</strong>
         <p>{observation}</p>
@@ -356,11 +303,7 @@ export function KnowGraphKnow({
         <summary>Source passage</summary>
         <blockquote>{evidence}</blockquote>
       </details> : null}
-    </> : <>
-      <p className="graph-record-time">Historical paired Know</p>
-      <KnowSide label="Supporting record" side={know.idea || {}} />
-      <KnowSide label="Counter record" side={know.counterIdea || {}} />
-    </>}
+    </>
     {entryTime ? <p className="graph-record-time"><span>Retrieved</span>{' '}<time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
     {sourceDate ? <p className="graph-record-time"><span>Source date</span>{' '}<time dateTime={sourceDate.dateTime}>{sourceDate.label}</time></p> : null}
     {onRemove ? <button

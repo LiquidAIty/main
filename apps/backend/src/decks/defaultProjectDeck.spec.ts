@@ -117,20 +117,23 @@ describe('backend-owned default Project deck', () => {
       modelKey: 'gpt-5.6-sol',
       subagentType: 'none',
       tools: expect.arrayContaining([
-        'graphiti.add_memory_to_entity',
+        'graphiti.add_know',
+        'graphiti.get_know',
+        'graphiti.get_entity_knows',
         'graphiti.get_status',
+        'graphiti.search_knows',
       ]),
       toolsets: ['web'],
     });
     expect(byId.get('card_knowgraph')?.runtimeOptions?.skills).toBeUndefined();
     expect(byId.get('card_knowgraph')?.prompt).toContain(
-      'One Know is one atomic know.v2 sourced observation',
+      'One Know is one first-class durable Graphiti object',
     );
     expect(byId.get('card_knowgraph')?.prompt).toContain(
       'A worker must never write Graphiti or Engraphis',
     );
     expect(byId.get('card_knowgraph')?.prompt).not.toContain('For and Against');
-    expect(byId.get('card_knowgraph')?.prompt).not.toContain('two-sided cited know.v1');
+    expect(byId.get('card_knowgraph')?.prompt).not.toContain('two-sided cited record');
     expect(byId.get('card_knowgraph')?.prompt).toContain(
       'the Know inspector, not the chat answer, presents citations and Graphiti record detail',
     );

@@ -110,15 +110,15 @@ describe('shared knowledge inspector', () => {
     expect(remove).toHaveBeenCalledTimes(1);
   });
 
-  it('renders one atomic Know as finding, interpretation, direction, and source', () => {
+  it('renders one first-class Know as finding, interpretation, direction, and citation', () => {
     const record: KnowInspectorRecord = {
       episodeId: 'episode-atomic',
       know: {
         title: 'Rocket Lab result',
-        schemaVersion: 'know.v2',
+        kind: 'Know',
         observation: 'Rocket Lab reported one source-backed operating result.',
         interpretation: 'The result informs demand but does not decide the thesis.',
-        source: {
+        citation: {
           url: 'https://example.test/result',
           resolvedUrl: 'https://example.test/archive/result',
           title: 'Rocket Lab quarterly result',
@@ -160,33 +160,24 @@ describe('shared knowledge inspector', () => {
     expect(screen.getByText('The exact source passage remains inspectable.')).toBeTruthy();
   });
 
-  it('keeps a historical paired Know explicitly readable and deduplicates its safe sources', () => {
+  it('keeps a complete Know readable and deduplicates its safe citation source', () => {
     const record: KnowInspectorRecord = {
       episodeId: 'episode-one',
       know: {
         title: 'Rocket Lab evidence',
-        schemaVersion: 'know.v1',
-        legacy: true,
-        idea: {
-          body: 'Supporting paragraph stays intact.',
-          detail: 'Supporting depth remains under More.',
-          citations: [{
-            url: 'https://example.test/source-one',
-            supports: 'Supports the favorable claim.',
-          }],
-        },
-        counterIdea: {
-          body: 'Counter paragraph stays intact.',
-          citations: [{
-            url: 'https://example.test/source-two',
-            supports: 'Supports the challenging claim.',
-          }],
+        kind: 'Know',
+        observation: 'Current observation stays intact.',
+        interpretation: 'Bounded interpretation stays distinct.',
+        citation: {
+          url: 'https://example.test/source-one',
+          title: 'Primary source',
+          publisher: 'Example',
+          evidence: 'The exact passage stays inspectable.',
         },
       },
       episode: {
         source_description: JSON.stringify([
           'https://example.test/source-one',
-          'https://example.test/source-two',
           'https://example.test/source-one',
         ]),
       },
@@ -197,17 +188,12 @@ describe('shared knowledge inspector', () => {
       <KnowSourceList records={[record]} />
     </>);
 
-    expect(screen.getByText('Supporting paragraph stays intact.')).toBeTruthy();
-    expect(screen.getByText('Counter paragraph stays intact.')).toBeTruthy();
-    expect(screen.getByText('Historical paired Know')).toBeTruthy();
-    expect(screen.getByText('Supporting record')).toBeTruthy();
-    expect(screen.getByText('Counter record')).toBeTruthy();
-    expect(screen.getByText('Supporting depth remains under More.')).toBeTruthy();
+    expect(screen.getByText('Current observation stays intact.')).toBeTruthy();
+    expect(screen.getByText('Bounded interpretation stays distinct.')).toBeTruthy();
+    expect(screen.queryByText('Paired Know')).toBeNull();
     expect(screen.getAllByRole('link').map(link => link.getAttribute('href'))).toEqual([
       'https://example.test/source-one',
-      'https://example.test/source-two',
       'https://example.test/source-one',
-      'https://example.test/source-two',
     ]);
     expect(INSPECTOR_RECORD_LIMIT).toBe(2);
   });

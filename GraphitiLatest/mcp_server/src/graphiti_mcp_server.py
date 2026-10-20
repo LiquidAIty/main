@@ -5,24 +5,29 @@ Graphiti MCP Server - Exposes Graphiti functionality through the Model Context P
 
 import argparse
 import asyncio
-import copy
 import logging
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 from uuid import uuid4
 
 from dotenv import load_dotenv
 from graphiti_core import Graphiti
-from graphiti_core.driver.driver import GraphDriver
 from graphiti_core.edges import EntityEdge
-from graphiti_core.nodes import EntityNode, EpisodeType, EpisodicNode, SagaNode
+from graphiti_core.knows import (
+    KnowCitation,
+    KnowDirection,
+    KnowNode,
+    know_content_hash,
+    know_uuid,
+)
+from graphiti_core.nodes import EntityNode, EpisodeType, SagaNode
 from graphiti_core.search.search_filters import SearchFilters
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data
 from mcp.server.mcpserver import MCPServer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
 from config.schema import GraphitiConfig, ServerConfig
@@ -33,7 +38,9 @@ from models.response_types import (
     EpisodeSearchResponse,
     ErrorResponse,
     FactSearchResponse,
-    MemoryQueuedResponse,
+    KnowAcceptedResponse,
+    KnowResponse,
+    KnowSearchResponse,
     NodeSearchResponse,
     SagaSummaryResponse,
     StatusResponse,
@@ -153,8 +160,10 @@ Core tools:
   excluded_entity_types and custom_extraction_instructions to steer extraction,
   previous_episode_uuids to supply explicit context, update_communities to refresh community summaries,
   and saga / saga_previous_episode_uuid to associate the episode with an ordered saga.
-- add_memory_to_entity: the queued Entity-specific sibling of add_memory. It creates or resolves
-  one exact Entity UUID and records one structural ABOUT attachment without changing MENTIONS.
+- add_know: add one cited, interpreted Know as a normal episode with a single explicit ABOUT Entity
+  attachment. It retains ordinary extraction, hybrid retrieval, communities, and Saga membership.
+- get_know / search_knows / get_entity_knows: retrieve one exact Know, search globally, or follow its
+  exact Entity attachment.
 - add_triplet: write a single fact (source entity -> fact -> target entity) directly, bypassing
   extraction. graphiti-core resolves/deduplicates the endpoint entities and generates embeddings.
 - search_nodes: semantic + keyword + graph search over entities, optionally filtered by entity type
@@ -186,41 +195,6 @@ mcp = MCPServer(
 # Global services
 graphiti_service: Optional['GraphitiService'] = None
 queue_service: QueueService | None = None
-
-
-_group_drivers: dict[tuple[int, str], GraphDriver] = {}
-
-
-def _driver_for_group(client: Graphiti, group_id: str) -> GraphDriver:
-    """Return a driver bound to the graph that stores the given group.
-
-    FalkorDB stores each non-default group_id in its own graph; on backends
-    where clone() is a no-op this returns the base driver unchanged. Clones are
-    cached per base driver and group so the backend builds indices once per group.
-    """
-    key = (id(client.driver), group_id)
-    driver = _group_drivers.get(key)
-    if driver is None:
-        driver = client.driver.clone(database=group_id)
-        _group_drivers[key] = driver
-    return driver
-
-
-def _client_for_group(client: Graphiti, group_id: str) -> Graphiti:
-    """Return a Graphiti client whose driver is bound to the group's graph.
-
-    Mirrors core's own request-scope resolution: methods that use self.driver
-    (remove_episode, summarize_saga, add_triplet, get_nodes_and_edges_by_episode)
-    must see the group-scoped driver or they touch the default graph instead.
-    """
-    driver = _driver_for_group(client, group_id)
-    if driver is client.driver:
-        return client
-    scoped = copy.copy(client)
-    scoped.driver = driver
-    scoped.clients = client.clients.model_copy(update={'driver': driver})
-    return scoped
-
 
 # Global client for backward compatibility
 graphiti_client: Graphiti | None = None
@@ -402,6 +376,28 @@ class GraphitiService:
         return self.client
 
 
+def _know_result(know: KnowNode) -> dict[str, Any]:
+    return {
+        'uuid': know.uuid,
+        'name': know.name,
+        'entity_uuid': know.entity_uuid,
+        'observation': know.observation,
+        'interpretation': know.interpretation,
+        'citation': know.citation.model_dump(by_alias=True, exclude_none=True),
+        **(
+            {'direction': know.direction.model_dump()}
+            if know.direction is not None
+            else {}
+        ),
+        'content_hash': know.content_hash,
+        'group_id': know.group_id,
+        'created_at': know.created_at.isoformat(),
+        'valid_at': know.valid_at.isoformat(),
+        **({'saga_uuid': know.saga_uuid} if know.saga_uuid else {}),
+        **({'saga_name': know.saga_name} if know.saga_name else {}),
+    }
+
+
 @mcp.tool()
 async def add_memory(
     name: str,
@@ -456,6 +452,7 @@ async def add_memory(
                                  episodes so their evolving narrative can be summarized via summarize_saga.
         saga_previous_episode_uuid (str, optional): UUID of the preceding episode in the saga, used to
                                  order episodes within the saga.
+
     Examples:
         # Adding plain text content
         add_memory(
@@ -538,14 +535,15 @@ async def add_memory(
 
 
 @mcp.tool()
-async def add_memory_to_entity(
-    entity_name: str,
-    name: str,
-    episode_body: str,
-    source_description: str,
-    entity_uuid: str | None = None,
+async def add_know(
+    name: Annotated[str, Field(min_length=1, max_length=1000)],
+    entity_name: Annotated[str, Field(min_length=1, max_length=1000)],
+    observation: Annotated[str, Field(min_length=1, max_length=8000)],
+    interpretation: Annotated[str, Field(min_length=1, max_length=8000)],
+    citation: KnowCitation,
     group_id: str | None = None,
-    source: str = 'text',
+    entity_uuid: str | None = None,
+    direction: KnowDirection | None = None,
     uuid: str | None = None,
     reference_time: str | None = None,
     excluded_entity_types: list[str] | None = None,
@@ -554,52 +552,44 @@ async def add_memory_to_entity(
     update_communities: bool = True,
     saga: str | None = None,
     saga_previous_episode_uuid: str | None = None,
-) -> MemoryQueuedResponse | ErrorResponse:
-    """Queue one episode with exactly one structural Entity attachment.
+) -> KnowAcceptedResponse | ErrorResponse:
+    """Add one cited Know to one exact Entity through normal episode processing.
 
-    This is the Entity-specific sibling of ``add_memory``. It preserves the same
-    queued extraction, relationship, provenance, and temporal behavior, then writes
-    one ``ABOUT`` edge to the exact Entity UUID. ``MENTIONS`` remains independent.
-
-    ``source_description`` is required because an Entity-attached episode is intended
-    to remain independently inspectable. Existing callers should continue using
-    ``add_memory`` when they do not need an exact Entity attachment.
+    The target Entity is reused when ``entity_uuid`` or an exact existing name identifies it;
+    otherwise Graphiti creates it. The Know is stored as an ``Episodic:Know`` node, receives
+    exactly one explicit ``ABOUT`` edge, and remains compatible with extraction-owned
+    ``MENTIONS``, hybrid episode retrieval, communities, temporal fields, and Sagas.
     """
 
     global graphiti_service, queue_service
     if graphiti_service is None or queue_service is None:
         return ErrorResponse(error='Services not initialized')
-
-    exact_entity_name = str(entity_name or '').strip()
-    if not exact_entity_name:
-        return ErrorResponse(error='entity_name is required')
-    exact_source = str(source_description or '').strip()
-    if not exact_source:
-        return ErrorResponse(error='source_description is required')
-    exact_entity_uuid = str(entity_uuid or '').strip() or str(uuid4())
-    episode_uuid = str(uuid or '').strip() or str(uuid4())
     try:
         parsed_reference_time = parse_reference_time(reference_time)
-    except ValueError as error:
-        return ErrorResponse(error=f'Invalid reference_time: {error}')
+    except ValueError as e:
+        return ErrorResponse(error=f'Invalid reference_time: {e}')
 
     try:
         effective_group_id = group_id or config.graphiti.group_id
-        episode_type = EpisodeType.text
-        if source:
-            try:
-                episode_type = EpisodeType[source.lower()]
-            except (KeyError, AttributeError):
-                logger.warning(f"Unknown source type '{source}', using 'text' as default")
-
-        await queue_service.add_episode(
+        digest = know_content_hash(
+            entity_name=entity_name,
+            observation=observation,
+            interpretation=interpretation,
+            citation=citation,
+            direction=direction,
+        )
+        know_id = uuid or know_uuid(effective_group_id, entity_name, digest)
+        await queue_service.add_know(
             group_id=effective_group_id,
             name=name,
-            content=episode_body,
-            source_description=exact_source,
-            episode_type=episode_type,
+            entity_name=entity_name,
+            entity_uuid=entity_uuid,
+            observation=observation,
+            interpretation=interpretation,
+            citation=citation,
+            direction=direction,
             entity_types=graphiti_service.entity_types,
-            uuid=episode_uuid,
+            uuid=know_id,
             reference_time=parsed_reference_time,
             edge_types=graphiti_service.edge_types,
             edge_type_map=graphiti_service.edge_type_map,
@@ -609,21 +599,101 @@ async def add_memory_to_entity(
             update_communities=update_communities,
             saga=saga,
             saga_previous_episode_uuid=saga_previous_episode_uuid,
-            entity_uuid=exact_entity_uuid,
-            entity_name=exact_entity_name,
         )
-        return MemoryQueuedResponse(
-            message=(
-                f"Episode '{name}' queued for processing in group "
-                f"'{effective_group_id}' for Entity '{exact_entity_name}'"
-            ),
-            episode_uuid=episode_uuid,
-            entity_uuid=exact_entity_uuid,
+        return KnowAcceptedResponse(
+            message=f"Know '{name}' accepted for processing in group '{effective_group_id}'",
+            know_uuid=know_id,
+            content_hash=digest,
+            group_id=effective_group_id,
+            entity_name=entity_name,
+            entity_uuid=entity_uuid,
         )
-    except Exception as error:
-        error_msg = str(error)
-        logger.error(f'Error queuing Entity-attached episode: {error_msg}')
-        return ErrorResponse(error=f'Error queuing Entity-attached episode: {error_msg}')
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f'Error accepting Know: {error_msg}')
+        return ErrorResponse(error=f'Error accepting Know: {error_msg}')
+
+
+@mcp.tool()
+async def get_know(
+    uuid: str,
+    group_id: str | None = None,
+) -> KnowResponse | ErrorResponse:
+    """Read one exact first-class Know by its stable UUID."""
+
+    global graphiti_service
+    if graphiti_service is None:
+        return ErrorResponse(error='Graphiti service not initialized')
+    try:
+        client = await graphiti_service.get_client()
+        effective_group_id = group_id or config.graphiti.group_id
+        know = await client.get_know(uuid, group_id=effective_group_id)
+        return KnowResponse(
+            message=f'Found Know {uuid}',
+            know=_know_result(know),
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f'Error reading Know: {error_msg}')
+        return ErrorResponse(error=f'Error reading Know: {error_msg}')
+
+
+@mcp.tool()
+async def search_knows(
+    query: str,
+    group_id: str | None = None,
+    max_knows: int = 10,
+) -> KnowSearchResponse | ErrorResponse:
+    """Search first-class Knows with Graphiti episode BM25 and cross-encoder retrieval."""
+
+    global graphiti_service
+    if graphiti_service is None:
+        return ErrorResponse(error='Graphiti service not initialized')
+    try:
+        client = await graphiti_service.get_client()
+        effective_group_id = group_id or config.graphiti.group_id
+        knows = await client.search_knows(
+            query,
+            group_id=effective_group_id,
+            limit=max_knows,
+        )
+        return KnowSearchResponse(
+            message=f'Found {len(knows)} Knows',
+            knows=[_know_result(know) for know in knows],
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f'Error searching Knows: {error_msg}')
+        return ErrorResponse(error=f'Error searching Knows: {error_msg}')
+
+
+@mcp.tool()
+async def get_entity_knows(
+    entity_uuid: str,
+    group_id: str | None = None,
+    max_knows: int = 10,
+) -> KnowSearchResponse | ErrorResponse:
+    """Read durable Knows attached to one exact Entity by ``ABOUT``."""
+
+    global graphiti_service
+    if graphiti_service is None:
+        return ErrorResponse(error='Graphiti service not initialized')
+    try:
+        client = await graphiti_service.get_client()
+        effective_group_id = group_id or config.graphiti.group_id
+        knows = await client.get_entity_knows(
+            entity_uuid,
+            group_id=effective_group_id,
+            limit=max_knows,
+        )
+        return KnowSearchResponse(
+            message=f'Found {len(knows)} Knows for Entity {entity_uuid}',
+            knows=[_know_result(know) for know in knows],
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f'Error reading Entity Knows: {error_msg}')
+        return ErrorResponse(error=f'Error reading Entity Knows: {error_msg}')
 
 
 @mcp.tool()
@@ -784,14 +854,11 @@ async def search_memory_facts(
 
 
 @mcp.tool()
-async def delete_entity_edge(
-    uuid: str, group_id: str | None = None
-) -> SuccessResponse | ErrorResponse:
+async def delete_entity_edge(uuid: str) -> SuccessResponse | ErrorResponse:
     """Delete an entity edge from the graph memory.
 
     Args:
         uuid: UUID of the entity edge to delete
-        group_id: Optional group ID. Falls back to the default group when omitted.
     """
     global graphiti_service
 
@@ -801,14 +868,10 @@ async def delete_entity_edge(
     try:
         client = await graphiti_service.get_client()
 
-        effective_group_id = group_id or config.graphiti.group_id
-        driver = (
-            _driver_for_group(client, effective_group_id) if effective_group_id else client.driver
-        )
         # Get the entity edge by UUID
-        entity_edge = await EntityEdge.get_by_uuid(driver, uuid)
+        entity_edge = await EntityEdge.get_by_uuid(client.driver, uuid)
         # Delete the edge using its delete method
-        await entity_edge.delete(driver)
+        await entity_edge.delete(client.driver)
         return SuccessResponse(message=f'Entity edge with UUID {uuid} deleted successfully')
     except Exception as e:
         error_msg = str(e)
@@ -817,7 +880,7 @@ async def delete_entity_edge(
 
 
 @mcp.tool()
-async def delete_episode(uuid: str, group_id: str | None = None) -> SuccessResponse | ErrorResponse:
+async def delete_episode(uuid: str) -> SuccessResponse | ErrorResponse:
     """Delete an episode from the graph memory.
 
     Uses Graphiti.remove_episode, which cascades the deletion: entities and facts
@@ -826,7 +889,6 @@ async def delete_episode(uuid: str, group_id: str | None = None) -> SuccessRespo
 
     Args:
         uuid: UUID of the episode to delete
-        group_id: Optional group ID. Falls back to the default group when omitted.
     """
     global graphiti_service
 
@@ -836,13 +898,9 @@ async def delete_episode(uuid: str, group_id: str | None = None) -> SuccessRespo
     try:
         client = await graphiti_service.get_client()
 
-        effective_group_id = group_id or config.graphiti.group_id
-        scoped_client = (
-            _client_for_group(client, effective_group_id) if effective_group_id else client
-        )
         # remove_episode cascades cleanup of episode-created entities/edges,
         # unlike EpisodicNode.delete which would orphan them.
-        await scoped_client.remove_episode(uuid)
+        await client.remove_episode(uuid)
         return SuccessResponse(message=f'Episode with UUID {uuid} deleted successfully')
     except Exception as e:
         error_msg = str(e)
@@ -851,12 +909,11 @@ async def delete_episode(uuid: str, group_id: str | None = None) -> SuccessRespo
 
 
 @mcp.tool()
-async def get_entity_edge(uuid: str, group_id: str | None = None) -> dict[str, Any] | ErrorResponse:
+async def get_entity_edge(uuid: str) -> dict[str, Any] | ErrorResponse:
     """Get an entity edge from the graph memory by its UUID.
 
     Args:
         uuid: UUID of the entity edge to retrieve
-        group_id: Optional group ID. Falls back to the default group when omitted.
     """
     global graphiti_service
 
@@ -866,12 +923,8 @@ async def get_entity_edge(uuid: str, group_id: str | None = None) -> dict[str, A
     try:
         client = await graphiti_service.get_client()
 
-        effective_group_id = group_id or config.graphiti.group_id
-        driver = (
-            _driver_for_group(client, effective_group_id) if effective_group_id else client.driver
-        )
         # Get the entity edge directly using the EntityEdge class method
-        entity_edge = await EntityEdge.get_by_uuid(driver, uuid)
+        entity_edge = await EntityEdge.get_by_uuid(client.driver, uuid)
 
         # Use the format_fact_result function to serialize the edge
         # Return the Python dict directly - MCP will handle serialization
@@ -912,23 +965,13 @@ async def get_episodes(
             else []
         )
 
-        # Each non-default group lives in its own graph, so query each group
-        # with a driver bound to that graph and merge the results. FalkorDB
-        # clones share one connection, which drops concurrent queries, so the
-        # loop stays sequential.
+        # Get episodes from the driver directly
+        from graphiti_core.nodes import EpisodicNode
+
         if effective_group_ids:
-            episodes = []
-            for group_id in effective_group_ids:
-                episodes.extend(
-                    await EpisodicNode.get_by_group_ids(
-                        _driver_for_group(client, group_id), [group_id], limit=max_episodes
-                    )
-                )
-            episodes.sort(
-                key=lambda episode: episode.created_at or datetime.min.replace(tzinfo=timezone.utc),
-                reverse=True,
+            episodes = await EpisodicNode.get_by_group_ids(
+                client.driver, effective_group_ids, limit=max_episodes
             )
-            episodes = episodes[:max_episodes]
         else:
             # If no group IDs, we need to use a different approach
             # For now, return empty list when no group IDs specified
@@ -994,16 +1037,14 @@ async def summarize_saga(
         # add_memory takes a saga *name*; core keys sagas by (name, group_id) and
         # assigns its own UUID, while summarize_saga requires that UUID. Resolve the
         # name to its UUID within the group before delegating to core.
-        sagas = await SagaNode.get_by_group_ids(
-            _driver_for_group(client, effective_group_id), [effective_group_id]
-        )
+        sagas = await SagaNode.get_by_group_ids(client.driver, [effective_group_id])
         match = next((saga for saga in sagas if saga.name == saga_name), None)
         if match is None:
             return ErrorResponse(
                 error=f"No saga named '{saga_name}' found in group '{effective_group_id}'"
             )
 
-        saga_node = await _client_for_group(client, effective_group_id).summarize_saga(match.uuid)
+        saga_node = await client.summarize_saga(match.uuid)
 
         return SagaSummaryResponse(
             message=f"Saga '{saga_name}' summarized successfully",
@@ -1132,9 +1173,7 @@ async def add_triplet(
             created_at=now,
         )
 
-        result = await _client_for_group(client, effective_group_id).add_triplet(
-            source_node, edge, target_node
-        )
+        result = await client.add_triplet(source_node, edge, target_node)
 
         return TripletResponse(
             message=f"Triplet '{source_node_name} -[{edge_name}]-> {target_node_name}' added",
@@ -1150,7 +1189,6 @@ async def add_triplet(
 @mcp.tool()
 async def get_episode_entities(
     episode_uuids: list[str],
-    group_id: str | None = None,
 ) -> EpisodeEntitiesResponse | ErrorResponse:
     """Get the entities (nodes) and facts (edges) created by specific episodes.
 
@@ -1159,7 +1197,6 @@ async def get_episode_entities(
 
     Args:
         episode_uuids: List of episode UUIDs to look up provenance for
-        group_id: Optional group ID. Falls back to the default group when omitted.
     """
     global graphiti_service
 
@@ -1172,11 +1209,7 @@ async def get_episode_entities(
     try:
         client = await graphiti_service.get_client()
 
-        effective_group_id = group_id or config.graphiti.group_id
-        scoped_client = (
-            _client_for_group(client, effective_group_id) if effective_group_id else client
-        )
-        results = await scoped_client.get_nodes_and_edges_by_episode(episode_uuids)
+        results = await client.get_nodes_and_edges_by_episode(episode_uuids)
 
         return EpisodeEntitiesResponse(
             message=f'Retrieved provenance for {len(episode_uuids)} episode(s)',
@@ -1220,9 +1253,8 @@ async def clear_graph(
         if not effective_group_ids:
             return ErrorResponse(error='No group IDs specified for clearing')
 
-        # Clear data per group: each non-default group lives in its own graph.
-        for group_id in effective_group_ids:
-            await clear_data(_driver_for_group(client, group_id), group_ids=[group_id])
+        # Clear data for the specified group IDs
+        await clear_data(client.driver, group_ids=effective_group_ids)
 
         return SuccessResponse(
             message=f'Graph data cleared successfully for group IDs: {", ".join(effective_group_ids)}'
@@ -1422,7 +1454,9 @@ async def run_mcp_server():
     if mcp_config.transport == 'stdio':
         await mcp.run_stdio_async()
     elif mcp_config.transport == 'sse':
-        logger.info(f'Running MCP server with SSE transport on {mcp_config.host}:{mcp_config.port}')
+        logger.info(
+            f'Running MCP server with SSE transport on {mcp_config.host}:{mcp_config.port}'
+        )
         logger.info(f'Access the server at: http://{mcp_config.host}:{mcp_config.port}/sse')
         await mcp.run_sse_async(host=mcp_config.host, port=mcp_config.port)
     elif mcp_config.transport == 'http':

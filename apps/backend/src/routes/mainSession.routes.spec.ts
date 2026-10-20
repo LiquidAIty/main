@@ -136,8 +136,9 @@ describe('Main Project-session closure', () => {
       main: cards[0],
     };
 
+    const client = gateway();
     const result = await cardSession(
-      gateway(),
+      client,
       authority,
       authority.main,
       {
@@ -161,6 +162,26 @@ describe('Main Project-session closure', () => {
     });
     expect(result.cardSessions.worldsignals.botModeRoster).toEqual([]);
     expect(result.cardSessions).not.toHaveProperty('unrelated');
+    const resumeCalls = vi.mocked(client.request).mock.calls
+      .filter(([method]) => method === 'session.resume');
+    expect(resumeCalls).toHaveLength(3);
+    expect(resumeCalls.every(([_method, params]) => params?.eager_build === true)).toBe(true);
+    expect(resumeCalls.map(([_method, params]) => params?.profile).sort()).toEqual([
+      'main', 'signal', 'worldsignals',
+    ]);
+    const materializeCalls = profileMocks.materializeSavedCardProfile.mock.calls.length;
+    await cardSession(
+      client,
+      authority,
+      authority.main,
+      {
+        projectId: 'project-1',
+        projectSessionId: 'project-1',
+        userId: 'user-1',
+      },
+      cards[1],
+    );
+    expect(profileMocks.materializeSavedCardProfile).toHaveBeenCalledTimes(materializeCalls);
   });
 
   it('classifies Hermes interruption as cancellation rather than completion', () => {

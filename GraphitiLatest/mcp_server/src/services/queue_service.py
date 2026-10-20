@@ -42,6 +42,10 @@ class QueueService:
 
         # Start a worker for this queue if one isn't already running
         if not self._queue_workers.get(group_id, False):
+            # Claim the group synchronously before yielding to the new task. Two
+            # back-to-back submissions can otherwise both observe ``False`` and
+            # start concurrent workers for a queue that must be serialized.
+            self._queue_workers[group_id] = True
             asyncio.create_task(self._process_episode_queue(group_id))
 
         return self._episode_queues[group_id].qsize()
@@ -116,8 +120,6 @@ class QueueService:
         update_communities: bool = False,
         saga: str | None = None,
         saga_previous_episode_uuid: str | None = None,
-        entity_uuid: str | None = None,
-        entity_name: str | None = None,
     ) -> int:
         """Add an episode for processing.
 
@@ -144,8 +146,6 @@ class QueueService:
                 ingestion
             saga: Optional saga name/id to attach this episode to
             saga_previous_episode_uuid: Optional UUID of the prior episode in the saga
-            entity_uuid: Optional exact Entity UUID this episode is about
-            entity_name: Exact Entity name paired with entity_uuid
 
         Returns:
             The position in the queue
@@ -175,8 +175,6 @@ class QueueService:
                     update_communities=update_communities,
                     saga=saga,
                     saga_previous_episode_uuid=saga_previous_episode_uuid,
-                    entity_uuid=entity_uuid,
-                    entity_name=entity_name,
                     uuid=uuid,
                 )
 
@@ -188,3 +186,62 @@ class QueueService:
 
         # Use the existing add_episode_task method to queue the processing
         return await self.add_episode_task(group_id, process_episode)
+
+    async def add_know(
+        self,
+        group_id: str,
+        name: str,
+        entity_name: str,
+        observation: str,
+        interpretation: str,
+        citation: Any,
+        entity_types: Any,
+        *,
+        entity_uuid: str | None = None,
+        direction: Any = None,
+        uuid: str | None = None,
+        reference_time: datetime | None = None,
+        edge_types: Any = None,
+        edge_type_map: Any = None,
+        excluded_entity_types: list[str] | None = None,
+        previous_episode_uuids: list[str] | None = None,
+        custom_extraction_instructions: str | None = None,
+        update_communities: bool = True,
+        saga: str | None = None,
+        saga_previous_episode_uuid: str | None = None,
+    ) -> int:
+        """Queue one Entity-attached Know through Graphiti's episode pipeline."""
+
+        if self._graphiti_client is None:
+            raise RuntimeError('Queue service not initialized. Call initialize() first.')
+
+        async def process_know():
+            try:
+                logger.info(f'Processing Know {uuid} for group {group_id}')
+                await self._graphiti_client.add_know(
+                    name=name,
+                    entity_name=entity_name,
+                    entity_uuid=entity_uuid,
+                    observation=observation,
+                    interpretation=interpretation,
+                    citation=citation,
+                    direction=direction,
+                    group_id=group_id,
+                    uuid=uuid,
+                    reference_time=reference_time or datetime.now(timezone.utc),
+                    entity_types=entity_types,
+                    edge_types=edge_types,
+                    edge_type_map=edge_type_map,
+                    excluded_entity_types=excluded_entity_types,
+                    previous_episode_uuids=previous_episode_uuids,
+                    custom_extraction_instructions=custom_extraction_instructions,
+                    update_communities=update_communities,
+                    saga=saga,
+                    saga_previous_episode_uuid=saga_previous_episode_uuid,
+                )
+                logger.info(f'Successfully processed Know {uuid} for group {group_id}')
+            except Exception as e:
+                logger.error(f'Failed to process Know {uuid} for group {group_id}: {str(e)}')
+                raise
+
+        return await self.add_episode_task(group_id, process_know)

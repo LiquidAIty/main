@@ -118,7 +118,7 @@ async def human_endpoint(request):
                 "object_handle": handle,
             }, actor="human"))
             return JSONResponse(result)
-        if action not in {"new", "select", "edit", "save", "reopen"}:
+        if action not in {"new", "select", "edit", "author", "save", "reopen"}:
             raise ValueError("action_not_supported")
         return JSONResponse(await project.human(action, args, body.get("revision")))
     except ValueError as error:

@@ -1,50 +1,32 @@
-**Start with an issue.** Every pull request must link an existing GitHub issue with `Fixes #<number>`.
-Feature work also needs a discussion with the Graphiti team and `rfc-approved` on that issue
-before you open the PR. If something is missing, you get an automated comment and 14 days to fix it.
-See [CONTRIBUTING.md](https://github.com/getzep/graphiti/blob/main/CONTRIBUTING.md).
-
 ## Summary
+Brief description of the changes in this PR.
 
-<!-- Explain the problem and the solution. Focus on why this change is needed. -->
-
-## Type of change
-
+## Type of Change
 - [ ] Bug fix
-- [ ] Feature (linked Feature issue already has `rfc-approved`)
-- [ ] Documentation
-- [ ] Maintenance or refactor
+- [ ] New feature
+- [ ] Performance improvement
+- [ ] Documentation/Tests
 
-## Related issue
-
-<!-- Required for every pull request. Open the issue first if one does not exist. -->
-
-Fixes #
-
-## Design approval
-
-<!-- Required for feature pull requests. Bug fixes, docs, and maintenance skip this. -->
-
-- [ ] This is not a feature pull request.
-- [ ] The linked Feature issue has the `rfc-approved` label after discussion with the Graphiti team.
+## Objective
+**For new features and performance improvements:** Clearly describe the objective and rationale for this change.
 
 ## Testing
+- [ ] Unit tests added/updated
+- [ ] Integration tests added/updated
+- [ ] All existing tests pass
 
-- [ ] Tests were added or updated for behavior changes.
-- [ ] `make check` passes.
-- [ ] Tests are not applicable; the reason is explained below.
+## Breaking Changes
+- [ ] This PR contains breaking changes
 
-<!-- List the commands run and relevant results. Explain anything you could not run. -->
-
-## Breaking changes
-
-- [ ] This change affects an existing public API, data model, or deployment.
-
-<!-- If checked, describe the impact and migration path. -->
+If this is a breaking change, describe:
+- What functionality is affected
+- Migration path for existing users
 
 ## Checklist
+- [ ] Code follows project style guidelines (`make lint` passes)
+- [ ] Self-review completed
+- [ ] Documentation updated where necessary
+- [ ] No secrets or sensitive information committed
 
-- [ ] I opened or linked an existing issue before this pull request.
-- [ ] I reviewed my own changes.
-- [ ] I updated documentation for changed behavior or public interfaces.
-- [ ] I did not commit secrets, credentials, customer data, or other sensitive information.
-- [ ] I will complete the Contributor License Agreement when prompted.
+## Related Issues
+Closes #[issue number]

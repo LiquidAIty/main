@@ -13,12 +13,6 @@ class SuccessResponse(TypedDict):
     message: str
 
 
-class MemoryQueuedResponse(TypedDict, total=False):
-    message: str
-    episode_uuid: str
-    entity_uuid: str
-
-
 class NodeResult(TypedDict):
     uuid: str
     name: str
@@ -42,6 +36,25 @@ class FactSearchResponse(TypedDict):
 class EpisodeSearchResponse(TypedDict):
     message: str
     episodes: list[dict[str, Any]]
+
+
+class KnowSearchResponse(TypedDict):
+    message: str
+    knows: list[dict[str, Any]]
+
+
+class KnowResponse(TypedDict):
+    message: str
+    know: dict[str, Any]
+
+
+class KnowAcceptedResponse(TypedDict):
+    message: str
+    know_uuid: str
+    content_hash: str
+    group_id: str
+    entity_name: str
+    entity_uuid: str | None
 
 
 class StatusResponse(TypedDict):

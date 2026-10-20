@@ -1,65 +1,57 @@
 // Entity: Building Inspector
-// Relationship: This inspector presents authoritative OpenStudio properties and submits a bounded engineering edit with revision checking.
-import { useEffect, useState } from 'react';
-import { objectLabel, type ModelObject, type ObjectProperties } from './contracts';
+// Relationship: Selection-specific input panels submit model edits; internal identities and SDK diagnostics are not presented as controls.
+import { useState } from 'react';
+import { graphCompanionTabButtonStyle, graphCompanionTabGroupStyle } from '../../../client/src/components/graph/graphVisualTokens';
+import type { DrawingSettings, ModelObject } from './contracts';
+import LayoutInputs, { type Author } from './inputs/LayoutInputs';
+import ConstructionInputs from './inputs/ConstructionInputs';
+import OpeningInputs from './inputs/OpeningInputs';
+import LoadInputs from './inputs/LoadInputs';
+import HvacInputs from './inputs/HvacInputs';
+import InputField from './inputs/InputField';
 
-const fields: Record<string, { property: string; label: string; unit: string; min: number; max: number; step: number }> = {
-  ThermalZone: { property: 'multiplier', label: 'Multiplier', unit: 'dimensionless', min: 1, max: 100, step: 1 },
-  LightsDefinition: { property: 'wattsperSpaceFloorArea', label: 'Watts per Space Floor Area', unit: 'W/m²', min: 0, max: 50, step: 0.1 },
-};
-
-export default function ObjectInspector({ object, properties, busy, onEdit, onSelect }: {
-  object: ModelObject | null;
-  properties: ObjectProperties | null;
-  busy: boolean;
-  onEdit: (property: string, value: number) => Promise<boolean>;
-  onSelect: (handle: string) => void;
+export default function ObjectInspector(props: {
+  object: ModelObject | null; objects: Readonly<Record<string, ModelObject>>;
+  drawing: DrawingSettings; setDrawing: (next: DrawingSettings) => void;
+  view: 'plan' | '3d'; setView: (view: 'plan' | '3d') => void;
+  busy: boolean; author: Author; onNew: () => void; onSave: () => void;
+  models: readonly { id: string; label: string; savedAt?: string }[];
+  activeModel: string | null; onOpen: (id: string) => void;
 }) {
-  const [tab, setTab] = useState('Properties');
-  const [draft, setDraft] = useState('');
-  const [dirty, setDirty] = useState(false);
-  const field = object ? fields[object.type] : undefined;
-  const authoritative = field ? properties?.properties[field.property]?.value : undefined;
-  useEffect(() => { setDirty(false); setDraft(''); }, [object?.handle]);
-  useEffect(() => {
-    if (!dirty && authoritative !== undefined) setDraft(String(authoritative));
-  }, [authoritative, dirty]);
-  if (!object) return <p>Select the Building, a Space, a Surface, or another OpenStudio object.</p>;
-  return <section data-testid="nrgsim-inspector">
-    <h3>{object.name || object.type}</h3>
-    <p className="nrgsim-muted">{objectLabel[object.type] || object.type}</p>
-    <nav className="nrgsim-tabs">{['Properties', 'Relationships', 'Identity'].map((name) =>
-      <button key={name} aria-pressed={tab === name} onClick={() => setTab(name)}>{name}</button>)}</nav>
-    {tab === 'Properties' && <>
-      {field && typeof authoritative === 'number' && <form onSubmit={async (event) => {
-        event.preventDefault();
-        if (await onEdit(field.property, Number(draft))) setDirty(false);
-      }}>
-        <label>{field.label} <span>{field.unit}</span>
-          <input aria-label={field.label} type="number" value={draft} min={field.min} max={field.max} step={field.step}
-            onChange={(event) => { setDraft(event.target.value); setDirty(true); }} />
-        </label>
-        <input aria-label={`${field.label} slider`} type="range" value={draft || '0'} min={field.min} max={field.max} step={field.step}
-          onChange={(event) => { setDraft(event.target.value); setDirty(true); }} />
-        <p>OpenStudio currently: <strong>{String(authoritative)} {field.unit}</strong></p>
-        {object.type === 'LightsDefinition' && <p>This is a shared Lights Definition. Changing it affects every Lights object that references it.</p>}
-        <button disabled={busy || !dirty || draft === ''} type="submit">Apply to OpenStudio</button>
-      </form>}
-      {!field && <p className="nrgsim-muted">Assignments and engineering values are inspectable. Editing this object type is outside the first inspector slice.</p>}
-      <dl>{Object.entries(object).filter(([key]) => ['floorArea', 'grossArea', 'netArea', 'surfaceType', 'outsideBoundaryCondition'].includes(key))
-        .map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}{key.endsWith('Area') ? ' m²' : ''}</dd></div>)}</dl>
-      <details><summary>OpenStudio property readback</summary>
-        <pre>{properties ? JSON.stringify(properties.properties, null, 2) : 'Reading current model…'}</pre>
-      </details>
+  const { object, objects, busy, author } = props;
+  const isSurface = object?.type === 'Surface' || object?.type === 'SubSurface';
+  const isSpace = object?.type === 'Space';
+  const hasConstruction = isSurface || isSpace || object?.type === 'Building';
+  const hasOpenings = object?.type === 'Surface' && object.surfaceType === 'Wall'
+    && object.outsideBoundaryCondition === 'Outdoors';
+  const tabs = [...(isSpace ? ['Activity'] : []), ...(hasConstruction ? ['Construction'] : []),
+    ...(hasOpenings ? ['Openings'] : []), ...(isSpace ? ['Lighting', 'HVAC'] : []),
+    ...(!isSurface ? ['Geometry'] : [])];
+  const [tab, setTab] = useState(isSurface ? 'Construction' : isSpace ? 'Activity' : 'Geometry');
+  const activeTab = tabs.includes(tab) ? tab : tabs[0];
+  return <section className="building-editor-inputs" data-testid="nrgsim-inspector">
+    {object && <InputField key={`${object.handle}:name`} label="Name" value={object.name} busy={busy}
+      onCommit={(name) => author({ operation: 'rename', handle: object.handle, type: object.type, name })} />}
+    <nav aria-label="Building inputs" style={graphCompanionTabGroupStyle({ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 12 })}>
+      {tabs.map((name) => <button type="button" key={name} aria-pressed={activeTab === name}
+        style={graphCompanionTabButtonStyle(activeTab === name)} onClick={() => setTab(name)}>{name}</button>)}
+    </nav>
+    {!isSurface && <div hidden={activeTab !== 'Geometry'}><LayoutInputs {...props} /></div>}
+    {hasConstruction && object && <div hidden={activeTab !== 'Construction'}>
+      <ConstructionInputs object={object} objects={objects} busy={busy} author={author} />
+    </div>}
+    {hasOpenings && object && <div hidden={activeTab !== 'Openings'}>
+      <OpeningInputs object={object} objects={objects} busy={busy} author={author} />
+    </div>}
+    {isSpace && object && <>
+      <div hidden={activeTab !== 'Activity'}>
+        <LoadInputs space={object} objects={objects} kind="People" busy={busy} author={author} />
+        <LoadInputs space={object} objects={objects} kind="ElectricEquipment" busy={busy} author={author} />
+      </div>
+      <div hidden={activeTab !== 'Lighting'}>
+        <LoadInputs space={object} objects={objects} kind="Lights" busy={busy} author={author} />
+      </div>
+      <div hidden={activeTab !== 'HVAC'}><HvacInputs key={`${object.handle}:${object.thermalZone}`} space={object} objects={objects} busy={busy} author={author} /></div>
     </>}
-    {tab === 'Relationships' && <><dl>{Object.entries(object).filter(([key, value]) =>
-      ['space', 'surface', 'thermalZone', 'buildingStory', 'construction'].includes(key) && value
-    ).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>
-      <button onClick={() => onSelect(String(value))}>Inspect related object</button>
-    </dd></div>)}</dl>
-      {object.layers && <><p>Construction layers · outside to inside</p><ol>{object.layers.map((handle, index) =>
-        <li key={`${handle}-${index}`}><button onClick={() => onSelect(handle)}>Inspect layer {index + 1}</button></li>)}</ol></>}
-    </>}
-    {tab === 'Identity' && <><p>OpenStudio handle in the active model</p><code>{object.handle}</code></>}
   </section>;
 }

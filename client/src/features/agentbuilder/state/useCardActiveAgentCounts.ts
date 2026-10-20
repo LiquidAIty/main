@@ -10,7 +10,7 @@ import type { DeckDocument } from '../../../types/agentgraph';
 type CardRunActivity = {
   cardId: string;
   state: string;
-  activeWorkers: number;
+  activeWorkers: number | null;
 };
 
 const ACTIVE_RUN_STATES = new Set(['pending', 'running']);
@@ -73,8 +73,13 @@ export default function useCardActiveAgentCounts({
           if (status && (
             status.cardId !== cardId
             || typeof status.state !== 'string'
-            || !Number.isSafeInteger(status.activeWorkers)
-            || status.activeWorkers < 0
+            || (
+              status.activeWorkers !== null
+              && (
+                !Number.isSafeInteger(status.activeWorkers)
+                || status.activeWorkers < 0
+              )
+            )
           )) {
             throw new Error('card_activity_response_invalid');
           }
@@ -91,7 +96,9 @@ export default function useCardActiveAgentCounts({
         }
         const status = observation.value;
         if (!status || !ACTIVE_RUN_STATES.has(String(status.state || ''))) continue;
-        const childWorkers = Number.isSafeInteger(status.activeWorkers) && status.activeWorkers > 0
+        const childWorkers = typeof status.activeWorkers === 'number'
+          && Number.isSafeInteger(status.activeWorkers)
+          && status.activeWorkers > 0
           ? status.activeWorkers
           : 0;
         nextCounts[status.cardId] = 1 + childWorkers;

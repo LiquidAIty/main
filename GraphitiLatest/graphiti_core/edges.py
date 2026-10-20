@@ -30,8 +30,6 @@ from graphiti_core.embedder import EmbedderClient
 from graphiti_core.errors import EdgeNotFoundError, GroupsEdgesNotFoundError
 from graphiti_core.helpers import parse_db_date
 from graphiti_core.models.edges.edge_db_queries import (
-    ABOUT_EDGE_RETURN,
-    ABOUT_EDGE_SAVE,
     COMMUNITY_EDGE_RETURN,
     EPISODIC_EDGE_RETURN,
     EPISODIC_EDGE_SAVE,
@@ -261,97 +259,6 @@ class EpisodicEdge(Edge):
             raise GroupsEdgesNotFoundError(group_ids)
         return edges
 
-
-class AboutEdge(Edge):
-    """Exact structural attachment from one episode to one Entity.
-
-    ``ABOUT`` is deliberately distinct from ``MENTIONS``: an episode may mention
-    many entities while being attached to exactly one Entity by its caller.
-    """
-
-    async def save(self, driver: GraphDriver):
-        result = await driver.execute_query(
-            ABOUT_EDGE_SAVE,
-            episode_uuid=self.source_node_uuid,
-            entity_uuid=self.target_node_uuid,
-            uuid=self.uuid,
-            group_id=self.group_id,
-            created_at=self.created_at,
-        )
-
-        logger.debug(f'Saved edge to Graph: {self.uuid}')
-        return result
-
-    async def delete(self, driver: GraphDriver):
-        await driver.execute_query(
-            """
-            MATCH (n:Episodic)-[e:ABOUT {uuid: $uuid}]->(m:Entity)
-            DELETE e
-            """,
-            uuid=self.uuid,
-        )
-        logger.debug(f'Deleted Edge: {self.uuid}')
-
-    @classmethod
-    async def get_by_uuid(cls, driver: GraphDriver, uuid: str):
-        records, _, _ = await driver.execute_query(
-            """
-            MATCH (n:Episodic)-[e:ABOUT {uuid: $uuid}]->(m:Entity)
-            RETURN
-            """
-            + ABOUT_EDGE_RETURN,
-            uuid=uuid,
-            routing_='r',
-        )
-        edges = [get_about_edge_from_record(record) for record in records]
-        if len(edges) == 0:
-            raise EdgeNotFoundError(uuid)
-        return edges[0]
-
-    @classmethod
-    async def get_by_uuids(cls, driver: GraphDriver, uuids: list[str]):
-        records, _, _ = await driver.execute_query(
-            """
-            MATCH (n:Episodic)-[e:ABOUT]->(m:Entity)
-            WHERE e.uuid IN $uuids
-            RETURN
-            """
-            + ABOUT_EDGE_RETURN,
-            uuids=uuids,
-            routing_='r',
-        )
-        return [get_about_edge_from_record(record) for record in records]
-
-    @classmethod
-    async def get_by_group_ids(
-        cls,
-        driver: GraphDriver,
-        group_ids: list[str],
-        limit: int | None = None,
-        uuid_cursor: str | None = None,
-    ):
-        cursor_query: LiteralString = 'AND e.uuid < $uuid' if uuid_cursor else ''
-        limit_query: LiteralString = 'LIMIT $limit' if limit is not None else ''
-        records, _, _ = await driver.execute_query(
-            """
-            MATCH (n:Episodic)-[e:ABOUT]->(m:Entity)
-            WHERE e.group_id IN $group_ids
-            """
-            + cursor_query
-            + """
-            RETURN
-            """
-            + ABOUT_EDGE_RETURN
-            + """
-            ORDER BY e.uuid DESC
-            """
-            + limit_query,
-            group_ids=group_ids,
-            uuid=uuid_cursor,
-            limit=limit,
-            routing_='r',
-        )
-        return [get_about_edge_from_record(record) for record in records]
 
 class EntityEdge(Edge):
     name: str = Field(description='name of the edge, relation name')
@@ -1050,16 +957,6 @@ class NextEpisodeEdge(Edge):
 # Edge helpers
 def get_episodic_edge_from_record(record: Any) -> EpisodicEdge:
     return EpisodicEdge(
-        uuid=record['uuid'],
-        group_id=record['group_id'],
-        source_node_uuid=record['source_node_uuid'],
-        target_node_uuid=record['target_node_uuid'],
-        created_at=parse_db_date(record['created_at']),  # type: ignore
-    )
-
-
-def get_about_edge_from_record(record: Any) -> AboutEdge:
-    return AboutEdge(
         uuid=record['uuid'],
         group_id=record['group_id'],
         source_node_uuid=record['source_node_uuid'],

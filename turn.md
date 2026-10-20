@@ -1,4 +1,135 @@
-# Turn Report
+# Turn Report — OpenStudio dependency repair, 2026-10-20
+
+## Status
+
+PASS / COMPLETE for the installed dependency runtime and its direct engineering/persistence proof.
+The broader NRGSIM modeling application remains INCOMPLETE. Saved-Card execution, modeling UI
+acceptance, interactive performance, and simulation are NOT PROVEN by this repair.
+
+## Requested Delta
+
+Repair the installed OpenStudio/MCP dependency path using the actual upstream runtime and prove
+real measure execution and OSM persistence. The owner's latest direction stopped UI work and
+prohibited scaffolding, imposters, and fake production substitutes.
+
+## Preservation Set
+
+Trading, shared services, saved Cards/models/prompts/grants/topology, existing OSMs, and unrelated
+dirty work remain outside this repair. No Git mutation, vendor-source modification, security
+disable, saved-Card mutation, shared-service restart, or UI edit was performed by this repair.
+Engineering writes were confined to new scratch proof directories. The prior Trading handoff
+below is preserved verbatim; its historical claims are not claims of this dependency review.
+
+## Tasks and Definitions of Done
+
+- T001 — Restore the real dependency runtime. Definition of Done: one pinned upstream MCP process
+  serves the existing serialized Project session with isolated paths and no native fallback.
+  COMPLETE: official `nrel/openstudio-mcp` 1.2.1 image, digest
+  `sha256:5c46c32bb4acc8e008c795d51fcc3ad26b51ef858631ba2688ce0a3f935c6601`,
+  OpenStudio 3.11.0, three Project mounts, read-only inputs, no network or published ports,
+  unchanged upstream sandbox, and `--pull never`.
+- T002 — Preserve engineering state during readback. Definition of Done: host/runtime paths resolve
+  only through the Project mounts, authoring reads explicit SDK fields from the saved OSM, and unsafe
+  generic Space introspection is refused before the upstream call. COMPLETE for `Space`, `OS:Space`,
+  and `OS_Space`; serialization, revision/selection refusals, and original tool contracts remain.
+- T003 — Prove actual dependencies and persistence. Definition of Done: real Python and Ruby
+  measures execute, geometry starts from an empty SDK model, and saved geometry/name/adjacency
+  survive an MCP session restart and reopen. COMPLETE for the bounded proofs below.
+
+## Actual Changes
+
+- `agent-products/nrgsim/nrgsim/launch.py` — replaces the broken native Windows MCP launch path
+  with the pinned official image; builds isolated mounts and translates mounted paths.
+- `agent-products/nrgsim/nrgsim/session.py` — uses that launcher in the existing session owner,
+  resolves returned artifacts, reads authoring results through the existing explicit SDK projection,
+  and refuses the known destructive Space introspection call.
+- `agent-products/nrgsim/authoring_proof.py` — exercises empty-model authoring, two stories,
+  three Spaces/zones, rename, save, actual session restart, and reopen.
+- `agent-products/nrgsim/tests/prove_runtime.py` — opt-in real upstream dependency proof with
+  Python measure creation/execution, geometry, save/reload, and evidence receipts.
+- `agent-products/nrgsim/tests/test_launch.py` and `test_session.py` — bounded mount/path,
+  missing-runtime, and unsafe-read refusal contracts.
+- `ARCHITECTURE.md` — records the pinned runtime and the upstream Space-introspection limitation.
+  Its earlier UI prose and other pre-existing dirty hunks are not acceptance claims of this slice.
+
+## Verification
+
+- Source: PASS. Independent direct reads covered the seven frozen files and relevant unchanged
+  projection, measure packaging/entry point, SDK authoring, and provider callers. The Primary's CBM
+  generation was `2026-10-20T16:41:36Z`; `session.py` had `metadata_changed`, so direct source was
+  authoritative. The reviewer did not operate CBM. The replaced native MCP launch path has no live
+  fallback; upstream SDK/MCP source was not changed.
+- Deterministic: PASS. Reviewer rerun: launch 5/5, session 11/11, provider 4/4. Primary also passed
+  7/7 direct OpenStudio SDK tests and Python compilation. Scoped `git diff --check` passed.
+  Mocked coordination tests are contract evidence only; they do not establish engine execution.
+- Direct runtime: PASS. `agent-products/nrgsim/.data/66aa1377-db61-46f6-822c-afbcc7dc72e5/runtime-proof.json`
+  has `ok=true`, discovers 197 upstream tools, executes a newly created Python measure, authors one
+  80 m² Space from an empty model, and saves/reloads it with its ThermalZone. The installed image
+  digest was independently reread. `ruby-runtime-proof.json` in that same directory has `ok=true`;
+  the Primary's independent SDK read found the saved Ruby result's north axis at 30 degrees.
+- Engine executable: the Primary ran the actual
+  `/usr/local/openstudio-3.11.0/EnergyPlus/energyplus-25.2.0` version command successfully:
+  `EnergyPlus, Version 25.2.0-cf7368216c`, exit 0. Upstream `get_versions` still reports its
+  EnergyPlus field as null. No simulation was run; executable presence is not simulation acceptance.
+- Persistence: PASS for the scratch proof. The independently read
+  `agent-products/nrgsim/.data/b57dc567-ab26-42fb-a47c-5534b0c2fd77/authoring-proof.json`
+  has no error and records `persistedAcrossSessionRestart=true`. Model
+  `314163e2-1d42-40c1-b648-63ff956884f3` contains two stories, three Spaces, three ThermalZones,
+  240 m², and four reciprocal Surface boundaries. Names are Office East, Office West, and
+  Upper Studio. The Primary independently verified these through the SDK after the restart;
+  the reviewer verified the receipt, paired-handle projection, and saved-file hash:
+  `6496edec799da9f86b35ce167a2a7c3091c7cec989ae509efe3e04a97f725cc3`.
+- Loaded application: health only. During concurrent work, the shared MCP PID changed from 6088
+  to 40612; this repair did not restart it. The Primary's latest health read reported ready and
+  `sourceCurrent=true`. That does not prove the loaded modeling workflow or saved-Card execution.
+- Live saved Card: NOT RUN. Visual/owner acceptance: NOT PROVEN. No modeler UI was opened or
+  imported for this repair. Simulation and baseline/proposed comparison: NOT RUN.
+- Resource cleanup: the reviewer independently found no running container for the pinned image;
+  the isolated proof containers had exited and been removed.
+
+Python rails restart/reload required: yes, for a running process that predates these changes.
+This statement authorizes no shared-service restart.
+
+## Findings, Limits, and Remaining Work
+
+- No blocking defect was found in the dependency-repair slice. No new regression was found among
+  the exercised isolation, serialization, refusal, tool-contract, runtime, and persistence invariants;
+  the regression ratio for those exercised invariants is 0.000.
+- Upstream 1.2.1 generic introspection calls `Space.unmatchSurfaces()` because its skipped prefixes
+  omit `unmatch`; the Primary measured paired boundaries falling from 2 to 0. The repair avoids that
+  readback and explicitly refuses generic Space inspection. The existing generic human-properties
+  route therefore reports the refusal for Space; that broader UI path remains unfinished.
+- Upstream detailed Building inspection divides by zero for an empty model. The dependency proof
+  uses the existing model-summary operation to assert the same actual Building name. No upstream
+  patch, fabricated read, or success fallback was introduced.
+- Measured authoring-measure calls took roughly 18–58 seconds on the pressured host. These are
+  functional runtime results, not interactive-performance acceptance.
+- Broader authoring/UI changes already present in the dirty tree remain UNFINISHED and outside
+  this acceptance. Complete loaded modeling, saved-Card, UI, and simulation acceptance separately.
+- `ARCHITECTURE.md` now describes the repaired runtime and its refusal accurately; `PLAN.md`
+  continues to label the first modeling checkpoint incomplete. No unrelated documentation changed.
+
+## Changed-File Snapshot
+
+Exact full-file bytes for the seven files changed in this dependency slice, including any preserved
+pre-existing hunks in those files. The report and unrelated dirty files are excluded. Lines are sorted
+by repository-relative path and joined with LF plus one final LF for the combined checksum.
+
+```text
+9302e0a2c88ec9eada44d60acea76b81ef7ce86c95c57c5f3b4c4cc8cbcf8b6d  agent-products/nrgsim/authoring_proof.py
+98de6c9e8539119f1cd12859a538deb3a340b7eccf37d11ac22e804474391a37  agent-products/nrgsim/nrgsim/launch.py
+d9b3d930357be96f58c96ba929326803cfce3125399dedaef57ec8bc89f0f4cb  agent-products/nrgsim/nrgsim/session.py
+79772b0dce7d7a632d0f45f468422a69c4a111f81b1f775d386936843a550074  agent-products/nrgsim/tests/prove_runtime.py
+12b989fa1c8793d67ff0c3d3a244a4a620f844cac0de1f6db0d6a8d63aec0226  agent-products/nrgsim/tests/test_launch.py
+70a4eb276d9ce977693b55448a9622ceb52d87e5324da9db344978f686f58eda  agent-products/nrgsim/tests/test_session.py
+0644c84f380773385e8efffcbabc394fb43f57ea63abb4edf7ee5025c00c6016  ARCHITECTURE.md
+```
+
+REVIEW_SNAPSHOT_SHA256: 242c20a949fd1aea3beef02d5b7ada5e59f374b2304ee6fced02bf6dab73622d
+
+---
+
+# Prior Trading handoff — preserved, not this cleanup's claims
 
 ## Status
 

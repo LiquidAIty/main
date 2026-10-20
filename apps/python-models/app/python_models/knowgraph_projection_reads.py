@@ -1,7 +1,7 @@
 """Bounded KnowGraph projection and neighborhood reads for the UI."""
 
 # Entity: KnowGraph
-# Relationship: This file reads bounded Project-scoped Graphiti Entities, relationships, atomic and historical Know evidence, and one-hop neighborhoods without copying graph authority.
+# Relationship: This file reads bounded Project-scoped Graphiti Entities, relationships, first-class Know evidence, and one-hop neighborhoods without copying graph authority.
 # Entity: Project Knowledge Graph
 # Relationship: This file projects KnowGraph records into the shared visual graph contract used by the application.
 # Entity: Jev Decisions
@@ -84,14 +84,10 @@ def _attach_entity_knows(
         return
     rows = neo4j_rows(session.run(
         """
-        MATCH (episode:Episodic)-[:ABOUT]->(entity:Entity)
+        MATCH (episode:Episodic:Know)-[:ABOUT]->(entity:Entity)
         WHERE coalesce(toString(entity.uuid), elementId(entity)) IN $entityIds
           AND toString(entity.group_id) IN $projectScopeIds
           AND toString(episode.group_id) IN $projectScopeIds
-          AND (
-            toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v1\"'
-            OR toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v2\"'
-          )
         RETURN coalesce(toString(entity.uuid), elementId(entity)) AS entity_id,
                coalesce(toString(episode.uuid), elementId(episode)) AS episode_id,
                properties(episode) AS episode_props
@@ -130,24 +126,17 @@ def _attach_entity_knows(
             "graphitiEpisodeId": episode_id,
             "graphitiEntityId": entity_id,
             "title": str(properties.get("name") or "Know"),
-            "schemaVersion": know["schemaVersion"],
+            "kind": "Know",
+            "observation": know["observation"],
+            "interpretation": know["interpretation"],
+            "citation": know["citation"],
             "validFrom": properties.get("valid_at"),
             "ingestedAt": properties.get("created_at"),
         }
-        if know["schemaVersion"] == "know.v2":
-            record.update({
-                "observation": know["observation"],
-                "interpretation": know["interpretation"],
-                "source": know["source"],
-                **({"direction": know["direction"]} if know.get("direction") else {}),
-                **({"dedupeKey": know["dedupeKey"]} if know.get("dedupeKey") else {}),
-            })
-        else:
-            record.update({
-                "legacy": True,
-                "idea": know["idea"],
-                "counterIdea": know["counterIdea"],
-            })
+        if know.get("direction"):
+            record["direction"] = know["direction"]
+        if know.get("contentHash"):
+            record["contentHash"] = know["contentHash"]
         evidence.append(record)
         counts[entity_id] = count + 1
 

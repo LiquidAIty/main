@@ -17,7 +17,7 @@ limitations under the License.
 import logging
 from datetime import datetime
 from time import time
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -26,10 +26,9 @@ from typing_extensions import LiteralString
 from graphiti_core.cross_encoder.client import CrossEncoderClient
 from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
 from graphiti_core.decorators import handle_multiple_group_ids
-from graphiti_core.driver.driver import GraphDriver
+from graphiti_core.driver.driver import GraphDriver, GraphProvider
 from graphiti_core.driver.neo4j_driver import Neo4jDriver
 from graphiti_core.edges import (
-    AboutEdge,
     CommunityEdge,
     Edge,
     EntityEdge,
@@ -40,14 +39,25 @@ from graphiti_core.edges import (
 )
 from graphiti_core.embedder import EmbedderClient, OpenAIEmbedder
 from graphiti_core.errors import EdgeNotFoundError, NodeNotFoundError
-from graphiti_core.graphiti_types import GraphitiClients, generate_prompt_response
+from graphiti_core.graphiti_types import GraphitiClients
 from graphiti_core.helpers import (
     get_default_group_id,
     semaphore_gather,
     validate_excluded_entity_types,
     validate_group_id,
 )
-from graphiti_core.llm_client import LLMClient, LLMRuntime, OpenAIClient
+from graphiti_core.llm_client import LLMClient, OpenAIClient
+from graphiti_core.knows import (
+    AboutEdge,
+    KnowCitation,
+    KnowDirection,
+    KnowNode,
+    about_uuid,
+    know_content_hash,
+    know_episode_content,
+    know_uuid,
+    resolve_know_entity,
+)
 from graphiti_core.namespaces import EdgeNamespace, NodeNamespace
 from graphiti_core.nodes import (
     CommunityNode,
@@ -58,15 +68,16 @@ from graphiti_core.nodes import (
     SagaNode,
     create_entity_node_embeddings,
 )
-from graphiti_core.prompts import prompt_library
-from graphiti_core.prompts.lib import (
-    ChatPromptLibrary,
-    ensure_prompt_library_wrapped,
-    validate_prompt_library,
-)
+from graphiti_core.prompts.lib import prompt_library
 from graphiti_core.prompts.summarize_sagas import SagaSummary
 from graphiti_core.search.search import SearchConfig, search
-from graphiti_core.search.search_config import DEFAULT_SEARCH_LIMIT, SearchResults
+from graphiti_core.search.search_config import (
+    DEFAULT_SEARCH_LIMIT,
+    EpisodeReranker,
+    EpisodeSearchConfig,
+    EpisodeSearchMethod,
+    SearchResults,
+)
 from graphiti_core.search.search_config_recipes import (
     COMBINED_HYBRID_SEARCH_CROSS_ENCODER,
     EDGE_HYBRID_SEARCH_NODE_DISTANCE,
@@ -124,7 +135,15 @@ class AddEpisodeResults(BaseModel):
     edges: list[EntityEdge]
     communities: list[CommunityNode]
     community_edges: list[CommunityEdge]
-    about_edge: AboutEdge | None = None
+
+
+class AddKnowResults(BaseModel):
+    know: KnowNode
+    entity: EntityNode
+    about_edge: AboutEdge
+    episode_results: AddEpisodeResults | None
+    created: bool
+    entity_created: bool
 
 
 class AddBulkEpisodeResults(BaseModel):
@@ -155,8 +174,6 @@ class Graphiti:
         max_coroutines: int | None = None,
         tracer: Tracer | None = None,
         trace_span_prefix: str = 'graphiti',
-        prompt_library: ChatPromptLibrary | None = None,
-        llm_runtime: LLMRuntime | None = None,
     ):
         """
         Initialize a Graphiti instance.
@@ -175,7 +192,6 @@ class Graphiti:
         llm_client : LLMClient | None, optional
             An instance of LLMClient for natural language processing tasks.
             If not provided, a default OpenAIClient will be initialized.
-            Cannot be combined with ``llm_runtime``.
         embedder : EmbedderClient | None, optional
             An instance of EmbedderClient for embedding tasks.
             If not provided, a default OpenAIEmbedder will be initialized.
@@ -194,22 +210,6 @@ class Graphiti:
             An OpenTelemetry tracer instance for distributed tracing. If not provided, tracing is disabled (no-op).
         trace_span_prefix : str, optional
             Prefix to prepend to all span names. Defaults to 'graphiti'.
-        prompt_library : ChatPromptLibrary | None, optional
-            An instance-scoped prompt library used for all LLM prompt construction.
-            If not provided, Graphiti uses its legacy module-level prompt functions.
-            ``self.prompt_library`` and ``self.clients.prompt_library`` remain ``None`` by default.
-            For partial customization, compose overrides with
-            ``create_prompt_library(overrides)`` and pass the result here.
-            Override callables must return ``ChatPrompt``.
-            Cannot be combined with ``llm_runtime``.
-        llm_runtime : LLMRuntime | None, optional
-            An opt-in runtime that routes prompts across one or more
-            ``LLMTransport`` instances. It requires a default ``LLMModel``.
-            The runtime owns prompt selection and model routing. It has no
-            ``small_id`` field. ``model_size`` does not select a smaller model
-            on the runtime path. Route lightweight prompts to a smaller model.
-            GLiNER2 does not support per-prompt routing. Cannot be combined
-            with ``llm_client`` or ``prompt_library``.
 
         Returns
         -------
@@ -230,15 +230,6 @@ class Graphiti:
         Graphiti if you're using the default OpenAIClient.
         """
 
-        if llm_runtime is not None:
-            extras = [
-                name
-                for name, value in (('llm_client', llm_client), ('prompt_library', prompt_library))
-                if value is not None
-            ]
-            if extras:
-                raise ValueError('llm_runtime cannot be combined with: ' + ', '.join(extras) + '.')
-
         if graph_driver:
             self.driver = graph_driver
         else:
@@ -248,22 +239,10 @@ class Graphiti:
 
         self.store_raw_episode_content = store_raw_episode_content
         self.max_coroutines = max_coroutines
-
-        self.llm_runtime = llm_runtime
-        if llm_runtime is not None:
-            self.llm_client = llm_runtime.client
-            self.prompt_library = llm_runtime.library
+        if llm_client:
+            self.llm_client = llm_client
         else:
-            if llm_client:
-                self.llm_client = llm_client
-            else:
-                self.llm_client = OpenAIClient()
-            if prompt_library is not None:
-                validate_prompt_library(prompt_library)
-                self.prompt_library = ensure_prompt_library_wrapped(prompt_library)
-            else:
-                self.prompt_library = None
-
+            self.llm_client = OpenAIClient()
         if embedder:
             self.embedder = embedder
         else:
@@ -277,10 +256,7 @@ class Graphiti:
         self.tracer = create_tracer(tracer, trace_span_prefix)
 
         # Set tracer on clients
-        if self.llm_runtime is not None:
-            self.llm_runtime.set_tracer(self.tracer)
-        else:
-            self.llm_client.set_tracer(self.tracer)
+        self.llm_client.set_tracer(self.tracer)
 
         self.clients = GraphitiClients(
             driver=self.driver,
@@ -288,8 +264,6 @@ class Graphiti:
             embedder=self.embedder,
             cross_encoder=self.cross_encoder,
             tracer=self.tracer,
-            prompt_library=self.prompt_library,
-            llm_runtime=self.llm_runtime,
         )
 
         # Initialize namespace API (graphiti.nodes.entity.save(), etc.)
@@ -598,13 +572,10 @@ class Graphiti:
             'episodes': episode_contents,
         }
 
-        llm_response = await generate_prompt_response(
-            self.llm_client,
-            'summarize_sagas.summarize_saga',
-            prompt_library.summarize_sagas.summarize_saga,
-            context,
-            clients=self.clients,
+        llm_response = await self.llm_client.generate_response(
+            prompt_library.summarize_sagas.summarize_saga(context),
             response_model=SagaSummary,
+            prompt_name='summarize_sagas.summarize_saga',
         )
 
         summary = llm_response.get('summary', '')
@@ -759,12 +730,11 @@ class Graphiti:
         entity_edges: list[EntityEdge],
         now: datetime,
         group_id: str,
-        entity_uuid: str | None = None,
         saga: str | SagaNode | None = None,
         saga_previous_episode_uuid: str | None = None,
         node_episode_index_map: dict[str, list[int]] | None = None,
         clients: GraphitiClients | None = None,
-    ) -> tuple[list[EpisodicEdge], EpisodicNode, AboutEdge | None]:
+    ) -> tuple[list[EpisodicEdge], EpisodicNode]:
         """Process and save episode data to the graph.
 
         Parameters
@@ -779,9 +749,6 @@ class Graphiti:
             The current timestamp.
         group_id : str
             The group id for the episode.
-        entity_uuid : str | None
-            Optional exact Entity UUID this episode is about. This creates one
-            structural ABOUT edge and never changes MENTIONS extraction.
         saga : str | SagaNode | None
             Optional. Either a saga name (str) or a SagaNode object to associate
             this episode with. If a string is provided, the saga will be looked up
@@ -802,23 +769,8 @@ class Graphiti:
         driver = clients.driver
         episodes = episode if isinstance(episode, list) else [episode]
         episode_uuids = [ep.uuid for ep in episodes]
-        primary_episode = episodes[0]
 
         episodic_edges = build_episodic_edges(nodes, episode_uuids, now, node_episode_index_map)
-        about_edge = (
-            AboutEdge(
-                uuid=str(uuid5(
-                    NAMESPACE_URL,
-                    f'graphiti:about:{group_id}:{primary_episode.uuid}:{entity_uuid}',
-                )),
-                source_node_uuid=primary_episode.uuid,
-                target_node_uuid=entity_uuid,
-                group_id=group_id,
-                created_at=now,
-            )
-            if entity_uuid is not None
-            else None
-        )
         for ep in episodes:
             ep.entity_edges = [edge.uuid for edge in entity_edges]
             if not self.store_raw_episode_content:
@@ -831,8 +783,9 @@ class Graphiti:
             nodes,
             entity_edges,
             clients.embedder,
-            about_edges=[about_edge] if about_edge is not None else None,
         )
+
+        primary_episode = episodes[0]
 
         # Handle saga association if provided
         if saga is not None:
@@ -880,7 +833,7 @@ class Graphiti:
             saga_node.last_episode_uuid = primary_episode.uuid
             await saga_node.save(driver)
 
-        return episodic_edges, primary_episode, about_edge
+        return episodic_edges, primary_episode
 
     async def _extract_and_dedupe_nodes_bulk(
         self,
@@ -1113,60 +1066,6 @@ class Graphiti:
         clients = self.clients.model_copy(update={'driver': driver})
         return group_id, driver, clients
 
-    async def _resolve_exact_entity_attachment(
-        self,
-        *,
-        driver: GraphDriver,
-        group_id: str,
-        entity_uuid: str | None,
-        entity_name: str | None,
-        created_at: datetime,
-        episode_uuid: str | None,
-    ) -> EntityNode | None:
-        """Resolve or prepare one caller-declared exact Entity attachment.
-
-        The UUID is authority. The name is required so a missing UUID can create the
-        exact Entity in the same transaction as the episode. Names are never searched,
-        guessed, or used to select an existing Entity.
-        """
-
-        if entity_uuid is None and entity_name is None:
-            return None
-        exact_uuid = str(entity_uuid or '').strip()
-        exact_name = str(entity_name or '').strip()
-        if not exact_uuid or not exact_name:
-            raise ValueError('entity_uuid and entity_name must be provided together')
-
-        if episode_uuid is not None:
-            records, _, _ = await driver.execute_query(
-                """
-                MATCH (:Episodic {uuid: $episode_uuid})-[:ABOUT]->(entity:Entity)
-                RETURN entity.uuid AS entity_uuid
-                """,
-                episode_uuid=episode_uuid,
-                routing_='r',
-            )
-            attached = [str(record.get('entity_uuid') or '') for record in records]
-            if len(attached) > 1 or any(value != exact_uuid for value in attached):
-                raise ValueError('episode already has a different exact Entity attachment')
-
-        try:
-            entity = await EntityNode.get_by_uuid(driver, exact_uuid)
-        except NodeNotFoundError:
-            return EntityNode(
-                uuid=exact_uuid,
-                name=exact_name,
-                group_id=group_id,
-                labels=[],
-                created_at=created_at,
-            )
-
-        if entity.group_id != group_id:
-            raise ValueError('entity_uuid belongs to a different group_id')
-        if entity.name != exact_name:
-            raise ValueError('entity_name does not match entity_uuid')
-        return entity
-
     async def add_episode(
         self,
         name: str,
@@ -1185,8 +1084,6 @@ class Graphiti:
         custom_extraction_instructions: str | None = None,
         saga: str | SagaNode | None = None,
         saga_previous_episode_uuid: str | None = None,
-        entity_uuid: str | None = None,
-        entity_name: str | None = None,
     ) -> AddEpisodeResults:
         """
         Process an episode and update the graph.
@@ -1234,12 +1131,6 @@ class Graphiti:
             query to find the most recent episode. Useful for efficiently adding multiple episodes
             to the same saga in sequence. The returned AddEpisodeResults.episode.uuid can be passed
             as this parameter for the next episode.
-        entity_uuid : str | None
-            Optional exact Entity UUID this episode is about. Must be supplied with
-            ``entity_name``. The Entity is resolved only by UUID or created with that
-            UUID; MENTIONS and semantic similarity never choose the attachment.
-        entity_name : str | None
-            Exact Entity name paired with ``entity_uuid``.
 
         Returns
         -------
@@ -1272,15 +1163,6 @@ class Graphiti:
         # shared ``self.driver``, so concurrent calls for different group_ids cannot
         # clobber each other's database target mid-execution (issue #1676).
         group_id, driver, clients = self._resolve_request_scope(group_id)
-
-        attached_entity = await self._resolve_exact_entity_attachment(
-            driver=driver,
-            group_id=group_id,
-            entity_uuid=entity_uuid,
-            entity_name=entity_name,
-            created_at=now,
-            episode_uuid=uuid,
-        )
 
         with self.tracer.start_span('add_episode') as span:
             try:
@@ -1334,34 +1216,13 @@ class Graphiti:
                     custom_extraction_instructions,
                 )
 
-                fixed_node_uuids: set[str] = set()
-                if attached_entity is not None:
-                    for index, extracted_node in enumerate(extracted_nodes):
-                        if extracted_node.name != attached_entity.name:
-                            continue
-                        attached_entity.labels = list(dict.fromkeys(
-                            [*attached_entity.labels, *extracted_node.labels]
-                        ))
-                        attached_entity.attributes = {
-                            **extracted_node.attributes,
-                            **attached_entity.attributes,
-                        }
-                        extracted_nodes[index] = attached_entity
-                        fixed_node_uuids.add(attached_entity.uuid)
-                        break
-
                 nodes, uuid_map, _ = await resolve_extracted_nodes(
                     clients,
                     extracted_nodes,
                     episode,
                     previous_episodes,
                     entity_types,
-                    fixed_node_uuids=fixed_node_uuids,
                 )
-                if attached_entity is not None and not any(
-                    node.uuid == attached_entity.uuid for node in nodes
-                ):
-                    nodes.append(attached_entity)
 
                 # Extract and resolve edges in parallel with attribute extraction
                 (
@@ -1395,13 +1256,12 @@ class Graphiti:
                 )
 
                 # Process and save episode data (including saga association if provided)
-                episodic_edges, episode, about_edge = await self._process_episode_data(
+                episodic_edges, episode = await self._process_episode_data(
                     episode,
                     hydrated_nodes,
                     entity_edges,
                     now,
                     group_id,
-                    attached_entity.uuid if attached_entity is not None else None,
                     saga,
                     saga_previous_episode_uuid,
                     node_episode_index_map,
@@ -1412,22 +1272,13 @@ class Graphiti:
                 communities = []
                 community_edges = []
                 if update_communities:
-                    community_results = await semaphore_gather(
+                    communities, community_edges = await semaphore_gather(
                         *[
-                            update_community(
-                                driver,
-                                clients.llm_client,
-                                clients.embedder,
-                                node,
-                                clients=clients,
-                            )
+                            update_community(driver, clients.llm_client, clients.embedder, node)
                             for node in nodes
                         ],
                         max_coroutines=self.max_coroutines,
                     )
-                    for updated_communities, updated_edges in community_results:
-                        communities.extend(updated_communities)
-                        community_edges.extend(updated_edges)
 
                 end = time()
 
@@ -1459,13 +1310,228 @@ class Graphiti:
                     edges=entity_edges,
                     communities=communities,
                     community_edges=community_edges,
-                    about_edge=about_edge,
                 )
 
             except Exception as e:
                 span.set_status('error', str(e))
                 span.record_exception(e)
                 raise e
+
+    async def add_know(
+        self,
+        name: str,
+        entity_name: str,
+        observation: str,
+        interpretation: str,
+        citation: KnowCitation,
+        reference_time: datetime,
+        *,
+        entity_uuid: str | None = None,
+        direction: KnowDirection | None = None,
+        group_id: str | None = None,
+        uuid: str | None = None,
+        update_communities: bool = True,
+        entity_types: dict[str, type[BaseModel]] | None = None,
+        excluded_entity_types: list[str] | None = None,
+        previous_episode_uuids: list[str] | None = None,
+        edge_types: dict[str, type[BaseModel]] | None = None,
+        edge_type_map: dict[tuple[str, str], list[str]] | None = None,
+        custom_extraction_instructions: str | None = None,
+        saga: str | SagaNode | None = None,
+        saga_previous_episode_uuid: str | None = None,
+    ) -> AddKnowResults:
+        """Store one first-class Know through the normal episode and Saga pipeline.
+
+        A Know remains a normal episode for extraction, temporal ordering, hybrid
+        retrieval, communities, and Saga membership. The additional ``Know`` label
+        and sole ``ABOUT`` edge preserve its typed, explicit Entity attachment;
+        extraction-owned ``MENTIONS`` edges remain independent.
+        """
+
+        observation = observation.strip()
+        interpretation = interpretation.strip()
+        if not observation or len(observation) > 8000:
+            raise ValueError('Know observation must contain at most 8000 characters')
+        if not interpretation or len(interpretation) > 8000:
+            raise ValueError('Know interpretation must contain at most 8000 characters')
+        group_id, driver, clients = self._resolve_request_scope(group_id)
+        if driver.provider == GraphProvider.KUZU:
+            raise NotImplementedError('Know storage is not available for Kuzu')
+        if not getattr(self, 'store_raw_episode_content', True):
+            raise ValueError('Know storage requires searchable episode content')
+
+        entity, entity_created = await resolve_know_entity(
+            clients,
+            group_id=group_id,
+            entity_name=entity_name,
+            entity_uuid=entity_uuid,
+        )
+        digest = know_content_hash(
+            entity_name=entity.name,
+            observation=observation,
+            interpretation=interpretation,
+            citation=citation,
+            direction=direction,
+        )
+        existing = await KnowNode.get_by_content_hash(
+            driver,
+            group_id=group_id,
+            content_hash=digest,
+        )
+        if existing is not None:
+            if existing.entity_uuid != entity.uuid:
+                raise ValueError('Know content is already attached to a different Entity')
+            existing_about = AboutEdge(
+                uuid=about_uuid(existing.uuid, entity.uuid),
+                source_node_uuid=existing.uuid,
+                target_node_uuid=entity.uuid,
+                group_id=group_id,
+                created_at=existing.created_at,
+                entity_created=existing.entity_created,
+            )
+            return AddKnowResults(
+                know=existing,
+                entity=entity,
+                about_edge=existing_about,
+                episode_results=None,
+                created=False,
+                entity_created=False,
+            )
+
+        know_id = uuid or know_uuid(group_id, entity.name, digest)
+        episode_body = know_episode_content(
+            observation=observation,
+            interpretation=interpretation,
+            citation=citation,
+            direction=direction,
+        )
+        source_description = f'{citation.publisher}: {citation.title}'
+        try:
+            episode = await EpisodicNode.get_by_uuid(driver, know_id)
+        except NodeNotFoundError:
+            episode_results = await self.add_episode(
+                name=name,
+                episode_body=episode_body,
+                source_description=source_description,
+                reference_time=reference_time,
+                source=EpisodeType.text,
+                group_id=group_id,
+                uuid=know_id,
+                update_communities=update_communities,
+                entity_types=entity_types,
+                excluded_entity_types=excluded_entity_types,
+                previous_episode_uuids=previous_episode_uuids,
+                edge_types=edge_types,
+                edge_type_map=edge_type_map,
+                custom_extraction_instructions=custom_extraction_instructions,
+                saga=saga,
+                saga_previous_episode_uuid=saga_previous_episode_uuid,
+            )
+            episode = episode_results.episode
+        else:
+            if (
+                episode.group_id != group_id
+                or episode.name != name
+                or episode.source is not EpisodeType.text
+                or episode.content != episode_body
+                or episode.source_description != source_description
+            ):
+                raise ValueError('Know UUID is already used by a different episode')
+            episode_results = None
+        know = KnowNode.from_episode(
+            episode,
+            entity_uuid=entity.uuid,
+            observation=observation,
+            interpretation=interpretation,
+            citation=citation,
+            direction=direction,
+            content_hash=digest,
+        )
+        about = AboutEdge(
+            uuid=about_uuid(know.uuid, entity.uuid),
+            source_node_uuid=know.uuid,
+            target_node_uuid=entity.uuid,
+            group_id=group_id,
+            created_at=know.created_at,
+            entity_created=entity_created,
+        )
+        await know.save_know(driver, about)
+        know = await KnowNode.get_by_uuid(driver, know.uuid)
+        return AddKnowResults(
+            know=know,
+            entity=entity,
+            about_edge=about,
+            episode_results=episode_results,
+            created=True,
+            entity_created=entity_created,
+        )
+
+    async def search_knows(
+        self,
+        query: str,
+        *,
+        group_id: str | None = None,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+    ) -> list[KnowNode]:
+        """Use Graphiti episode BM25 and cross-encoder retrieval for Knows only."""
+
+        if limit < 1 or limit > 100:
+            raise ValueError('Know search limit must be between 1 and 100')
+        group_id, driver, clients = self._resolve_request_scope(group_id)
+        if driver.provider == GraphProvider.KUZU:
+            raise NotImplementedError('Know search is not available for Kuzu')
+        config = SearchConfig(
+            episode_config=EpisodeSearchConfig(
+                search_methods=[EpisodeSearchMethod.bm25],
+                reranker=EpisodeReranker.cross_encoder,
+            ),
+            limit=limit,
+        )
+        results = await search(
+            clients,
+            query,
+            [group_id],
+            config,
+            SearchFilters(node_labels=['Know']),
+            driver=driver,
+        )
+        return await KnowNode.get_by_uuids(
+            driver,
+            [episode.uuid for episode in results.episodes],
+        )
+
+    async def get_entity_knows(
+        self,
+        entity_uuid: str,
+        *,
+        group_id: str | None = None,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+    ) -> list[KnowNode]:
+        """Read the Knows explicitly attached to one exact Entity."""
+
+        if limit < 1 or limit > 100:
+            raise ValueError('Know read limit must be between 1 and 100')
+        group_id, driver, _clients = self._resolve_request_scope(group_id)
+        return await KnowNode.get_by_entity_uuid(
+            driver,
+            entity_uuid,
+            group_id=group_id,
+            limit=limit,
+        )
+
+    async def get_know(
+        self,
+        uuid: str,
+        *,
+        group_id: str | None = None,
+    ) -> KnowNode:
+        """Read one exact first-class Know within its graph partition."""
+
+        group_id, driver, _clients = self._resolve_request_scope(group_id)
+        know = await KnowNode.get_by_uuid(driver, uuid)
+        if know.group_id != group_id:
+            raise NodeNotFoundError(uuid)
+        return know
 
     async def add_episode_bulk(
         self,
@@ -1742,16 +1808,8 @@ class Graphiti:
         # Clear existing communities (scoped: only the groups being rebuilt)
         await remove_communities(driver, group_ids=group_ids)
 
-        # Prefer the resolved clients bundle (llm_runtime / prompt_library),
-        # but honor an explicit driver override when provided.
-        clients = self.clients
-        if driver is not None and driver is not self.driver:
-            clients = self.clients.model_copy(update={'driver': driver})
         community_nodes, community_edges = await build_communities(
-            clients.driver,
-            clients.llm_client,
-            group_ids,
-            clients=clients,
+            driver, self.llm_client, group_ids
         )
 
         await semaphore_gather(
@@ -1999,7 +2057,6 @@ class Graphiti:
                 group_id=edge.group_id,
             ),
             None,
-            clients=self.clients,
         )
 
         edges: list[EntityEdge] = [resolved_edge] + invalidated_edges
@@ -2025,6 +2082,27 @@ class Graphiti:
 
         # Find nodes mentioned by the episode
         nodes = await get_mentioned_nodes(self.driver, [episode])
+        attachment_by_entity: dict[str, bool] = {}
+        if self.driver.provider != GraphProvider.KUZU:
+            attachment_rows, _, _ = await self.driver.execute_query(
+                """
+                MATCH (episode:Episodic {uuid: $episode_uuid})
+                      -[about:ABOUT]->(entity:Entity)
+                RETURN entity.uuid AS entity_uuid,
+                       coalesce(about.entity_created, false) AS entity_created
+                """,
+                episode_uuid=episode.uuid,
+                routing_='r',
+            )
+            attachment_by_entity = {
+                str(row['entity_uuid']): bool(row.get('entity_created'))
+                for row in attachment_rows
+                if row.get('entity_uuid')
+            }
+            mentioned_ids = {node.uuid for node in nodes}
+            for entity_uuid in attachment_by_entity:
+                if entity_uuid not in mentioned_ids:
+                    nodes.append(await EntityNode.get_by_uuid(self.driver, entity_uuid))
         # We should delete all nodes that are only mentioned in the deleted episode
         nodes_to_delete: list[EntityNode] = []
         for node in nodes:
@@ -2032,7 +2110,28 @@ class Graphiti:
             records, _, _ = await self.driver.execute_query(query, uuid=node.uuid, routing_='r')
 
             for record in records:
-                if record['episode_count'] == 1:
+                if node.uuid not in attachment_by_entity:
+                    if record['episode_count'] == 1:
+                        nodes_to_delete.append(node)
+                    continue
+                if not attachment_by_entity[node.uuid]:
+                    continue
+                reference_records, _, _ = await self.driver.execute_query(
+                    """
+                    MATCH (entity:Entity {uuid: $entity_uuid})
+                    OPTIONAL MATCH (other_episode:Episodic)-[:MENTIONS]->(entity)
+                    WHERE other_episode.uuid <> $episode_uuid
+                    WITH entity, count(DISTINCT other_episode) AS other_mentions
+                    OPTIONAL MATCH (other_know:Episodic:Know)-[:ABOUT]->(entity)
+                    WHERE other_know.uuid <> $episode_uuid
+                    WITH other_mentions, count(DISTINCT other_know) AS other_knows
+                    RETURN other_mentions + other_knows AS other_references
+                    """,
+                    episode_uuid=episode.uuid,
+                    entity_uuid=node.uuid,
+                    routing_='r',
+                )
+                if reference_records and reference_records[0]['other_references'] == 0:
                     nodes_to_delete.append(node)
 
         await Edge.delete_by_uuids(self.driver, [edge.uuid for edge in edges_to_delete])

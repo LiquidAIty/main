@@ -210,46 +210,28 @@ def _choice_id(authority: str, record_id: str) -> str:
     return f"context_{digest}"
 
 
-def _bounded_know_side(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        return {}
-    return {
-        "body": _bounded_text(value.get("body"), _BODY_LIMIT),
-        **({"detail": _bounded_text(value.get("detail"), _BODY_LIMIT)}
-           if value.get("detail") else {}),
-        "citations": deepcopy(value.get("citations") or [])[:4],
-    }
-
-
 def _bounded_know_candidate(record: dict[str, Any]) -> dict[str, Any]:
-    if record.get("schemaVersion") == "know.v2" or record.get("observation"):
-        source = record.get("source")
-        source = source if isinstance(source, dict) else {}
-        direction = record.get("direction")
-        direction = direction if isinstance(direction, dict) else {}
-        return {
-            "schemaVersion": "know.v2",
-            "observation": _bounded_text(record.get("observation"), _BODY_LIMIT),
-            "interpretation": _bounded_text(record.get("interpretation"), _BODY_LIMIT),
-            "source": {
-                "title": _bounded_text(source.get("title"), 1000),
-                "publisher": _bounded_text(source.get("publisher"), 1000),
-                "evidence": _bounded_text(source.get("evidence"), _BODY_LIMIT),
-                "url": _bounded_text(
-                    source.get("resolvedUrl") or source.get("url"),
-                    2048,
-                ),
-            },
-            **({"direction": {
-                "proposition": _bounded_text(direction.get("proposition"), _BODY_LIMIT),
-                "relation": _bounded_text(direction.get("relation"), 32),
-            }} if direction else {}),
-        }
+    citation = record.get("citation")
+    citation = citation if isinstance(citation, dict) else {}
+    direction = record.get("direction")
+    direction = direction if isinstance(direction, dict) else {}
     return {
-        "schemaVersion": "know.v1",
-        "legacy": True,
-        "idea": _bounded_know_side(record.get("idea")),
-        "counterIdea": _bounded_know_side(record.get("counterIdea")),
+        "kind": "Know",
+        "observation": _bounded_text(record.get("observation"), _BODY_LIMIT),
+        "interpretation": _bounded_text(record.get("interpretation"), _BODY_LIMIT),
+        "citation": {
+            "title": _bounded_text(citation.get("title"), 1000),
+            "publisher": _bounded_text(citation.get("publisher"), 1000),
+            "evidence": _bounded_text(citation.get("evidence"), _BODY_LIMIT),
+            "url": _bounded_text(
+                citation.get("resolvedUrl") or citation.get("url"),
+                2048,
+            ),
+        },
+        **({"direction": {
+            "proposition": _bounded_text(direction.get("proposition"), _BODY_LIMIT),
+            "relation": _bounded_text(direction.get("relation"), 32),
+        }} if direction else {}),
     }
 
 
@@ -299,10 +281,10 @@ def _jev_relevance(
                     "idea and makes its strongest useful optimistic case without changing its intent. "
                     if authority == "thinkgraph" else
                     "Rate which exact stored sourced Know is most directly useful to the current "
-                    "idea. A current Know is one verified observation plus a separate interpretation "
-                    "and may support, challenge, or contextualize an explicit proposition. Historical "
-                    "paired Knows remain labeled as legacy records; rate the complete stored record "
-                    "without inventing a conversion or fixed sentiment balance. "
+                    "idea. A Know is one verified observation, a separate interpretation, one "
+                    "inspectable citation and exactly one ABOUT Entity attachment. It may support, "
+                    "challenge, or contextualize an explicit proposition. Rate the complete stored "
+                    "record without inventing a fixed sentiment balance. "
                 )
                 + "Do not reward mere recency or repetition of the immediately previous turn. "
                 "This is contextual relevance, not truth, authority, claim confidence, or "

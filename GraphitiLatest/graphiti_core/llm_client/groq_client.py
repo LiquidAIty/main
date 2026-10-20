@@ -61,8 +61,6 @@ class GroqClient(LLMClient):
         response_model: type[BaseModel] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         model_size: ModelSize = ModelSize.medium,
-        *,
-        model: str | None = None,
     ) -> dict[str, typing.Any]:
         msgs: list[ChatCompletionMessageParam] = []
         for m in messages:
@@ -72,7 +70,7 @@ class GroqClient(LLMClient):
                 msgs.append({'role': 'system', 'content': m.content})
         try:
             response = await self.client.chat.completions.create(
-                model=model or self.model or DEFAULT_MODEL,
+                model=self.model or DEFAULT_MODEL,
                 messages=msgs,
                 temperature=self.temperature,
                 max_tokens=max_tokens or self.max_tokens,

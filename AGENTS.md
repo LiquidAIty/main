@@ -409,10 +409,13 @@ and writer. The source-default Card uses Sol for the deeper factual/reality-chec
 model choice remains authority. AutoTeam candidate workers retain the saved Web research surface but receive
 no profile MCP connection or graph-write tool. The synthesis root alone receives the exact saved Card Run
 context and saved MCP ceiling, reviews worker findings, verifies provenance, deduplicates, and persists.
-One current Know is one atomic `know.v2` episode about one Entity with one source document, exact evidence
-passage, self-contained observation, separate bounded interpretation and optional proposition direction.
-Python rails verifies and encodes that record before invoking Graphiti's queued
-`add_memory_to_entity`. Historical paired `know.v1` records remain explicit legacy reads.
+One current Know is one first-class `Episodic:Know` object about exactly one Entity, with one source
+document, exact evidence passage, self-contained observation, separate bounded interpretation and optional
+proposition direction. Its citation fields are inspectable properties, its plain-text episode content remains
+available to Graphiti extraction and hybrid retrieval, and an exact `ABOUT` edge is distinct from extracted
+`MENTIONS`. The saved KnowGraph root uses Hermes' `grounded-citations` evidence workflow before invoking
+Graphiti's queued `add_know`; Python rails preserves the typed citation and Project scope without creating a
+second web retriever or citation ledger.
 Main PDF attachment ingestion writes through the Graphiti service directly; it is not a KnowGraph Card
 turn and must never borrow this Card's model or system prompt. The retired Steward/Stuart identities,
 Team delegation residue, and compatibility aliases must not return.

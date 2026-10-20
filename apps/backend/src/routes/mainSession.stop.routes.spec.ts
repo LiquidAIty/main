@@ -887,4 +887,5 @@ describe('Main direct-recipient stop settlement', () => {
     expect(conversationMocks.appendConversationReplyOnce).not.toHaveBeenCalled();
     expect(conversationMocks.appendConversationTurn).toHaveBeenCalledOnce();
   });
+
 });

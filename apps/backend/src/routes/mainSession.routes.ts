@@ -27,6 +27,7 @@
  * Relationship: This file authorizes either the signed-in Project owner or one exact external identity grant before resolving Main and any recipient Card.
  */
 
+import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 
 import { resolveExternalIdentityProjectGrant } from '../auth/externalIdentityGrantStore';
@@ -100,6 +101,40 @@ type CardSessionBinding = ProjectCardSession & {
 export type SessionBinding = CardSessionBinding & {
   cardSessions: Record<string, CardSessionBinding>;
 };
+
+type ProfileMaterializationCacheEntry = {
+  cardRevisionId: string;
+  catalogFingerprint: string;
+  profileFingerprint: string;
+};
+
+const profileMaterializationCache = new Map<string, ProfileMaterializationCacheEntry>();
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function profileStateFingerprint(value: HermesProfileState): string {
+  return createHash('sha256').update(canonicalJson(value)).digest('hex');
+}
+
+function toolCatalogFingerprint(value: Awaited<ReturnType<typeof readToolCatalog>>): string {
+  return createHash('sha256').update(JSON.stringify({
+    state: value.state,
+    tools: value.tools,
+    unavailableFamilies: [...value.unavailableFamilies].sort(),
+    toolFailures: Object.fromEntries(Object.entries(value.toolFailures).sort(([left], [right]) => (
+      left.localeCompare(right)
+    ))),
+  })).digest('hex');
+}
 
 type SessionScope = {
   cwd?: string;
@@ -591,6 +626,7 @@ async function resumeProjectCardSession(args: {
     session_id: stored.sessionId,
     profile: card.profile,
     omit_messages: true,
+    eager_build: true,
     close_on_disconnect: false,
     follow_profile_config: true,
     bot_mode_roster: stored.botModeRoster,
@@ -686,6 +722,7 @@ async function projectSessionCatalog(
   }
   const request = <T>(method: string, params: Record<string, unknown> = {}) => client.request<T>(method, params);
   const toolCatalog = await readToolCatalog();
+  const catalogFingerprint = toolCatalogFingerprint(toolCatalog);
   const provisioned = new Map<string, HermesProfileState>();
   for (const card of requiredCards) {
     await assertHermesProfileOwner(card.profile, ownerUserId);
@@ -697,14 +734,32 @@ async function projectSessionCatalog(
   const profiles = new Map<string, HermesProfileState>();
   for (const card of requiredCards) {
     const profile = card.profile.toLowerCase();
-    profiles.set(profile, await materializeSavedCardProfile(
+    const existingProfile = provisioned.get(profile)!;
+    const existingFingerprint = profileStateFingerprint(existingProfile);
+    const cacheKey = `${ownerUserId}:${profile}`;
+    const cached = profileMaterializationCache.get(cacheKey);
+    if (
+      cached?.cardRevisionId === card.cardRevisionId
+      && cached.catalogFingerprint === catalogFingerprint
+      && cached.profileFingerprint === existingFingerprint
+    ) {
+      profiles.set(profile, existingProfile);
+      continue;
+    }
+    const materialized = await materializeSavedCardProfile(
       request,
       card.card,
       ownerUserId,
-      provisioned.get(profile),
+      existingProfile,
       toolCatalog.tools,
       toolCatalog.unavailableFamilies,
-    ));
+    );
+    profiles.set(profile, materialized);
+    profileMaterializationCache.set(cacheKey, {
+      cardRevisionId: card.cardRevisionId,
+      catalogFingerprint,
+      profileFingerprint: profileStateFingerprint(materialized),
+    });
   }
   const sessions: Record<string, ProjectCardSession> = {};
   for (const card of requiredCards) {

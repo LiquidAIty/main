@@ -895,7 +895,12 @@ async def episode_fulltext_search(
     if fuzzy_query == '':
         return []
 
-    filter_params: dict[str, Any] = {}
+    filter_queries, filter_params = node_search_filter_query_constructor(
+        _search_filter,
+        driver.provider,
+        node_alias='e',
+    )
+    node_filter_query = ''.join(f'\nAND {item}' for item in filter_queries)
     group_filter_query: LiteralString = ''
     if group_ids is not None:
         group_filter_query += '\nAND e.group_id IN $group_ids'
@@ -909,11 +914,15 @@ async def episode_fulltext_search(
                 input_ids.append({'id': r['_source']['uuid'], 'score': r['_score']})
 
             # Match the edge ides and return the values
-            query = """
+            query = (
+                """
                 UNWIND $ids as i
                 MATCH (e:Episodic)
                 WHERE e.uuid=i.uuid
-            RETURN
+                """
+                + node_filter_query
+                + """
+                RETURN
                     e.content AS content,
                     e.created_at AS created_at,
                     e.valid_at AS valid_at,
@@ -925,7 +934,8 @@ async def episode_fulltext_search(
                     e.entity_edges AS entity_edges
                 ORDER BY i.score DESC
                 LIMIT $limit
-            """
+                """
+            )
             records, _, _ = await driver.execute_query(
                 query,
                 ids=input_ids,
@@ -944,6 +954,7 @@ async def episode_fulltext_search(
             MATCH (e:Episodic)
             WHERE e.uuid = episode.uuid
             """
+            + node_filter_query
             + group_filter_query
             + """
             RETURN

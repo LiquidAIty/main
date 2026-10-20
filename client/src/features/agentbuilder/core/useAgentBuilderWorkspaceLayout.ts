@@ -28,7 +28,7 @@ export const COMPANION_MIN_WIDTHS = Object.freeze({
   trading: 520,
   worldsignal: 360,
   worldview: 720,
-  nrgsim: 800,
+  nrgsim: 520,
 });
 
 export function companionMinimumWidth(workspaceView: string): number {

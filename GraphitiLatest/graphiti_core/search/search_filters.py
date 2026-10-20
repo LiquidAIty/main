@@ -86,6 +86,7 @@ def cypher_to_opensearch_operator(op: ComparisonOperator) -> str:
 def node_search_filter_query_constructor(
     filters: SearchFilters,
     provider: GraphProvider,
+    node_alias: str = 'n',
 ) -> tuple[list[str], dict[str, Any]]:
     filter_queries: list[str] = []
     filter_params: dict[str, Any] = {}
@@ -94,11 +95,11 @@ def node_search_filter_query_constructor(
         # Defense-in-depth for model_construct()/other validation bypasses.
         validate_node_labels(filters.node_labels)
         if provider == GraphProvider.KUZU:
-            node_label_filter = 'list_has_all(n.labels, $labels)'
+            node_label_filter = f'list_has_all({node_alias}.labels, $labels)'
             filter_params['labels'] = filters.node_labels
         else:
             node_labels = '|'.join(filters.node_labels)
-            node_label_filter = 'n:' + node_labels
+            node_label_filter = node_alias + ':' + node_labels
         filter_queries.append(node_label_filter)
 
     return filter_queries, filter_params

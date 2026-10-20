@@ -335,7 +335,7 @@ provider-projected attached Thinks or Knows, with KnowGraph as the landing autho
 ThinkGraph remains the left tab and KnowGraph the right tab. Search/Results and a Relevant/Recent switch are
 not current UI. Main/Builder's automatic grounding remains a separate one-result-per-category contract.
 
-One current Know is one atomic `know.v2` Graphiti episode:
+One current Know is one first-class `Episodic:Know` Graphiti object:
 
 ```text
 one verified source URL/redirect + document identity/date + exact evidence passage
@@ -345,14 +345,14 @@ one verified source URL/redirect + document identity/date + exact evidence passa
 = one Know attached to exactly one Entity
 ```
 
-Python rails projects `graphiti.add_memory_to_entity` as that strict model-facing schema, re-fetches a
-public source through bounded verified redirects, rejects hard/soft failure pages, document-identity
-mismatches, absent exact passages and temporary access failures, then canonicalizes the single JSON episode
-and exact resolved URL before invoking Graphiti's queued operation. A deterministic episode UUID makes a
-repeated same-Entity/source/observation submission idempotent; a persisted duplicate is not queued again.
-Historical paired `know.v1` episodes remain explicit legacy reads and are never relabeled as newly verified
-atomic Knows. Only Entities render as Project graph nodes. Thinks, Knows, Graphiti episodes, sources, provider
-references and supporting episode IDs remain attached properties/evidence/provenance.
+The saved KnowGraph root uses Hermes' `grounded-citations` skill over actual `web_search` / `web_extract`
+results: retrieval-time URL registration, exact evidence checked against extracted page text, and the evidence
+verification gate precede an accepted write. Python rails projects `graphiti.add_know` as the strict
+Project-scoped model-facing schema and preserves those citation fields without operating a competing web
+retriever or citation ledger. Graphiti stores the citation on the Know, keeps a plain-text episode for
+extraction and hybrid retrieval, and derives a deterministic local Know UUID plus portable content hash so
+repeated identical intake is idempotent. Only Entities render as Project graph nodes. Thinks, Knows,
+citations, provider references and supporting episode IDs remain attached properties/evidence/provenance.
 
 The unified canvas shows the blue **Think** and orange **Know** visual layers by default. The green **Code**
 layer is hidden and unloaded until explicitly enabled from the graph-design inspector, where it remains marked
@@ -367,9 +367,11 @@ attached Think-and-Know word count from least to most. That transient visual met
 probability, gravity mass, retrieval, or stored graph meaning.
 
 KnowGraph may use selected Thinks only as research framing. Sourced Knows remain Graphiti evidence.
-Its dedicated queued `add_memory_to_entity` path writes one structural `ABOUT` edge to an exact Entity in
-the same Graphiti episode transaction, leaves extraction-owned `MENTIONS` independent, updates Graphiti
-communities by default, and accepts Graphiti Saga continuity. The public generic `add_memory` behavior remains
+Its dedicated queued `add_know` path reuses the exact supplied UUID/name Entity, reuses an exact-name Entity
+when no UUID is supplied, or creates the missing Entity. It then writes one structural `ABOUT` edge, leaves
+extraction-owned `MENTIONS` independent, updates Graphiti communities by default, and accepts Graphiti Saga
+continuity. `get_know` reads the exact UUID returned at intake, `search_knows` reuses Graphiti episode BM25 plus cross-encoder reranking, while
+`get_entity_knows` follows only the exact `ABOUT` attachment. The public generic `add_memory` behavior remains
 unchanged. Quick-Web evidence handoff and a requested-time sorting interaction remain unimplemented and must
 not be described as current.
 
@@ -501,7 +503,7 @@ The vendored Graphiti fork has this bounded additive divergence:
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |
-| `getzep/graphiti` core `0.30.2` / MCP `1.1.0` at `86f1c941bea7bf53fa45fe4e08c03244b4990eee` | `GraphitiLatest/graphiti_core/{edges.py,graphiti.py}`; `graphiti_core/models/edges/edge_db_queries.py`; `driver/kuzu_driver.py`; `utils/{bulk_utils.py,maintenance/node_operations.py}`; `mcp_server/src/{graphiti_mcp_server.py,models/response_types.py,services/queue_service.py}`; exact attachment tests; `apps/python-models/requirements.txt` | Add one structural `ABOUT` edge and one queued `add_memory_to_entity` tool for a caller-declared exact Entity UUID/name. A missing exact Entity may be created in the same Graphiti episode transaction; semantic extraction cannot deduplicate it onto a different Entity. `ABOUT` never substitutes for extraction-owned `MENTIONS`. The dedicated tool preserves Graphiti episode extraction, facts, provenance, temporal fields, community refresh (on by default), Saga continuity, queue ordering, and episode removal. Existing `add_memory`, `add_triplet`, search, community, Saga, and deletion behavior remains available and unchanged. LiquidAIty imports the controlled fork directly instead of maintaining a Graphiti replacement. | Core exact-attachment/atomicity tests and MCP queue/signature/parity tests cover the additive path and ordinary no-attachment behavior. Fork cost is one edge type, optional exact-attachment arguments, and one additive MCP tool suitable for an upstream PR. Rollback removes those additions and returns the Python requirement to upstream Graphiti; existing Entity, episode, fact, Community, and Saga data require no rewrite, while records that rely on `ABOUT` would lose only that new attachment view. |
+| `getzep/graphiti` core `0.30.2` / MCP `1.1.0` at `eaa4128681bc53487138a4bbc22d58336ebe70d2` | `GraphitiLatest/graphiti_core/{knows.py,graphiti.py,graph_queries.py}`; episode-search label filtering in `search/{search_filters.py,search_utils.py}` and Neo4j/FalkorDB/Neptune search operations; `mcp_server/src/{graphiti_mcp_server.py,models/response_types.py,services/queue_service.py}`; MCP/core Know tests and MCP README; MCP-v2 `pyproject.toml` and transport port retained from the repository's prior accepted Graphiti compatibility work | **PURPOSE:** add one first-class, cited `Episodic:Know` that uses ordinary `add_episode` extraction, hybrid episode retrieval, temporal fields, Communities and Saga edges, then adds exactly one caller-owned `ABOUT` Entity attachment while leaving extracted `MENTIONS` independent. Exact UUID/name Entities are reused; an absent Entity is created without fuzzy target substitution. `get_know` reads the exact intake UUID; `search_knows` uses Graphiti BM25 plus cross-encoder reranking; `get_entity_knows` follows exact `ABOUT`. Citation and reasoning are typed node properties and episode content is plain text, never a JSON Know envelope. **EXTERNAL ALTERNATIVE CHECK:** upstream `add_episode` supplies extraction/retrieval/Saga behavior but has no first-class Know type or exact one-Entity attachment, and an application adapter cannot add those provider-owned graph semantics. Existing generic tools and records are unchanged. The product uses Neo4j; the additive Know path explicitly refuses deprecated Kuzu rather than pretending parity. | Focused core tests cover exact Entity reuse/create, plain-text ingestion, one-Entity enforcement, Saga forwarding and filtered hybrid search; MCP tests cover v2 catalog shape, the shared per-group queue and argument parity; Python adapter/UI tests cover verified typed citations, exact reads and display. Loaded Neo4j/agent persistence remains a separate proof tier. Fork cost is one additive model/edge contract, four additive MCP tools, episode-label filtering, and the retained MCP-v2 compatibility port. Rollback removes those additions and returns to upstream episodes without first-class Know retrieval; existing upstream Entity, episode, fact, Community and Saga behavior requires no migration. |
 
 The installed Engraphis runtime and the separately retained browser-renderer fork have these bounded local divergences:
 
@@ -531,12 +533,27 @@ route checks normal Project ownership before forwarding human actions to the sam
 through the existing process-secret boundary. The browser receives neither that secret nor Card
 credentials. No extra agent runtime, MCP host, scheduler or engineering schema is introduced.
 
-The TypeScript product surface is lazily mounted by the existing Agent Builder companion host and
-uses the shared inspector drawer and current authorized `@Card` conversation path. New Building is
-an explicit empty SDK model followed by a requested agent recipe; save/reopen is OSM persistence.
+The TypeScript product surface is lazily mounted behind a pane-local error boundary. It uses the
+shared inspector drawer, graph-paper background and canvas navigation controls. The building tree
+follows the supplied Building Story, Space, Surface and SubSurface relationships; resource groups
+are presentation only. Conversation stays exclusively in the existing Chat window and its authorized
+`@Card` path. New Building creates an empty SDK model without injecting an agent mission; New, Save
+and Open live in the inspector's Model tab. Save/reopen is OSM persistence.
 The current two editable inspector properties have explicit units and authoritative readback.
-The upstream OpenStudio installation is configured by `NRGSIM_OPENSTUDIO_ROOT`, defaulting to the
-existing Desktop NRGSIM reference installation. Upstream SDK/MCP source remains unchanged.
+The Project session's runtime launcher uses the official OpenStudio MCP 1.2.1 Docker package,
+pinned to registry digest `sha256:5c46c32bb4acc8e008c795d51fcc3ad26b51ef858631ba2688ce0a3f935c6601`
+with OpenStudio 3.11.0. It replaces the native Windows MCP subprocess configuration; there is no
+native fallback. Each stdio session mounts only that Project's `inputs` (read-only), `runs`, and
+`measures`, publishes no ports, disables container networking, and retains the upstream sandbox.
+Images must be installed before startup (`--pull never`). `NRGSIM_OPENSTUDIO_ROOT` still selects
+the existing Desktop SDK Python environment for local read-only projection and measure packaging.
+Upstream SDK/MCP source remains unchanged. A coherent application reload is required to activate
+changed Python rails; an isolated dependency proof does not establish loaded application acceptance.
+Editor mutations read back explicit SDK fields from the exact saved OSM projection. Upstream 1.2.1
+`get_object_fields` introspection invokes `Space.unmatchSurfaces()`, so the adapter explicitly refuses
+that tool for Space inspection and points callers to `get_space_details`/`list_spaces`; it does not
+silently substitute a different tool or alter saved grants. Remove that refusal only after an upstream
+read-only implementation is verified to preserve the model's shared-surface relationships.
 
 Direct engineering/persistence proof, loaded transport proof, saved-Card execution, and visual
 acceptance are separate; `PLAN.md` records the still-incomplete first modeling checkpoint.

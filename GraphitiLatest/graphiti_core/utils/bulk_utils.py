@@ -28,18 +28,11 @@ from graphiti_core.driver.driver import (
     GraphDriverSession,
     GraphProvider,
 )
-from graphiti_core.edges import (
-    AboutEdge,
-    Edge,
-    EntityEdge,
-    EpisodicEdge,
-    create_entity_edge_embeddings,
-)
+from graphiti_core.edges import Edge, EntityEdge, EpisodicEdge, create_entity_edge_embeddings
 from graphiti_core.embedder import EmbedderClient
-from graphiti_core.graphiti_types import GraphitiClients, uses_prompt_routing
+from graphiti_core.graphiti_types import GraphitiClients
 from graphiti_core.helpers import normalize_l2, semaphore_gather
 from graphiti_core.models.edges.edge_db_queries import (
-    ABOUT_EDGE_SAVE,
     get_entity_edge_save_bulk_query,
     get_episodic_edge_save_bulk_query,
 )
@@ -139,7 +132,6 @@ async def add_nodes_and_edges_bulk(
     entity_nodes: list[EntityNode],
     entity_edges: list[EntityEdge],
     embedder: EmbedderClient,
-    about_edges: list[AboutEdge] | None = None,
 ):
     session = driver.session()
     try:
@@ -151,7 +143,6 @@ async def add_nodes_and_edges_bulk(
             entity_edges,
             embedder,
             driver=driver,
-            about_edges=about_edges or [],
         )
     finally:
         await session.close()
@@ -164,11 +155,8 @@ async def add_nodes_and_edges_bulk_tx(
     entity_nodes: list[EntityNode],
     entity_edges: list[EntityEdge],
     embedder: EmbedderClient,
-    *,
     driver: GraphDriver,
-    about_edges: list[AboutEdge] | None = None,
 ):
-    about_edges = about_edges or []
     episodes = [dict(episode) for episode in episodic_nodes]
     for episode in episodes:
         episode['source'] = str(episode['source'].value)
@@ -237,15 +225,6 @@ async def add_nodes_and_edges_bulk_tx(
     if driver.graph_operations_interface:
         await driver.graph_operations_interface.episodic_node_save_bulk(None, driver, tx, episodes)
         await driver.graph_operations_interface.node_save_bulk(None, driver, tx, nodes)
-        for edge in about_edges:
-            await tx.run(
-                ABOUT_EDGE_SAVE,
-                episode_uuid=edge.source_node_uuid,
-                entity_uuid=edge.target_node_uuid,
-                uuid=edge.uuid,
-                group_id=edge.group_id,
-                created_at=edge.created_at,
-            )
         await driver.graph_operations_interface.episodic_edge_save_bulk(
             None, driver, tx, [edge.model_dump() for edge in episodic_edges]
         )
@@ -259,15 +238,6 @@ async def add_nodes_and_edges_bulk_tx(
         entity_node_query = get_entity_node_save_bulk_query(driver.provider, nodes)
         for node in nodes:
             await tx.run(entity_node_query, **node)
-        for edge in about_edges:
-            await tx.run(
-                ABOUT_EDGE_SAVE,
-                episode_uuid=edge.source_node_uuid,
-                entity_uuid=edge.target_node_uuid,
-                uuid=edge.uuid,
-                group_id=edge.group_id,
-                created_at=edge.created_at,
-            )
         entity_edge_query = get_entity_edge_save_bulk_query(driver.provider)
         for edge in edges:
             await tx.run(entity_edge_query, **edge)
@@ -280,15 +250,6 @@ async def add_nodes_and_edges_bulk_tx(
             get_entity_node_save_bulk_query(driver.provider, nodes),
             nodes=nodes,
         )
-        for edge in about_edges:
-            await tx.run(
-                ABOUT_EDGE_SAVE,
-                episode_uuid=edge.source_node_uuid,
-                entity_uuid=edge.target_node_uuid,
-                uuid=edge.uuid,
-                group_id=edge.group_id,
-                created_at=edge.created_at,
-            )
         await tx.run(
             get_episodic_edge_save_bulk_query(driver.provider),
             episodic_edges=[edge.model_dump() for edge in episodic_edges],
@@ -579,7 +540,6 @@ async def dedupe_edges_bulk(
 
             dedupe_tuples.append((episode_tuples[i][0], edge, candidates))
 
-    resolver_kwargs = {'clients': clients} if uses_prompt_routing(clients) else {}
     bulk_edge_resolutions: list[
         tuple[EntityEdge, EntityEdge, list[EntityEdge]]
     ] = await semaphore_gather(
@@ -591,7 +551,6 @@ async def dedupe_edges_bulk(
                 candidates,
                 episode,
                 edge_types,
-                **resolver_kwargs,
             )
             for episode, edge, candidates in dedupe_tuples
         ]

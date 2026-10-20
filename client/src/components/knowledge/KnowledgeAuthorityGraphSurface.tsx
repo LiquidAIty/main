@@ -1225,36 +1225,23 @@ export function KnowledgeGraphProjectionSurface({
     ? evidenceRecords.flatMap((item): KnowInspectorRecord[] => {
         const episodeId = knowEvidenceIdentity(item);
         if (!episodeId) return [];
-        const idea = item.idea && typeof item.idea === 'object' && !Array.isArray(item.idea)
-          ? item.idea as Record<string, unknown>
-          : {};
-        const counterIdea = item.counterIdea
-          && typeof item.counterIdea === 'object'
-          && !Array.isArray(item.counterIdea)
-          ? item.counterIdea as Record<string, unknown>
-          : {};
-        const ideaBody = typeof idea.body === 'string' ? idea.body.trim() : '';
-        const counterBody = typeof counterIdea.body === 'string'
-          ? counterIdea.body.trim()
-          : '';
         const observation = typeof item.observation === 'string'
           ? item.observation.trim()
           : '';
         const interpretation = typeof item.interpretation === 'string'
           ? item.interpretation.trim()
           : '';
-        const source = item.source
-          && typeof item.source === 'object'
-          && !Array.isArray(item.source)
-          ? item.source as Record<string, unknown>
+        const citation = item.citation
+          && typeof item.citation === 'object'
+          && !Array.isArray(item.citation)
+          ? item.citation as Record<string, unknown>
           : {};
         const direction = item.direction
           && typeof item.direction === 'object'
           && !Array.isArray(item.direction)
           ? item.direction as Record<string, unknown>
           : {};
-        const atomic = item.schemaVersion === 'know.v2' || Boolean(observation);
-        if (atomic ? !observation || !interpretation : !ideaBody && !counterBody) return [];
+        if (!observation || !interpretation || !Object.keys(citation).length) return [];
         const properties = item.properties
           && typeof item.properties === 'object'
           && !Array.isArray(item.properties)
@@ -1264,27 +1251,21 @@ export function KnowledgeGraphProjectionSurface({
           episodeId,
           know: {
             title: String(item.title || properties.name || 'Know'),
-            schemaVersion: String(item.schemaVersion || (atomic ? 'know.v2' : 'know.v1')),
-            ...(atomic ? {
-              observation,
-              interpretation,
-              source,
-              ...(Object.keys(direction).length ? { direction } : {}),
-            } : {
-              legacy: true,
-              idea,
-              counterIdea,
-            }),
+            kind: 'Know',
+            observation,
+            interpretation,
+            citation,
+            ...(Object.keys(direction).length ? { direction } : {}),
             observedAt: item.ingestedAt ?? properties.created_at,
             sourceDate: item.validFrom ?? properties.valid_at,
           },
           episode: { ...properties, ...item },
         }];
       }).sort((left, right) => {
-          const leftTime = graphEntryTime(left.know.observedAt)?.dateTime || '';
-          const rightTime = graphEntryTime(right.know.observedAt)?.dateTime || '';
-          return rightTime.localeCompare(leftTime) || left.episodeId.localeCompare(right.episodeId);
-        })
+        const leftTime = graphEntryTime(left.know.observedAt)?.dateTime || '';
+        const rightTime = graphEntryTime(right.know.observedAt)?.dateTime || '';
+        return rightTime.localeCompare(leftTime) || left.episodeId.localeCompare(right.episodeId);
+      })
     : [];
   const visibleKnowItems = directKnowItems.slice(0, INSPECTOR_RECORD_LIMIT);
   const jev = selectedEdge?.properties?.jev

@@ -115,6 +115,27 @@ describe('knowledge authority graph surfaces', () => {
     edges: [],
   });
 
+  const knowRecord = (
+    episodeId: string,
+    title: string,
+    observation: string,
+    url: string,
+  ) => ({
+    id: episodeId,
+    graphitiEpisodeId: episodeId,
+    graphitiEntityId: `entity-${episodeId}`,
+    kind: 'Know',
+    title,
+    observation,
+    interpretation: 'Bounded interpretation.',
+    citation: {
+      url,
+      title: `${title} source`,
+      publisher: 'Example',
+      evidence: `${observation} Exact source passage.`,
+    },
+  });
+
   const codeProps = (projection: GraphProjectionV1 = emptyCode()) => ({
     codeGraph: {
       projection,
@@ -247,17 +268,9 @@ describe('knowledge authority graph surfaces', () => {
       ...empty('knowgraph'),
       nodes: [
         { id: 'know-shared', label: 'Shared', properties: { evidence: [{
-          id: 'episode-1',
-          graphitiEpisodeId: 'episode-1',
-          title: 'Know',
-          idea: {
-            body: 'Direct sourced Know.',
-            citations: [{ url: 'https://example.com/source', title: 'Source' }],
-          },
-          counterIdea: {
-            body: 'A material counterpoint.',
-            citations: [{ url: 'https://example.com/source', title: 'Source' }],
-          },
+          ...knowRecord(
+            'episode-1', 'Know', 'Direct sourced Know.', 'https://example.com/source',
+          ),
           ingestedAt: '2026-10-03T12:30:00Z',
         }] } },
         { id: 'know-target', label: 'Target', properties: {} },
@@ -295,7 +308,7 @@ describe('knowledge authority graph surfaces', () => {
       .toContain('Direct sourced Know.');
     expect(screen.getAllByRole('link').some(link => (
       link.getAttribute('href') === 'https://example.com/source'
-      && link.textContent?.includes('Source')
+      && link.textContent?.includes('Know source')
     ))).toBe(true);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     fireEvent.click(screen.getByRole('button', { name: 'Delete record' }));
@@ -322,21 +335,18 @@ describe('knowledge authority graph surfaces', () => {
     const know = {
       ...empty('knowgraph'),
       nodes: [
-        { id: 'know-a', label: 'Joined A', properties: { evidence: [{
-          id: 'know-a-episode', graphitiEpisodeId: 'know-a-episode', title: 'Know A',
-          idea: { body: 'Know A.', citations: [{ url: 'https://example.test/a' }] },
-          counterIdea: { body: 'Counter A.', citations: [{ url: 'https://example.test/a-counter' }] },
-        }] } },
-        { id: 'know-b', label: 'Joined B', properties: { evidence: [{
-          id: 'know-b-episode', graphitiEpisodeId: 'know-b-episode', title: 'Know B',
-          idea: { body: 'Know B.', citations: [{ url: 'https://example.test/b' }] },
-          counterIdea: { body: 'Counter B.', citations: [{ url: 'https://example.test/b-counter' }] },
-        }] } },
-        { id: 'know-only', label: 'Know only', properties: { evidence: [{
-          id: 'know-only-episode', graphitiEpisodeId: 'know-only-episode', title: 'Know only',
-          idea: { body: 'Know only record.', citations: [{ url: 'https://example.test/only' }] },
-          counterIdea: { body: 'Counter only.', citations: [{ url: 'https://example.test/only-counter' }] },
-        }] } },
+        { id: 'know-a', label: 'Joined A', properties: { evidence: [
+          knowRecord('know-a-episode', 'Know A', 'Know A.', 'https://example.test/a'),
+        ] } },
+        { id: 'know-b', label: 'Joined B', properties: { evidence: [
+          knowRecord('know-b-episode', 'Know B', 'Know B.', 'https://example.test/b'),
+        ] } },
+        { id: 'know-only', label: 'Know only', properties: { evidence: [
+          knowRecord(
+            'know-only-episode', 'Know only', 'Know only record.',
+            'https://example.test/only',
+          ),
+        ] } },
         { id: 'target-a', label: 'Target A', properties: {} },
         { id: 'target-b', label: 'Target B', properties: {} },
         { id: 'target-only', label: 'Target only', properties: {} },
@@ -1285,25 +1295,31 @@ describe('knowledge authority graph surfaces', () => {
       ...empty('knowgraph'),
       nodes: [
         { id: 'company', label: 'Rocket Lab', mentionCount: 1, properties: { evidence: [{
-          id: 'episode-company',
-          graphitiEpisodeId: 'episode-company',
-          title: 'Rocket Lab market Know',
-          idea: {
-            body: 'Rocket Lab participates in the launch market.',
-            detail: 'The filing reports participation without resolving long-term market share.',
-            citations: [{
-              url: 'https://www.sec.gov/Archives/rocket-lab-10-k',
-              title: 'SEC filing',
-              supports: 'Supports the reported participation.',
-            }],
+          ...knowRecord(
+            'episode-company',
+            'Rocket Lab market Know',
+            'Rocket Lab participates in the launch market.',
+            'https://www.sec.gov/Archives/rocket-lab-10-k',
+          ),
+          interpretation: 'The filing reports participation without resolving long-term market share.',
+          citation: {
+            url: 'https://www.sec.gov/Archives/rocket-lab-10-k',
+            title: 'SEC filing',
+            publisher: 'SEC',
+            evidence: 'The filing reports Rocket Lab participation in the launch market.',
           },
-          counterIdea: {
-            body: 'Participation does not establish durable market power.',
-            citations: [{
-              url: 'https://investors.rocketlabcorp.com/risk-factors',
-              title: 'Risk factors',
-              supports: 'Supports the competitive-risk counterpoint.',
-            }],
+        }, {
+          ...knowRecord(
+            'episode-company-risk',
+            'Rocket Lab risk Know',
+            'Participation does not establish durable market power.',
+            'https://investors.rocketlabcorp.com/risk-factors',
+          ),
+          citation: {
+            url: 'https://investors.rocketlabcorp.com/risk-factors',
+            title: 'Risk factors',
+            publisher: 'Rocket Lab',
+            evidence: 'The company describes material competitive risks.',
           },
         }] } },
         { id: 'market', label: 'Launch market', mentionCount: 1, properties: {} },
@@ -1326,15 +1342,12 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.getAllByRole('link', { name: /SEC filing/ }).some(link => (
       link.getAttribute('href') === 'https://www.sec.gov/Archives/rocket-lab-10-k'
     ))).toBe(true);
-    const forSide = screen.getByText('Supporting record').parentElement!;
-    const againstSide = screen.getByText('Counter record').parentElement!;
-    expect(forSide.textContent).toContain('Supports the reported participation.');
-    expect(forSide.textContent).not.toContain('Supports the competitive-risk counterpoint.');
-    expect(againstSide.textContent).toContain('Supports the competitive-risk counterpoint.');
-    expect(againstSide.querySelector('a')?.getAttribute('href'))
-      .toBe('https://investors.rocketlabcorp.com/risk-factors');
-    expect(screen.getByText('More').parentElement?.textContent)
-      .toContain('without resolving long-term market share');
+    expect(screen.getByText('Participation does not establish durable market power.')).toBeTruthy();
+    expect(screen.getAllByRole('link', { name: /Risk factors/ }).some(link => (
+      link.getAttribute('href') === 'https://investors.rocketlabcorp.com/risk-factors'
+    ))).toBe(true);
+    expect(screen.getByText('The filing reports participation without resolving long-term market share.'))
+      .toBeTruthy();
     expect(screen.queryByRole('link', { name: 'example.org' })).toBeNull();
   });
 
@@ -1342,25 +1355,32 @@ describe('knowledge authority graph surfaces', () => {
     const paragraph = 'Across the latest four reported quarters, Rocket Lab disclosed completed launch '
       + 'activity and total revenue growth, but the official releases did not provide mission-level '
       + 'launch-services revenue attribution sufficient to prove the proposed cadence thesis.';
-    const packageUrls = [
-      'https://investors.rocketlabcorp.com/news/third-quarter-2025-results',
-      'https://investors.rocketlabcorp.com/news/fourth-quarter-2025-results',
-      'https://investors.rocketlabcorp.com/news/third-quarter-2025-results',
-    ];
+    const firstUrl = 'https://investors.rocketlabcorp.com/news/third-quarter-2025-results';
+    const secondUrl = 'https://investors.rocketlabcorp.com/news/fourth-quarter-2025-results';
     const projection = {
       ...empty('knowgraph'),
       nodes: [
         { id: 'company', label: 'Rocket Lab', properties: { evidence: [
           {
-            id: 'episode-one', graphitiEpisodeId: 'episode-one', title: 'Know one',
-            idea: { body: paragraph, citations: packageUrls.map(url => ({ url })) },
-            counterIdea: { body: 'Counterpoint one.', citations: packageUrls.map(url => ({ url })) },
+            ...knowRecord('episode-one', 'Know one', paragraph, firstUrl),
+            citation: {
+              url: firstUrl,
+              title: 'Third quarter 2025 results',
+              publisher: 'Rocket Lab',
+              evidence: 'Exact third-quarter evidence.',
+            },
             ingestedAt: '2026-10-03T12:03:00Z',
           },
           {
-            id: 'episode-two', graphitiEpisodeId: 'episode-two', title: 'Know two',
-            idea: { body: 'Second complete current Know.', citations: packageUrls.map(url => ({ url })) },
-            counterIdea: { body: 'Counterpoint two.', citations: packageUrls.map(url => ({ url })) },
+            ...knowRecord(
+              'episode-two', 'Know two', 'Second complete current Know.', secondUrl,
+            ),
+            citation: {
+              url: secondUrl,
+              title: 'Fourth quarter 2025 results',
+              publisher: 'Rocket Lab',
+              evidence: 'Exact fourth-quarter evidence.',
+            },
             ingestedAt: '2026-10-03T12:02:00Z',
           },
         ] } },
@@ -1394,7 +1414,7 @@ describe('knowledge authority graph surfaces', () => {
     ]);
     expect(sourceList.textContent).toContain('Third quarter 2025 results');
     expect(sourceList.textContent).toContain('Fourth quarter 2025 results');
-    expect(sourceList.textContent).toContain('investors.rocketlabcorp.com');
+    expect(sourceList.textContent).toContain('Rocket Lab');
   });
 
   it.each(['thinkgraph', 'knowgraph'] as const)('opens a compact movable %s inspector and preserves graph settings without exposing record plumbing', async authority => {
@@ -1411,13 +1431,10 @@ describe('knowledge authority graph surfaces', () => {
       : { ...empty(authority), nodes: [
         { id: 'provider-1', label: 'Recorded subject',
           properties: { evidence: [{
-            id: 'episode-one', graphitiEpisodeId: 'episode-one', title: 'Recorded Know',
-            idea: { body: 'The complete original statement.', citations: [
-              { url: 'https://example.test/support', title: 'Supporting source' },
-            ] },
-            counterIdea: { body: 'The complete counter statement.', citations: [
-              { url: 'https://example.test/counter', title: 'Counter source' },
-            ] },
+            ...knowRecord(
+              'episode-one', 'Recorded Know', 'The complete original statement.',
+              'https://example.test/support',
+            ),
           }] } },
         { id: 'provider-target', label: 'Recorded target' },
       ], edges: [{

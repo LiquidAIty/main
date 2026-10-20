@@ -79,16 +79,21 @@ not create a second Run or a second completed pair.
 ### KnowGraph
 
 KnowGraph has Hermes Web plus its saved Graphiti read/write corridor. A deliberately supplied Think is
-framing, not evidence. Useful sourced findings enter Graphiti through Graphiti's queued
-`add_memory_to_entity`, which binds the episode to one exact Entity through `ABOUT`, leaves extracted
-`MENTIONS` independent, updates Graphiti communities by default, and may associate the continuing research
-thread with one Saga. One current Know is one atomic `know.v2` episode with one verified source document,
-one exact evidence passage, one self-contained observation, one separate bounded interpretation and optional
-direction relative to an explicit proposition. Supporting-only, challenging-only and neutral findings are
-valid. Distinct sources remain distinct Knows, including several attached to the same Entity; deterministic
-identity prevents repeated copies of the same source-backed observation. Historical paired `know.v1`
-records remain readable as explicit legacy records. Python rails verifies document identity, redirects,
-dates and exact passage presence before encoding the current structure for the unchanged Graphiti queue.
+framing, not evidence. Useful sourced findings enter Graphiti through Graphiti's queued `add_know`, which
+creates one first-class `Episodic:Know`, reuses an exact supplied or exact-name Entity when present and creates
+that Entity otherwise, records one exact `ABOUT` attachment, leaves extracted `MENTIONS` independent, updates
+Graphiti communities by default, and may associate the continuing research thread with one Saga. One Know has
+one verified source document, one exact evidence passage, one self-contained observation, one separate bounded
+interpretation and optional direction relative to an explicit proposition. Its typed citation properties and
+plain-text episode content remain inspectable and searchable through Graphiti. Supporting-only,
+challenging-only and neutral findings are valid. Distinct sources remain distinct Knows, including several
+attached to the same Entity; deterministic content identity prevents repeated copies of the same sourced Know.
+Hermes `grounded-citations` verifies the research chain from actual retrieval through exact extracted-page
+evidence before the KnowGraph root sends the typed citation to the unchanged Graphiti per-group processing
+queue. Python rails preserves Project scope and typed citation transport; it does not operate a second web
+retrieval or citation ledger.
+The acceptance receipt supplies the deterministic Know UUID and content hash without claiming persistence;
+`get_know` provides the exact readback used to establish materialization.
 The source-default KnowGraph Card uses Sol; ThinkGraph remains Luna. Queue acceptance does not prove
 materialization.
 

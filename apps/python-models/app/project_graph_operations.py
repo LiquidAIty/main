@@ -215,39 +215,15 @@ def project_graph_operation_definitions(
         "required": ["engraphisMemoryId", "engraphisEntityId", "body"],
         "additionalProperties": False,
     }
-    citation = {
-        "type": "object",
-        "properties": {
-            "url": {"type": "string", "minLength": 1},
-            "title": {"type": "string"},
-            "publisher": {"type": "string"},
-            "locator": {"type": "string"},
-            "supports": {"type": "string"},
-        },
-        "required": ["url"],
-        "additionalProperties": False,
-    }
-    know_side = {
-        "type": "object",
-        "properties": {
-            "body": {"type": "string", "minLength": 1},
-            "detail": {"type": "string", "minLength": 1},
-            "citations": {
-                "type": "array", "minItems": 1, "items": citation,
-            },
-        },
-        "required": ["body", "citations"],
-        "additionalProperties": False,
-    }
     know_record_common = {
         "graphitiEpisodeId": {"type": "string", "minLength": 1},
         "graphitiEntityId": {"type": "string", "minLength": 1},
-        "schemaVersion": {"type": "string"},
+        "kind": {"const": "Know"},
         "validFrom": {}, "ingestedAt": {},
         "relevance": {"type": "number", "minimum": 0, "maximum": 1},
         "relevanceRank": {"type": "integer", "minimum": 1, "maximum": 12},
     }
-    atomic_source = {
+    know_citation = {
         "type": "object",
         "properties": {
             "url": {"type": "string", "minLength": 1},
@@ -265,7 +241,7 @@ def project_graph_operation_definitions(
         "required": ["url", "title", "publisher", "evidence"],
         "additionalProperties": False,
     }
-    atomic_direction = {
+    know_direction = {
         "type": "object",
         "properties": {
             "proposition": {"type": "string", "minLength": 1},
@@ -277,39 +253,22 @@ def project_graph_operation_definitions(
         "required": ["proposition", "relation"],
         "additionalProperties": False,
     }
-    atomic_know_record = {
+    know_record = {
         "type": "object",
         "properties": {
             **know_record_common,
-            "schemaVersion": {"const": "know.v2"},
             "observation": {"type": "string", "minLength": 1},
             "interpretation": {"type": "string", "minLength": 1},
-            "source": atomic_source,
-            "direction": atomic_direction,
-            "dedupeKey": {"type": "string", "minLength": 1},
+            "citation": know_citation,
+            "direction": know_direction,
+            "contentHash": {"type": "string", "minLength": 1},
         },
         "required": [
-            "graphitiEpisodeId", "graphitiEntityId", "schemaVersion",
-            "observation", "interpretation", "source",
+            "graphitiEpisodeId", "graphitiEntityId", "kind",
+            "observation", "interpretation", "citation",
         ],
         "additionalProperties": False,
     }
-    legacy_know_record = {
-        "type": "object",
-        "properties": {
-            **know_record_common,
-            "schemaVersion": {"const": "know.v1"},
-            "legacy": {"const": True},
-            "idea": know_side,
-            "counterIdea": know_side,
-        },
-        "required": [
-            "graphitiEpisodeId", "graphitiEntityId", "schemaVersion",
-            "legacy", "idea", "counterIdea",
-        ],
-        "additionalProperties": False,
-    }
-    know_record = {"oneOf": [atomic_know_record, legacy_know_record]}
 
     def selection_schema(record_schema: dict[str, Any]) -> dict[str, Any]:
         return {

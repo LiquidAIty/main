@@ -420,7 +420,7 @@ class NeptuneSearchOperations(SearchOperations):
         self,
         executor: QueryExecutor,
         query: str,
-        search_filter: SearchFilters,  # noqa: ARG002
+        search_filter: SearchFilters,
         group_ids: list[str] | None = None,
         limit: int = 10,
     ) -> list[EpisodicNode]:
@@ -435,11 +435,26 @@ class NeptuneSearchOperations(SearchOperations):
         for r in res['hits']['hits']:
             input_ids.append({'id': r['_source']['uuid'], 'score': r['_score']})
 
+        filter_queries, filter_params = node_search_filter_query_constructor(
+            search_filter,
+            GraphProvider.NEPTUNE,
+            node_alias='e',
+        )
+        node_filter_query = ''.join(f'\nAND {item}' for item in filter_queries)
+        group_filter_query = ''
+        if group_ids is not None:
+            group_filter_query = '\nAND e.group_id IN $group_ids'
+            filter_params['group_ids'] = group_ids
+
         cypher = (
             """
             UNWIND $ids as i
             MATCH (e:Episodic)
             WHERE e.uuid=i.id
+            """
+            + node_filter_query
+            + group_filter_query
+            + """
             RETURN
             """
             + EPISODIC_NODE_RETURN_NEPTUNE
@@ -453,6 +468,7 @@ class NeptuneSearchOperations(SearchOperations):
             cypher,
             ids=input_ids,
             limit=limit,
+            **filter_params,
         )
 
         return [episodic_node_from_record(r) for r in records]
