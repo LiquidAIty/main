@@ -4,8 +4,6 @@
  *
  * Entity: WorldView
  * Relationship: Bundles the controlled WorldView mount, scopes its styles to the owning pane, and proxies its loopback provider surface.
- * Entity: Building Viewport
- * Relationship: Resolves Pascal's optional public environment inputs at build time without exposing a Node process or server environment in the browser.
  */
 
 import { defineConfig, loadEnv, type Plugin } from 'vite';
@@ -194,10 +192,6 @@ export default defineConfig(({ mode, command }) => {
       }),
     ],
     define: {
-      // Pascal publishes Next-style optional public inputs. Keep them unset so
-      // its documented defaults apply; never shim or serialize process.env.
-      'process.env.NEXT_PUBLIC_ASSETS_CDN_URL': 'undefined',
-      'process.env.NEXT_PUBLIC_SUPABASE_URL': 'undefined',
       'import.meta.env.GOOGLE_MAPS_API_KEY': JSON.stringify(googleMapsApiKey),
       'import.meta.env.CESIUM_ION_TOKEN': JSON.stringify(cesiumIonToken),
     },

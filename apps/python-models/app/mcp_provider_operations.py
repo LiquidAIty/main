@@ -35,7 +35,7 @@ PROVIDER_PREFIXES = {
     "cbm": "cbm.",
     "graphiti": "graphiti.",
 }
-PROVIDER_FAMILIES = (*PROVIDER_PREFIXES, "openstudio")
+PROVIDER_FAMILIES = tuple(PROVIDER_PREFIXES)
 _CARD_CATALOG_PROVIDER_TOOL_NAMES = {
     "cbm": frozenset({
         "check_index_coverage",
@@ -146,10 +146,7 @@ async def _entity_know_provider_arguments(
 
 
 def is_provider_operation_name(name: str) -> bool:
-    definition = operation_definition(name)
-    return name.startswith((*PROVIDER_PREFIXES.values(), "engraphis_")) or bool(
-        definition and definition.external_source_id == "openstudio"
-    )
+    return name.startswith((*PROVIDER_PREFIXES.values(), "engraphis_"))
 
 
 def belongs_to_provider(name: str, family: str) -> bool:

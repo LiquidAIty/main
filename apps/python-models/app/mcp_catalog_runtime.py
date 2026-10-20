@@ -378,8 +378,6 @@ def reset_catalog_lifecycle() -> None:
     # clients have closed so a later lifespan must rediscover exact live tools.
     mcp_provider_operations.register_cbm_catalog([])
     mcp_provider_operations.register_graphiti_catalog([])
-    from app.mcp_openstudio_provider import register_tools
-    register_tools([])
     with _CATALOG_DIAGNOSTIC_LOCK:
         _CATALOG_STATE = "initializing"
         _CATALOG_FAILURE = None

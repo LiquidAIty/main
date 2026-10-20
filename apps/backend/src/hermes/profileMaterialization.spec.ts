@@ -249,7 +249,7 @@ describe('Hermes profile owner and request-context materialization', () => {
     expect(mutation).not.toHaveBeenCalled();
   });
 
-  it('clears Team mode from KnowGraph and materializes it only for the saved Team identity', async () => {
+  it('materializes AutoTeam mode only for the saved KnowGraph and Team identities', async () => {
     const ownerRef = createHash('sha256').update('user-owner-one').digest('hex');
     const knowCard: DeckCard = {
       ...card,
@@ -278,7 +278,7 @@ describe('Hermes profile owner and request-context materialization', () => {
       name: 'knowgraph',
       soul: 'Saved KnowGraph prompt',
       mcp_servers: [],
-      task_mode: 'team',
+      task_mode: null,
       ui_meta: {
         'hermes-bots': {
           title: 'KnowGraph',
@@ -314,11 +314,11 @@ describe('Hermes profile owner and request-context materialization', () => {
       [],
     );
 
-    expect(result.task_mode).toBeNull();
+    expect(result.task_mode).toBe('team');
     expect(configured).toHaveLength(1);
     expect(configured[0]).toMatchObject({
       name: 'knowgraph',
-      task_mode: null,
+      task_mode: 'team',
     });
     expect(configured[0]).not.toHaveProperty('enabled_toolsets');
 
@@ -357,6 +357,43 @@ describe('Hermes profile owner and request-context materialization', () => {
     expect(configured[0]).toMatchObject({
       name: 'team',
       task_mode: 'team',
+    });
+
+    current = {
+      ...current,
+      name: 'builder',
+      soul: 'Saved Builder prompt',
+      task_mode: 'team',
+      ui_meta: {
+        'hermes-bots': {
+          title: 'Builder',
+          owner_ref: ownerRef,
+          owner_scoped: true,
+        },
+      },
+    };
+    configured.length = 0;
+
+    const ordinaryCard: DeckCard = {
+      ...card,
+      runtimeOptions: {
+        ...card.runtimeOptions,
+        tools: [],
+      },
+    };
+    const ordinaryResult = await materializeSavedCardProfile(
+      request,
+      ordinaryCard,
+      'user-owner-one',
+      current,
+      [],
+    );
+
+    expect(ordinaryResult.task_mode).toBeNull();
+    expect(configured).toHaveLength(1);
+    expect(configured[0]).toMatchObject({
+      name: 'builder',
+      task_mode: null,
     });
   });
 

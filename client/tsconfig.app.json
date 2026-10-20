@@ -38,8 +38,6 @@
     "vitest.config.mts"
   ],
   "include": [
-    "../agent-products/nrgsim/ui/**/*.ts",
-    "../agent-products/nrgsim/ui/**/*.tsx",
     "src/**/*.js",
     "src/**/*.jsx",
     "src/**/*.ts",

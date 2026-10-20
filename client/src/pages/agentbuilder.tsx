@@ -38,7 +38,6 @@ import {
   type CanonicalEntityFocusTarget,
 } from '../components/builder/canonicalEntityLinks';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
-import ModelWorkspaceBoundary from '../../../agent-products/nrgsim/ui/ModelWorkspaceBoundary';
 import WorldSignalSurface, {
   type WorldSignalsInspectorBridge,
   type WorldSignalsInspectorSection,
@@ -123,7 +122,6 @@ type SavedCardChoice = {
 };
 
 const loadCardEditor = () => import('../components/CardEditor');
-const ModelWorkspace = lazy(() => import('../../../agent-products/nrgsim/ui/ModelWorkspace'));
 const CardEditor = lazy(async () => {
   const mod = await loadCardEditor();
   return { default: mod.CardEditor };
@@ -260,12 +258,10 @@ export default function AgentBuilder(): React.ReactElement {
     | 'trading'
     | 'worldsignal'
     | 'worldview'
-    | 'nrgsim'
   >(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('workspace') === 'knowledge') return 'knowledge';
     if (params.get('workspace') === 'worldview') return 'worldview';
-    if (params.get('workspace') === 'nrgsim') return 'nrgsim';
     return params.get('projectId') ? 'canvas' : 'chat';
   });
   // Left-rail camera focus: carries a requested pan/zoom-to-fit to BuilderCanvas;
@@ -504,10 +500,6 @@ export default function AgentBuilder(): React.ReactElement {
     deckRevision,
     prepareRunImages,
     onMainRunCompleted: knowledgeGraphs.refreshAfterMainRun,
-  });
-  const modelingAgents = addressableAgents.filter((agent) => {
-    const tools = deck.nodes.find((card) => card.id === agent.cardId)?.runtimeOptions?.tools;
-    return Array.isArray(tools) && tools.includes('get_model_summary');
   });
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
@@ -1518,13 +1510,6 @@ export default function AgentBuilder(): React.ReactElement {
       onOpenAddAgent={handleOpenSavedCardChooser}
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
-      onShowModelingWorkspace={modelingAgents.length ? async () => {
-        if (!(await closeInspectorDrawer())) return;
-        setWorkspaceView('nrgsim');
-        const params = new URLSearchParams(window.location.search);
-        params.set('workspace', 'nrgsim');
-        window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
-      } : undefined}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
     />
   );
@@ -1532,12 +1517,6 @@ export default function AgentBuilder(): React.ReactElement {
   const workspaceCompanionSurfaceHost = (
     <CompanionSurfaceHost
       workspaceView={workspaceView}
-      nrgsimSurface={modelingAgents.length ? <ModelWorkspaceBoundary key={canvasProjectId}>
-        <Suspense fallback={null}>
-          <ModelWorkspace projectId={canvasProjectId || null}
-            agentBusy={sessionActive || sessionConnecting} />
-        </Suspense>
-      </ModelWorkspaceBoundary> : null}
       knowledgeSurface={
         renderKnowledgeGraphSurface({
           minHeight: 420,

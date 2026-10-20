@@ -135,9 +135,6 @@ def requested_provider_families() -> tuple[str, ...]:
 
 
 async def discover_provider_tools(provider: str) -> list[Tool]:
-    if provider == "openstudio":
-        from app.mcp_openstudio_provider import discover_tools
-        return await discover_tools()
     return (
         await mcp_cbm_provider.cbm_tools()
         if provider == "cbm"
@@ -152,9 +149,6 @@ def provider_unavailability(provider: str, tools: list[Tool]) -> dict[str, Any] 
 
 
 def project_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
-    if provider == "openstudio":
-        from app.mcp_openstudio_provider import register_tools
-        return register_tools(tools)
     namespaced = mcp_provider_operations.namespace_provider_tools(provider, tools)
     if provider == "cbm":
         mcp_provider_operations.register_cbm_catalog(namespaced)

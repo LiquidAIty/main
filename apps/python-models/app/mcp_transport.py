@@ -20,7 +20,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from app import mcp_auth, mcp_catalog_runtime, mcp_cbm_provider, mcp_graphiti_provider, mcp_observability, mcp_provider_operations
-from app import mcp_openstudio_provider
 from mcp.server.lowlevel.server import Server
 from mcp.server.stdio import stdio_server
 
@@ -65,7 +64,6 @@ async def run_stdio(server: Server, implementation_version: str) -> None:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())
     finally:
-        await mcp_openstudio_provider.close()
         await mcp_graphiti_provider.close_graphiti()
         await mcp_cbm_provider.close_cbm()
         mcp_catalog_runtime.reset_catalog_lifecycle()
@@ -252,7 +250,6 @@ async def run_streamable_http(
                     await catalog_task
                 except asyncio.CancelledError:
                     pass
-            await mcp_openstudio_provider.close()
             await mcp_graphiti_provider.close_graphiti()
             await mcp_cbm_provider.close_cbm()
             mcp_catalog_runtime.reset_catalog_lifecycle()
@@ -284,8 +281,6 @@ async def run_streamable_http(
         )
 
     health_routes = [
-        Route("/_internal/nrgsim/{project_id}/{action}",
-              endpoint=mcp_openstudio_provider.human_endpoint, methods=["GET", "POST"]),
         Route("/health", endpoint=health_endpoint, methods=["GET"]),
         Route("/health/catalog", endpoint=readiness_endpoint, methods=["GET"]),
         Route("/health/ready", endpoint=readiness_endpoint, methods=["GET"]),

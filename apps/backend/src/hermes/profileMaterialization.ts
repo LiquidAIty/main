@@ -9,8 +9,8 @@
  * Relationship: This file configures the profile-owned LiquidAIty MCP connection with the fixed public host, OAuth contract, profile header, and exact selected tool filter.
  * Entity: Bot Mode Delegation
  * Relationship: This file derives a Card's direct Bot roster only from its enabled outbound orange flow edges and never from blue Magnetic membership.
- * Entity: Team
- * Relationship: This file assigns Hermes Team task mode only to the saved Team Card and clears that mode from every other profile.
+ * Entity: AutoTeam
+ * Relationship: This file assigns Hermes Team task mode only to the saved Team and KnowGraph Cards and clears that mode from every other profile.
  * Entity: Authentication
  * Relationship: This file claims and verifies one hashed owner reference before any reusable profile mutation can occur.
  * Entity: Credentials
@@ -53,7 +53,7 @@ export type HermesProfileState = {
 
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ESSENTIAL_SKILLS = new Set(['hermes-agent']);
-const TEAM_CARD_IDS = new Set(['card_team']);
+const TEAM_CARD_IDS = new Set(['card_team', 'card_knowgraph']);
 const CARD_PROFILE_MCP_SERVER = 'liquidaity';
 const PROFILE_OWNER_META_KEY = 'hermes-bots';
 

@@ -125,7 +125,9 @@ describe('backend-owned default Project deck', () => {
       ]),
       toolsets: ['web'],
     });
-    expect(byId.get('card_knowgraph')?.runtimeOptions?.skills).toBeUndefined();
+    expect(byId.get('card_knowgraph')?.runtimeOptions?.skills).toEqual([
+      'grounded-citations',
+    ]);
     expect(byId.get('card_knowgraph')?.prompt).toContain(
       'One Know is one first-class durable Graphiti object',
     );

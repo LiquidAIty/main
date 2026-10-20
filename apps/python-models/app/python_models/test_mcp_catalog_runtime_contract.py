@@ -22,7 +22,6 @@ from app import (
     mcp_cbm_provider,
     mcp_graphiti_provider,
     mcp_observability,
-    mcp_openstudio_provider,
 )
 
 
@@ -227,12 +226,10 @@ def test_catalog_lifecycle_reset_clears_frozen_and_provider_state(monkeypatch):
         "register_graphiti_catalog",
         lambda tools: cleared.append(("graphiti", list(tools))),
     )
-    monkeypatch.setattr(mcp_openstudio_provider, "register_tools",
-                        lambda tools: cleared.append(("openstudio", list(tools))))
 
     mcp_catalog_runtime.reset_catalog_lifecycle()
 
-    assert cleared == [("cbm", []), ("graphiti", []), ("openstudio", [])]
+    assert cleared == [("cbm", []), ("graphiti", [])]
     assert mcp_catalog_runtime._CATALOG_INITIALIZATION_TASK is None
     assert mcp_catalog_runtime._CATALOG_STATE == "initializing"
     assert mcp_catalog_runtime._CATALOG_FAILURE is None
@@ -318,7 +315,6 @@ def test_empty_provider_catalogs_are_unavailable_not_completed(monkeypatch):
 
     monkeypatch.setattr(mcp_cbm_provider, "cbm_tools", cbm_catalog)
     monkeypatch.setattr(mcp_graphiti_provider, "graphiti_tools", graphiti_catalog)
-    monkeypatch.setattr(mcp_openstudio_provider, "discover_tools", graphiti_catalog)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_COMPLETED_FAMILIES", ())
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_UNAVAILABLE_FAMILIES", ())
@@ -328,16 +324,14 @@ def test_empty_provider_catalogs_are_unavailable_not_completed(monkeypatch):
     assert [item["initializingCatalogFamily"] for item in snapshots] == [
         "cbm",
         "graphiti",
-        "openstudio",
     ]
     assert [item["completedCatalogFamilies"] for item in snapshots] == [
-        ["liquidaity"],
         ["liquidaity"],
         ["liquidaity"],
     ]
     assert mcp_catalog_runtime._CATALOG_COMPLETED_FAMILIES == ("liquidaity",)
     assert mcp_catalog_runtime._CATALOG_UNAVAILABLE_FAMILIES == (
-        "cbm", "graphiti", "openstudio",
+        "cbm", "graphiti",
     )
     assert mcp_catalog_runtime._CATALOG_INITIALIZING_FAMILY is None
 
@@ -359,8 +353,6 @@ def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
         "graphiti_tools",
         lambda: asyncio.sleep(0, result=[]),
     )
-    monkeypatch.setattr(mcp_openstudio_provider, "discover_tools",
-                        lambda: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(
         mcp_cbm_provider,
         "close_cbm",
@@ -385,7 +377,7 @@ def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
     assert mcp_catalog_runtime._CATALOG_INITIALIZING_FAMILY is None
     diagnostics = mcp_catalog_runtime.catalog_diagnostics()
     assert diagnostics["catalogReady"] is True
-    assert diagnostics["unavailableCatalogFamilies"] == ["cbm", "graphiti", "openstudio"]
+    assert diagnostics["unavailableCatalogFamilies"] == ["cbm", "graphiti"]
     listed = asyncio.run(mcp_catalog_runtime.list_tools())
     assert listed
     assert not any(tool.name.startswith("cbm.") for tool in listed)
