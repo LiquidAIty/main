@@ -2262,6 +2262,30 @@ def _(rid, params: dict, session: dict) -> dict:
 
 
 # ── interrupt / steer / redirect ─────────────────────────────────────
+def _interrupt_team_task_ids(params: dict) -> list[str] | None:
+    raw = params.get("team_task_ids")
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or any(not isinstance(value, str) for value in raw):
+        raise ValueError("team_task_ids must be a list of task ids")
+    values = list(dict.fromkeys(value.strip() for value in raw))
+    if not values or any(not value for value in values):
+        raise ValueError("team_task_ids must contain non-empty task ids")
+    return values
+
+
+def _interrupt_team_tasks(session_id: str, task_ids: list[str] | None) -> list[str]:
+    from hermes_cli import kanban_db_connect as kbc
+    from hermes_cli.kanban_team import archive_team_tasks_for_session
+
+    with kbc.connect_closing() as conn:
+        return archive_team_tasks_for_session(
+            conn,
+            session_id,
+            task_ids=task_ids,
+        )
+
+
 @method("session.interrupt")
 def _(rid, params: dict) -> dict:
     session, err = _sess_nowait(params, rid)
@@ -2272,21 +2296,55 @@ def _(rid, params: dict) -> dict:
             task = session.get("_hosted_room_task")
             if not (session.get("running") and isinstance(task, dict) and task.get("task_id") == expected):
                 return _ok(rid, {"status": "not_interrupted", "interrupted": False})
-    if expected := _str_param(params, "expected_submission_id"):
+    try:
+        team_task_ids = _interrupt_team_task_ids(params)
+    except ValueError as exc:
+        return _err(rid, 4002, str(exc))
+    interrupt_team_tasks = params.get("interrupt_team_tasks") is True
+    expected_submission_id = _str_param(params, "expected_submission_id")
+    submission_matches = True
+    if expected_submission_id:
         with session["history_lock"]:
-            if not (
+            submission_matches = bool(
                 session.get("running")
-                and session.get("_active_submission_id") == expected
-            ):
-                return _ok(rid, {"status": "not_interrupted", "interrupted": False})
+                and session.get("_active_submission_id") == expected_submission_id
+            )
+        if not submission_matches and team_task_ids is None:
+            return _ok(rid, {"status": "not_interrupted", "interrupted": False})
     _tts_stream_stop()  # keypress barge-in also silences streaming TTS (voice is process-global)
     sid = str(params.get("session_id") or "")
+    source_session_id = str(
+        getattr(session.get("agent"), "session_id", "")
+        or session.get("session_key")
+        or ""
+    )
+    try:
+        archived_team_tasks = _interrupt_team_tasks(
+            source_session_id,
+            team_task_ids if team_task_ids is not None else None,
+        ) if (interrupt_team_tasks or team_task_ids is not None) and (
+            submission_matches or team_task_ids is not None
+        ) else []
+    except Exception as exc:
+        return _err(rid, 5019, f"Team task interrupt failed: {exc}")
+    if not submission_matches:
+        if archived_team_tasks:
+            return _ok(rid, {
+                "status": "interrupted",
+                "interrupted": True,
+                "team_task_ids": archived_team_tasks,
+            })
+        return _ok(rid, {"status": "not_interrupted", "interrupted": False})
     if _session_uses_compute_host(session):
         try:
             _interrupt_session_turn(sid, session, request_id=f"interrupt-{rid}")
         except Exception as exc:
             return _err(rid, 5019, f"compute-host interrupt failed: {exc}")
-        return _ok(rid, {"status": "interrupted", "turn_isolation": True})
+        return _ok(rid, {
+            "status": "interrupted",
+            "turn_isolation": True,
+            **({"team_task_ids": archived_team_tasks} if archived_team_tasks else {}),
+        })
     session, err = _sess(params, rid)
     if err:
         return err
@@ -2297,7 +2355,10 @@ def _(rid, params: dict) -> dict:
     with session["history_lock"]:
         active_marker_key = str(session.pop("_active_turn_marker_key", "") or "")
     _retire_turn_marker(session, active_marker_key)
-    return _ok(rid, {"status": "interrupted"})
+    return _ok(rid, {
+        "status": "interrupted",
+        **({"team_task_ids": archived_team_tasks} if archived_team_tasks else {}),
+    })
 
 
 def _apply_correction(rid, session: dict, verb: str, text: str, accepted_status: str) -> dict:

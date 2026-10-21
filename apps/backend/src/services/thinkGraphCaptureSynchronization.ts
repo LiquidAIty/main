@@ -1,5 +1,9 @@
 const captureTails = new Map<string, Promise<void>>();
 const activeCaptures = new Map<string, Promise<void>>();
+const settledCaptureByProject = new Map<string, {
+  runId: string;
+  completion: Promise<void>;
+}>();
 
 function captureScopeKey(projectId: string, deckId: string): string {
   return JSON.stringify([projectId, deckId]);
@@ -37,13 +41,13 @@ export function registerActiveThinkGraphCapture(
   const key = captureRunKey(projectId, runId);
   const completion = capture.then(() => undefined);
   activeCaptures.set(key, completion);
+  const retainSettled = () => {
+    if (activeCaptures.get(key) === completion) activeCaptures.delete(key);
+    settledCaptureByProject.set(projectId, { runId, completion });
+  };
   void completion.then(
-    () => {
-      if (activeCaptures.get(key) === completion) activeCaptures.delete(key);
-    },
-    () => {
-      if (activeCaptures.get(key) === completion) activeCaptures.delete(key);
-    },
+    retainSettled,
+    retainSettled,
   );
 }
 
@@ -51,6 +55,16 @@ export async function waitForActiveThinkGraphCapture(
   projectId: string,
   runId: string,
 ): Promise<void> {
-  const capture = activeCaptures.get(captureRunKey(projectId, runId));
-  if (capture) await capture;
+  const active = activeCaptures.get(captureRunKey(projectId, runId));
+  const settled = settledCaptureByProject.get(projectId);
+  const capture = active || (settled?.runId === runId ? settled.completion : null);
+  if (!capture) return;
+  try {
+    await capture;
+  } finally {
+    const retained = settledCaptureByProject.get(projectId);
+    if (retained?.runId === runId && retained.completion === capture) {
+      settledCaptureByProject.delete(projectId);
+    }
+  }
 }

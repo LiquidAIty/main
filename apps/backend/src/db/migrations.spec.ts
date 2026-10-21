@@ -81,6 +81,10 @@ describe('canonical backend migrations', () => {
         filename: '058_apply_main_policy_and_remove_retired_card_controls.sql',
         applied: true,
       }),
+      expect.objectContaining({
+        filename: '059_enforce_current_hermes_status_and_main_delivery.sql',
+        applied: true,
+      }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -371,7 +375,7 @@ describe('canonical backend migrations', () => {
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 
-  it('accepts an applied 053 ledger and schedules only the five forward corrections', async () => {
+  it('accepts an applied 053 ledger and schedules only the six forward corrections', async () => {
     const migrationsDirectory = resolve(__dirname, '../../migrations');
     const fresh = await applyBackendMigrations({
       client: fakeClient() as any,
@@ -393,8 +397,9 @@ describe('canonical backend migrations', () => {
       '056_rename_project_code_folder.sql',
       '057_card_run_selection_and_usage.sql',
       '058_apply_main_policy_and_remove_retired_card_controls.sql',
+      '059_enforce_current_hermes_status_and_main_delivery.sql',
     ]);
-    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 5);
+    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 6);
   });
 
   it('adds Card Run selection and usage fields without another metrics store', async () => {
@@ -422,6 +427,29 @@ describe('canonical backend migrations', () => {
     expect(source).toContain("WHEN 'shared_chat_target'");
     expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
     expect(source).not.toMatch(/DELETE\s+FROM\s+ag_catalog\.conversation_messages/i);
+  });
+
+  it('narrows durable task status to Hermes and append-revises old Main delivery prose', async () => {
+    const source = await readFile(
+      migrationPath('059_enforce_current_hermes_status_and_main_delivery.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("retired_status CONSTANT TEXT := concat('que', 'ued')");
+    expect(source).toContain('retired_hermes_phase_rows_present');
+    expect(source).toContain('DROP CONSTRAINT IF EXISTS agent_runs_hermes_phase_check');
+    for (const status of [
+      'triage', 'todo', 'scheduled', 'ready', 'running',
+      'blocked', 'review', 'done', 'archived',
+    ]) {
+      expect(source).toContain(`'${status}'`);
+    }
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('INSERT INTO ag_catalog.card_capability_grants');
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).toContain('UPDATE ag_catalog.deck_prompt_templates');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
+    expect(source).not.toMatch(/DELETE\s+FROM\s+ag_catalog\.agent_runs/i);
   });
 
   it('retires the obsolete Card-as-assistant capability through new current revisions', async () => {

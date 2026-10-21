@@ -9,7 +9,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { SessionStreamError, streamSession } from './mainSessionClient';
+import { loadSessionHistory, SessionStreamError, streamSession } from './mainSessionClient';
 
 function sse(kind: string, data: Record<string, unknown>): string {
   return `event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -112,6 +112,29 @@ describe('Main session SSE completion', () => {
     })).rejects.toMatchObject<Partial<SessionStreamError>>({
       code: 'session_stream_transport_failed',
       message: 'stream socket closed',
+    });
+  });
+});
+
+describe('Main conversation evidence readback', () => {
+  it('preserves exact linked Know identities from persisted history', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      ok: true,
+      mainCardId: 'card_main_chat',
+      addressableAgents: [],
+      messages: [{
+        role: 'assistant',
+        text: 'Sourced result',
+        speaker: { kind: 'card', label: 'KnowGraph', cardId: 'card_knowgraph' },
+        linkedEvidenceIds: ['know-one'],
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+
+    await expect(loadSessionHistory({ projectId: 'project-a' })).resolves.toMatchObject({
+      messages: [{ linkedEvidenceIds: ['know-one'] }],
     });
   });
 });

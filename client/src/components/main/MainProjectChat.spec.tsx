@@ -59,24 +59,55 @@ describe('MainProjectChat', () => {
     vi.unstubAllGlobals();
   });
 
-  it('shows only a visual indicator for the real active turn', () => {
+  it('replaces the one circular Send control with the square Stop control for the active operation', () => {
     const onSend = vi.fn();
-    render(
+    const onStop = vi.fn();
+    const { unmount } = render(
       <MainProjectChat
-        busy
         messages={[]}
         onSend={onSend}
+        onStop={onStop}
         knowledgeProjectId="project-1"
         colors={colors}
       />,
     );
 
-    expect(screen.getByTestId('main-chat-active-indicator').textContent).toBe('');
+    const send = screen.getByRole('button', { name: 'Send' });
+    expect(send.className).toContain('rounded-full');
+    expect((send as HTMLButtonElement).style.width).toBe('40px');
+    expect((send as HTMLButtonElement).style.height).toBe('40px');
+    expect(send.querySelector('svg')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+
+    unmount();
+    render(
+      <MainProjectChat
+        busy
+        messages={[]}
+        onSend={onSend}
+        onStop={onStop}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    expect(screen.queryByTestId('main-chat-active-indicator')).toBeNull();
     expect(screen.queryByText('Working…')).toBeNull();
     expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false);
-    const send = screen.getByRole('button', { name: 'Send' });
-    expect((send as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(send);
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    const stop = screen.getByRole('button', { name: 'Stop' });
+    expect(stop).toBe(screen.getByTestId('main-chat-stop'));
+    expect((stop as HTMLButtonElement).disabled).toBe(false);
+    expect(stop.className).toContain('rounded-full');
+    expect((stop as HTMLButtonElement).style.width).toBe('40px');
+    expect((stop as HTMLButtonElement).style.height).toBe('40px');
+    const square = stop.querySelector('span');
+    expect(square?.style.width).toBe('10px');
+    expect(square?.style.height).toBe('10px');
+    expect(square?.style.background).toBe('rgb(255, 255, 255)');
+    expect(stop.textContent).toBe('');
+    fireEvent.click(stop);
+    expect(onStop).toHaveBeenCalledOnce();
     expect(onSend).not.toHaveBeenCalled();
   });
 
@@ -140,6 +171,36 @@ describe('MainProjectChat', () => {
     expect(onEntityFocus).toHaveBeenCalledWith(targets.get('Rocket Lab'));
   });
 
+  it('renders exact Run-linked Knows as graph focus controls', async () => {
+    const onEvidenceFocus = vi.fn();
+    render(
+      <VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 96 }}>
+        <MainProjectChat
+          messages={[{
+            role: 'assistant',
+            text: 'The sourced research is ready.',
+            speaker: { kind: 'card', label: 'KnowGraph', cardId: 'card_knowgraph' },
+            linkedEvidenceIds: ['know-one', 'know-two'],
+            status: 'complete',
+          }]}
+          mainCardId="card_main_chat"
+          onSend={vi.fn()}
+          knowledgeProjectId="project-1"
+          colors={colors}
+          onEvidenceFocus={onEvidenceFocus}
+        />
+      </VirtuosoMockContext.Provider>,
+    );
+    scrollVirtualViewportToBottom(1, 96, 300);
+
+    const first = await screen.findByRole('button', { name: 'Open Know 1 in graph' });
+    const second = screen.getByRole('button', { name: 'Open Know 2 in graph' });
+    expect(first.textContent).toBe('Know 1');
+    expect(second.textContent).toBe('Know 2');
+    fireEvent.click(second);
+    expect(onEvidenceFocus).toHaveBeenCalledExactlyOnceWith('know-two');
+  });
+
   it('keeps intraword underscores literal while retaining intentional underscore emphasis', async () => {
     render(
       <VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 96 }}>
@@ -173,22 +234,26 @@ describe('MainProjectChat', () => {
     ]);
   });
 
-  it('shows a quiet activity indicator while the Hermes turn is connecting', () => {
+  it('does not show Stop before the server has supplied the active Run identity', () => {
+    const onStop = vi.fn();
     render(
       <MainProjectChat
         connecting
         messages={[]}
         onSend={vi.fn()}
+        onStop={onStop}
         knowledgeProjectId="project-1"
         colors={colors}
       />,
     );
 
     expect(screen.queryByText('Connecting…')).toBeNull();
-    expect(screen.queryByTestId('main-chat-active-indicator')).not.toBeNull();
+    expect(screen.queryByTestId('main-chat-active-indicator')).toBeNull();
     expect(screen.queryByText('Working…')).toBeNull();
-    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled)
-      .toBe(false);
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+    const send = screen.getByRole('button', { name: 'Send' });
+    expect((send as HTMLButtonElement).disabled).toBe(false);
+    expect(onStop).not.toHaveBeenCalled();
   });
 
   it('uses one mic control for idle, listening, and explicit stop', () => {

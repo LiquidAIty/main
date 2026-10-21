@@ -2,7 +2,7 @@
  * Entity: Main Chat
  * Relationship: This file verifies Main cancellation reports the exact active state and persists no incomplete recipient output as conversation speech.
  * Entity: Bot Mode Delegation
- * Relationship: This file verifies an addressed Builder turn interrupts the exact recipient submission rather than Main or an unrelated Card.
+ * Relationship: This file verifies one Stop interrupts Main and every exact addressed Bot submission attached to the active Run.
  * Entity: Run Ledger
  * Relationship: This file verifies socket failure settles the outer Run as failed and explicit interruption settles it as cancelled without fabricated provider evidence.
  * Entity: Authentication
@@ -51,6 +51,10 @@ const lifecycleMocks = vi.hoisted(() => ({
       unavailableTools: [],
       images: [],
     },
+  })),
+  readCardRun: vi.fn(async (): Promise<Record<string, any>> => ({
+    state: 'completed',
+    graphReferences: [],
   })),
   startCardRun: vi.fn(async () => undefined),
 }));
@@ -124,6 +128,7 @@ vi.mock('../services/cardRunLifecycle', async () => {
     ...actual,
     finishCardRun: lifecycleMocks.finishCardRun,
     prepareCardRun: lifecycleMocks.prepareCardRun,
+    readCardRun: lifecycleMocks.readCardRun,
     startCardRun: lifecycleMocks.startCardRun,
     internalCardTurnEndpoint: vi.fn(() => 'http://127.0.0.1:4000/api/card-turn'),
   };
@@ -205,6 +210,22 @@ function authority(includeThinkGraph = false): ProjectCardAuthority {
   return { deck, cards, main: cards[0] };
 }
 
+const STRUCTURED_THINK_OUTPUT = {
+  facts: [{
+    content: 'Separate long-horizon business quality from short-horizon option timing.',
+    title: 'Space-stock horizon distinction',
+    mtype: 'episodic',
+    importance: 0,
+    keywords: ['space stocks', 'investment horizon'],
+    entity: 'Space-stock thesis',
+    entities: ['Space-stock thesis'],
+    relations: [],
+    think: {
+      summary: 'Separate long-horizon business quality from short-horizon option timing.',
+    },
+  }],
+};
+
 function event(
   type: HermesGatewayEvent['type'],
   sessionId: string,
@@ -269,16 +290,27 @@ function gateway(recipientWaiting: () => void, disconnectAfterStart = false) {
       return { status: 'streaming' };
     }
     if (method === 'session.interrupt') {
-      expect(params).toEqual({
-        session_id: 'live-builder',
-        expected_submission_id: '__bot_dm__delivery-one',
-      });
-      emit(event('message.complete', 'live-builder', {
-        submission_id: '__bot_dm__delivery-one',
-        status: 'interrupted',
-        text: 'partial result that must not persist',
-      }));
-      return { status: 'interrupted' };
+      if (params.session_id === 'live-main') {
+        expect(params).toEqual({
+          session_id: 'live-main',
+          expected_submission_id: 'run-one',
+          interrupt_team_tasks: true,
+        });
+        return { status: 'not_interrupted', interrupted: false };
+      }
+      if (params.session_id === 'live-builder') {
+        expect(params).toEqual({
+          session_id: 'live-builder',
+          expected_submission_id: '__bot_dm__delivery-one',
+        });
+        emit(event('message.complete', 'live-builder', {
+          submission_id: '__bot_dm__delivery-one',
+          status: 'interrupted',
+          text: 'partial result that must not persist',
+        }));
+        return { status: 'interrupted' };
+      }
+      throw new Error(`unexpected_interrupt_session:${String(params.session_id || '')}`);
     }
     throw new Error(`unexpected_gateway_method:${method}`);
   });
@@ -331,7 +363,7 @@ function steeringGateway() {
           emit(event('message.complete', 'live-thinkgraph', {
             submission_id: 'run-thinkgraph',
             status: 'complete',
-            text: '{"facts":[]}',
+            text: JSON.stringify(STRUCTURED_THINK_OUTPUT),
           }));
         });
         return { status: 'streaming' };
@@ -408,7 +440,7 @@ function sequentialGateway() {
       queueMicrotask(() => {
         emit(event('prompt.submission.started', sessionId, { submission_id: submissionId }));
         const text = profile === 'thinkgraph'
-          ? '{"facts":[]}'
+          ? JSON.stringify(STRUCTURED_THINK_OUTPUT)
           : `Answer for ${submissionId}`;
         emit(event('message.delta', sessionId, { submission_id: submissionId, text }));
         emit(event('message.complete', sessionId, {
@@ -435,6 +467,272 @@ function sequentialGateway() {
       request,
     } as unknown as HermesGatewayClient,
     request,
+  };
+}
+
+function teamWaitingGateway() {
+  const listeners = new Set<(value: HermesGatewayEvent) => void>();
+  const emit = (value: HermesGatewayEvent) => listeners.forEach(listener => listener(value));
+  let markWaiting!: () => void;
+  const waiting = new Promise<void>((resolve) => { markWaiting = resolve; });
+  const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+    const profile = String(params.profile || 'main');
+    if (method === 'session.list') {
+      return { sessions: [{ resolved_id: `stored-${profile}` }] };
+    }
+    if (method === 'session.resume' || method === 'session.activate') {
+      return {
+        session_id: `live-${profile}`,
+        stored_session_id: `stored-${profile}`,
+        messages_omitted: true,
+        info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+      };
+    }
+    if (method === 'session.status') return { running: false };
+    if (method === 'prompt.submit') {
+      queueMicrotask(() => {
+        emit(event('prompt.submission.started', 'live-main', { submission_id: 'run-one' }));
+        emit(event('tool.start', 'live-main', {
+          submission_id: 'run-one',
+          name: 'message_agent',
+          tool_id: 'tool-team',
+          args: { target: '@Builder' },
+        }));
+        emit(event('tool.complete', 'live-main', {
+          submission_id: 'run-one',
+          name: 'message_agent',
+          tool_id: 'tool-team',
+          result: {
+            task_id: 'task-team-root',
+            run_id: 'run-team-child',
+            reply_delivery: 'team',
+          },
+        }));
+        emit(event('message.complete', 'live-main', {
+          submission_id: 'run-one',
+          status: 'complete',
+          text: '[SILENT]',
+        }));
+        markWaiting();
+      });
+      return { status: 'streaming' };
+    }
+    if (method === 'session.interrupt') {
+      expect(params).toEqual({
+        session_id: 'live-main',
+        expected_submission_id: 'run-one',
+        interrupt_team_tasks: true,
+        team_task_ids: ['task-team-root'],
+      });
+      return { status: 'interrupted', team_task_ids: ['task-team-root'] };
+    }
+    throw new Error(`unexpected_gateway_method:${method}`);
+  });
+  return {
+    client: {
+      connectionState: 'open',
+      connect: vi.fn(async () => undefined),
+      close: vi.fn(),
+      onEvent: vi.fn((listener: (value: HermesGatewayEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+      onState: vi.fn(() => () => undefined),
+      onRequest: vi.fn(() => () => undefined),
+      request,
+    } as unknown as HermesGatewayClient,
+    request,
+    waiting,
+    complete(
+      mainRelay = 'Main relay after the completed task.',
+      taskResult = 'Builder team result',
+    ) {
+      emit(event('message.complete', 'live-main', {
+        notification_task_ids: ['task-team-root'],
+        notification_task_results: { 'task-team-root': taskResult },
+        status: 'complete',
+        text: mainRelay,
+      }));
+    },
+  };
+}
+
+function lateStartingGateway() {
+  const listeners = new Set<(value: HermesGatewayEvent) => void>();
+  const emit = (value: HermesGatewayEvent) => listeners.forEach(listener => listener(value));
+  let markSubmitted!: () => void;
+  const submitted = new Promise<void>((resolve) => { markSubmitted = resolve; });
+  let interruptAttempts = 0;
+  const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+    const profile = String(params.profile || 'main');
+    if (method === 'session.list') {
+      return { sessions: [{ resolved_id: `stored-${profile}` }] };
+    }
+    if (method === 'session.resume' || method === 'session.activate') {
+      return {
+        session_id: `live-${profile}`,
+        stored_session_id: `stored-${profile}`,
+        messages_omitted: true,
+        info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+      };
+    }
+    if (method === 'session.status') return { running: false };
+    if (method === 'prompt.submit') {
+      markSubmitted();
+      return { status: 'streaming' };
+    }
+    if (method === 'session.interrupt') {
+      expect(params).toEqual({
+        session_id: 'live-main',
+        expected_submission_id: 'run-one',
+        interrupt_team_tasks: true,
+      });
+      interruptAttempts += 1;
+      if (interruptAttempts === 1) {
+        return { status: 'not_interrupted', interrupted: false };
+      }
+      queueMicrotask(() => emit(event('message.complete', 'live-main', {
+        submission_id: 'run-one',
+        status: 'interrupted',
+        text: '',
+      })));
+      return { status: 'interrupted' };
+    }
+    throw new Error(`unexpected_gateway_method:${method}`);
+  });
+  return {
+    client: {
+      connectionState: 'open',
+      connect: vi.fn(async () => undefined),
+      close: vi.fn(),
+      onEvent: vi.fn((listener: (value: HermesGatewayEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+      onState: vi.fn(() => () => undefined),
+      onRequest: vi.fn(() => () => undefined),
+      request,
+    } as unknown as HermesGatewayClient,
+    submitted,
+    start() {
+      emit(event('prompt.submission.started', 'live-main', { submission_id: 'run-one' }));
+    },
+    interruptAttempts: () => interruptAttempts,
+  };
+}
+
+function notificationWaitingGateway() {
+  const listeners = new Set<(value: HermesGatewayEvent) => void>();
+  const emit = (value: HermesGatewayEvent) => listeners.forEach(listener => listener(value));
+  let markWaiting!: () => void;
+  const waiting = new Promise<void>((resolve) => { markWaiting = resolve; });
+  const interrupts: Record<string, unknown>[] = [];
+  const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+    const profile = String(params.profile || 'main');
+    if (method === 'session.list') {
+      return { sessions: [{ resolved_id: `stored-${profile}` }] };
+    }
+    if (method === 'session.resume' || method === 'session.activate') {
+      return {
+        session_id: `live-${profile}`,
+        stored_session_id: `stored-${profile}`,
+        messages_omitted: true,
+        info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+      };
+    }
+    if (method === 'session.status') return { running: false };
+    if (method === 'prompt.submit') {
+      queueMicrotask(() => {
+        emit(event('prompt.submission.started', 'live-main', { submission_id: 'run-one' }));
+        emit(event('tool.start', 'live-main', {
+          submission_id: 'run-one', name: 'message_agent', tool_id: 'tool-notify',
+          args: { target: '@Builder' },
+        }));
+        emit(event('tool.complete', 'live-main', {
+          submission_id: 'run-one', name: 'message_agent', tool_id: 'tool-notify',
+          result: {
+            delivery_id: 'delivery-notify',
+            process_id: 'process-notify',
+            reply_delivery: 'notification',
+          },
+        }));
+        emit(event('message.complete', 'live-main', {
+          submission_id: 'run-one', status: 'complete', text: '[SILENT]',
+        }));
+        markWaiting();
+      });
+      return { status: 'streaming' };
+    }
+    if (method === 'session.interrupt') {
+      interrupts.push(params);
+      if (params.session_id === 'live-builder') return { status: 'interrupted' };
+      return { status: 'not_interrupted', interrupted: false };
+    }
+    throw new Error(`unexpected_gateway_method:${method}`);
+  });
+  return {
+    client: {
+      connectionState: 'open', connect: vi.fn(async () => undefined), close: vi.fn(),
+      onEvent: vi.fn((listener: (value: HermesGatewayEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+      onState: vi.fn(() => () => undefined), onRequest: vi.fn(() => () => undefined), request,
+    } as unknown as HermesGatewayClient,
+    waiting,
+    interrupts,
+  };
+}
+
+function retryableInterruptGateway() {
+  const listeners = new Set<(value: HermesGatewayEvent) => void>();
+  const emit = (value: HermesGatewayEvent) => listeners.forEach(listener => listener(value));
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  let interruptAttempts = 0;
+  const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+    const profile = String(params.profile || 'main');
+    if (method === 'session.list') return { sessions: [{ resolved_id: `stored-${profile}` }] };
+    if (method === 'session.resume' || method === 'session.activate') {
+      return {
+        session_id: `live-${profile}`, stored_session_id: `stored-${profile}`,
+        messages_omitted: true,
+        info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+      };
+    }
+    if (method === 'session.status') return { running: false };
+    if (method === 'prompt.submit') {
+      queueMicrotask(() => {
+        emit(event('prompt.submission.started', 'live-main', { submission_id: 'run-one' }));
+        markStarted();
+      });
+      return { status: 'streaming' };
+    }
+    if (method === 'session.interrupt') {
+      expect(params).toEqual({
+        session_id: 'live-main', expected_submission_id: 'run-one',
+        interrupt_team_tasks: true,
+      });
+      interruptAttempts += 1;
+      if (interruptAttempts === 1) throw new Error('hermes_interrupt_transport_failed');
+      queueMicrotask(() => emit(event('message.complete', 'live-main', {
+        submission_id: 'run-one', status: 'interrupted', text: '',
+      })));
+      return { status: 'interrupted' };
+    }
+    throw new Error(`unexpected_gateway_method:${method}`);
+  });
+  return {
+    client: {
+      connectionState: 'open', connect: vi.fn(async () => undefined), close: vi.fn(),
+      onEvent: vi.fn((listener: (value: HermesGatewayEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+      onState: vi.fn(() => () => undefined), onRequest: vi.fn(() => () => undefined), request,
+    } as unknown as HermesGatewayClient,
+    started,
+    interruptAttempts: () => interruptAttempts,
   };
 }
 
@@ -506,7 +804,7 @@ describe('Main direct-recipient stop settlement', () => {
         ok: true,
         revisionChanged: true,
         pairReference: 'pair-one',
-        thinkMemoryIds: [],
+        thinkMemoryIds: ['think-one'],
       });
     conversationMocks.getConversationMessages.mockResolvedValueOnce([
       {
@@ -577,6 +875,12 @@ describe('Main direct-recipient stop settlement', () => {
     expect(lifecycleMocks.prepareCardRun.mock.calls.filter(
       ([args]) => args?.target.card.id === 'card_thinkgraph',
     )).toHaveLength(1);
+    const thinkGraphAssignment = lifecycleMocks.prepareCardRun.mock.calls.find(
+      ([args]) => args?.target.card.id === 'card_thinkgraph',
+    )?.[0]?.message;
+    expect(thinkGraphAssignment).toContain('OUTPUT_SCHEMA:');
+    expect(thinkGraphAssignment).toContain('EXTRACTION_PROMPT:');
+    expect(thinkGraphAssignment).not.toContain('EXTRACTION_INPUT:');
     expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
       runId: 'run-thinkgraph', state: 'completed',
     }));
@@ -595,7 +899,7 @@ describe('Main direct-recipient stop settlement', () => {
       .toBe('/thinkgraph/completed-pair/settle');
     expect(JSON.parse(String(
       (pythonRailsMocks.requestPythonRailsJson.mock.calls[1]?.[1] as { body?: unknown })?.body,
-    )).structuredOutput).toEqual({ facts: [] });
+    )).structuredOutput).toEqual(STRUCTURED_THINK_OUTPUT);
   });
 
   it('creates a new Run and one new ThinkGraph settlement after the prior turn completes', async () => {
@@ -626,7 +930,9 @@ describe('Main direct-recipient stop settlement', () => {
         enrichmentSchema: { type: 'object' }, enrichmentPrompt: 'Extract one.',
         enrichmentInput: { exact_user_message: 'first' },
       })
-      .mockResolvedValueOnce({ ok: true, revisionChanged: true, pairReference: 'pair-one' })
+      .mockResolvedValueOnce({
+        ok: true, revisionChanged: true, pairReference: 'pair-one', thinkMemoryIds: ['think-one'],
+      })
       .mockResolvedValueOnce({
         ok: true, revisionChanged: false, structuredExtractionRequired: true,
         intakeOperation: 'pending', pairReference: 'pair-two',
@@ -634,7 +940,9 @@ describe('Main direct-recipient stop settlement', () => {
         enrichmentSchema: { type: 'object' }, enrichmentPrompt: 'Extract two.',
         enrichmentInput: { exact_user_message: 'second' },
       })
-      .mockResolvedValueOnce({ ok: true, revisionChanged: true, pairReference: 'pair-two' });
+      .mockResolvedValueOnce({
+        ok: true, revisionChanged: true, pairReference: 'pair-two', thinkMemoryIds: ['think-two'],
+      });
     conversationMocks.getConversationMessages.mockResolvedValue([
       {
         messageId: 'msg_00000000-0000-4000-8000-000000000021',
@@ -834,7 +1142,309 @@ describe('Main direct-recipient stop settlement', () => {
     expect(conversationMocks.appendConversationReplyOnce).not.toHaveBeenCalled();
   });
 
-  it('interrupts the exact recipient, cancels the outer Run, and persists no partial reply', async () => {
+  it('stops the server-owned Run while its Hermes session is still preparing', async () => {
+    let releaseSessionList!: () => void;
+    let markSessionListStarted!: () => void;
+    const sessionListStarted = new Promise<void>((resolve) => { markSessionListStarted = resolve; });
+    const sessionListRelease = new Promise<void>((resolve) => { releaseSessionList = resolve; });
+    let held = false;
+    const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+      const profile = String(params.profile || 'main');
+      if (method === 'session.list') {
+        if (!held) {
+          held = true;
+          markSessionListStarted();
+          await sessionListRelease;
+        }
+        return { sessions: [{ resolved_id: `stored-${profile}` }] };
+      }
+      if (method === 'session.resume' || method === 'session.activate') {
+        return {
+          session_id: `live-${profile}`,
+          stored_session_id: `stored-${profile}`,
+          messages_omitted: true,
+          info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+        };
+      }
+      if (method === 'session.status') return { running: false };
+      if (method === 'prompt.submit') throw new Error('stopped_preparing_run_must_not_submit');
+      throw new Error(`unexpected_gateway_method:${method}`);
+    });
+    gatewayMocks.hermesGateway.mockResolvedValue({
+      connectionState: 'open',
+      connect: vi.fn(async () => undefined),
+      close: vi.fn(),
+      onEvent: vi.fn(() => () => undefined),
+      onState: vi.fn(() => () => undefined),
+      onRequest: vi.fn(() => () => undefined),
+      request,
+    } as unknown as HermesGatewayClient);
+    projectMocks.projectCardAuthority.mockResolvedValue(authority());
+    const { baseUrl } = await serve();
+
+    const chatRequest = fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        message: 'Investigate the issue.',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000031',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000032',
+      }),
+    });
+    await sessionListStarted;
+
+    const stopped = await fetch(`${baseUrl}/api/main/session/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        expectedRunId: 'run-one',
+      }),
+    });
+    expect(stopped.status).toBe(200);
+    expect(await stopped.json()).toEqual({ ok: true, runId: 'run-one', state: 'stopping' });
+
+    releaseSessionList();
+    const chat = await chatRequest;
+    const stream = await chat.text();
+    expect(stream).toContain('"state":"preparing"');
+    expect(stream).toContain('"state":"cancelled"');
+    expect(request.mock.calls.filter(([method]) => method === 'prompt.submit')).toHaveLength(0);
+    expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-one',
+      state: 'cancelled',
+      errorCode: 'hermes_turn_cancelled',
+    }));
+  });
+
+  it('retries the exact Hermes interrupt when Stop lands before prompt start', async () => {
+    const fake = lateStartingGateway();
+    gatewayMocks.hermesGateway.mockResolvedValue(fake.client);
+    projectMocks.projectCardAuthority.mockResolvedValue(authority());
+    const { baseUrl } = await serve();
+
+    const chat = await fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        message: 'Investigate the issue.',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000035',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000036',
+      }),
+    });
+    const streamRequest = chat.text();
+    await fake.submitted;
+
+    const stopped = await fetch(`${baseUrl}/api/main/session/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        expectedRunId: 'run-one',
+      }),
+    });
+    expect(stopped.status).toBe(200);
+    expect(fake.interruptAttempts()).toBe(1);
+
+    fake.start();
+    const stream = await streamRequest;
+    expect(fake.interruptAttempts()).toBe(2);
+    expect(stream).toContain('"state":"cancelled"');
+    expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-one',
+      state: 'cancelled',
+      errorCode: 'hermes_turn_cancelled',
+    }));
+  });
+
+  it('keeps the active Run retryable when the first Hermes interrupt RPC fails', async () => {
+    const fake = retryableInterruptGateway();
+    gatewayMocks.hermesGateway.mockResolvedValue(fake.client);
+    projectMocks.projectCardAuthority.mockResolvedValue(authority());
+    const { baseUrl } = await serve();
+
+    const chat = await fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one', deckId: 'deck_builder', message: 'Keep working.',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000047',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000048',
+      }),
+    });
+    const streamRequest = chat.text();
+    await fake.started;
+
+    const stop = () => fetch(`${baseUrl}/api/main/session/stop`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one', deckId: 'deck_builder', expectedRunId: 'run-one',
+      }),
+    });
+    const first = await stop();
+    expect(first.status).toBe(503);
+    expect(await first.json()).toEqual({ ok: false, error: 'hermes_interrupt_transport_failed' });
+    expect(lifecycleMocks.finishCardRun).not.toHaveBeenCalled();
+
+    const second = await stop();
+    const stream = await streamRequest;
+    expect(second.status).toBe(200);
+    expect(fake.interruptAttempts()).toBe(2);
+    expect(stream).toContain('"state":"cancelled"');
+    expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-one', state: 'cancelled', errorCode: 'hermes_turn_cancelled',
+    }));
+  });
+
+  it('attributes an explicitly addressed AutoTeam result to the addressed Card', async () => {
+    const fake = teamWaitingGateway();
+    gatewayMocks.hermesGateway.mockResolvedValue(fake.client);
+    projectMocks.projectCardAuthority.mockResolvedValue(authority());
+    lifecycleMocks.readCardRun.mockResolvedValueOnce({
+      state: 'completed',
+      graphReferences: [{
+        graphitiEpisodeId: 'know-one',
+        graphitiEntityId: 'entity-one',
+      }],
+    });
+    const { baseUrl } = await serve();
+
+    const chat = await fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        message: '@Builder research the issue.',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000037',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000038',
+      }),
+    });
+    const streamRequest = chat.text();
+    await fake.waiting;
+    fake.complete();
+    const stream = await streamRequest;
+
+    expect(stream).toContain('Builder team result');
+    expect(stream).not.toContain('Main relay after the completed task.');
+    expect(stream).toContain('"label":"Builder"');
+    expect(conversationMocks.appendConversationReplyOnce).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({
+          content: 'Builder team result',
+          speaker: expect.objectContaining({
+            cardId: 'builder',
+            profile: 'builder',
+          }),
+          linkedEvidenceIds: ['know-one'],
+        }),
+      }),
+    );
+    expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-team-child',
+      state: 'completed',
+      finalResult: 'Builder team result',
+    }));
+    expect(stream).toContain('"linkedEvidenceIds":["know-one"]');
+  });
+
+  it('stops an AutoTeam consultation and settles both its child Run and outer Run as cancelled', async () => {
+    const fake = teamWaitingGateway();
+    gatewayMocks.hermesGateway.mockResolvedValue(fake.client);
+    projectMocks.projectCardAuthority.mockResolvedValue(authority());
+    const { baseUrl } = await serve();
+
+    const chat = await fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        message: 'Ask Builder to inspect the issue.',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000041',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000042',
+      }),
+    });
+    const streamRequest = chat.text();
+    await fake.waiting;
+
+    const stopped = await fetch(`${baseUrl}/api/main/session/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        expectedRunId: 'run-one',
+      }),
+    });
+    const stream = await streamRequest;
+
+    expect(stopped.status).toBe(200);
+    expect(await stopped.json()).toEqual({ ok: true, runId: 'run-one', state: 'stopping' });
+    expect(stream).toContain('"state":"cancelled"');
+    expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-team-child',
+      state: 'cancelled',
+      errorCode: 'hermes_turn_cancelled',
+      providerTurnRef: 'task-team-root',
+    }));
+    expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-one',
+      state: 'cancelled',
+      errorCode: 'hermes_turn_cancelled',
+    }));
+    expect(conversationMocks.appendConversationReplyOnce).not.toHaveBeenCalled();
+  });
+
+  it('stops an ordinary Main notification recipient attached to the active Run', async () => {
+    const fake = notificationWaitingGateway();
+    gatewayMocks.hermesGateway.mockResolvedValue(fake.client);
+    projectMocks.projectCardAuthority.mockResolvedValue(authority());
+    const { baseUrl } = await serve();
+
+    const chat = await fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one', deckId: 'deck_builder',
+        message: 'Ask Builder to inspect this.',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000045',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000046',
+      }),
+    });
+    const streamRequest = chat.text();
+    await fake.waiting;
+
+    const stopped = await fetch(`${baseUrl}/api/main/session/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one', deckId: 'deck_builder', expectedRunId: 'run-one',
+      }),
+    });
+    const stream = await streamRequest;
+
+    expect(stopped.status).toBe(200);
+    expect(fake.interrupts).toEqual(expect.arrayContaining([
+      {
+        session_id: 'live-main', expected_submission_id: 'run-one', interrupt_team_tasks: true,
+      },
+      {
+        session_id: 'live-builder', expected_submission_id: '__bot_dm__delivery-notify',
+      },
+    ]));
+    expect(stream).toContain('"state":"cancelled"');
+    expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-one', state: 'cancelled', errorCode: 'hermes_turn_cancelled',
+    }));
+  });
+
+  it('stops Main and the exact recipient, cancels the outer Run, and persists no partial reply', async () => {
     let markRecipientWaiting!: () => void;
     const recipientWaiting = new Promise<void>((resolve) => { markRecipientWaiting = resolve; });
     const fakeGateway = gateway(markRecipientWaiting);
@@ -875,6 +1485,19 @@ describe('Main direct-recipient stop settlement', () => {
 
     expect(stopped.status).toBe(200);
     expect(await stopped.json()).toEqual({ ok: true, runId: 'run-one', state: 'stopping' });
+    expect((fakeGateway.request as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([method]) => method === 'session.interrupt',
+    ).map(([, params]) => params)).toEqual(expect.arrayContaining([
+      {
+        session_id: 'live-main',
+        expected_submission_id: 'run-one',
+        interrupt_team_tasks: true,
+      },
+      {
+        session_id: 'live-builder',
+        expected_submission_id: '__bot_dm__delivery-one',
+      },
+    ]));
     expect(chat.status).toBe(200);
     expect(stream).toContain('"state":"cancelled"');
     expect(stream).not.toContain('partial result that must not persist');

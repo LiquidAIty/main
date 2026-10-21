@@ -333,6 +333,41 @@ def _decompose_team_root(team_board, monkeypatch, worker_count=2):
     return root.id, outcome.child_ids or []
 
 
+def test_team_stop_archives_exact_session_root_then_real_decomposed_workers(
+    team_board, monkeypatch
+):
+    from hermes_cli.kanban_team import archive_team_tasks_for_session
+
+    root_id, worker_ids = _decompose_team_root(team_board, monkeypatch, worker_count=2)
+    with kbc.connect_closing() as conn:
+        unrelated = _new_team_root(
+            conn,
+            session_id="other-session",
+            idempotency_key="other-session-root",
+        )
+        assert all(kb.get_task(conn, worker_id).session_id == "session-1" for worker_id in worker_ids)
+        assert {
+            row["parent_id"]
+            for row in conn.execute(
+                "SELECT parent_id FROM task_links WHERE child_id = ?",
+                (root_id,),
+            ).fetchall()
+        } == set(worker_ids)
+
+        archived = archive_team_tasks_for_session(conn, "session-1")
+
+        assert archived == [root_id, *worker_ids]
+        assert kb.get_task(conn, root_id).status == "archived"
+        assert all(kb.get_task(conn, worker_id).status == "archived" for worker_id in worker_ids)
+        assert kb.get_task(conn, unrelated.id).status == "triage"
+        with pytest.raises(ValueError, match="does not belong"):
+            archive_team_tasks_for_session(
+                conn,
+                "session-1",
+                task_ids=[unrelated.id],
+            )
+
+
 def test_team_decomposition_uses_same_profile_and_same_root_synthesis(team_board, monkeypatch):
     from hermes_cli import kanban_db_dispatch as dispatch
     from hermes_cli.kanban_team import TEAM_SYNTHESIS_STEP, TEAM_WORKER_STEP, TEAM_WORKFLOW_ID

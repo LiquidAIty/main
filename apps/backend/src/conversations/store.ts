@@ -49,6 +49,7 @@ export type ConversationMessageWrite = {
   status?: Extract<ConversationMessageStatus, 'pending' | 'complete' | 'error'>;
   providerContinuationRef?: string | null;
   providerMessageId?: string | null;
+  linkedEvidenceIds?: string[];
 };
 
 export type ConversationMessage = {
@@ -86,6 +87,16 @@ function iso(value: unknown): string {
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+function exactLinkedEvidenceIds(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error('conversation_evidence_ids_invalid');
+  const values = value.map(item => typeof item === 'string' ? item.trim() : '');
+  if (values.some(item => !item) || new Set(values).size !== values.length) {
+    throw new Error('conversation_evidence_ids_invalid');
+  }
+  return values;
 }
 
 function visibleActivities(value: unknown): VisibleActivity[] | undefined {
@@ -219,15 +230,16 @@ export async function appendConversationTurn(input: {
         ...(write.target ? [participantActivity('conversation_target', write.target)] : []),
       ];
       const status = write.status || 'complete';
+      const linkedEvidenceIds = exactLinkedEvidenceIds(write.linkedEvidenceIds);
       const result = await client.query(
         `INSERT INTO ${MESSAGES_TABLE} (
            project_id, conversation_id, message_id, role, content, status, seq,
            completed_at, provider_continuation_ref, provider_message_id,
-           visible_activities
+           linked_evidence_ids, visible_activities
          )
          VALUES ($1::uuid, $2, $3, $4, $5, $6, $7,
                  CASE WHEN $6 = 'pending' THEN NULL ELSE NOW() END,
-                 $8, $9, $10::jsonb)
+                 $8, $9, $10::jsonb, $11::jsonb)
          RETURNING *`,
         [
           canonicalProjectId,
@@ -239,6 +251,7 @@ export async function appendConversationTurn(input: {
           firstSequence + index,
           write.providerContinuationRef ?? null,
           write.providerMessageId ?? null,
+          JSON.stringify(linkedEvidenceIds),
           JSON.stringify(activities),
         ],
       );
@@ -339,13 +352,14 @@ export async function appendConversationReplyOnce(input: {
         ? [participantActivity('conversation_target', input.message.target)]
         : []),
     ];
+    const linkedEvidenceIds = exactLinkedEvidenceIds(input.message.linkedEvidenceIds);
     const result = await client.query(
       `INSERT INTO ${MESSAGES_TABLE} (
          project_id, conversation_id, message_id, role, content, status, seq,
          completed_at, provider_continuation_ref, provider_message_id,
-         visible_activities
+         linked_evidence_ids, visible_activities
        )
-       VALUES ($1::uuid, $2, $3, 'assistant', $4, 'complete', $5, NOW(), $6, $7, $8::jsonb)
+       VALUES ($1::uuid, $2, $3, 'assistant', $4, 'complete', $5, NOW(), $6, $7, $8::jsonb, $9::jsonb)
        RETURNING *`,
       [
         canonicalProjectId,
@@ -355,6 +369,7 @@ export async function appendConversationReplyOnce(input: {
         Number(sequence.rows[0].next_seq),
         input.message.providerContinuationRef ?? null,
         providerMessageId,
+        JSON.stringify(linkedEvidenceIds),
         JSON.stringify(activities),
       ],
     );

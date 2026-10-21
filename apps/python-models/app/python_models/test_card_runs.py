@@ -243,9 +243,19 @@ def test_card_rejoin_reads_only_the_outer_run_ledger_without_age_filtering(monke
     })
 
     assert result["run"]["runId"] == "root-run"
-    query, params = cursor.execute.call_args_list[-1].args
+    run_query_call = next(
+        call for call in cursor.execute.call_args_list
+        if len(call.args) > 1
+        and call.args[1] == ("project-one", "deck-one", "card-one")
+    )
+    query, params = run_query_call.args
     assert "hermesChildId" not in query
     assert params == ("project-one", "deck-one", "card-one")
+    assert any(
+        len(call.args) > 1
+        and call.args[1] == ("root-run", "graphiti-know-reference")
+        for call in cursor.execute.call_args_list
+    )
 
 def test_new_run_fails_closed_when_root_input_files_cannot_persist(
     monkeypatch: pytest.MonkeyPatch,

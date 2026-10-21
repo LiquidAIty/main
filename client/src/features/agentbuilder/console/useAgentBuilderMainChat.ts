@@ -48,7 +48,10 @@ type UseAgentBuilderMainChatArgs = {
   deckRevision?: string | null;
   dataAnchors?: LoadedCardGraphReference['reference'][];
   prepareRunImages?: (addressedCardId: string | null) => Promise<MainRunImage[]>;
-  onMainRunCompleted?: (runId: string) => void | Promise<void>;
+  onMainRunCompleted?: (
+    runId: string,
+    waitForThinkCapture?: boolean,
+  ) => void | Promise<void>;
 };
 
 export type LoadedCardGraphReference = {
@@ -184,6 +187,7 @@ export default function useAgentBuilderMainChat({
     runId: string | null;
     requestKey: string;
   }>());
+  const activeRunIdRef = useRef<{ key: string; runId: string } | null>(null);
   const voiceControllerRef = useRef<AbortController | null>(null);
   const voiceTranscriptRef = useRef<string | null>(null);
   const voiceTurnActiveRef = useRef(false);
@@ -201,6 +205,7 @@ export default function useAgentBuilderMainChat({
       if (active.key !== projectKey) controller.abort();
     }
     activeStreamsRef.current.clear();
+    activeRunIdRef.current = null;
     voiceControllerRef.current?.abort();
     voiceControllerRef.current = null;
     voiceTranscriptRef.current = null;
@@ -316,6 +321,7 @@ export default function useAgentBuilderMainChat({
     const images = [...(runInput.images || [])];
     let runId: string | null = null;
     let streamedText = '';
+    let responseEvidenceIds: string[] = [];
     const appendText = (chunk: string) => {
       if (!chunk) return;
       streamedText += chunk;
@@ -341,7 +347,11 @@ export default function useAgentBuilderMainChat({
         return { key: projectKey, messages: copy };
       });
     };
-    const finishText = (textValue: string, status: 'complete' | 'error' = 'complete') => {
+    const finishText = (
+      textValue: string,
+      status: 'complete' | 'error' = 'complete',
+      linkedEvidenceIds: string[] = responseEvidenceIds,
+    ) => {
       setTranscript((current) => {
         if (current.key !== projectKey) return current;
         const copy = [...current.messages];
@@ -357,11 +367,13 @@ export default function useAgentBuilderMainChat({
           copy[assistantIndex] = {
             role: 'assistant', text: retainedText, speaker: responseParticipant,
             status, requestKey,
+            ...(linkedEvidenceIds.length ? { linkedEvidenceIds } : {}),
           };
         } else {
           copy.push({
             role: 'assistant', text: retainedText, speaker: responseParticipant,
             status, requestKey,
+            ...(linkedEvidenceIds.length ? { linkedEvidenceIds } : {}),
           });
         }
         return { key: projectKey, messages: copy };
@@ -406,10 +418,11 @@ export default function useAgentBuilderMainChat({
           }
           if (event.runId && !runId) {
             runId = event.runId;
+            activeRunIdRef.current = { key: projectKey, runId };
             const active = activeStreamsRef.current.get(controller);
             if (active) active.runId = runId;
           }
-          if (event.kind === 'session' || event.kind === 'text') {
+          if (event.kind === 'run' || event.kind === 'session' || event.kind === 'text') {
             setTurnState({ key: projectKey, phase: 'active' });
           }
           if (event.kind === 'session') {
@@ -425,6 +438,11 @@ export default function useAgentBuilderMainChat({
             }
           }
           if (event.kind === 'text') appendText(String(event.text || ''));
+          if (event.kind === 'done') {
+            responseEvidenceIds = Array.isArray(event.linkedEvidenceIds)
+              ? [...new Set(event.linkedEvidenceIds.map(String).map(value => value.trim()).filter(Boolean))]
+              : [];
+          }
         },
       });
       finishText(finalText || streamedText);
@@ -440,12 +458,14 @@ export default function useAgentBuilderMainChat({
       const completedRunId = runId;
       if (
         completedRunId
-        && !addressedCardId
-        && responseParticipant.cardId === mainCardId
         && String(finalText || streamedText).trim()
       ) {
         void Promise.resolve()
-          .then(() => onMainRunCompleted?.(completedRunId))
+          .then(() => (
+            !addressedCardId && responseParticipant.cardId === mainCardId
+              ? onMainRunCompleted?.(completedRunId)
+              : onMainRunCompleted?.(completedRunId, false)
+          ))
           .catch(() => undefined);
       }
       return finalText;
@@ -482,6 +502,12 @@ export default function useAgentBuilderMainChat({
       throw error;
     } finally {
       activeStreamsRef.current.delete(controller);
+      const projectStillActive = [...activeStreamsRef.current.values()].some(
+        (active) => active.key === projectKey,
+      );
+      if (!projectStillActive && activeRunIdRef.current?.key === projectKey) {
+        activeRunIdRef.current = null;
+      }
       setTurnState({
         key: projectKey,
         phase: activeStreamsRef.current.size ? 'active' : 'idle',
@@ -595,14 +621,17 @@ export default function useAgentBuilderMainChat({
 
   const stopMainTurn = useCallback(async () => {
     if (!sessionPending || !canvasProjectId) return;
-    const activeEntry = [...activeStreamsRef.current.entries()].reverse().find(([, active]) => (
-      active.key === projectKey && Boolean(active.runId)
-    ));
-    const expectedRunId = activeEntry?.[1].runId || null;
-    if (!activeEntry || !expectedRunId) throw new Error('expected_run_id_required');
+    const expectedRunId = activeRunIdRef.current?.key === projectKey
+      ? activeRunIdRef.current.runId
+      : null;
+    if (!expectedRunId) throw new Error('expected_run_id_required');
     await stopSession({ projectId: canvasProjectId, deckId, expectedRunId });
-    activeEntry[0].abort();
-    activeStreamsRef.current.delete(activeEntry[0]);
+    for (const [controller, active] of activeStreamsRef.current) {
+      if (active.key !== projectKey) continue;
+      controller.abort();
+      activeStreamsRef.current.delete(controller);
+    }
+    activeRunIdRef.current = null;
     setTurnState({
       key: projectKey,
       phase: activeStreamsRef.current.size ? 'active' : 'idle',

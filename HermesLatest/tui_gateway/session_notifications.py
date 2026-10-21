@@ -330,15 +330,27 @@ _KANBAN_EVENT_FORMATTERS = {
 
 
 class KanbanNotificationText(str):
-    """Display text carrying exact task correlation without changing its UX."""
+    """Compact display text plus the exact model-visible task result."""
 
     task_id: str
     event_kind: str
+    model_text: str
+    task_result: str
 
-    def __new__(cls, value: str, *, task_id: str, event_kind: str):
+    def __new__(
+        cls,
+        value: str,
+        *,
+        task_id: str,
+        event_kind: str,
+        model_text: str | None = None,
+        task_result: str = "",
+    ):
         instance = super().__new__(cls, value)
         instance.task_id = task_id
         instance.event_kind = event_kind
+        instance.model_text = model_text if model_text is not None else value
+        instance.task_result = task_result
         return instance
 
 
@@ -352,10 +364,22 @@ def _format_kanban_event_text(sub: dict, task, ev, board_slug: str) -> Optional[
     title = (getattr(task, "title", None) or task_id)[:120]
     who = getattr(task, "assignee", None) or ""
     prefix = f"{glyph} " + (f"[{board_slug}] " if board_slug else "") + (f"@{who} " if who else "")
+    display_text = f"{prefix}Kanban {task_id}{fmt(task, getattr(ev, 'payload', None) or {}, title)}"
+    task_result = (
+        str(getattr(task, "result", None) or "").strip()
+        if str(getattr(ev, "kind", "") or "") == "completed"
+        else ""
+    )
+    model_text = (
+        f"{display_text}\n\nCompleted task result:\n{task_result}"
+        if task_result else display_text
+    )
     return KanbanNotificationText(
-        f"{prefix}Kanban {task_id}{fmt(task, getattr(ev, 'payload', None) or {}, title)}",
+        display_text,
         task_id=str(task_id),
         event_kind=str(getattr(ev, "kind", "") or ""),
+        model_text=model_text,
+        task_result=task_result,
     )
 
 
@@ -473,12 +497,24 @@ def _notif_poll_kanban_scoped(sid: str, session: dict) -> None:
         if getattr(text, "event_kind", "") == "completed"
         and str(getattr(text, "task_id", "") or "").strip()
     ))
+    completed_task_results = {
+        str(getattr(text, "task_id", "") or "").strip():
+            str(getattr(text, "task_result", "") or "").strip()
+        for text in batch
+        if getattr(text, "event_kind", "") == "completed"
+        and str(getattr(text, "task_id", "") or "").strip()
+        and str(getattr(text, "task_result", "") or "").strip()
+    }
     with contextlib.suppress(Exception):
         metadata = {
             **({"notification_category": "diagnostic"} if diagnostic else {}),
             **({"task_ids": completed_task_ids} if completed_task_ids else {}),
+            **({"task_results": completed_task_results} if completed_task_results else {}),
         }
-        _notif_submit(f"__notif__{int(time.time() * 1000)}", sid, session, "\n".join(batch),
+        model_text = "\n".join(
+            str(getattr(text, "model_text", text)) for text in batch
+        )
+        _notif_submit(f"__notif__{int(time.time() * 1000)}", sid, session, model_text,
                       "kanban notification dispatch failed",
                       **({"display_metadata": metadata} if metadata else {}))
 

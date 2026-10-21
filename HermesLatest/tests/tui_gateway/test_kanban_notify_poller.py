@@ -39,10 +39,10 @@ def _create_subscribed_task(*, chat_id: str = SESSION_KEY, platform: str = "tui"
         conn.close()
 
 
-def _complete(tid: str, summary: str = "all done") -> None:
+def _complete(tid: str, summary: str = "all done", *, result: str | None = None) -> None:
     conn = kbc.connect()
     try:
-        kb.complete_task(conn, tid, summary=summary)
+        kb.complete_task(conn, tid, result=result, summary=summary)
     finally:
         conn.close()
 
@@ -249,6 +249,18 @@ class TestFormatKanbanEventText:
         text = _format_kanban_event_text(self.SUB, self.TASK, ev, "")
         assert "timed out" in text
 
+    def test_completed_status_stays_compact_while_model_text_keeps_full_result(self):
+        result = "first line\n" + ("full research evidence " * 80)
+        task = SimpleNamespace(title="research", assignee="knowgraph", result=result)
+        ev = SimpleNamespace(kind="completed", payload={"summary": result[:400]})
+
+        text = _format_kanban_event_text(self.SUB, task, ev, "main")
+
+        assert len(str(text)) < 400
+        assert result not in str(text)
+        assert text.task_result == result.strip()
+        assert text.model_text.endswith(result.strip())
+
 
 class TestNotificationPollerLoopKanbanWiring:
     """Drive a real TUI subscription through ``_notification_poller_loop``.
@@ -304,7 +316,8 @@ class TestNotificationPollerLoopKanbanWiring:
 
     def test_idle_session_gets_status_update_and_agent_turn(self, monkeypatch):
         tid = _create_subscribed_task()
-        _complete(tid, summary="poller e2e done")
+        full_result = "poller e2e done\n" + ("verified evidence " * 80)
+        _complete(tid, summary="poller e2e done", result=full_result)
         session = self._poller_session(running=False)
 
         stop, thread, emits, submits = self._start_poller(session, monkeypatch)
@@ -316,9 +329,14 @@ class TestNotificationPollerLoopKanbanWiring:
 
         status_texts = [p["text"] for e, p in emits if e == "status.update" and p]
         assert any(tid in t for t in status_texts), status_texts
+        assert all(full_result not in text for text in status_texts)
         assert any(e == "message.start" for e, _ in emits)
         assert any(tid in text for text, _kwargs in submits), submits
+        assert full_result.strip() in submits[0][0]
         assert submits[0][1]["display_metadata"]["task_ids"] == [tid]
+        assert submits[0][1]["display_metadata"]["task_results"] == {
+            tid: full_result.strip()
+        }
         assert session["running"] is True  # poller claimed the turn
         assert not session.get("_kanban_pending")
 

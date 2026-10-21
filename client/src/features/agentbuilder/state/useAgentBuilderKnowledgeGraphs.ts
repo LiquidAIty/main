@@ -35,7 +35,7 @@ type KnowledgeGraphState = {
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
   removeKnowGraphEvidence: (episodeId: string) => Promise<void>;
   refreshThinkGraph: (afterRunId?: string) => Promise<void>;
-  refreshAfterMainRun: (runId: string) => Promise<void>;
+  refreshAfterMainRun: (runId: string, waitForThinkCapture?: boolean) => Promise<void>;
   codeGraph: {
     projection: GraphProjectionV1;
     status: 'idle' | 'loading' | 'ready' | 'error';
@@ -190,8 +190,14 @@ export default function useAgentBuilderKnowledgeGraphs({
         signal: controller.signal,
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok || !isRecord(payload)
-        || payload.schemaVersion !== 'thinkgraph.engraphis.v1'
+      if (!response.ok) {
+        throw new Error(String(
+          isRecord(payload) && payload.error
+            ? payload.error
+            : `thinkgraph_http_${response.status}`,
+        ));
+      }
+      if (!isRecord(payload) || payload.schemaVersion !== 'thinkgraph.engraphis.v1'
         || payload.authority !== 'engraphis'
         || payload.projectId !== projectId
         || !Array.isArray(payload.nodes)
@@ -448,9 +454,12 @@ export default function useAgentBuilderKnowledgeGraphs({
     await refreshKnowGraph();
   }, [projectId, refreshKnowGraph]);
 
-  const refreshAfterMainRun = useCallback(async (runId: string) => {
+  const refreshAfterMainRun = useCallback(async (
+    runId: string,
+    waitForThinkCapture = true,
+  ) => {
     try {
-      await refreshThinkGraph(runId);
+      await refreshThinkGraph(waitForThinkCapture ? runId : undefined);
     } finally {
       await refreshKnowGraph();
     }

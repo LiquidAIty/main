@@ -56,7 +56,7 @@ and inverse deletion/rename mechanics.
 
 | Concern | Current owner | Contract |
 | --- | --- | --- |
-| Saved Card system | `saved_card_contract.py`, `saved_cards.py`, `card_invocation_authority.py`, `card_invocation_tools.py`, `card_invocation_preparation.py`, `card_run_preparation.py`, `card_run_inputs.py`, `card_run_readback.py`, `card_run_execution.py`, `card_run_settlement.py`, `card_run_selection_context.py`, `card_run_jev.py`, `card_run_auto_tools.py`, `card_run_auto_model.py`, `agentgraph_query.py`, `agentgraph_topology.py`, `agentgraph_run_observations.py`, and `agentgraph_inspection.py` under `apps/python-models/app/python_models/` | Separate literal owners for saved identity/runtime validation, Project/deck/Card revisions, invocation authority, effective tools, graph selection and IDF preparation, Run acceptance/preparation, canonical input retention, readback/projection, execution progress, terminal settlement, bounded Jev context/transport, saved-ceiling AutoTools, same-provider AutoModel, AGE query/topology/observations, and read-only AgentGraph inspection |
+| Saved Card system | `saved_card_contract.py`, `saved_cards.py`, `card_invocation_authority.py`, `card_invocation_tools.py`, `card_invocation_preparation.py`, `card_run_preparation.py`, `card_run_inputs.py`, `card_run_readback.py`, `card_run_graph_references.py`, `card_run_execution.py`, `card_run_settlement.py`, `card_run_selection_context.py`, `card_run_jev.py`, `card_run_auto_tools.py`, `card_run_auto_model.py`, `agentgraph_query.py`, `agentgraph_topology.py`, `agentgraph_run_observations.py`, and `agentgraph_inspection.py` under `apps/python-models/app/python_models/` | Separate literal owners for saved identity/runtime validation, Project/deck/Card revisions, invocation authority, effective tools, graph selection and IDF preparation, Run acceptance/preparation, canonical input retention, exact provider-reference evidence, readback/projection, execution progress, terminal settlement, bounded Jev context/transport, saved-ceiling AutoTools, same-provider AutoModel, AGE query/topology/observations, and read-only AgentGraph inspection |
 | Canonical Run input | `idf.py`, `idf_contract.py`, `idf_graph_records.py`, and `idf_projection.py` under `apps/python-models/app/python_models/`; sole constructor `idf.py::materialize_idf` | Literal contract, bounded graph-record construction, inspection/model projections, and one materializer which writes and rereads one UTF-8 `in.idf` before execution |
 | Card Python Script | `apps/python-models/app/python_models/card_script.py`, the existing Card editor transport, and `HermesLatest/agent/{card_turn_tools,card_script_tool}.py` | Saved Card-owned source, structural compilation, live selected-tool validation, one immutable turn contract, and execution through Hermes' existing child Python runner against profile-loaded tools; no TypeScript executor or application callback tool protocol |
 | Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, unified Think/Know/Code visual-layer controls, and no semantic routing |
@@ -310,17 +310,18 @@ model edge writer, or whole-graph reclassification loop. This lifecycle does not
 ### Current graph context
 
 Model-facing graph context includes exact provider Data Anchors plus one automatically supplied,
-identity-and-Relationship-only canonical Entity map. Python implements `project_graph.list_entities` and
-`project_graph.read_entity_context`. Main, Builder, ThinkGraph, and KnowGraph preparation use Engraphis
-recall and Graphiti Entity search/exact `ABOUT` hydration to produce bounded candidates,
-then ask Jev for one non-persisting relevance distribution per authority. Deterministic code selects the
-highest-probability record and excludes the Recent record from those candidates. The default packet is:
+identity-and-Relationship-only canonical Entity map for Main, Builder, ThinkGraph, and KnowGraph. Python
+implements `project_graph.list_entities` and `project_graph.read_entity_context`. Main additionally receives
+ThinkGraph-only current-request grounding; Builder retains the wider ThinkGraph-and-KnowGraph construction
+packet. Those grounding paths use provider retrieval followed by one non-persisting Jev relevance distribution,
+select the highest-probability record, and exclude the Recent record from those candidates. Automatic
+ThinkGraph completed-pair extraction and KnowGraph research receive no prior Think/Know bodies: each uses the
+Entity/Relationship shape and deliberately reads deeper only for its actual task. Main's default packet is:
 
 ```text
 current user request
 + complete exact Entity/Relationship map
 + one most Relevant Think + one distinct most Recent Think
-+ one most Relevant Know + one distinct most Recent Know
 ```
 
 Thinks are selected for the strongest faithful optimistic steelman of the user's current idea. Each current
@@ -333,7 +334,7 @@ never relabels recency as relevance.
 The exact Entity inspector does not perform that relevance-read flow. It shows at most two current
 provider-projected attached Thinks or Knows, with KnowGraph as the landing authority when an Entity has both;
 ThinkGraph remains the left tab and KnowGraph the right tab. Search/Results and a Relevant/Recent switch are
-not current UI. Main/Builder's automatic grounding remains a separate one-result-per-category contract.
+not current UI. Main/Builder's automatic grounding remains a separate bounded contract.
 
 One current Know is one first-class `Episodic:Know` Graphiti object:
 
@@ -345,14 +346,20 @@ one verified source URL/redirect + document identity/date + exact evidence passa
 = one Know attached to exactly one Entity
 ```
 
-The saved KnowGraph root uses Hermes' `grounded-citations` skill over actual `web_search` / `web_extract`
-results: retrieval-time URL registration, exact evidence checked against extracted page text, and the evidence
-verification gate precede an accepted write. Python rails projects `graphiti.add_know` as the strict
+The saved KnowGraph root applies its always-on evidence gate to actual `web_search` / `web_extract` results:
+discovery snippets are not documents, the final or resolved URL is copied from successful retrieval, and the
+exact evidence passage must occur in fetched page text before an accepted write. Python rails projects
+`graphiti.add_know` as the strict
 Project-scoped model-facing schema and preserves those citation fields without operating a competing web
 retriever or citation ledger. Graphiti stores the citation on the Know, keeps a plain-text episode for
 extraction and hybrid retrieval, and derives a deterministic local Know UUID plus portable content hash so
 repeated identical intake is idempotent. Only Entities render as Project graph nodes. Thinks, Knows,
 citations, provider references and supporting episode IDs remain attached properties/evidence/provenance.
+Mere intake acceptance creates no conversation evidence link. A successful exact `graphiti.get_know` readback
+under the authenticated Card Run records one ordinary Run artifact with the Graphiti episode/entity IDs and
+content hash. The completed conversation stores those episode IDs in `linkedEvidenceIds`; its compact Know
+control opens the exact episode ahead of the inspector's ordinary two-record recency window without copying
+Know content or changing layer visibility.
 
 The unified canvas shows the blue **Think** and orange **Know** visual layers by default. The green **Code**
 layer is hidden and unloaded until explicitly enabled from the graph-design inspector, where it remains marked
@@ -367,7 +374,7 @@ attached Think-and-Know word count from least to most. That transient visual met
 probability, gravity mass, retrieval, or stored graph meaning.
 
 KnowGraph may use selected Thinks only as research framing. Sourced Knows remain Graphiti evidence.
-Its dedicated queued `add_know` path reuses the exact supplied UUID/name Entity, reuses an exact-name Entity
+Its dedicated `add_know` intake path reuses the exact supplied UUID/name Entity, reuses an exact-name Entity
 when no UUID is supplied, or creates the missing Entity. It then writes one structural `ABOUT` edge, leaves
 extraction-owned `MENTIONS` independent, updates Graphiti communities by default, and accepts Graphiti Saga
 continuity. `get_know` reads the exact UUID returned at intake, `search_knows` reuses Graphiti episode BM25 plus cross-encoder reranking, while
@@ -464,7 +471,7 @@ LiquidAIty execution boundary. No other Hermes customization is accepted by this
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
 | --- | --- | --- | --- |
-| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Retained Hermes extensions are governed only by that register and current source. Hermes keeps profile creation, execution, sessions, Bot delivery, learning, its upstream internal scheduling, task ledger, PTY, MCP transport, and child Python execution. LiquidAIty submits only an idle Main prompt or an invisible active-turn steer and never requests, exposes, or accepts an upstream busy-prompt queue state. Local hunks add Project roster/session/target-Card inputs, receiving-Card Run context, exact process/task/Run correlation, profile-MCP request headers and signed loopback authorization, content-aware profile-configuration cache invalidation, preservation of enabled profile MCP servers beneath an empty ordinary-Hermes-tool pin, Card Script presentation, saved-Card-bound AutoTeam synthesis with read-only candidate workers, and the existing Team/Magnetic authority constraints without another runtime. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, per-turn application tool callback, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
+| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Retained Hermes extensions are governed only by that register and current source. Hermes keeps profile creation, execution, sessions, Bot delivery, learning, its upstream internal scheduling, task ledger, PTY, MCP transport, and child Python execution. LiquidAIty submits only an idle Main prompt or an invisible active-turn steer and never requests, exposes, or accepts an upstream busy-prompt queue state. Local hunks add Project roster/session/target-Card inputs, receiving-Card Run context, exact process/task/Run correlation, exact completed-task result delivery into the existing owner session while retaining compact status presentation, profile-MCP request headers and signed loopback authorization, content-aware profile-configuration cache invalidation, preservation of enabled profile MCP servers beneath an empty ordinary-Hermes-tool pin, Card Script presentation, saved-Card-bound AutoTeam synthesis with read-only candidate workers, and the existing Team/Magnetic authority constraints without another runtime. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, per-turn application tool callback, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
 | Same Hermes baseline | `HermesLatest/hermes_cli/taskgraph_adapter.py::{validate_profiles,stage_root,activate_root,read_root,main}`; focused adapter tests | Provide one generic, JSON-serializable public process boundary over Hermes's existing profile and Kanban APIs so another co-located runtime can stage, activate, and read the same task root without importing Hermes internals or mutating process-global Python module state. Hermes retains its database, dispatcher, attempts, workers, dependencies, authority events, and synthesis. | External alternative check: shipped CLI/Gateway do not expose exact allowed-assignee, authority-event, blocked-stage/activate, or whole-root readback contracts; Python-rails and Hermes package pins conflict. Proof requires adapter unit tests plus application Magnetic tests and one loaded same-root mission. Fork cost is one additive module; rollback removes it and disables the dependent Magnetic adapter without migrating task data. |
 
 The existing Hermes app-server adapter also preserves provider vision input:

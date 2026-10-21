@@ -37,6 +37,10 @@ import {
   type CanonicalEntityFocusRequest,
   type CanonicalEntityFocusTarget,
 } from '../components/builder/canonicalEntityLinks';
+import {
+  isCanonicalEntityDirectory,
+  readCanonicalEntityProviderPointers,
+} from '../components/knowledge/canonicalEntityDirectory';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
 import WorldSignalSurface, {
   type WorldSignalsInspectorBridge,
@@ -474,6 +478,45 @@ export default function AgentBuilder(): React.ReactElement {
       requestId: entityFocusRequestIdentityRef.current,
     });
   }, [activeProject]);
+  const handleKnowEvidenceFocus = useCallback((episodeId: string) => {
+    const exactEpisodeId = episodeId.trim();
+    const knowProjection = knowledgeGraphs.projections.knowgraph;
+    const directory = knowledgeGraphs.projections.thinkgraph.canonicalEntityDirectory;
+    if (!activeProject || !exactEpisodeId || !isCanonicalEntityDirectory(directory)) return;
+    const entityNode = knowProjection.nodes.find((node) => {
+      const evidence = Array.isArray(node.properties?.evidence)
+        ? node.properties.evidence
+        : [];
+      return evidence.some((item) => (
+        item && typeof item === 'object'
+        && String((item as Record<string, unknown>).graphitiEpisodeId || '').trim()
+          === exactEpisodeId
+      ));
+    });
+    if (!entityNode) return;
+    const directoryEntity = directory.entities.find((entity) => (
+      readCanonicalEntityProviderPointers(entity)?.some((pointer) => (
+        pointer.authority === 'knowgraph' && pointer.entityId === entityNode.id
+      ))
+    ));
+    const members = directoryEntity
+      ? readCanonicalEntityProviderPointers(directoryEntity)
+      : null;
+    if (!directoryEntity || !members?.length) return;
+    handleCanonicalEntityFocus({
+      projectId: activeProject,
+      directorySha256: directory.sha256,
+      canonicalName: directoryEntity.canonicalName,
+      view: 'knowgraph',
+      members,
+      graphitiEpisodeId: exactEpisodeId,
+    });
+  }, [
+    activeProject,
+    handleCanonicalEntityFocus,
+    knowledgeGraphs.projections.knowgraph,
+    knowledgeGraphs.projections.thinkgraph.canonicalEntityDirectory,
+  ]);
   const prepareRunImages = useCallback(async (addressedCardId: string | null) => {
     if (!addressedCardId || addressedCardId !== worldViewCard?.id || workspaceView !== 'worldview') {
       return [];
@@ -1262,6 +1305,7 @@ export default function AgentBuilder(): React.ReactElement {
           knowledgeProjectId={projectId}
           entityMatcher={canonicalEntityMatcher}
           onEntityFocus={handleCanonicalEntityFocus}
+          onEvidenceFocus={handleKnowEvidenceFocus}
           colors={C}
           busy={sessionActive}
           connecting={sessionConnecting}

@@ -15,6 +15,7 @@ from psycopg.rows import dict_row
 
 from app.python_models import agentgraph_query, saved_cards
 from app.python_models.card_run_execution import HERMES_TASK_STATUSES
+from app.python_models.card_run_graph_references import graph_references_for_run
 from app.python_models.postgres import connect_postgres
 from app.python_models.saved_card_contract import CardDomainError, required_text
 
@@ -165,6 +166,10 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                     (project_id, deck_id, value),
                 )
             row = cursor.fetchone()
+            graph_references = (
+                graph_references_for_run(cursor, str(row["run_id"]))
+                if row is not None else []
+            )
             if row is not None and conversation_id is not None:
                 scope = agentgraph_query.execute_fixed_agentgraph_query(
                     cursor,
@@ -180,6 +185,8 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                 if len(scope) != 1 or scope[0].get("run_id") != str(row["run_id"]):
                     return {"ok": True, "run": None}
     run = run_projection(dict(row)) if row is not None else None
+    if run is not None:
+        run["graphReferences"] = graph_references
     if run is not None and conversation_id is not None:
         run["conversationId"] = conversation_id
         raw_input_ids = scope[0].get("input_message_ids")

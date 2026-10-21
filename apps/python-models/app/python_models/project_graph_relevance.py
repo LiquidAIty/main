@@ -386,6 +386,7 @@ def build_project_graph_grounding(
     know_retriever: Retriever = _provider_know_records,
     relevance_rater: Rater = _jev_relevance,
     result_limit: int = 1,
+    authorities: tuple[str, ...] = ("thinkgraph", "knowgraph"),
 ) -> dict[str, Any]:
     """Build one non-persisting Recent/Relevant packet for the current request."""
 
@@ -396,14 +397,22 @@ def build_project_graph_grounding(
     if isinstance(result_limit, bool) or not isinstance(result_limit, int) \
             or not 1 <= result_limit <= _MAX_CANDIDATE_LIMIT // 2:
         raise ValueError("project_graph_relevance_limit_invalid")
+    selected_authorities = tuple(dict.fromkeys(authorities))
+    if not selected_authorities or any(
+        authority not in {"thinkgraph", "knowgraph"}
+        for authority in selected_authorities
+    ):
+        raise ValueError("project_graph_relevance_authority_invalid")
     recent: dict[str, list[dict[str, Any]]] = {}
     candidates: dict[str, list[dict[str, Any]]] = {}
     provider: dict[str, dict[str, Any]] = {}
     failures: dict[str, str] = {}
-    for authority, retriever in (
-        ("thinkgraph", think_retriever),
-        ("knowgraph", know_retriever),
-    ):
+    retrievers = {
+        "thinkgraph": think_retriever,
+        "knowgraph": know_retriever,
+    }
+    for authority in selected_authorities:
+        retriever = retrievers[authority]
         try:
             authority_recent, authority_candidates, metadata = retriever(
                 project, query, result_limit,
@@ -423,8 +432,8 @@ def build_project_graph_grounding(
             provider[authority] = {"retrieval": f"{authority}_provider"}
             failures[authority] = f"{authority}_provider_retrieval_unavailable"
     rated = relevance_rater(query, context, candidates, result_limit)
-    authorities: dict[str, Any] = {}
-    for authority in ("thinkgraph", "knowgraph"):
+    authority_packets: dict[str, Any] = {}
+    for authority in selected_authorities:
         relevance = rated.get(authority) or {
             "status": "empty", "records": [], "decisionId": None,
         }
@@ -435,7 +444,7 @@ def build_project_graph_grounding(
                 "decisionId": None,
                 "records": [],
             }
-        authorities[authority] = {
+        authority_packets[authority] = {
             "recent": recent[authority],
             "relevant": list(relevance.get("records") or [])[:result_limit],
             "candidateCount": len(candidates[authority]),
@@ -452,7 +461,7 @@ def build_project_graph_grounding(
         "projectId": project,
         "resultLimit": result_limit,
         "querySha256": hashlib.sha256(query.encode("utf-8")).hexdigest(),
-        "authorities": authorities,
+        "authorities": authority_packets,
     }
     packet["revision"] = hashlib.sha256(
         json.dumps(packet, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")

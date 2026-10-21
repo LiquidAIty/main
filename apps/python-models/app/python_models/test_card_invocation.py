@@ -926,18 +926,19 @@ def test_invocation_rejects_every_non_graph_context_field(
         card_invocation_preparation.materialize_invocation(payload)
 
 @pytest.mark.parametrize(
-    ("card_id", "profile"),
+    ("card_id", "profile", "receives_old_context"),
     [
-        ("card_main_chat", "main"),
-        ("builder", "builder"),
-        ("card_thinkgraph", "thinkgraph"),
-        ("card_knowgraph", "knowgraph"),
+        ("card_main_chat", "main", True),
+        ("builder", "builder", True),
+        ("card_thinkgraph", "thinkgraph", False),
+        ("card_knowgraph", "knowgraph", False),
     ],
 )
-def test_main_builder_thinkgraph_and_knowgraph_receive_current_graph_grounding(
+def test_project_cards_receive_the_map_without_automatic_old_context(
     monkeypatch: pytest.MonkeyPatch,
     card_id: str,
     profile: str,
+    receives_old_context: bool,
 ) -> None:
     loaded = _destination_fixture(monkeypatch)
     target = loaded["deck"]["nodes"][1]
@@ -1022,33 +1023,66 @@ def test_main_builder_thinkgraph_and_knowgraph_receive_current_graph_grounding(
         },
         "revision": "b" * 64,
     }
-    grounding_calls: list[tuple[str, str, str]] = []
+    grounding_calls: list[tuple[str, str, str, tuple[str, ...]]] = []
+
+    def build_grounding(
+        project: str,
+        query: str,
+        context: str = "",
+        authorities: tuple[str, ...] = ("thinkgraph", "knowgraph"),
+    ) -> dict[str, Any]:
+        grounding_calls.append((project, query, context, authorities))
+        return {
+            **grounding,
+            "authorities": {
+                authority: grounding["authorities"][authority]
+                for authority in authorities
+            },
+        }
+
     monkeypatch.setattr(
         card_invocation_preparation,
         "build_project_graph_grounding",
-        lambda project, query, context="": (
-            grounding_calls.append((project, query, context)) or grounding
-        ),
+        build_grounding,
     )
     invocation = card_invocation_preparation.materialize_invocation(
         _destination_payload(card_id)
     )
 
     assert invocation["projectEntityMap"] == entity_map
-    assert invocation["projectGraphGrounding"] == grounding
-    assert grounding_calls == [(
-        loaded["projectId"],
-        _destination_payload(card_id)["assignment"],
-        "",
-    )]
     graph_text = invocation["idf"]["actualGraphData"]["modelText"]
     assert "Current Project Entity Map" in graph_text
     assert "Rocket Lab" in graph_text
     assert "OPERATES" in graph_text
-    assert "PROJECT GRAPH GROUNDING (CURRENT REQUEST)" in graph_text
-    assert "Relevant compact Think." in graph_text
-    assert "Relevant cited For." in graph_text
-    assert "Relevant cited Against." in graph_text
+    if receives_old_context:
+        expected_authorities = (
+            ("thinkgraph",) if card_id == "card_main_chat"
+            else ("thinkgraph", "knowgraph")
+        )
+        assert set(invocation["projectGraphGrounding"]["authorities"]) == set(
+            expected_authorities
+        )
+        assert grounding_calls == [(
+            loaded["projectId"],
+            _destination_payload(card_id)["assignment"],
+            "",
+            expected_authorities,
+        )]
+        assert "PROJECT GRAPH GROUNDING (CURRENT REQUEST)" in graph_text
+        assert "Relevant compact Think." in graph_text
+        if card_id == "card_main_chat":
+            assert "Relevant cited For." not in graph_text
+            assert "Relevant cited Against." not in graph_text
+        else:
+            assert "Relevant cited For." in graph_text
+            assert "Relevant cited Against." in graph_text
+    else:
+        assert "projectGraphGrounding" not in invocation
+        assert grounding_calls == []
+        assert "PROJECT GRAPH GROUNDING (CURRENT REQUEST)" not in graph_text
+        assert "Relevant compact Think." not in graph_text
+        assert "Relevant cited For." not in graph_text
+        assert "Relevant cited Against." not in graph_text
     assert '"body":' not in json.dumps(entity_map)
     assert invocation["inputSummary"]["estimatedGraphContextTokens"] > 0
 

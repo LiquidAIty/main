@@ -36,6 +36,7 @@ export type MainConversationMessage = {
   text: string;
   speaker: MainConversationParticipant;
   target?: MainConversationParticipant;
+  linkedEvidenceIds?: string[];
 };
 
 export type HermesSessionEvent = {
@@ -351,12 +352,16 @@ export async function loadSessionHistory(args: {
     }
     const speaker = participant(message.speaker);
     const target = participant(message.target);
+    const linkedEvidenceIds = Array.isArray(message.linkedEvidenceIds)
+      ? message.linkedEvidenceIds.map(String).map(value => value.trim()).filter(Boolean)
+      : [];
     if (!speaker || !message.text) return [];
     return [{
       role: message.role as 'assistant' | 'user',
       text: message.text,
       speaker,
       ...(target ? { target } : {}),
+      ...(linkedEvidenceIds.length ? { linkedEvidenceIds } : {}),
     }];
   });
   const addressableAgents = Array.isArray(payload.addressableAgents)

@@ -40,34 +40,31 @@ project: C-Projects-LiquidAIty-main
 root:    C:/Projects/LiquidAIty/main
 ```
 
-## Standing start-of-run refresh
+## Automatic freshness
 
-The owner has explicitly authorized and required one official CLI reindex at the start of every
-PromptSpec run before the Primary maps ownership:
+The installed CBM watcher refreshes the canonical project when source changes. Do not run
+`index_repository` at the start of a task and do not reindex, restart, repair, inspect caches, or
+change CBM lifecycle because a file reports `metadata_changed`. That value is transient watcher
+freshness, not a Git mutation or an application defect. Direct-read the material source and continue.
 
-```powershell
-codebase-memory-mcp cli --progress index_repository `
-  --repo-path C:/Projects/LiquidAIty/main
-```
-
-Run it once, then read `index_status`. This standing instruction authorizes that one refresh; it does
-not authorize process restarts, cache access, project deletion, registration changes, or retry loops.
-A successful reindex is not proof that every file is current: qualify coverage and direct-read each
-material source path.
+Manual indexing or any other CBM lifecycle mutation requires an explicit current owner instruction
+for that exact action. Read `index_status` only when current graph generation is materially needed for
+the structural claim; do not turn routine freshness into user-facing status narration.
 
 ## Primary workflow
 
 Use only the smallest useful sequence:
 
 ```text
-index_status when freshness is material
-→ search_graph for each independent ownership question
+search_graph for each independent ownership question
 → trace_path when callers/callees or impact matter
 → get_code_snippet only for a qualified name returned by search_graph
 → check_index_coverage for every material evidence path
 → complete direct-source read
 → focused rg for literals, Markdown, config, dynamic dispatch, and residue
 ```
+
+Insert `index_status` only when generation identity is material to the requested proof.
 
 Do not turn this into broad archaeology. Stop when current owners, material callers, tests, coverage
 limits, and collisions are known.
@@ -137,7 +134,7 @@ A `search_graph` query is ranked. A zero result is not an exhaustive absence pro
 
 ## Freshness and coverage
 
-Record:
+When freshness is material to the claim, record:
 
 - project and root;
 - status and generation timestamp;
@@ -147,12 +144,11 @@ Record:
 - direct-source fallback used.
 
 `no_recorded_issue` is not completeness proof. If coverage says `metadata_changed`, read the file
-directly and report freshness as unproven even when a search result looks correct.
+directly. Treat the watcher transition as background noise unless it prevents the requested proof.
 
-Normal ongoing freshness belongs to the upstream watcher. Apart from the one owner-required start-of-run
-reindex above, restart, additional reindexing, trace ingestion, project deletion, or other lifecycle
-mutation requires an explicit current owner instruction for that exact operation. Do not reflexively
-refresh again because a query returns nothing.
+Normal ongoing freshness belongs to the upstream watcher. Reindexing, restart, trace ingestion,
+project deletion, or any other lifecycle mutation requires an explicit current owner instruction for
+that exact operation. Do not reflexively refresh because a query returns nothing.
 
 Never:
 

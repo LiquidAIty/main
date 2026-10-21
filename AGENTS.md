@@ -178,9 +178,9 @@ For PromptSpec repository work:
   to the direct-source scouts;
 - current source wins every disagreement;
 - a zero graph result is never sufficient absence/dead-code proof;
-- perform the owner-required one official CLI reindex at the start of each PromptSpec run exactly as
-  documented in `skills/codebasedmemory.md`; any additional reindex, restart, trace ingestion, project
-  deletion, or other lifecycle mutation requires a new explicit owner instruction for that exact operation.
+- rely on the installed watcher's automatic source refresh as documented in `skills/codebasedmemory.md`;
+  do not perform a start-of-run reindex, and require a new explicit owner instruction for any manual
+  reindex, restart, trace ingestion, project deletion, or other lifecycle mutation.
 
 Support agents do not operate CBM and do not repair its process or index. They verify supplied anchors through
 `rg`, direct source, callers, contracts, and tests. Any deletion or rename must still resolve actual qualified

@@ -65,6 +65,7 @@ type MainProjectChatMessage = {
   text: string;
   speaker: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
   target?: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
+  linkedEvidenceIds?: string[];
   status?: "pending" | "complete" | "error";
 };
 
@@ -310,6 +311,7 @@ function MainProjectChatMessageBubble({
   message,
   entityMatcher,
   onEntityFocus,
+  onEvidenceFocus,
 }: {
   colors: MainProjectChatColors;
   laneWidth: number | null;
@@ -317,6 +319,7 @@ function MainProjectChatMessageBubble({
   message: MainProjectChatMessage;
   entityMatcher?: CanonicalEntityMatcher | null;
   onEntityFocus?: (target: CanonicalEntityFocusTarget) => void;
+  onEvidenceFocus?: (episodeId: string) => void;
 }) {
   const text = safeText(message.text);
   const isUser = message.role !== "assistant";
@@ -408,6 +411,30 @@ function MainProjectChatMessageBubble({
           {isUser
             ? text
             : renderChatMarkdown(text, message.role, entityMatcher, onEntityFocus)}
+          {!isUser && message.linkedEvidenceIds?.length && onEvidenceFocus ? (
+            <span data-testid="main-chat-evidence-links" style={{
+              display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10,
+            }}>
+              {message.linkedEvidenceIds.map((episodeId, index) => (
+                <button
+                  key={episodeId}
+                  type="button"
+                  aria-label={`Open Know ${index + 1} in graph`}
+                  onClick={() => onEvidenceFocus(episodeId)}
+                  style={{
+                    border: '1px solid rgba(214,148,72,0.42)',
+                    borderRadius: 999,
+                    background: 'rgba(214,148,72,0.10)',
+                    color: '#E2A75E',
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    lineHeight: 1.2,
+                    padding: '3px 8px',
+                  }}
+                >Know{message.linkedEvidenceIds!.length > 1 ? ` ${index + 1}` : ''}</button>
+              ))}
+            </span>
+          ) : null}
         </div>
       </div>
     </div>
@@ -422,7 +449,6 @@ export default function MainProjectChat({
   knowledgeProjectId,
   colors,
   busy = false,
-  connecting = false,
   historyLoading = false,
   error = null,
   voiceError = null,
@@ -434,6 +460,7 @@ export default function MainProjectChat({
   onDraftChange,
   entityMatcher,
   onEntityFocus,
+  onEvidenceFocus,
 }: {
   messages: MainProjectChatMessage[];
   /** Main is the ambient voice of this chat; only directly addressed non-Main Cards need a label. */
@@ -459,6 +486,7 @@ export default function MainProjectChat({
   onDraftChange?: (value: string) => void;
   entityMatcher?: CanonicalEntityMatcher | null;
   onEntityFocus?: (target: CanonicalEntityFocusTarget) => void;
+  onEvidenceFocus?: (episodeId: string) => void;
 }) {
   const [localDraft, setLocalDraft] = useState("");
   const [selectedAddressIndex, setSelectedAddressIndex] = useState(0);
@@ -471,6 +499,7 @@ export default function MainProjectChat({
   const imageReadRef = useRef(false);
   const imageReadEpochRef = useRef(0);
   const interactionDisabled = historyLoading;
+  const stopActive = busy && Boolean(onStop);
   useEffect(() => {
     imageReadEpochRef.current += 1;
     imageReadRef.current = false;
@@ -603,6 +632,7 @@ export default function MainProjectChat({
         message={message}
         entityMatcher={entityMatcher}
         onEntityFocus={onEntityFocus}
+        onEvidenceFocus={onEvidenceFocus}
       />
     </div>
   ), [
@@ -610,6 +640,7 @@ export default function MainProjectChat({
     mainCardId,
     messageLaneWidth,
     onEntityFocus,
+    onEvidenceFocus,
     renderableMessages.length,
     entityMatcher,
   ]);
@@ -650,10 +681,6 @@ export default function MainProjectChat({
           }
           .main-chat-composer { scrollbar-width: none; }
           .main-chat-composer::-webkit-scrollbar { display: none; }
-          @keyframes main-chat-active-pulse {
-            0%, 100% { opacity: 0.3; transform: scale(0.82); }
-            50% { opacity: 1; transform: scale(1); }
-          }
         `}
       </style>
       <div
@@ -897,24 +924,6 @@ export default function MainProjectChat({
               ))}
             </div>
           ) : null}
-          {busy || connecting ? (
-            <span
-              data-testid="main-chat-active-indicator"
-              aria-hidden="true"
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: colors.primary,
-                animation: "main-chat-active-pulse 1.1s ease-in-out infinite",
-              }}
-            />
-          ) : null}
-          {busy && onStop ? (
-            <button type="button" data-testid="main-chat-stop" onClick={onStop}>
-              Stop
-            </button>
-          ) : null}
           {onVoiceStart && onVoiceStop ? (
             <button
               type="button"
@@ -975,32 +984,63 @@ export default function MainProjectChat({
             </button>
           ) : null}
           <button
-            onClick={send}
-            disabled={interactionDisabled || readingImages}
-            aria-label="Send"
+            type="button"
+            data-testid={stopActive ? "main-chat-stop" : "main-chat-submit"}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (stopActive) {
+                onStop?.();
+                return;
+              }
+              send();
+            }}
+            disabled={stopActive ? false : interactionDisabled || readingImages}
+            aria-label={stopActive ? "Stop" : "Send"}
             className="rounded-full flex items-center justify-center"
             style={{
               width: 40,
               height: 40,
-              background: interactionDisabled ? colors.neutral : colors.primary,
+              background: stopActive
+                ? colors.primary
+                : interactionDisabled
+                  ? colors.neutral
+                  : colors.primary,
               border: "1px solid rgba(79,162,173,0.36)",
               boxShadow: "0 8px 18px rgba(79,162,173,0.10), inset 0 1px 0 rgba(255,255,255,0.14)",
-              cursor: interactionDisabled ? "not-allowed" : "pointer",
+              cursor: stopActive
+                ? "pointer"
+                : interactionDisabled
+                  ? "not-allowed"
+                  : "pointer",
             }}
           >
-            <svg
-              width="19"
-              height="19"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="#FFFFFF"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 19V5" />
-              <path d="M5 12l7-7 7 7" />
-            </svg>
+            {stopActive ? (
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: 1.5,
+                  background: "#FFFFFF",
+                }}
+              />
+            ) : (
+              <svg
+                width="19"
+                height="19"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#FFFFFF"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 19V5" />
+                <path d="M5 12l7-7 7 7" />
+              </svg>
+            )}
           </button>
         </div>
       </div>

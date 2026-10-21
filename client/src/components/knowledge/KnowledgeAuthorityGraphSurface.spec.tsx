@@ -316,6 +316,60 @@ describe('knowledge authority graph surfaces', () => {
     expect(removeThink).not.toHaveBeenCalled();
   });
 
+  it('opens the exact Run-linked Know ahead of the ordinary two-record recency window', async () => {
+    const know = {
+      ...empty('knowgraph'),
+      nodes: [{
+        id: 'know-shared',
+        label: 'Shared',
+        properties: { evidence: [
+          {
+            ...knowRecord(
+              'episode-new', 'Newest Know', 'Newest ordinary Know.',
+              'https://example.test/new',
+            ),
+            ingestedAt: '2026-10-20T12:00:00Z',
+          },
+          {
+            ...knowRecord(
+              'episode-middle', 'Middle Know', 'Middle ordinary Know.',
+              'https://example.test/middle',
+            ),
+            ingestedAt: '2026-10-20T11:00:00Z',
+          },
+          {
+            ...knowRecord(
+              'episode-exact', 'Exact Know', 'Exact Run-linked Know.',
+              'https://example.test/exact',
+            ),
+            ingestedAt: '2026-10-20T10:00:00Z',
+          },
+        ] },
+      }],
+    };
+    const projections = currentProjections(empty('thinkgraph'), know);
+    render(<JoinedKnowledgeGraphSurface
+      projections={projections}
+      entityFocusRequest={{
+        projectId: 'project-1',
+        directorySha256: 'a'.repeat(64),
+        canonicalName: 'Shared',
+        view: 'knowgraph',
+        members: [{ authority: 'knowgraph', entityId: 'know-shared' }],
+        graphitiEpisodeId: 'episode-exact',
+        requestId: 1,
+      }}
+    />);
+
+    await waitFor(() => expect(screen.getByTestId('knowledge-know-records')).toBeTruthy());
+    const text = screen.getByTestId('knowledge-know-records').textContent || '';
+    expect(text).toContain('Exact Run-linked Know.');
+    expect(text).toContain('Newest ordinary Know.');
+    expect(text).not.toContain('Middle ordinary Know.');
+    expect(text.indexOf('Exact Run-linked Know.'))
+      .toBeLessThan(text.indexOf('Newest ordinary Know.'));
+  });
+
   it('defaults joined Entities to Know and preserves the chosen authority lens across node selections', () => {
     const thinkRecord = (id: string, summary: string) => ({
       id,

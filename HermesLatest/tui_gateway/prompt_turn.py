@@ -1322,6 +1322,13 @@ def _run_prompt_submit(
                     for task_id in notification_task_ids
                     if str(task_id).strip()
                 ]
+            notification_task_results = (display_metadata or {}).get("task_results")
+            if isinstance(notification_task_results, dict):
+                payload["notification_task_results"] = {
+                    str(task_id).strip(): str(result).strip()
+                    for task_id, result in notification_task_results.items()
+                    if str(task_id).strip() and str(result).strip()
+                }
             _emit("message.complete", sid, payload)
             goal_followup = _goal_followup_after_turn(sid, session, st.result, status, raw)
             if status == "complete":

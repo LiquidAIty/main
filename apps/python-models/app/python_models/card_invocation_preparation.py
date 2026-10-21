@@ -74,6 +74,7 @@ _DATA_ANCHOR_LIMIT = 16
 _PROJECT_ENTITY_MAP_CARD_IDS = frozenset({
     "card_main_chat", "builder", "card_thinkgraph", "card_knowgraph",
 })
+_PROJECT_GRAPH_GROUNDING_CARD_IDS = frozenset({"card_main_chat", "builder"})
 
 _FORBIDDEN_INVOCATION_CONTEXT_FIELDS = (
     "builderOperation", "agentBuilderOperation", "agentBuilderGuidance",
@@ -379,18 +380,26 @@ def materialize_invocation(
     auto_model_decision = resolved["autoModelDecision"]
     project_entity_map: dict[str, Any] | None = None
     project_graph_grounding: dict[str, Any] | None = None
-    if prepared["cardIdentity"]["cardId"] in _PROJECT_ENTITY_MAP_CARD_IDS:
+    card_id = prepared["cardIdentity"]["cardId"]
+    if card_id in _PROJECT_ENTITY_MAP_CARD_IDS:
         try:
             project_entity_map = build_project_entity_map(prepared["projectId"])
             graph_seed = append_project_entity_map(
                 graph_seed, project_entity_map
             )
+        except DataAnchorError as error:
+            raise CardDomainError(str(error)) from error
+    if card_id in _PROJECT_GRAPH_GROUNDING_CARD_IDS:
+        try:
             relevance_query = str(selection_request or assignment).strip()
             if relevance_query:
                 project_graph_grounding = build_project_graph_grounding(
                     prepared["projectId"],
                     relevance_query,
                     context=assignment if assignment != relevance_query else "",
+                    authorities=("thinkgraph",) if card_id == "card_main_chat" else (
+                        "thinkgraph", "knowgraph",
+                    ),
                 )
                 graph_seed = append_project_graph_grounding(
                     graph_seed, project_graph_grounding,

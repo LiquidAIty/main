@@ -189,6 +189,68 @@ def test_interrupt_expected_submission_refuses_a_different_active_turn(monkeypat
     assert interrupted == [True]
 
 
+def test_interrupt_stops_the_active_turn_and_exact_team_tasks(monkeypatch):
+    interrupted = []
+    team_stops = []
+    session = _session(
+        agent=types.SimpleNamespace(interrupt=lambda: interrupted.append(True)),
+        running=True,
+        _active_submission_id="run-current",
+    )
+    _patch_local_interrupt(monkeypatch, session)
+    monkeypatch.setattr(
+        server,
+        "_interrupt_team_tasks",
+        lambda session_id, task_ids: team_stops.append((session_id, task_ids))
+        or ["task-child", "task-root"],
+    )
+
+    response = server._methods["session.interrupt"](
+        "request-stop-all",
+        {
+            "session_id": "runtime-1",
+            "expected_submission_id": "run-current",
+            "interrupt_team_tasks": True,
+            "team_task_ids": ["task-root"],
+        },
+    )
+
+    assert response["result"] == {
+        "status": "interrupted",
+        "team_task_ids": ["task-child", "task-root"],
+    }
+    assert interrupted == [True]
+    assert team_stops == [("session-key", ["task-root"])]
+
+
+def test_interrupt_can_stop_exact_team_tasks_after_the_source_turn_completed(monkeypatch):
+    session = _session(running=False, _active_submission_id=None)
+    _patch_local_interrupt(monkeypatch, session)
+    monkeypatch.setattr(
+        server,
+        "_interrupt_team_tasks",
+        lambda session_id, task_ids: ["task-root"]
+        if (session_id, task_ids) == ("session-key", ["task-root"])
+        else [],
+    )
+
+    response = server._methods["session.interrupt"](
+        "request-stop-team",
+        {
+            "session_id": "runtime-1",
+            "expected_submission_id": "run-completed",
+            "interrupt_team_tasks": True,
+            "team_task_ids": ["task-root"],
+        },
+    )
+
+    assert response["result"] == {
+        "status": "interrupted",
+        "interrupted": True,
+        "team_task_ids": ["task-root"],
+    }
+
+
 def test_interrupt_racing_marker_write_cannot_leave_recovery_state(
     monkeypatch, emits, turn_env, marker_home
 ):

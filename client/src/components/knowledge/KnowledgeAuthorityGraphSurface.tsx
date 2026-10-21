@@ -313,6 +313,7 @@ export function KnowledgeGraphProjectionSurface({
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedAuthority, setSelectedAuthority] = useState<GraphAuthority | null>(null);
   const [selectedMemberKey, setSelectedMemberKey] = useState<string | null>(null);
+  const [selectedKnowEpisodeId, setSelectedKnowEpisodeId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [settings, setSettings] = useState<Record<string, number | boolean | string>>(
@@ -516,6 +517,7 @@ export function KnowledgeGraphProjectionSurface({
     setControlsOpen(false);
     setRemoveError(null);
     setSelectedMemberKey(null);
+    setSelectedKnowEpisodeId(null);
     setSelectedId(visualNodeId);
     setSelectedEdgeId(null);
     setInspectorOpen(true);
@@ -764,6 +766,7 @@ export function KnowledgeGraphProjectionSurface({
           setControlsOpen(false);
           setRemoveError(null);
           setSelectedMemberKey(null);
+          setSelectedKnowEpisodeId(null);
           setSelectedId(null);
           setSelectedEdgeId(String(link.id));
           setInspectorOpen(true);
@@ -771,6 +774,7 @@ export function KnowledgeGraphProjectionSurface({
         onBackgroundClick: () => {
           exitFocusRef.current();
           setSelectedMemberKey(null);
+          setSelectedKnowEpisodeId(null);
           setSelectedId(null);
           setSelectedEdgeId(null);
           setInspectorOpen(false);
@@ -1126,6 +1130,16 @@ export function KnowledgeGraphProjectionSurface({
     }
     consumedEntityFocusRequestRef.current = entityFocusRequest.requestId;
     inspectNodeRef.current(visualNodeId);
+    if (entityFocusRequest.graphitiEpisodeId) {
+      const knowMember = entityFocusRequest.members.find(
+        member => member.authority === 'knowgraph',
+      );
+      if (knowMember) {
+        setSelectedAuthority('knowgraph');
+        setSelectedMemberKey(providerMemberKey('knowgraph', knowMember.entityId));
+        setSelectedKnowEpisodeId(entityFocusRequest.graphitiEpisodeId);
+      }
+    }
   }, [
     authority,
     canonicalEntityDirectory,
@@ -1267,7 +1281,14 @@ export function KnowledgeGraphProjectionSurface({
         return rightTime.localeCompare(leftTime) || left.episodeId.localeCompare(right.episodeId);
       })
     : [];
-  const visibleKnowItems = directKnowItems.slice(0, INSPECTOR_RECORD_LIMIT);
+  const focusedKnowItem = selectedKnowEpisodeId
+    ? directKnowItems.find(item => item.episodeId === selectedKnowEpisodeId)
+    : null;
+  const visibleKnowItems = (
+    focusedKnowItem
+      ? [focusedKnowItem, ...directKnowItems.filter(item => item !== focusedKnowItem)]
+      : directKnowItems
+  ).slice(0, INSPECTOR_RECORD_LIMIT);
   const jev = selectedEdge?.properties?.jev
     && typeof selectedEdge.properties.jev === 'object'
     && !Array.isArray(selectedEdge.properties.jev)
@@ -1547,7 +1568,11 @@ export function KnowledgeGraphProjectionSurface({
                 type="button"
                 role="tab"
                 aria-selected={candidate === inspectedAuthority}
-                onClick={() => { setSelectedAuthority(candidate); setSelectedMemberKey(null); }}
+                onClick={() => {
+                  setSelectedAuthority(candidate);
+                  setSelectedMemberKey(null);
+                  setSelectedKnowEpisodeId(null);
+                }}
                 style={{
                   minWidth: 72,
                   padding: '6px 12px',

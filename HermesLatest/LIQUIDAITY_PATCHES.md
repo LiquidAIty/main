@@ -66,7 +66,7 @@ IDE/editor/compiler/executor is preserved; its broader hook-point design remains
 | `agent/card_turn_tools.py` | Profile MCP / Card Python | Narrows only already-loaded profile MCP tools, installs/restores the compact Script capability, and never registers a global or callback-provided application tool. |
 | `agent/card_script_tool.py` | Card Python | Validates the immutable Script contract, hashes, schemas, exact tool names/states and budgets; runs one child Python recipe and dispatches nested calls through the profile's registered tools. |
 | `tui_gateway/saved_card_turn.py` | Receiving-Card lifecycle | Validates Project/Card/conversation context, transports prepare/start/finish through the existing process-authenticated endpoint, binds current Project/deck/profile/Run headers, signs the short-lived internal profile-MCP bearer, serializes the same identity for one dispatcher-spawned synthesis root, and counts actual model plus Script tool calls. |
-| `hermes_cli/kanban_team.py` | AutoTeam | Owns the explicit Team task mode/policy, root construction/readback, staged saved-Card Run binding, activation and bounded decomposition-failure settlement. |
+| `hermes_cli/kanban_team.py` | AutoTeam / exact Stop | Owns the explicit Team task mode/policy, root construction/readback, staged saved-Card Run binding, activation, bounded decomposition-failure settlement, and fail-closed root-first archival of one exact source session's AutoTeam root and real decomposed workers through Hermes's existing archive owner. |
 | `hermes_cli/taskgraph_adapter.py` | Package-safe taskgraph adapter | Validates profiles and performs exact stage, authority-event binding, activation, and root/descendant readback through the existing Kanban database APIs; its CLI accepts one bounded JSON request and returns one bounded JSON result. |
 | `skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md` | Profile fencing | Bundled Builder guidance selected by the saved Builder Card and seeded by Hermes's existing fresh-profile skill sync; it adds no permission, loader or execution path. |
 
@@ -103,20 +103,20 @@ Files may appear in more than one family because one accepted turn carries all o
 | `tui_gateway/agent_callbacks.py` | Profile fencing / turn evidence | Rebuild from exact stored profile/session overrides and reject capability drift during the build. |
 | `tools/process_registry_notifications.py` | Turn evidence | Return the exact process IDs contained in one consumed notification batch so a caller can correlate the resulting assistant turn without parsing prose. |
 | `tools/terminal_tool.py`, `tools/terminal_tool_background.py` | Run lineage | Carry internal Run correlation into the existing tracked background-process owner; model-facing terminal arguments and execution semantics are unchanged. |
-| `tui_gateway/contracts/events.py` | Turn evidence | Declare submission identity, `MessageCompletePayload.turn_usage`, and exact process/task notification correlation IDs. |
+| `tui_gateway/contracts/events.py` | Turn evidence | Declare submission identity, `MessageCompletePayload.turn_usage`, exact process/task notification correlation IDs, and the exact terminal task result correlated to each completed task ID. |
 | `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` | Bot roster / profile fencing / AutoTeam | Declare Card-owned runtime/delegation/task-mode fields, Bot-title readback, and exact MCP include/context fields. |
 | `tui_gateway/contracts/prompt_voice.py` | Card Python / Bot roster / turn evidence | Declare exact profile-tool selection, Script, roster/session/target-Card-context, direct-vs-notification reply, submission and Run fields on `prompt.submit`. Retired application tool-definition/callback fields are absent. |
-| `tui_gateway/contracts/sessions.py` | Bot roster / receiving-Card lifecycle / exact Stop | Declare session roster/target map, Card-turn context, and `expected_submission_id`. |
+| `tui_gateway/contracts/sessions.py` | Bot roster / receiving-Card lifecycle / exact Stop | Declare session roster/target map, Card-turn context, `expected_submission_id`, and the bounded exact AutoTeam roots included in one session interrupt. |
 | `tui_gateway/contracts/tools_mcp_plugins.py` | Profile fencing | Add explicit profile identity to Hermes learning reads/edits. |
 | `tui_gateway/methods_profiles.py` | Bot roster / profile fencing / AutoTeam | Configure/read only declared Card fields, atomically preserve exact UTF-8 Card PromptBlock bytes in `SOUL.md` across platform newline modes, preserve explicit empty toolset pins and MCP `tools.include` whitelists (including an explicit empty block-all list), and read the existing Bot Mode title metadata. Ordinary Card tools remain profile MCP tools; this extension does not create a callback executor. |
 | `tui_gateway/methods_prompt.py` | Card Python / profile MCP / Bot roster / turn evidence | Validate one Script/profile-tool/roster/target-Card-context/Run envelope and forward the exact accepted authority; no application callback envelope remains. |
-| `tui_gateway/methods_session.py` | Bot roster / receiving-Card lifecycle / exact Stop / turn evidence | Apply roster, target sessions, and Card-turn context to create/resume/activate; let an older Project session opt into `follow_profile_config`; report its profile model/provider; and refuse interruption of a different submission. |
+| `tui_gateway/methods_session.py` | Bot roster / receiving-Card lifecycle / exact Stop / turn evidence | Apply roster, target sessions, and Card-turn context to create/resume/activate; let an older Project session opt into `follow_profile_config`; report its profile model/provider; refuse interruption of a different submission; and stop validated AutoTeam roots/workers through the durable source-session identity while retaining the live handle for the model-turn interrupt. |
 | `tui_gateway/methods_tools.py` | Profile fencing | Forward learning operations to Hermes's existing implementation for the exact profile. |
 | `tui_gateway/model_switch.py` | Profile fencing / model evidence | Resolve a lazy session's model and provider from that session's own profile and retain Hermes's capability-epoch rebuild without an application-supplied fingerprint. |
-| `tui_gateway/prompt_turn.py` | All turn-scoped families | Prepare/start/finish receiving Card Runs, bind externally managed continuations, install/restore profile-tool selection, Script and Bot target contexts, settle a delivery receipt only after Run settlement, emit process- or task-correlated completion events, and calculate turn-local usage. |
+| `tui_gateway/prompt_turn.py` | All turn-scoped families | Prepare/start/finish receiving Card Runs, bind externally managed continuations, install/restore profile-tool selection, Script and Bot target contexts, settle a delivery receipt only after Run settlement, emit process- or task-correlated completion events with exact completed-task results, and calculate turn-local usage. |
 | `tui_gateway/server.py` | Bot roster / receiving-Card lifecycle / profile fencing / turn evidence | Preserve an explicit empty ordinary-Hermes-tool pin while still loading enabled profile MCP servers; invalidate raw profile configuration by content even when file metadata is unchanged; carry roster, target sessions, and Card context; return the same model/provider identity for built and lazy sessions; fence profile builds; and expose available usage evidence. |
 | `tui_gateway/session_auto_continue.py` | Card Python / profile MCP / Bot roster / turn evidence | Preserve the accepted Script/profile-tool/roster/Run envelope when Hermes queues and later drains a busy-session turn. |
-| `tui_gateway/session_notifications.py` | Turn evidence / Run lineage | Carry exact process IDs, completed Kanban task IDs and originating Run intent as structured metadata; continue one still-open externally managed Run or prepare a new child notification Run without parsing prose. |
+| `tui_gateway/session_notifications.py` | Turn evidence / Run lineage | Keep the visible Kanban status compact while carrying the exact completed task result into the existing owner-session turn, alongside exact process IDs, completed task IDs, and originating Run intent; continue one still-open externally managed Run or prepare a new child notification Run without parsing prose. |
 
 `tui_gateway/methods_config_set.py` is not part of the overlay. The rejected Builder Docker/configuration
 patch is absent and this file is byte-equal to the imported upstream baseline.
@@ -125,7 +125,7 @@ patch is absent and this file is byte-equal to the imported upstream baseline.
 
 | File | Source | Rule |
 | --- | --- | --- |
-| `apps/shared/src/gateway-contract.openrpc.json` | Hermes Gateway contract generator | Must exactly contain Card Script, profile MCP selection, roster/session, Card context, direct-reply, notification-process, submission/Run/Stop and usage fields, with no application tool-definition/callback fields. |
+| `apps/shared/src/gateway-contract.openrpc.json` | Hermes Gateway contract generator | Must exactly contain Card Script, profile MCP selection, roster/session, Card context, direct-reply, notification process/task correlation, exact completed-task results, submission/Run/Stop and usage fields, with no application tool-definition/callback fields. |
 | `apps/shared/src/gateway-contract.generated.ts` | Same generator | Must be byte-derived from the same Python declarations; never hand-edit. |
 
 These artifacts are regenerated once after authored source freezes. A later source defect that requires a
@@ -158,7 +158,9 @@ tests/tools/test_process_registry.py
 tests/tools/test_kanban_tools.py
 tests/tui_gateway/test_auto_continue.py
 tests/tui_gateway/test_bot_live_owner_delivery.py
+tests/tui_gateway/test_diagnostic_turn_end_to_end.py
 tests/tui_gateway/test_fallback_chain_hot_reload.py
+tests/tui_gateway/test_kanban_notify_poller.py
 tests/tui_gateway/test_profile_rebuild_commit.py
 tests/tui_gateway/test_profiles_bot_roster.py
 tests/tui_gateway/test_profiles_toolset_pin.py

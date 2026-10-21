@@ -92,6 +92,44 @@ describe('Main saved-Card addressing', () => {
 });
 
 describe('Main stream retention and voice finality', () => {
+  it('stops the exact observed Run and aborts the local stream only after server acknowledgement', async () => {
+    let releaseStop!: () => void;
+    const stopAcknowledged = new Promise<void>((resolve) => { releaseStop = resolve; });
+    clientMocks.stopSession.mockImplementationOnce(async () => {
+      await stopAcknowledged;
+      return { runId: 'run-stop', state: 'stopping' };
+    });
+    const observed = { signal: null as AbortSignal | null };
+    clientMocks.streamSession.mockImplementationOnce(async ({ signal, onEvent }) => {
+      observed.signal = signal;
+      onEvent({ kind: 'run', runId: 'run-stop' });
+      onEvent({ kind: 'session', runId: 'run-stop' });
+      return new Promise<{ finalText: string }>((resolve) => {
+        signal.addEventListener('abort', () => resolve({ finalText: '' }), { once: true });
+      });
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-a', deckId: 'deck_builder',
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    act(() => { result.current.handleSend('Stop this exact Run.'); });
+    await waitFor(() => expect(result.current.sessionActive).toBe(true));
+
+    let stopping!: Promise<void>;
+    act(() => { stopping = result.current.stopMainTurn(); });
+    await waitFor(() => expect(clientMocks.stopSession).toHaveBeenCalledWith({
+      projectId: 'project-a', deckId: 'deck_builder', expectedRunId: 'run-stop',
+    }));
+    expect(observed.signal?.aborted).toBe(false);
+
+    await act(async () => {
+      releaseStop();
+      await stopping;
+    });
+    expect(observed.signal?.aborted).toBe(true);
+    expect(result.current.sessionActive).toBe(false);
+  });
+
   it('keeps a steering message visible before the one combined active-Run answer', async () => {
     const onMainRunCompleted = vi.fn();
     let finishFirst!: () => void;
@@ -170,6 +208,42 @@ describe('Main stream retention and voice finality', () => {
       }),
     ]));
     expect(result.current.technicalError).toBe('provider_failed');
+  });
+
+  it('requests graph refresh after an exact addressed Card completion without waiting for Main capture', async () => {
+    const onMainRunCompleted = vi.fn();
+    clientMocks.streamSession.mockImplementationOnce(async ({ onEvent }) => {
+      onEvent({ kind: 'run', runId: 'run-builder' });
+      onEvent({
+        kind: 'done',
+        runId: 'run-builder',
+        participant: {
+          kind: 'card', label: 'Builder', cardId: 'card_builder', profile: 'builder',
+        },
+        fullText: 'Builder result',
+        linkedEvidenceIds: ['know-one'],
+      });
+      return { finalText: 'Builder result' };
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-a',
+      deckId: 'deck_builder',
+      onMainRunCompleted,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.requestMainText('@Builder research this.');
+    });
+
+    await waitFor(() => expect(onMainRunCompleted).toHaveBeenCalledWith('run-builder', false));
+    expect(result.current.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'assistant',
+        text: 'Builder result',
+        linkedEvidenceIds: ['know-one'],
+      }),
+    ]));
   });
 
   it('submits a Hermes voice transcript without requiring a non-existent final flag', async () => {

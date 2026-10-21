@@ -245,6 +245,20 @@ async def dispatch_tool(
             category="APPLICATION",
             dependency="tool-runtime",
         )
+    graph_reference_identity = {
+        "run_id": str((context or {}).get("parentRunId") or "").strip(),
+        "project_id": str((context or {}).get("projectId") or "").strip(),
+        "card_id": str((context or {}).get("callerCardId") or "").strip(),
+    }
+    if name == "graphiti.get_know" and all(graph_reference_identity.values()):
+        from app.python_models.card_run_graph_references import (
+            record_graphiti_know_readback,
+        )
+
+        record_graphiti_know_readback(
+            result=result,
+            **graph_reference_identity,
+        )
     if isinstance(result, CallToolResult):
         return result
     if isinstance(result, list):

@@ -307,6 +307,142 @@ def create_team_root(
     return task
 
 
+def archive_team_tasks_for_session(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    task_ids: Iterable[str] | None = None,
+) -> list[str]:
+    """Stop exact AutoTeam roots and every descendant through Hermes' task owner.
+
+    ``session_id`` is the live source/orchestrator session recorded by
+    :func:`create_team_root`.  Explicit ids are fail-closed: a task from another
+    session or workflow is never archived.  Without ids, only nonterminal roots
+    owned by that exact session are selected.  The synthesis root is archived
+    before its worker prerequisites so releasing a dependency cannot promote a
+    live root back into the dispatcher between archive transactions.
+    """
+
+    source_session = str(session_id or "").strip()
+    if not source_session:
+        raise ValueError("Team stop requires the source session id")
+    requested = list(dict.fromkeys(str(value or "").strip() for value in (task_ids or ())))
+    if any(not value for value in requested):
+        raise ValueError("Team stop task ids must be non-empty")
+
+    if requested:
+        placeholders = ",".join("?" for _ in requested)
+        rows = conn.execute(
+            f"SELECT id, session_id, workflow_template_id, current_step_key "
+            f"FROM tasks WHERE id IN ({placeholders})",
+            requested,
+        ).fetchall()
+        by_id = {str(row["id"]): row for row in rows}
+        if set(by_id) != set(requested):
+            raise ValueError("Team stop task was not found")
+        if any(
+            str(row["session_id"] or "") != source_session
+            or str(row["workflow_template_id"] or "") != TEAM_WORKFLOW_ID
+            or str(row["current_step_key"] or "") not in {
+                TEAM_DECOMPOSITION_STEP, TEAM_SYNTHESIS_STEP,
+            }
+            for row in rows
+        ):
+            raise ValueError("Team stop task does not belong to the source session")
+        roots = requested
+    else:
+        roots = [
+            str(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM tasks "
+                "WHERE session_id = ? AND workflow_template_id = ? "
+                "AND current_step_key IN (?, ?) "
+                "AND status NOT IN ('done', 'archived') ORDER BY created_at, id",
+                (
+                    source_session,
+                    TEAM_WORKFLOW_ID,
+                    TEAM_DECOMPOSITION_STEP,
+                    TEAM_SYNTHESIS_STEP,
+                ),
+            ).fetchall()
+        ]
+
+    ordered: list[str] = []
+    selected: set[str] = set()
+    for root_id in roots:
+        event = conn.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? AND kind = 'decomposed' "
+            "ORDER BY id DESC LIMIT 1",
+            (root_id,),
+        ).fetchone()
+        worker_ids: list[str] = []
+        if event is not None:
+            try:
+                payload = json.loads(event["payload"] or "{}")
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Team stop decomposition record is invalid") from exc
+            worker_ids = list(dict.fromkeys(
+                str(value or "").strip()
+                for value in payload.get("child_ids", [])
+            )) if isinstance(payload, dict) and isinstance(payload.get("child_ids"), list) else []
+            if any(not value for value in worker_ids):
+                raise ValueError("Team stop decomposition record is invalid")
+            linked_workers = {
+                str(row["parent_id"])
+                for row in conn.execute(
+                    "SELECT parent_id FROM task_links WHERE child_id = ?",
+                    (root_id,),
+                ).fetchall()
+            }
+            if not set(worker_ids).issubset(linked_workers):
+                raise ValueError("Team stop decomposition links are incomplete")
+            if worker_ids:
+                placeholders = ",".join("?" for _ in worker_ids)
+                worker_rows = conn.execute(
+                    f"SELECT id, session_id, workflow_template_id, current_step_key FROM tasks "
+                    f"WHERE id IN ({placeholders})",
+                    worker_ids,
+                ).fetchall()
+                workers_by_id = {str(row["id"]): row for row in worker_rows}
+                if set(workers_by_id) != set(worker_ids) or any(
+                    str(row["session_id"] or "") != source_session
+                    or str(row["workflow_template_id"] or "") != TEAM_WORKFLOW_ID
+                    or str(row["current_step_key"] or "") != TEAM_WORKER_STEP
+                    for row in worker_rows
+                ):
+                    raise ValueError("Team stop decomposition workers are invalid")
+                for worker_id in worker_ids:
+                    created = conn.execute(
+                        "SELECT payload FROM task_events WHERE task_id = ? AND kind = 'created' "
+                        "ORDER BY id DESC LIMIT 1",
+                        (worker_id,),
+                    ).fetchone()
+                    try:
+                        created_payload = json.loads(created["payload"] or "{}") if created else {}
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("Team stop worker origin is invalid") from exc
+                    if (
+                        not isinstance(created_payload, dict)
+                        or str(created_payload.get("from_decompose_of") or "") != root_id
+                        or str(created_payload.get("creator_task_id") or "") != root_id
+                    ):
+                        raise ValueError("Team stop worker origin is invalid")
+        for task_id in [root_id, *worker_ids]:
+            if task_id in selected:
+                continue
+            selected.add(task_id)
+            ordered.append(task_id)
+
+    archived: list[str] = []
+    for task_id in ordered:
+        row = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None or str(row["status"] or "") in {"done", "archived"}:
+            continue
+        if kb.archive_task(conn, task_id):
+            archived.append(task_id)
+    return archived
+
+
 def activate_staged_team_root(conn: sqlite3.Connection, task_id: str) -> bool:
     """Atomically expose one exact staged Team root to native triage."""
 

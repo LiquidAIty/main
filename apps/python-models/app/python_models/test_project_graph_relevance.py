@@ -106,6 +106,39 @@ def test_grounding_keeps_one_most_relevant_and_one_distinct_recent_per_authority
     assert relevance.append_project_graph_grounding(context, packet) == context
 
 
+def test_grounding_can_supply_main_continuity_from_thinkgraph_without_automatic_knows() -> None:
+    def think_retriever(_project: str, _query: str, _limit: int):
+        return [_think("recent-think")], [_think("relevant-think")], {
+            "retrieval": "engraphis_provider",
+        }
+
+    def forbidden_know_retriever(*_args):
+        raise AssertionError("Main's automatic continuity packet must not preload Knows")
+
+    packet = relevance.build_project_graph_grounding(
+        "project-one",
+        "current user request",
+        authorities=("thinkgraph",),
+        think_retriever=think_retriever,
+        know_retriever=forbidden_know_retriever,
+        relevance_rater=lambda *_args: {
+            "thinkgraph": {
+                "status": "success",
+                "decisionId": "decision-main-think",
+                "records": [{**_think("relevant-think"), "relevanceRank": 1}],
+            },
+        },
+    )
+
+    assert set(packet["authorities"]) == {"thinkgraph"}
+    assert packet["authorities"]["thinkgraph"]["recent"][0][
+        "engraphisMemoryId"
+    ] == "recent-think"
+    assert packet["authorities"]["thinkgraph"]["relevant"][0][
+        "engraphisMemoryId"
+    ] == "relevant-think"
+
+
 def test_jev_rates_provider_candidates_by_current_context_without_recency_reward(
     monkeypatch,
 ) -> None:

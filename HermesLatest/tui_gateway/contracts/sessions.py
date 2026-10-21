@@ -573,6 +573,8 @@ method("session.compress", params=SessionCompressParams, result=SessionCompressR
 class SessionInterruptParams(SessionParams):
     expected_hosted_task_id: str | None = None  # only interrupt if this hosted task is the running one
     expected_submission_id: str | None = None  # only interrupt if this correlated submission is active
+    interrupt_team_tasks: bool = False  # also stop AutoTeam tasks owned by this exact source session
+    team_task_ids: list[str] | None = None  # optional exact roots when the source turn already completed
 
 
 class InterruptStatus(WireEnum):
@@ -584,10 +586,11 @@ class SessionInterruptResult(Result):
     status: InterruptStatus
     interrupted: bool | None = None
     turn_isolation: bool | None = None
+    team_task_ids: list[str] | None = None
 
 
 method("session.interrupt", params=SessionInterruptParams, result=SessionInterruptResult,
-       doc="Stop the running turn (and streaming TTS); retires the crash-recovery marker.")
+       doc="Stop the running turn, its requested AutoTeam tasks, and streaming TTS; retires the crash-recovery marker.")
 
 
 class CorrectionStatus(WireEnum):

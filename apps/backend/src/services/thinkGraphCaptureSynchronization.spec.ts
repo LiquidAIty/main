@@ -23,6 +23,20 @@ describe('completed Main ThinkGraph capture synchronization', () => {
     expect(refreshed).toBe(true);
   });
 
+  it('retains an exact capture failure until the matching projection refresh consumes it', async () => {
+    let rejectCapture!: (error: Error) => void;
+    const capture = new Promise<void>((_resolve, reject) => { rejectCapture = reject; });
+    registerActiveThinkGraphCapture('project-failure', 'run-failure', capture);
+    rejectCapture(new Error('thinkgraph_saved_card_not_authorized'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await expect(waitForActiveThinkGraphCapture('project-failure', 'run-failure'))
+      .rejects.toThrow('thinkgraph_saved_card_not_authorized');
+    await expect(waitForActiveThinkGraphCapture('project-failure', 'run-failure'))
+      .resolves.toBeUndefined();
+  });
+
   it('runs repeated captures one at a time for the same Project and deck', async () => {
     let releaseFirst!: () => void;
     const firstMayFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });

@@ -76,8 +76,20 @@ describe('backend-owned default Project deck', () => {
     expect(byId.get('card_main_chat')?.runtimeOptions).toMatchObject({
       subagentType: 'none',
       modelKey: 'gpt-5.6-sol',
-      tools: ['canvas.inspect', 'run_mag_one', 'worldview.set_capability'],
+      tools: [
+        'canvas.inspect',
+        'project_graph.list_entities',
+        'project_graph.read_entity_context',
+        'run_mag_one',
+        'worldview.set_capability',
+      ],
     });
+    expect(byId.get('card_main_chat')?.prompt).toContain(
+      'Project Entity/Relationship map as the current shape',
+    );
+    expect(byId.get('card_main_chat')?.prompt).toContain(
+      'granted project_graph read operations',
+    );
     expect(byId.get('card_main_chat')?.prompt).toContain(
       'do not paste raw source lists unless the user explicitly asks',
     );
@@ -90,6 +102,15 @@ describe('backend-owned default Project deck', () => {
     expect(byId.get('card_main_chat')?.prompt).toContain(
       'The Know inspector owns provenance and record detail',
     );
+    expect(byId.get('card_main_chat')?.prompt).toContain(
+      'do not call ThinkGraph to retrieve, refresh, confirm, or persist ordinary per-turn context',
+    );
+    expect(byId.get('card_main_chat')?.prompt).toContain(
+      'broader historical summary across multiple prior Thinks',
+    );
+    expect(byId.get('card_main_chat')?.prompt).toContain(
+      'Do not call ThinkGraph to perform, trigger, refresh, or confirm automatic completed-turn capture',
+    );
     expect(byId.get('builder')?.runtimeOptions).toMatchObject({
       subagentType: 'none',
       modelKey: 'gpt-5.6-sol',
@@ -99,9 +120,34 @@ describe('backend-owned default Project deck', () => {
     expect(byId.get('card_thinkgraph')?.runtimeOptions?.tools).toEqual([
       'engraphis_recall_context',
       'engraphis_get_memory',
-      'engraphis_remember',
-      'engraphis_update_memory',
+      'engraphis_remember_entities',
+      'engraphis_discover_actions',
+      'engraphis_execute_read',
     ]);
+    expect(byId.get('card_thinkgraph')?.prompt).toContain(
+      'OUTPUT_SCHEMA plus EXTRACTION_PROMPT means automatic completed-pair extraction',
+    );
+    expect(byId.get('card_thinkgraph')?.prompt).toContain(
+      'An explicit summary is not a new Think',
+    );
+    expect(byId.get('card_thinkgraph')?.prompt).toContain(
+      'Explicit summary output: a concise read-only synthesis',
+    );
+    expect(byId.get('card_thinkgraph')?.prompt).toContain(
+      'never more than one Think for the same Entity in that turn',
+    );
+    expect(byId.get('card_thinkgraph')?.prompt).toContain(
+      'Put one simple, concise, self-contained paragraph in think.summary',
+    );
+    expect(byId.get('card_thinkgraph')?.prompt).toContain(
+      'For automatic intake, recover and steelman only the completed User/Main pair',
+    );
+    expect(byId.get('card_thinkgraph')?.prompt).not.toContain(
+      'use the most Relevant Think first',
+    );
+    expect(byId.get('card_thinkgraph')?.prompt).not.toContain(
+      'One Think may relate to several Entities',
+    );
     expect(byId.get('card_team')?.runtimeOptions).toMatchObject({
       modelKey: 'gpt-5.6-terra',
       tools: [
@@ -133,6 +179,15 @@ describe('backend-owned default Project deck', () => {
     );
     expect(byId.get('card_knowgraph')?.prompt).toContain(
       'A worker must never write Graphiti or Engraphis',
+    );
+    expect(byId.get('card_knowgraph')?.prompt).toContain(
+      'copy the returned final or resolved URL byte-for-byte',
+    );
+    expect(byId.get('card_knowgraph')?.prompt).toContain(
+      'When retrieval does not return a usable final URL and matching passage, do not persist that finding',
+    );
+    expect(byId.get('card_knowgraph')?.prompt).not.toContain(
+      'use the saved grounded-citations skill',
     );
     expect(byId.get('card_knowgraph')?.prompt).not.toContain('For and Against');
     expect(byId.get('card_knowgraph')?.prompt).not.toContain('two-sided cited record');

@@ -58,6 +58,7 @@ import {
   hermesUsageFields,
   internalCardTurnEndpoint,
   prepareCardRun,
+  readCardRun,
   startCardRun,
   type PreparedCardRun,
 } from '../services/cardRunLifecycle';
@@ -160,9 +161,17 @@ type TurnResult = {
   mainCompletion?: { text: string; event: HermesGatewayEvent };
 };
 
-type ActiveTurnInterruptTarget = {
+type HermesInterruptTarget = {
   sessionId: string;
   submissionId: string;
+};
+
+type ActiveTurnInterruptState = {
+  cancelController: AbortController;
+  mainTarget: HermesInterruptTarget | null;
+  submissionStarted: boolean;
+  targets: Map<string, HermesInterruptTarget>;
+  teamTaskIds: Set<string>;
   stopRequested: boolean;
 };
 
@@ -183,7 +192,7 @@ type ActiveMainTurn = {
 };
 
 const sessionBindingTails = new Map<string, Promise<void>>();
-const activeTurnInterruptTargets = new Map<string, ActiveTurnInterruptTarget>();
+const activeTurnInterruptTargets = new Map<string, ActiveTurnInterruptState>();
 const mainTurnAdmissionTails = new Map<string, Promise<void>>();
 const activeMainTurns = new Map<string, ActiveMainTurn>();
 
@@ -191,6 +200,17 @@ function activeTurnKey(
   runId: string, projectId: string, deckId: string, userId: string,
 ): string {
   return JSON.stringify([runId, projectId, deckId, userId]);
+}
+
+function hermesInterruptTargetKey(target: HermesInterruptTarget): string {
+  return JSON.stringify([target.sessionId, target.submissionId]);
+}
+
+function addHermesInterruptTarget(
+  state: ActiveTurnInterruptState,
+  target: HermesInterruptTarget,
+): void {
+  state.targets.set(hermesInterruptTargetKey(target), target);
 }
 
 function mainTurnScopeKey(
@@ -461,6 +481,9 @@ function mainConversationMessage(message: ConversationMessage) {
     text: message.content,
     speaker,
     ...(target ? { target } : {}),
+    ...(message.linkedEvidenceIds?.length
+      ? { linkedEvidenceIds: [...message.linkedEvidenceIds] }
+      : {}),
   };
 }
 
@@ -932,8 +955,7 @@ async function completedMainInputText(args: {
 function thinkGraphExtractionTask(preparation: Record<string, any>): string {
   const schema = record(preparation.enrichmentSchema);
   const prompt = String(preparation.enrichmentPrompt || '').trim();
-  const input = record(preparation.enrichmentInput);
-  if (!Object.keys(schema).length || !prompt || !Object.keys(input).length) {
+  if (!Object.keys(schema).length || !prompt) {
     throw new Error('thinkgraph_prepare_extraction_contract_invalid');
   }
   return [
@@ -946,9 +968,6 @@ function thinkGraphExtractionTask(preparation: Record<string, any>): string {
     '',
     'EXTRACTION_PROMPT:',
     prompt,
-    '',
-    'EXTRACTION_INPUT:',
-    JSON.stringify(input),
   ].join('\n');
 }
 
@@ -1069,6 +1088,7 @@ async function executeCompletedMainTurnCapture(
       botModeCardContexts: {},
       onTeamConsultation: () => undefined,
       onInterruptTarget: () => undefined,
+      isStopRequested: () => false,
       onEvent: (event) => {
         if (event.type === 'prompt.submission.started') {
           started ||= startRun(childRun!, childBinding!, event);
@@ -1153,6 +1173,8 @@ async function executeHermesTurn(args: {
     target: ProjectCardBinding;
   }): void;
   onInterruptTarget(target: { sessionId: string; submissionId: string }): void;
+  isStopRequested(): boolean;
+  stopSignal?: AbortSignal;
   onEvent(event: HermesGatewayEvent, speaker: ProjectCardBinding): void;
 }): Promise<TurnResult> {
   const recipientBinding = args.directRecipient
@@ -1179,18 +1201,25 @@ async function executeHermesTurn(args: {
     let recipientCompletion: { text: string; event: HermesGatewayEvent } | null = null;
     let recipientError: Error | null = null;
     const pendingRecipientEvents = new Map<string, HermesGatewayEvent[]>();
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     let detachEvent: () => void = () => undefined;
     let detachState: () => void = () => undefined;
+    const stopTurn = () => finish(new Error('hermes_turn_cancelled'));
     const finish = (error?: Error, value?: TurnResult) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       detachEvent();
       detachState();
+      args.stopSignal?.removeEventListener('abort', stopTurn);
       if (error) reject(error);
       else resolve(value!);
     };
+    if (args.stopSignal?.aborted) {
+      finish(new Error('hermes_turn_cancelled'));
+      return;
+    }
+    args.stopSignal?.addEventListener('abort', stopTurn, { once: true });
     const finishRecipientIfReady = () => {
       if (!ownTurnCompleted) return;
       if (recipientError) finish(recipientError);
@@ -1337,6 +1366,17 @@ async function executeHermesTurn(args: {
             consultationError = new Error('hermes_consultation_delivery_duplicate');
           } else {
             expectedConsultationProcessId = processId;
+            const consultationBinding = consultationTarget
+              ? args.binding.cardSessions[consultationTarget.profile.toLowerCase()]
+              : null;
+            if (!consultationBinding) {
+              consultationError = new Error('hermes_consultation_session_missing');
+            } else {
+              args.onInterruptTarget({
+                sessionId: consultationBinding.liveHandle,
+                submissionId: `__bot_dm__${deliveryId}`,
+              });
+            }
           }
         } else if (String(event.payload?.tool_id || '').trim() === addressedToolId) {
           let recipientSubmissionId: string | null = null;
@@ -1389,6 +1429,7 @@ async function executeHermesTurn(args: {
         }
         if (messageAgentStarted) {
           ownTurnCompleted = true;
+          if (args.directRecipient) mainCompletion = { text, event };
           if (consultationError) {
             finish(consultationError);
             return;
@@ -1416,15 +1457,31 @@ async function executeHermesTurn(args: {
         finish(new Error('hermes_consultation_completion_ambiguous'));
         return;
       }
+      let completionText = text;
+      if (args.directRecipient && expectedConsultationTaskId) {
+        const taskResults = record(event.payload?.notification_task_results);
+        completionText = String(taskResults[expectedConsultationTaskId] || '').trim();
+        if (!completionText) {
+          finish(new Error('hermes_team_consultation_result_missing'));
+          return;
+        }
+      }
       finish(undefined, {
-        text,
+        text: completionText,
         event,
         toolCalls,
-        speaker: args.main,
+        speaker: args.directRecipient && expectedConsultationTaskId
+          ? args.directRecipient
+          : args.main,
+        ...(mainCompletion ? { mainCompletion } : {}),
       });
     });
     timer = setTimeout(() => finish(new Error('hermes_turn_timeout')), 30 * 60_000);
     timer.unref?.();
+    if (args.isStopRequested()) {
+      finish(new Error('hermes_turn_cancelled'));
+      return;
+    }
     void args.client.request<Record<string, unknown>>('prompt.submit', {
       session_id: args.binding.liveHandle,
       profile: args.main.profile,
@@ -1687,6 +1744,15 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     assistantMessageId: clientReplyMessageId,
   };
   const interruptTargetKey = activeTurnKey(run.runId, projectId, deckId, userId);
+  const interruptState: ActiveTurnInterruptState = {
+    cancelController: new AbortController(),
+    mainTarget: null,
+    submissionStarted: false,
+    targets: new Map<string, HermesInterruptTarget>(),
+    teamTaskIds: new Set<string>(),
+    stopRequested: false,
+  };
+  activeTurnInterruptTargets.set(interruptTargetKey, interruptState);
   writeSse(res, 'run', { ...identity, state: 'preparing' });
 
   let binding: SessionBinding | null = null;
@@ -1699,6 +1765,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     } | null;
     settled: boolean;
   } = { value: null, settled: false };
+  let linkedEvidenceIds: string[] = [];
   let streamedReplyText = '';
   let streamedReplySpeaker = main;
   let started: Promise<void> | null = null;
@@ -1726,11 +1793,13 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     if (scriptPresentation.mode === 'script' && !Object.keys(cardScript || {}).length) {
       throw new Error('card_script_runtime_contract_missing');
     }
-    activeTurnInterruptTargets.set(interruptTargetKey, {
+    const mainInterruptTarget = {
       sessionId: binding.liveHandle,
       submissionId: run.runId,
-      stopRequested: false,
-    });
+    };
+    interruptState.mainTarget = mainInterruptTarget;
+    addHermesInterruptTarget(interruptState, mainInterruptTarget);
+    if (interruptState.stopRequested) throw new Error('hermes_turn_cancelled');
     writeSse(res, 'session', {
       ...identity,
       sessionId: binding.sessionId,
@@ -1766,15 +1835,50 @@ mainSessionRoutes.post('/chat', async (req, res) => {
       ),
       onTeamConsultation: (value) => {
         if (!teamConsultationState.value) teamConsultationState.value = value;
+        const active = activeTurnInterruptTargets.get(interruptTargetKey);
+        active?.teamTaskIds.add(value.taskId);
+        if (active?.stopRequested && active.mainTarget) {
+          void client.request('session.interrupt', {
+            session_id: active.mainTarget.sessionId,
+            expected_submission_id: active.mainTarget.submissionId,
+            interrupt_team_tasks: true,
+            team_task_ids: [value.taskId],
+          }).catch(() => undefined);
+        }
       },
       onInterruptTarget: (target) => {
         const active = activeTurnInterruptTargets.get(interruptTargetKey);
         if (!active) return;
-        activeTurnInterruptTargets.set(interruptTargetKey, { ...active, ...target });
+        addHermesInterruptTarget(active, target);
+        if (active.stopRequested) {
+          void client.request('session.interrupt', {
+            session_id: target.sessionId,
+            expected_submission_id: target.submissionId,
+          }).catch(() => undefined);
+        }
       },
+      isStopRequested: () => (
+        activeTurnInterruptTargets.get(interruptTargetKey)?.stopRequested === true
+      ),
+      stopSignal: interruptState.cancelController.signal,
       onEvent: (event, speaker) => {
         const eventIdentity = { ...identity, participant: participant(speaker) };
         if (event.type === 'prompt.submission.started' && event.session_id === binding!.liveHandle) {
+          interruptState.submissionStarted = true;
+          if (interruptState.stopRequested && interruptState.mainTarget) {
+            void client.request('session.interrupt', {
+              session_id: interruptState.mainTarget.sessionId,
+              expected_submission_id: interruptState.mainTarget.submissionId,
+              interrupt_team_tasks: true,
+              ...(interruptState.teamTaskIds.size
+                ? { team_task_ids: [...interruptState.teamTaskIds] }
+                : {}),
+            }).then((value) => {
+              if (record(value).status === 'interrupted') {
+                interruptState.cancelController.abort();
+              }
+            }).catch(() => undefined);
+          }
           started ||= Promise.all([
             startRun(run, binding!, event),
             settleConversationMessage({
@@ -1843,6 +1947,21 @@ mainSessionRoutes.post('/chat', async (req, res) => {
         toolCallCount: 0,
       });
       teamConsultationState.settled = true;
+      const childReadback = await readCardRun({
+        projectId,
+        deckId,
+        runId: teamConsultation.runId,
+        cardId: teamConsultation.target.card.id,
+        profile: teamConsultation.target.profile,
+        conversationId,
+      });
+      linkedEvidenceIds = Array.isArray(childReadback.graphReferences)
+        ? [...new Set(childReadback.graphReferences.flatMap((reference) => {
+          const value = record(reference);
+          const episodeId = String(value.graphitiEpisodeId || '').trim();
+          return episodeId ? [episodeId] : [];
+        }))]
+        : [];
     }
     await finishRun({
       run,
@@ -1857,7 +1976,8 @@ mainSessionRoutes.post('/chat', async (req, res) => {
         : binding.cardSessions[result.speaker.profile.toLowerCase()];
       const providerMessageId = result.speaker.card.id === main.card.id
         ? `run:${run.runId}`
-        : String(result.event.payload?.submission_id || '').trim();
+        : teamConsultation?.taskId
+          || String(result.event.payload?.submission_id || '').trim();
       if (!resultBinding || !providerMessageId) {
         throw new Error('hermes_completion_identity_missing');
       }
@@ -1872,6 +1992,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
           target: USER_PARTICIPANT,
           providerContinuationRef: resultBinding.sessionId,
           providerMessageId,
+          ...(linkedEvidenceIds.length ? { linkedEvidenceIds } : {}),
         },
       });
     }
@@ -1907,16 +2028,21 @@ mainSessionRoutes.post('/chat', async (req, res) => {
       ...identity,
       participant: participant(result.speaker),
       fullText: result.text,
+      ...(linkedEvidenceIds.length ? { linkedEvidenceIds } : {}),
     });
   } catch (error) {
     releaseActiveMainTurn(scopeKey, activeTurn, error);
+    const cancelled = error instanceof Error && error.message === 'hermes_turn_cancelled'
+      || activeTurnInterruptTargets.get(interruptTargetKey)?.stopRequested === true;
     const teamConsultation = teamConsultationState.value;
     if (teamConsultation && !teamConsultationState.settled) {
       await finishCardRun({
         runId: teamConsultation.runId,
-        state: 'failed',
-        errorCode: 'hermes_team_consultation_failed',
-        errorSummary: error instanceof Error ? error.message : String(error),
+        state: cancelled ? 'cancelled' : 'failed',
+        errorCode: cancelled ? 'hermes_turn_cancelled' : 'hermes_team_consultation_failed',
+        errorSummary: cancelled
+          ? 'hermes_turn_cancelled'
+          : error instanceof Error ? error.message : String(error),
         providerTurnRef: teamConsultation.taskId,
       }).catch(() => undefined);
     }
@@ -1929,8 +2055,6 @@ mainSessionRoutes.post('/chat', async (req, res) => {
         status: 'error',
       }).catch(() => undefined);
     }
-    const cancelled = error instanceof Error && error.message === 'hermes_turn_cancelled'
-      || activeTurnInterruptTargets.get(interruptTargetKey)?.stopRequested === true;
     if (!runSettled) await finishRun({
       run,
       binding,
@@ -2135,25 +2259,63 @@ mainSessionRoutes.post('/stop', async (req, res) => {
     expectedRunId, projectId, deckId, authorization.userId,
   );
   try {
-    const target = activeTurnInterruptTargets.get(interruptTargetKey);
-    if (!target) return res.status(409).json({ ok: false, error: 'no_active_turn' });
+    const active = activeTurnInterruptTargets.get(interruptTargetKey);
+    if (!active) return res.status(409).json({ ok: false, error: 'no_active_turn' });
+    active.stopRequested = true;
+    if (active.targets.size === 0) {
+      active.cancelController.abort();
+      return res.json({ ok: true, runId: expectedRunId, state: 'stopping' });
+    }
     const client = await hermesGateway();
-    activeTurnInterruptTargets.set(interruptTargetKey, { ...target, stopRequested: true });
-    const interrupted = record(await client.request('session.interrupt', {
-      session_id: target.sessionId,
-      expected_submission_id: target.submissionId,
-    }));
-    if (interrupted.status !== 'interrupted') {
-      const active = activeTurnInterruptTargets.get(interruptTargetKey);
-      if (active) activeTurnInterruptTargets.set(interruptTargetKey, { ...active, stopRequested: false });
+    const results = await Promise.allSettled(
+      [...active.targets.values()].map(async (target) => {
+        const isMainTarget = active.mainTarget !== null
+          && hermesInterruptTargetKey(target) === hermesInterruptTargetKey(active.mainTarget);
+        return record(await client.request('session.interrupt', {
+          session_id: target.sessionId,
+          expected_submission_id: target.submissionId,
+          ...(isMainTarget ? {
+            interrupt_team_tasks: true,
+            ...(active.teamTaskIds.size ? { team_task_ids: [...active.teamTaskIds] } : {}),
+          } : {}),
+        }));
+      }),
+    );
+    const rejected = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    const interruptedCount = results.filter(
+      (result) => result.status === 'fulfilled' && result.value.status === 'interrupted',
+    ).length;
+    if (rejected) {
+      if (interruptedCount === 0) active.stopRequested = false;
+      return res.status(503).json({
+        ok: false,
+        error: rejected.reason instanceof Error
+          ? rejected.reason.message
+          : 'main_run_stop_failed',
+      });
+    }
+    const invalidResult = results.find(
+      (result) => result.status === 'fulfilled'
+        && !['interrupted', 'not_interrupted'].includes(String(result.value.status || '')),
+    );
+    if (invalidResult) {
+      if (interruptedCount === 0) active.stopRequested = false;
+      return res.status(503).json({ ok: false, error: 'hermes_interrupt_result_invalid' });
+    }
+    if (interruptedCount === 0 && active.submissionStarted) {
+      active.stopRequested = false;
       return res.status(409).json({ ok: false, error: 'no_active_turn' });
     }
+    if (interruptedCount === 0) {
+      return res.json({ ok: true, runId: expectedRunId, state: 'stopping' });
+    }
+    active.cancelController.abort();
     return res.json({ ok: true, runId: expectedRunId, state: 'stopping' });
   } catch (error) {
     const active = activeTurnInterruptTargets.get(interruptTargetKey);
-    if (active) {
-      activeTurnInterruptTargets.set(interruptTargetKey, { ...active, stopRequested: false });
-    }
+    if (active) active.stopRequested = false;
     return res.status(503).json({
       ok: false,
       error: error instanceof Error ? error.message : 'main_run_stop_failed',

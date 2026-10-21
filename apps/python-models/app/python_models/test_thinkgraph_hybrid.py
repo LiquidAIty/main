@@ -433,45 +433,7 @@ def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    entity_map = {
-        "schemaVersion": "project-entity-map",
-        "projectId": "project-one",
-        "complete": True,
-        "counts": {
-            "engraphis": 0, "graphiti": 0, "total": 0,
-            "thinkgraphRelationships": 0,
-            "knowgraphRelationships": 0,
-            "relationships": 0,
-        },
-        "revisions": {
-            "engraphis": "0:test", "graphiti": "test",
-            "entities": "test", "relationships": "test",
-        },
-        "entities": [],
-        "relationships": [],
-        "sha256": "test",
-        "bytes": 0,
-        "estimatedTokens": 0,
-        "readDurationMs": 0.0,
-    }
     monkeypatch.setattr(service_adapter, "_service", engraphis_service)
-    monkeypatch.setattr(
-        completed_pair_preparation,
-        "_entity_map_for_project",
-        lambda _project: entity_map,
-    )
-    grounding = {
-        "schemaVersion": "project-graph.grounding.v1",
-        "authorities": {
-            "thinkgraph": {"recent": [], "relevant": []},
-            "knowgraph": {"recent": [], "relevant": []},
-        },
-    }
-    monkeypatch.setattr(
-        completed_pair_preparation,
-        "_grounding_for_completed_pair",
-        lambda *_args: grounding,
-    )
     before = _table_counts(engraphis_service)
 
     prepared = completed_pair_preparation.prepare_completed_pair(_completed())
@@ -485,12 +447,18 @@ def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
     assert prepared["preparation"] == {
         "status": "completed_without_graph_mutation"
     }
-    assert prepared["projectEntityMap"] == entity_map
-    assert prepared["projectGraphGrounding"] == grounding
-    assert prepared["enrichmentInput"]["project_entity_map"] == entity_map
-    assert prepared["enrichmentInput"]["project_graph_grounding"] == grounding
+    assert "projectEntityMap" not in prepared
+    assert "projectGraphGrounding" not in prepared
+    assert "enrichmentInput" not in prepared
     assert "think" in str(prepared["enrichmentSchema"])
     assert "THINKGRAPH ENTITY-SPECIFIC THINKS" in prepared["enrichmentPrompt"]
+    assert prepared["enrichmentPrompt"].count(_completed()["userMessage"]) == 1
+    assert prepared["enrichmentPrompt"].count(_completed()["mainResponse"]) == 1
+    assert '"schemaVersion": "project-entity-map"' not in prepared["enrichmentPrompt"]
+    assert '"schemaVersion": "project-graph.grounding.v1"' not in prepared["enrichmentPrompt"]
+    assert "project_graph_grounding" not in prepared["enrichmentPrompt"]
+    assert "compare the new pair with prior Thinks" not in prepared["enrichmentPrompt"]
+    assert "Automatic intake receives no prior Think bodies" in prepared["enrichmentPrompt"]
     assert _table_counts(engraphis_service) == before
 
 

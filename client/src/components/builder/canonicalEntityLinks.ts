@@ -27,6 +27,7 @@ export type CanonicalEntityFocusTarget = {
   canonicalName: string;
   view: CanonicalEntityProviderAuthority | 'all';
   members: CanonicalEntityFocusMember[];
+  graphitiEpisodeId?: string;
 };
 
 export type CanonicalEntityFocusRequest = CanonicalEntityFocusTarget & {

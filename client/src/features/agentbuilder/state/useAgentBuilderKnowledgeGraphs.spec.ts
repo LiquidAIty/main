@@ -61,6 +61,58 @@ describe('KnowGraph route contracts', () => {
       .toBeGreaterThan(calls.lastIndexOf(refresh!));
   });
 
+  it('surfaces the exact completed-pair capture failure instead of a fake projection error', async () => {
+    let thinkReads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('/api/thinkgraph/projection?')) {
+        thinkReads += 1;
+        if (thinkReads > 1) {
+          return new Response(JSON.stringify({
+            error: 'thinkgraph_saved_card_not_authorized',
+          }), { status: 502 });
+        }
+        return new Response(JSON.stringify(projection()), { status: 200 });
+      }
+      return new Response(JSON.stringify({ nodes: [], relationships: [] }), { status: 200 });
+    }));
+    const { result } = renderHook(() => useAgentBuilderKnowledgeGraphs({
+      projectId: 'project-one',
+      deckId: 'deck-one',
+      conversationId: 'conversation-one',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+
+    await act(async () => { await result.current.refreshAfterMainRun('run-one'); });
+
+    expect(result.current.statuses.thinkgraph).toBe('error');
+    expect(result.current.errors.thinkgraph).toBe('thinkgraph_saved_card_not_authorized');
+  });
+
+  it('refreshes both providers after an addressed graph Card without waiting on Main capture', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.startsWith('/api/thinkgraph/projection?')) {
+        return new Response(JSON.stringify(projection()), { status: 200 });
+      }
+      return new Response(JSON.stringify({ nodes: [], relationships: [] }), { status: 200 });
+    }));
+    const { result } = renderHook(() => useAgentBuilderKnowledgeGraphs({
+      projectId: 'project-one', deckId: 'deck-one', conversationId: 'conversation-one',
+    }));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+
+    await act(async () => { await result.current.refreshAfterMainRun('run-graph-card', false); });
+
+    const refresh = calls.filter(url => url.startsWith('/api/thinkgraph/projection?')).at(-1)!;
+    const query = new URLSearchParams(refresh.split('?')[1] || '');
+    expect(query.get('projectId')).toBe('project-one');
+    expect(query.has('afterRunId')).toBe(false);
+    expect(calls.filter(url => url.startsWith('/api/knowgraph/graph?'))).toHaveLength(2);
+  });
+
   it('sends one exact delete request and refreshes after the server confirms it', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

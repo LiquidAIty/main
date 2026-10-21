@@ -200,6 +200,7 @@ class MessageCompletePayload(Payload):
     submission_id: str | None = None
     notification_process_ids: list[str] | None = None
     notification_task_ids: list[str] | None = None
+    notification_task_results: dict[str, str] | None = None
     usage: Usage | None = None
     turn_usage: Usage | None = None
     status: TurnStatus | None = None
