@@ -120,14 +120,32 @@ def read_geometry(path: Path) -> dict:
                     "netArea": face.netArea() if is_surface else face.grossArea(),
                 })
                 all_vertices.extend(vertices)
+        for group in space.shadingSurfaceGroups():
+            for shade in group.shadingSurfaces():
+                transform = group.siteTransformation()
+                plane = openstudio.Transformation.alignFace(shade.vertices())
+                triangles = openstudio.computeTriangulation(openstudio.reverse(plane.inverse() * shade.vertices()), openstudio.Point3dVectorVector())
+                if not triangles:
+                    raise ValueError(f"Cannot triangulate {shade.nameString()}")
+                host = shade.additionalProperties().getFeatureAsString("host_subsurface")
+                vertices = [_point(transform * vertex) for vertex in shade.vertices()]
+                objects.append({"handle": str(shade.handle()), "name": shade.nameString(), "objectType": "ShadingSurface",
+                                "surfaceType": "Shading", "spaceHandle": str(space.handle()),
+                                "parentHandle": host.get() if host.is_initialized() else str(space.handle()),
+                                "vertices": vertices, "positions": [value for triangle in triangles for vertex in triangle for value in _point(transform * (plane * vertex))],
+                                "grossArea": shade.grossArea(), "netArea": shade.grossArea()})
+                all_vertices.extend(vertices)
     if any(not math.isfinite(value) for point in all_vertices for value in point):
         raise ValueError("OpenStudio returned non-finite geometry")
     if path.read_bytes() != source:
         raise RuntimeError("The OSM changed during geometry readback")
     return {
         "modelId": str(model.getBuilding().handle()),
+        "name": model.getBuilding().nameString(),
         "revision": hashlib.sha256(source).hexdigest(),
         "openstudioVersion": openstudio.openStudioVersion(), "units": "m",
+        "site": {"latitude": model.getSite().latitude(), "longitude": model.getSite().longitude(),
+                 "timeZone": model.getSite().timeZone(), "northAxis": model.getBuilding().northAxis()},
         "spaces": sorted(spaces, key=lambda item: item["handle"]),
         "objects": sorted(objects, key=lambda item: item["handle"]),
         "bounds": None if not all_vertices else {

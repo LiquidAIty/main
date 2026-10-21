@@ -24,6 +24,7 @@ import cardTerminalRoutes from './cardTerminal.routes';
 import cardTurnInternalRoutes from './cardTurnInternal.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
 import codeGraphReadRoutes from './codeGraphRead.routes';
+import nrgsimRoutes from './nrgsim.routes';
 
 const router = Router();
 
@@ -50,5 +51,6 @@ router.use('/projects', authMiddleware, projectsRoutes);
 router.use('/projects', authMiddleware, decksRoutes);
 router.use('/trading', authMiddleware, tradingRoutes);
 router.use('/worldview', authMiddleware, worldviewRoutes);
+router.use('/nrgsim', authMiddleware, nrgsimRoutes);
 
 export default router;

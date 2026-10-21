@@ -5,7 +5,7 @@ import * as THREE from 'three';
 export type OpenStudioFace = {
   handle: string;
   name: string;
-  objectType: 'Surface' | 'SubSurface';
+  objectType: 'Surface' | 'SubSurface' | 'ShadingSurface';
   surfaceType: string;
   parentHandle: string;
   spaceHandle: string;
@@ -17,8 +17,11 @@ export type OpenStudioFace = {
 
 export type OpenStudioGeometry = {
   modelId: string;
+  name?: string;
   revision: string;
   units: 'm';
+  site?: { latitude: number; longitude: number; timeZone: number; northAxis: number };
+  spaces?: { handle: string; name: string; floorArea: number; volume: number; thermalZoneHandle: string | null }[];
   objects: OpenStudioFace[];
   bounds: { min: [number, number, number]; max: [number, number, number] } | null;
 };
@@ -43,7 +46,7 @@ export function buildOpenStudioGroup(model: OpenStudioGeometry, selectedHandle: 
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(face.positions, 3));
     geometry.computeVertexNormals();
     const opening = face.objectType === 'SubSurface';
-    const selected = selectedHandle === face.handle;
+    const selected = selectedHandle === face.handle || selectedHandle === face.spaceHandle || selectedHandle === model.modelId;
     const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
       color: opening ? '#3b75ff' : face.surfaceType === 'RoofCeiling' ? '#a68b66' : '#c99a45',
       roughness: 0.56, side: THREE.DoubleSide,

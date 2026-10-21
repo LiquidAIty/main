@@ -728,6 +728,7 @@ function FacadeScene({
   modelGeometry,
   selectedOpenStudioHandle = null,
   onOpenStudioSelect,
+  solarPreview,
 }: {
   inputs: EnergySurfaceParameters;
   selectedObjectId: string | null;
@@ -737,6 +738,7 @@ function FacadeScene({
   modelGeometry?: OpenStudioGeometry;
   selectedOpenStudioHandle?: string | null;
   onOpenStudioSelect?: (selection: OpenStudioSelection) => void;
+  solarPreview?: { x: number; y: number; z: number; aboveHorizon: boolean };
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const inputsRef = useRef(inputs);
@@ -747,6 +749,8 @@ function FacadeScene({
   const geometryRef = useRef(modelGeometry);
   const openStudioHandleRef = useRef(selectedOpenStudioHandle);
   const openStudioSelectRef = useRef(onOpenStudioSelect);
+  const solarPreviewRef = useRef(solarPreview);
+  solarPreviewRef.current = solarPreview;
   geometryRef.current = modelGeometry;
   openStudioHandleRef.current = selectedOpenStudioHandle;
   openStudioSelectRef.current = onOpenStudioSelect;
@@ -855,7 +859,10 @@ function FacadeScene({
       if (bounds) {
         const box = new THREE.Box3(new THREE.Vector3(...bounds.min), new THREE.Vector3(...bounds.max));
         box.getCenter(target);
-        distance = Math.max(box.getSize(new THREE.Vector3()).length() * 1.5, 1);
+        yaw = .55;
+        const halfVerticalFov = THREE.MathUtils.degToRad(camera.fov / 2);
+        const halfHorizontalFov = Math.atan(Math.tan(halfVerticalFov) * camera.aspect);
+        distance = Math.max(box.getSize(new THREE.Vector3()).length() * .65 / Math.sin(Math.min(halfVerticalFov, halfHorizontalFov)), 1);
       }
       applyCamera();
     };
@@ -880,7 +887,10 @@ function FacadeScene({
       const width = Math.max(host.clientWidth, 1);
       const height = Math.max(host.clientHeight, 1);
       renderer.setSize(width, height, false);
+      const oldAngle = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.min(camera.aspect, 1));
       camera.aspect = width / height;
+      const newAngle = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.min(camera.aspect, 1));
+      if (geometryRef.current && oldAngle > 0 && newAngle > 0) distance *= Math.sin(oldAngle) / Math.sin(newAngle);
       camera.updateProjectionMatrix();
       applyCamera();
     };
@@ -890,7 +900,7 @@ function FacadeScene({
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
       raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObjects([facadeGroup, sunSphere], true);
+      const hits = raycaster.intersectObjects([facadeGroup, ...(sunSphere.visible ? [sunSphere] : [])], true);
       const hit = hits.find((entry) => {
         let current: THREE.Object3D | null = entry.object;
         while (current) {
@@ -962,6 +972,8 @@ function FacadeScene({
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
     renderer.domElement.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('resize', resize);
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(host);
     fitView();
     resize();
 
@@ -980,18 +992,25 @@ function FacadeScene({
         scene.add(facadeGroup);
       }
 
-      const solar = calculateSolarPosition({
+      const radius = projection?.bounds
+        ? Math.max(3, ...projection.bounds.max.map((value, axis) => value - projection.bounds!.min[axis])) : 10;
+      const preview = solarPreviewRef.current;
+      const solar = projection
+        ? { x: (preview?.x ?? 0) * radius, y: (preview?.y ?? 0) * radius, z: (preview?.z ?? 0) * radius, aboveHorizon: preview?.aboveHorizon ?? false }
+        : calculateSolarPosition({
         dayOfYear: current.day,
         hour: current.hour,
         latitudeDeg: 45,
         // Later, orientation should come from Site/Building layout, not the Solar Position strip.
-        orientationDeg: DEFAULT_SOLAR_ORIENTATION_DEG,
-        radius: 10,
+        // The recovered solar helper's 180-degree orientation puts solar noon
+        // on world -Y (south), matching OpenStudio's +Y north / +X east axes.
+        orientationDeg: projection ? 180 : DEFAULT_SOLAR_ORIENTATION_DEG,
+        radius,
       });
       const sunPosition = new THREE.Vector3(solar.x, solar.y, solar.z);
       sunSphere.position.copy(sunPosition);
-      sunSphere.visible = projection === undefined;
-      sunRay.visible = projection === undefined;
+      sunSphere.visible = projection === undefined || solarPreviewRef.current !== undefined;
+      sunRay.visible = sunSphere.visible;
       sunSphere.scale.setScalar(solar.aboveHorizon ? 1 : 0.54);
       sunLight.position.copy(sunPosition).multiplyScalar(2.5);
       sunLight.intensity = solar.aboveHorizon ? 0.95 : 0.08;
@@ -1031,6 +1050,7 @@ function FacadeScene({
     return () => {
       window.cancelAnimationFrame(frame);
       window.removeEventListener('resize', resize);
+      resizeObserver.disconnect();
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
@@ -1050,14 +1070,17 @@ function FacadeScene({
 }
 
 // The host supplies the model and selection; this adds no inspector, chat or synthetic output panel.
-export function OpenStudioBlockScene({ geometry, selectedHandle, onSelect }: {
+export function OpenStudioBlockScene({ geometry, selectedHandle, onSelect, sun, onSunSelect }: {
   geometry: OpenStudioGeometry;
   selectedHandle: string | null;
   onSelect: (selection: OpenStudioSelection) => void;
+  sun?: { x: number; y: number; z: number; aboveHorizon: boolean };
+  onSunSelect?: () => void;
 }) {
   return <FacadeScene inputs={ENERGY_DEFAULT_PARAMETERS} selectedObjectId={null}
     interactionLocked={false} cameraCommand={null} modelGeometry={geometry}
-    selectedOpenStudioHandle={selectedHandle} onOpenStudioSelect={onSelect} />;
+    selectedOpenStudioHandle={selectedHandle} onOpenStudioSelect={onSelect}
+    solarPreview={sun} onObjectSelect={id => { if (id === 'energy:sun') onSunSelect?.(); }} />;
 }
 
 function ParameterControl({

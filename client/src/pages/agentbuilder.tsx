@@ -250,6 +250,7 @@ function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): strin
 // The Graphs workspace presents independently visible Think, Know, and opt-in Code
 // layers on one canvas; all three remain backed by their own provider authority.
 const PROJECTS_API = '/api/projects';
+const NrgsimWorkspace = lazy(() => import('../../../agent-products/nrgsim/client/src/components/energy/NrgsimWorkspace'));
 
 /** Mean synodic month in days (NASA/USNO convention). */
 export default function AgentBuilder(): React.ReactElement {
@@ -262,10 +263,12 @@ export default function AgentBuilder(): React.ReactElement {
     | 'trading'
     | 'worldsignal'
     | 'worldview'
+    | 'nrgsim'
   >(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('workspace') === 'knowledge') return 'knowledge';
     if (params.get('workspace') === 'worldview') return 'worldview';
+    if (params.get('workspace') === 'nrgsim') return 'nrgsim';
     return params.get('projectId') ? 'canvas' : 'chat';
   });
   // Left-rail camera focus: carries a requested pan/zoom-to-fit to BuilderCanvas;
@@ -372,6 +375,21 @@ export default function AgentBuilder(): React.ReactElement {
   const cardLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const [worldViewInspectorHost, setWorldViewInspectorHost] = useState<HTMLDivElement | null>(null);
   const [worldViewInspectorOpen, setWorldViewInspectorOpen] = useState(true);
+  const [modelingInspectorHost, setModelingInspectorHost] = useState<HTMLDivElement | null>(null);
+  const [modelingInspectorOpen, setModelingInspectorOpen] = useState(true);
+  const [modelingAvailable, setModelingAvailable] = useState(false);
+  useEffect(() => {
+    let current = true;
+    setModelingAvailable(false);
+    if (canvasProjectId) {
+      fetch(`/api/nrgsim/projects/${encodeURIComponent(canvasProjectId)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'state' }),
+      }).then(async response => response.ok ? response.json() : null)
+        .then(value => { if (current) setModelingAvailable(value?.configured === true); })
+        .catch(() => { if (current) setModelingAvailable(false); });
+    }
+    return () => { current = false; };
+  }, [canvasProjectId]);
   const registerCardLeave = useCallback((save: (() => Promise<boolean>) | null) => {
     cardLeaveRef.current = save;
   }, []);
@@ -1224,7 +1242,8 @@ export default function AgentBuilder(): React.ReactElement {
     return <div className="space-y-3">{renderEditorContent()}</div>;
   };
 
-  const inspectorDrawerRole = useMemo<'agent' | 'trading' | 'worldsignal' | 'worldview' | null>(() => {
+  const inspectorDrawerRole = useMemo<'agent' | 'trading' | 'worldsignal' | 'worldview' | 'nrgsim' | null>(() => {
+    if (workspaceView === 'nrgsim') return 'nrgsim';
     if (workspaceView === 'canvas' && canonicalDeckReady && selectedCard) return 'agent';
     // The canonical Inspector also serves the WorldSignals companion surface —
     // same drawer, same renderer, section requested by the vendor controls.
@@ -1234,7 +1253,9 @@ export default function AgentBuilder(): React.ReactElement {
     return null;
   }, [canonicalDeckReady, selectedCard, tradingCard, worldViewCard, workspaceView, worldSignalInspectorSection]);
   const isInspectorDrawerVisible =
-    inspectorDrawerRole === 'worldsignal'
+    inspectorDrawerRole === 'nrgsim'
+      ? modelingInspectorOpen
+    : inspectorDrawerRole === 'worldsignal'
       ? worldSignalInspectorOpen
       : inspectorDrawerRole === 'worldview'
         ? worldViewInspectorOpen
@@ -1555,11 +1576,20 @@ export default function AgentBuilder(): React.ReactElement {
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
+      modelingAvailable={modelingAvailable}
+      onShowModelingWorkspace={() => {
+        setWorkspaceView('nrgsim'); setModelingInspectorOpen(true);
+        const params = new URLSearchParams(window.location.search);
+        params.set('workspace', 'nrgsim');
+        window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
+      }}
     />
   );
 
   const workspaceCompanionSurfaceHost = (
-    <CompanionSurfaceHost
+    workspaceView === 'nrgsim' && canvasProjectId ? <Suspense fallback={null}>
+      <NrgsimWorkspace key={canvasProjectId} projectId={canvasProjectId} inspectorContainer={modelingInspectorHost} />
+    </Suspense> : <CompanionSurfaceHost
       workspaceView={workspaceView}
       knowledgeSurface={
         renderKnowledgeGraphSurface({
@@ -1602,7 +1632,7 @@ export default function AgentBuilder(): React.ReactElement {
       <RightGlassDrawer
         isOpen={isInspectorDrawerVisible}
         title={
-          inspectorDrawerRole === 'worldsignal'
+          inspectorDrawerRole === 'nrgsim' ? '' : inspectorDrawerRole === 'worldsignal'
             ? 'WorldSignals'
             : inspectorDrawerRole === 'worldview'
               ? ''
@@ -1611,7 +1641,7 @@ export default function AgentBuilder(): React.ReactElement {
             : safeText(selectedCard?.title || 'Agent')
         }
         onClose={
-          inspectorDrawerRole === 'worldsignal'
+          inspectorDrawerRole === 'nrgsim' ? () => setModelingInspectorOpen(false) : inspectorDrawerRole === 'worldsignal'
             ? closeWorldSignalInspector
             : inspectorDrawerRole === 'worldview'
               ? () => setWorldViewInspectorOpen(false)
@@ -1619,7 +1649,7 @@ export default function AgentBuilder(): React.ReactElement {
               ? () => setInspectorDrawerOpen(false)
               : dockInspectorDrawer
         }
-        onOpen={inspectorDrawerRole === 'worldsignal'
+        onOpen={inspectorDrawerRole === 'nrgsim' ? () => setModelingInspectorOpen(true) : inspectorDrawerRole === 'worldsignal'
           ? () => setWorldSignalInspectorOpen(true)
           : inspectorDrawerRole === 'worldview'
             ? () => setWorldViewInspectorOpen(true)
@@ -1627,7 +1657,7 @@ export default function AgentBuilder(): React.ReactElement {
               ? () => setInspectorDrawerOpen(true)
               : undefined}
         collapsedLabel={null}
-        openAriaLabel={inspectorDrawerRole === 'worldsignal'
+        openAriaLabel={inspectorDrawerRole === 'nrgsim' ? 'Open modeling Inspector' : inspectorDrawerRole === 'worldsignal'
           ? 'Open WorldSignals Inspector'
           : inspectorDrawerRole === 'worldview'
             ? 'Open WorldView controls'
@@ -1640,7 +1670,7 @@ export default function AgentBuilder(): React.ReactElement {
         minWidth={300}
         maxWidth={560}
         storageKey={
-          inspectorDrawerRole === 'worldsignal'
+          inspectorDrawerRole === 'nrgsim' ? 'building.inspector.width' : inspectorDrawerRole === 'worldsignal'
             ? 'liquidaity.drawer.inspector.worldsignal.v1.width'
             : inspectorDrawerRole === 'worldview'
               ? 'liquidaity.drawer.inspector.worldview.v1.width'
@@ -1652,6 +1682,7 @@ export default function AgentBuilder(): React.ReactElement {
         right={12}
         top={48}
       >
+        {inspectorDrawerRole === 'nrgsim' ? <div ref={setModelingInspectorHost} /> : null}
         {inspectorDrawerRole === 'worldview' ? <div ref={setWorldViewInspectorHost} /> : null}
         {inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
           <div

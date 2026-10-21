@@ -22,6 +22,8 @@
     "moduleResolution": "bundler"
   },
   "exclude": [
+    "../agent-products/nrgsim/**/*.spec.ts",
+    "../agent-products/nrgsim/**/*.spec.tsx",
     "out-tsc",
     "dist",
     "src/**/*.spec.ts",
@@ -38,6 +40,9 @@
     "vitest.config.mts"
   ],
   "include": [
+    "../agent-products/nrgsim/client/src/components/energy/**/*.tsx",
+    "../agent-products/nrgsim/client/src/features/energy/*.ts",
+    "../agent-products/nrgsim/client/src/types/*.ts",
     "src/**/*.js",
     "src/**/*.jsx",
     "src/**/*.ts",

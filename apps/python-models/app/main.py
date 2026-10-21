@@ -16,6 +16,14 @@ from app.card_domain_routes import router as card_domain_router
 from app.graph_routes import graph_read_router, graph_settlement_router
 from app.trading_routes import router as trading_router
 
+# NRGSIM keeps domain source in its product folder; this is only route composition.
+import importlib.util
+from pathlib import Path
+_modeling_routes_path = Path(__file__).resolve().parents[3] / "agent-products" / "nrgsim" / "services" / "routes.py"
+_modeling_spec = importlib.util.spec_from_file_location("nrgsim_routes", _modeling_routes_path)
+_modeling_routes = importlib.util.module_from_spec(_modeling_spec)
+_modeling_spec.loader.exec_module(_modeling_routes)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,3 +62,4 @@ app.include_router(graph_settlement_router)
 app.include_router(trading_router)
 app.include_router(card_domain_router)
 app.include_router(graph_read_router)
+app.include_router(_modeling_routes.router)
