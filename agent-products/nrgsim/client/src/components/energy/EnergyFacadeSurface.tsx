@@ -787,6 +787,7 @@ function FacadeScene({
     let panMode = false;
     let frame = 0;
     let previousSignature = '';
+    let previousBounds = JSON.stringify(geometryRef.current?.bounds);
     let lastCameraCommandToken = 0;
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
@@ -839,6 +840,10 @@ function FacadeScene({
     scene.add(facadeGroup);
 
     const applyCamera = () => {
+      if (geometryRef.current) {
+        camera.far = Math.max(100, distance * 5);
+        camera.updateProjectionMatrix();
+      }
       const horizontal = Math.cos(pitch) * distance;
       camera.position.set(
         target.x + Math.sin(yaw) * horizontal,
@@ -846,6 +851,13 @@ function FacadeScene({
         target.z + Math.sin(pitch) * distance,
       );
       camera.lookAt(target);
+    };
+
+    const zoomLimits = (): [number, number] => {
+      const bounds = geometryRef.current?.bounds;
+      if (!bounds) return [4, 28];
+      const diagonal = Math.hypot(...bounds.max.map((value, axis) => value - bounds.min[axis]));
+      return [Math.max(.1, diagonal * .05), Math.max(28, diagonal * 20)];
     };
 
     const fitView = () => {
@@ -863,6 +875,8 @@ function FacadeScene({
         const halfVerticalFov = THREE.MathUtils.degToRad(camera.fov / 2);
         const halfHorizontalFov = Math.atan(Math.tan(halfVerticalFov) * camera.aspect);
         distance = Math.max(box.getSize(new THREE.Vector3()).length() * .65 / Math.sin(Math.min(halfVerticalFov, halfHorizontalFov)), 1);
+        camera.far = Math.max(100, distance * 10);
+        camera.updateProjectionMatrix();
       }
       applyCamera();
     };
@@ -871,12 +885,12 @@ function FacadeScene({
       if (!command || command.token === lastCameraCommandToken) return;
       lastCameraCommandToken = command.token;
       if (command.action === 'zoom_in') {
-        distance = clampNumber(distance * 0.82, 4, 28);
+        distance = clampNumber(distance * 0.82, ...zoomLimits());
         applyCamera();
         return;
       }
       if (command.action === 'zoom_out') {
-        distance = clampNumber(distance * 1.18, 4, 28);
+        distance = clampNumber(distance * 1.18, ...zoomLimits());
         applyCamera();
         return;
       }
@@ -960,7 +974,7 @@ function FacadeScene({
     const onWheel = (event: WheelEvent) => {
       if (interactionLockedRef.current) return;
       event.preventDefault();
-      distance = clampNumber(distance + event.deltaY * 0.012, 4, 28);
+      distance = clampNumber(distance + event.deltaY * 0.012, ...zoomLimits());
       applyCamera();
     };
 
@@ -980,6 +994,8 @@ function FacadeScene({
     const animate = () => {
       const current = inputsRef.current;
       const projection = geometryRef.current;
+      const nextBounds = JSON.stringify(projection?.bounds);
+      if (nextBounds !== previousBounds) { previousBounds = nextBounds; fitView(); }
       const signature = projection !== undefined
         ? `${projection.modelId}:${projection.revision}:${openStudioHandleRef.current}`
         : `${JSON.stringify(current)}:${selectedObjectIdRef.current}`;

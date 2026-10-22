@@ -6,7 +6,7 @@ stays the single late-binding seam tests monkeypatch (``web_deps.late``).
 Usage: ``python -m hermes_cli.main web [--port 8080]``.
 """
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import asyncio
 from collections import deque
@@ -133,6 +133,78 @@ def _start_desktop_cron_ticker(stop_event: "threading.Event", interval: int = 60
 
     _log.info("Desktop cron scheduler started (provider=%s, interval=%ds)", provider.name, interval)
     provider.start(stop_event, **start_kwargs)
+
+
+def _start_headless_kanban_dispatcher(
+    stop_event: "threading.Event",
+    dispatch_epoch: str,
+) -> None:
+    """Run Hermes' existing Kanban dispatcher inside the headless serve host.
+
+    LiquidAIty uses ``hermes serve`` as its one canonical Gateway/TUI process.
+    The upstream messaging ``GatewayRunner`` normally owns this watcher, but a
+    headless serve process has no messaging runner. Reuse the same watcher,
+    settings, task database and singleton lock here instead of creating a
+    second dispatcher or process.
+    """
+
+    # Let FastAPI finish its lifespan startup before importing the dispatcher
+    # graph in this thread. On Windows a cold import can hold the GIL long
+    # enough to delay the backend-ready probe even though the work is threaded.
+    if stop_event.wait(1.0):
+        return
+
+    from gateway.kanban_watchers import GatewayKanbanWatchersMixin
+
+    runner = GatewayKanbanWatchersMixin()
+    runner._running = True
+    runner._kanban_team_scope_only = True
+    runner._kanban_team_dispatch_epoch = dispatch_epoch
+
+    async def _run() -> None:
+        watcher = asyncio.create_task(runner._kanban_dispatcher_watcher())
+        try:
+            while not stop_event.is_set() and not watcher.done():
+                await asyncio.sleep(0.25)
+            if watcher.done():
+                await watcher
+        finally:
+            runner._running = False
+            if not watcher.done():
+                try:
+                    await asyncio.wait_for(watcher, timeout=5.0)
+                except asyncio.TimeoutError:
+                    watcher.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await watcher
+
+    try:
+        asyncio.run(_run())
+    except Exception:
+        _log.exception("Headless serve Kanban dispatcher failed")
+
+
+def _arm_headless_kanban_dispatcher() -> None:
+    """Arm the dispatcher only after the serve socket has finished binding."""
+
+    if os.environ.get("HERMES_SERVE_HEADLESS") != "1":
+        return
+    existing = getattr(app.state, "kanban_dispatcher_thread", None)
+    if existing is not None and existing.is_alive():
+        return
+    stop = threading.Event()
+    dispatch_epoch = secrets.token_hex(16)
+    os.environ["HERMES_KANBAN_DISPATCH_EPOCH"] = dispatch_epoch
+    thread = threading.Thread(
+        target=_start_headless_kanban_dispatcher,
+        args=(stop, dispatch_epoch),
+        daemon=True,
+        name="headless-kanban-dispatcher",
+    )
+    app.state.kanban_dispatcher_stop = stop
+    app.state.kanban_dispatcher_thread = thread
+    app.state.kanban_dispatch_epoch = dispatch_epoch
+    thread.start()
 
 
 # Desktop `serve` only (start_server(start_mcp_discovery_after_bind=True)):
@@ -266,6 +338,12 @@ async def _lifespan(app: "FastAPI"):
         hosted_room_start_cancel.set()
         _hosted_groups.stop_hosted_room_service(timeout=5.0)
         hosted_room_start_thread.join(timeout=1.0)
+        kanban_stop = getattr(app.state, "kanban_dispatcher_stop", None)
+        kanban_thread = getattr(app.state, "kanban_dispatcher_thread", None)
+        if kanban_stop is not None:
+            kanban_stop.set()
+        if kanban_thread is not None:
+            kanban_thread.join(timeout=6.0)
         if cron_stop is not None:
             cron_stop.set()
         pty_reaper_task.cancel()
@@ -1348,6 +1426,7 @@ def _on_server_started(
     else:
         print(f"  Hermes Web UI → http://{host}:{actual_port}")
     _maybe_open_browser(host, actual_port, open_browser, initial_profile)
+    _arm_headless_kanban_dispatcher()
 
     if start_mcp_discovery_after_bind:
         # Desktop `serve`: the ~350ms `mcp` SDK import holds the GIL while the

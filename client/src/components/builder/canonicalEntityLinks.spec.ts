@@ -249,6 +249,17 @@ describe('canonical Entity chat links', () => {
       projection: joinedPresentation.projection,
       joinedPresentation,
       directory,
+      request: {
+        ...rocket,
+        view: 'knowgraph',
+        graphitiEpisodeId: 'know-exact',
+        requestId: 5,
+      },
+    })).toBe(visualId);
+    expect(resolveCanonicalEntityFocusVisualId({
+      projection: joinedPresentation.projection,
+      joinedPresentation,
+      directory,
       request: { ...electron, requestId: 2 },
     })).toBe(electronVisualId);
     expect(resolveCanonicalEntityFocusVisualId({

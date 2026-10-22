@@ -3,22 +3,27 @@
 import { useEffect, useRef, useState } from 'react';
 
 export type Comparison = {
+  baselineCaseId?: string;
   channel: { name: string; key: string; units: string; frequency: string };
   timeBasis: string;
-  cases: { caseId: string; runId: string; revision: string; engine: string; weatherSha256: string; missing: number }[];
+  cases: { caseId: string; name?: string; floorArea?: number; runId: string; revision: string; engine: string; weatherSha256: string; missing: number }[];
   rows: { time: string; intervalMinutes: number; values: (number | null)[] }[];
-  summary?: null | { units: string; values: (number | null)[]; changePercent: (number | null)[] };
+  summary?: null | { units: string; values: (number | null)[]; changePercent: (number | null)[]; perArea?: (number | null)[]; perAreaUnits?: string };
   energy?: null | { title: string; components: string[]; units: string;
+    totalValues: (number | null)[]; perArea: (number | null)[]; normalizedByFloorArea: boolean;
     daily: { period: string; values: (number | null)[][] }[]; monthly: { period: string; values: (number | null)[][] }[] };
   hourly: null | { profile: { hour: number; values: (number | null)[]; sampleCounts: number[] }[];
     heatmap: { date: string; hour: number; values: (number | null)[] }[]; profileMeaning: string };
 };
 const colors = ['#4FA2AD', '#F2A64A', '#C694DF'];
 const GRAPH_TEXT = '#A7B0BA';
-const caseColor = (id: string) => colors[['baseline', 'case1', 'case2'].indexOf(id)] || colors[0];
 export const caseName = (id: string) => ({ baseline: 'Baseline', case1: 'Comparison 1', case2: 'Comparison 2' }[id] || id);
 
 export default function ResultComparison({ data, mode = 'profile' }: { data: Comparison; mode?: 'profile' | 'heatmap' | 'timeseries' | 'daily' | 'monthly' }) {
+  const baselineId = data.baselineCaseId || 'baseline';
+  const label = (id: string) => `${id === baselineId ? 'Baseline' : 'Performance'} · ${id.startsWith('case_') ? data.cases.find(item => item.caseId === id)?.name || id : caseName(id)}`;
+  const colorFor = (id: string) => colors[id === baselineId ? 0 : 1];
+  const stacked = (mode === 'monthly' || mode === 'daily') && data.energy;
   const canvas = useRef<HTMLCanvasElement>(null);
   const [hover, setHover] = useState<number | null>(null);
   useEffect(() => {
@@ -38,7 +43,7 @@ export default function ResultComparison({ data, mode = 'profile' }: { data: Com
         ctx.font = '10px system-ui';
         data.cases.forEach((item, index) => {
           const top = index * panelHeight + 18, bottom = top + panelHeight - 32, left = 42, right = width - 8;
-          ctx.fillStyle = GRAPH_TEXT; ctx.fillText(caseName(item.caseId), left, top - 6);
+          ctx.fillStyle = GRAPH_TEXT; ctx.fillText(label(item.caseId), left, top - 6);
           for (let tick = 0; tick <= 2; tick++) {
             const value = maximum * tick / 2, y = bottom - value / maximum * (bottom - top);
             ctx.fillText(value.toLocaleString(undefined, {maximumSignificantDigits: 3}), 0, y + 3);
@@ -77,7 +82,7 @@ export default function ResultComparison({ data, mode = 'profile' }: { data: Com
         ctx.font = '11px system-ui';
         data.cases.forEach((item, caseIndex) => {
           const top = caseIndex * panelHeight + 20, plotHeight = panelHeight - 28;
-          ctx.fillStyle = caseColor(item.caseId); ctx.fillText(caseName(item.caseId), left, top - 6);
+          ctx.fillStyle = colorFor(item.caseId); ctx.fillText(label(item.caseId), left, top - 6);
           ctx.fillStyle = '#A7B0BA'; ctx.fillText('24', 8, top + 8); ctx.fillText('00', 8, top + plotHeight);
           ctx.fillStyle = '#20272D'; ctx.fillRect(left, top, right - left, plotHeight);
           for (const cell of data.hourly!.heatmap) {
@@ -109,7 +114,7 @@ export default function ResultComparison({ data, mode = 'profile' }: { data: Com
         ctx.fillText(value.toLocaleString(undefined, { maximumSignificantDigits: 4 }), 5, py + 4);
       }
       for (let c = data.cases.length - 1; c >= 0; c--) {
-        ctx.strokeStyle = caseColor(data.cases[c].caseId); ctx.globalAlpha = profile ? 1 : .65; ctx.lineWidth = profile ? 1.5 : 1; ctx.beginPath();
+        ctx.strokeStyle = colorFor(data.cases[c].caseId); ctx.globalAlpha = profile ? 1 : .65; ctx.lineWidth = profile ? 1.5 : 1; ctx.beginPath();
         let connected = false;
         plotted.forEach((row, index) => {
           const value = row.values[c];
@@ -152,15 +157,20 @@ export default function ResultComparison({ data, mode = 'profile' }: { data: Com
   return <section aria-label="Simulation comparison" style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 180, padding: 12, color: '#A7B0BA' }}>
     <div style={{ fontSize: 12 }} title={data.channel.key}>{(mode === 'monthly' || mode === 'daily') && data.energy ? `${data.energy.title} · ${data.energy.units} · ${mode === 'monthly' ? 'Monthly' : 'Daily'}` : `${data.channel.name} · ${data.channel.units} · ${data.channel.frequency}`}</div>
     {mode !== 'heatmap' && !data.summary ? <div style={{ display: 'flex', gap: 16, fontSize: 12, marginTop: 6 }}>
-      {data.cases.map(item => <span key={item.caseId} style={{ color: caseColor(item.caseId) }} title={`${item.runId}\nModel ${item.revision}\n${item.engine}\nMissing samples: ${item.missing}`}>
-        {caseName(item.caseId)}{item.missing ? ` (${item.missing} missing)` : ''}
+      {data.cases.map(item => <span key={item.caseId} style={{ color: colorFor(item.caseId) }} title={`${item.runId}\nModel ${item.revision}\n${item.engine}\nMissing samples: ${item.missing}`}>
+        {label(item.caseId)}{item.missing ? ` (${item.missing} missing)` : ''}
       </span>)}
     </div> : null}
     {data.summary && mode !== 'monthly' && mode !== 'daily' ? <div aria-label="Period totals and relative change from baseline" title="Totals over the selected period; percentage change from baseline" style={{ fontSize: 11, display: 'flex', flexWrap: 'wrap', gap: '3px 12px', marginTop: 4 }}>
-      {data.cases.map((item, index) => <span key={item.caseId} style={{ color: caseColor(item.caseId) }}>
-        {caseName(item.caseId)}: {data.summary!.values[index]?.toLocaleString(undefined, { maximumFractionDigits: 1 }) ?? 'missing'} {data.summary!.units}
-        {item.caseId !== 'baseline' && data.summary!.changePercent[index] !== null ? ` (${data.summary!.changePercent[index]! > 0 ? '+' : ''}${data.summary!.changePercent[index]!.toFixed(1)}%)` : ''}
+      {data.cases.map((item, index) => <span key={item.caseId} style={{ color: colorFor(item.caseId) }}>
+        {label(item.caseId)}: {data.summary!.values[index]?.toLocaleString(undefined, { maximumFractionDigits: 1 }) ?? 'missing'} {data.summary!.units}
+        {item.caseId !== baselineId && data.summary!.changePercent[index] !== null ? ` (${data.summary!.changePercent[index]! > 0 ? '+' : ''}${data.summary!.changePercent[index]!.toFixed(1)}%)` : ''}
       </span>)}
+    </div> : null}
+    {data.cases.some(item => item.floorArea !== undefined) ? <div aria-label="Floor area and energy intensity" style={{ fontSize: 11, display: 'flex', flexWrap: 'wrap', gap: '3px 12px' }}>
+      {data.cases.map((item, index) => <span key={item.caseId} style={{ color: colorFor(item.caseId) }}>{label(item.caseId)} · {item.floorArea?.toFixed(2) ?? 'unknown'} m²
+        {stacked ? ` · ${stacked.totalValues?.[index]?.toFixed(1) ?? 'missing'} ${stacked.units}${stacked.normalizedByFloorArea ? ` · ${stacked.perArea?.[index]?.toFixed(2) ?? 'missing'} ${stacked.units}/m²` : ''}`
+          : data.summary?.perArea ? ` · ${data.summary.perArea[index]?.toFixed(2) ?? 'missing'} ${data.summary.perAreaUnits}` : ''}</span>)}
     </div> : null}
     {!data.rows.length ? <p>No samples in this time window.</p> : <canvas ref={canvas} aria-label="Aligned simulation time series" style={{ width: '100%', flex: 1, minHeight: 0 }}
       onPointerLeave={() => setHover(null)} onPointerMove={event => {
@@ -172,6 +182,6 @@ export default function ResultComparison({ data, mode = 'profile' }: { data: Com
         while (index + 1 < data.rows.length && Date.parse(data.rows[index + 1].time + ':00Z') <= target) index++;
         setHover(index);
       }} />}
-    <div style={{ fontSize: 12, minHeight: 18 }}>{row ? `${row.time.replace('T', ' ')} · ${row.values.map((value, index) => `${caseName(data.cases[index].caseId)}: ${value === null ? 'missing' : value.toLocaleString(undefined, { maximumSignificantDigits: 6 })} ${data.channel.units}`).join(' · ')}` : mode === 'profile' ? 'Mean hourly values over the selected dates' : mode === 'heatmap' ? 'One shared color scale · missing samples stay blank' : mode === 'daily' || mode === 'monthly' ? 'Energy sums · shared scale' : 'Local standard time · interval end'}</div>
+    <div style={{ fontSize: 12, minHeight: 18 }}>{row ? `${row.time.replace('T', ' ')} · ${row.values.map((value, index) => `${label(data.cases[index].caseId)}: ${value === null ? 'missing' : value.toLocaleString(undefined, { maximumSignificantDigits: 6 })} ${data.channel.units}`).join(' · ')}` : mode === 'profile' ? 'Mean hourly values over the selected dates' : mode === 'heatmap' ? 'One shared color scale · missing samples stay blank' : mode === 'daily' || mode === 'monthly' ? 'Energy sums · shared scale' : 'Local standard time · interval end'}</div>
   </section>;
 }

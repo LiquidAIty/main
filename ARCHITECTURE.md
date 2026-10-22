@@ -526,44 +526,53 @@ The installed Engraphis runtime and the separately retained browser-renderer for
 
 ### NRGSIM modeling boundary
 
-`agent-products/nrgsim/nrgsim/session.py` owns Project-scoped application references and serializes
-calls to one active installed OpenStudio MCP process per Project. It saves actual OSM files under the
-product's ignored `.data/<project>/runs/models/` area; `project.json` stores references, revisions and
-selection, not engineering objects. SDK-generated glTF and its object-handle projection are disposable
-reads of those OSMs. Pascal's public `Viewer`/`GlbScene` receive those artifacts with custom selection;
-the Pascal Editor and its parametric mutations are not engineering writers.
+The rejected persistent-session/Pascal/Docker prototype is not current architecture. The restored
+Three.js workspace mounts through the existing Agent Builder page and shared inspector. Its floating
+tree contains only actual Building/Story/Space/Surface/opening relationships. Main chat and saved Card
+authority remain separate. Only the owner-authorized Modeler contract/grants have been migrated.
 
-`apps/python-models/app/mcp_openstudio_provider.py` contributes the selected upstream tools to the
-existing catalog with their original names, descriptions and schemas. Existing saved Card grants and
-authenticated Project context control agent calls. The backend's `/api/nrgsim/:projectId/:action`
-route checks normal Project ownership before forwarding human actions to the same MCP-host session
-through the existing process-secret boundary. The browser receives neither that secret nor Card
-credentials. No extra agent runtime, MCP host, scheduler or engineering schema is introduced.
+`agent-products/nrgsim/services/routes.py::execute` serializes the authenticated Project's operations
+on Python rails. `apps/backend/src/routes/nrgsim.routes.ts` checks ownership and forwards to that owner;
+the browser submits typed case/revision/control values, not file paths, commands or Card credentials.
+`workspace_operations.py` stages and reopens candidates using the installed native Windows SDK/MCP
+environment. Sessions are transaction-scoped; saved OSM bytes in the existing ignored
+`.local/projects/<project-id>/inputs/` directory own engineering state. Local config selects the
+installation and enabled Project. There is no new Docker dependency, persistent provider session or
+second engineering store. Derived state caching cannot override a saved OSM revision.
 
-The TypeScript product surface is lazily mounted behind a pane-local error boundary. It uses the
-shared inspector drawer, graph-paper background and canvas navigation controls. The building tree
-follows the supplied Building Story, Space, Surface and SubSurface relationships; resource groups
-are presentation only. Conversation stays exclusively in the existing Chat window and its authorized
-`@Card` path. New Building creates an empty SDK model without injecting an agent mission; New, Save
-and Open live in the inspector's Model tab. Save/reopen is OSM persistence.
-The current two editable inspector properties have explicit units and authoritative readback.
-The Project session's runtime launcher uses the official OpenStudio MCP 1.2.1 Docker package,
-pinned to registry digest `sha256:5c46c32bb4acc8e008c795d51fcc3ad26b51ef858631ba2688ce0a3f935c6601`
-with OpenStudio 3.11.0. It replaces the native Windows MCP subprocess configuration; there is no
-native fallback. Each stdio session mounts only that Project's `inputs` (read-only), `runs`, and
-`measures`, publishes no ports, disables container networking, and retains the upstream sandbox.
-Images must be installed before startup (`--pull never`). `NRGSIM_OPENSTUDIO_ROOT` still selects
-the existing Desktop SDK Python environment for local read-only projection and measure packaging.
-Upstream SDK/MCP source remains unchanged. A coherent application reload is required to activate
-changed Python rails; an isolated dependency proof does not establish loaded application acceptance.
-Editor mutations read back explicit SDK fields from the exact saved OSM projection. Upstream 1.2.1
-`get_object_fields` introspection invokes `Space.unmatchSurfaces()`, so the adapter explicitly refuses
-that tool for Space inspection and points callers to `get_space_details`/`list_spaces`; it does not
-silently substitute a different tool or alter saved grants. Remove that refusal only after an upstream
-read-only implementation is verified to preserve the model's shared-surface relationships.
+`input_controls.py` publishes explicit SDK getters/setters with units, bounds, choices and object
+scope. `floor_geometry.py` operates on native Stories, Spaces, zones and matched surfaces; the initial
+core/perimeter layout does not become a fixed zone schema. Existing-vertex transforms retain identities,
+and copied upper faces have explicit lineage. The viewport projects saved SDK geometry directly into
+Three.js; it is not an independently edited model. Unsupported controls are not manufactured from
+generic introspection.
 
-Direct engineering/persistence proof, loaded transport proof, saved-Card execution, and visual
-acceptance are separate; `PLAN.md` records the still-incomplete first modeling checkpoint.
+Each native simulation receives a frozen OSM and retains actual weather/version/diagnostic/output
+evidence. SQL is read-only. Historical-run inspection checks frozen-model bytes against the recorded
+revision; comparisons keep output keys, units, frequency, environment, interval time and missing data.
+Building-energy sums retain their source keys. Floor-area normalization is separate from total energy;
+an area-driven change is not labeled an efficiency saving.
+
+The bounded packaged DX test calls the installed System 3 recipe and verifies the resulting equipment.
+Its observed mixer/coil/fan order requires an explicit public-SDK correction in `packaged_rooftop.py`;
+upstream source is unchanged. Recurring native coil-frost diagnostics remain a model-quality gap, not
+successful performance acceptance. The owner has authorized a later genuine multizone increment.
+The current EPW sizing option stores native OSM weather-period fields; an owned EnergyPlus measure
+bridges SDK 3.11's observed forward-translation omission through the existing public MCP OSW runner.
+It retains design days and verifies the exact native periods in the executed IDF. It is not another
+solver, upstream patch or invented weather generator.
+
+The saved Modeler now selects two domain-owned code operations in the existing MCP catalog.
+`modeling_tools.py` forwards grant-checked, Project-injected reads and edits to the same Python rails
+HTTP entry; it does not import its process-local lock or hold another OSM. Native SDK bindings are
+the common human/agent control definitions. Existing Main completion callbacks request a model
+refresh without overwriting a pending human draft. Direct SDK/MCP tests, saved grant readback and
+human edits still do not prove loaded Modeler tool discovery/execution.
+Construction choices use actual surface categories and a deliberately selected installed OpenStudio
+library. A native IDF-object reference closure avoids loading all unrelated library sets. Imported
+assemblies retain source provenance; R values exclude films/bridges, and PCM assemblies reject the
+generic R adjustment. This is not a whole-building standards transformation.
+`PLAN.md` and `agent-products/nrgsim/CoderReport.md` record current proof and the explicit remaining gaps.
 
 - Source, focused tests, typechecks, a loaded service, a real saved-Card turn, an external MCP call,
   and owner visual acceptance remain separate proof tiers.

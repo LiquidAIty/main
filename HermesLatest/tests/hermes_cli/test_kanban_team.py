@@ -207,9 +207,17 @@ def test_public_helper_rejects_model_override_and_incomplete_notification(team_b
         assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
 
 
-def test_staged_team_root_is_not_dispatchable_until_exact_native_activation(team_board):
-    from hermes_cli.kanban_team import activate_staged_team_root
+def test_staged_team_root_is_not_dispatchable_until_exact_native_activation(
+    team_board, monkeypatch,
+):
+    from hermes_cli.kanban_team import (
+        activate_staged_team_root,
+        active_team_root_ids,
+        active_team_task_ids,
+        archive_team_tasks_for_session,
+    )
 
+    monkeypatch.setenv("HERMES_KANBAN_DISPATCH_EPOCH", "epoch-one")
     with kbc.connect_closing() as conn:
         root = _new_team_root(
             conn,
@@ -218,13 +226,20 @@ def test_staged_team_root_is_not_dispatchable_until_exact_native_activation(team
             initial_status="blocked",
         )
         assert root.status == "blocked"
+        assert root.id not in active_team_root_ids(conn, "epoch-one")
         assert kb.claim_task(conn, root.id, claimer="must-not-claim") is None
         assert activate_staged_team_root(conn, root.id) is True
         activated = kb.get_task(conn, root.id)
         assert activated is not None and activated.status == "triage"
+        assert root.id in active_team_root_ids(conn, "epoch-one")
+        assert active_team_task_ids(conn, {root.id}) == {root.id}
         assert activate_staged_team_root(conn, root.id) is False
         events = [event.kind for event in kb.list_events(conn, root.id)]
         assert events.count("team_root_activated") == 1
+        assert archive_team_tasks_for_session(
+            conn, "session-1", task_ids=[root.id],
+        ) == [root.id]
+        assert root.id not in active_team_root_ids(conn, "epoch-one")
 
 
 def test_staged_team_root_binds_one_exact_saved_card_run(team_board):
@@ -331,6 +346,68 @@ def _decompose_team_root(team_board, monkeypatch, worker_count=2):
     outcome = decompose.decompose_task(root.id, author="terra")
     assert outcome.ok is True
     return root.id, outcome.child_ids or []
+
+
+def test_scoped_dispatch_never_spawns_historical_ready_work(team_board, monkeypatch):
+    from hermes_cli import kanban_db_dispatch as dispatch
+    from hermes_cli import kanban_decompose as decompose
+    from hermes_cli.kanban_team import (
+        activate_staged_team_root,
+        active_team_task_ids,
+    )
+
+    monkeypatch.setenv("HERMES_KANBAN_DISPATCH_EPOCH", "epoch-current")
+    with kbc.connect_closing() as conn:
+        root = _new_team_root(
+            conn,
+            idempotency_key="live-root",
+            initial_status="blocked",
+        )
+        assert activate_staged_team_root(conn, root.id)
+        historical = kb.create_task(
+            conn,
+            title="Historical ordinary work",
+            assignee=TEAM_PROFILE,
+        )
+
+    monkeypatch.setattr(
+        decompose,
+        "_load_routing",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("Team decomposition must not read the global roster")
+        ),
+    )
+    monkeypatch.setattr(
+        decompose,
+        "_call_aux",
+        lambda *_args, **_kwargs: (
+            json.dumps({
+                "fanout": True,
+                "tasks": [{
+                    "title": "Current evidence",
+                    "body": "Read the bounded current source.",
+                    "assignee": "outside-profile",
+                    "parents": [],
+                }],
+            }),
+            "",
+        ),
+    )
+    outcome = decompose.decompose_task(root.id, author="auto-decomposer")
+    assert outcome.ok and outcome.child_ids
+
+    with kbc.connect_closing() as conn:
+        from hermes_cli.kanban_team import active_team_root_ids
+
+        roots = active_team_root_ids(conn, "epoch-current")
+        eligible = active_team_task_ids(conn, roots)
+        dispatchable_ids = {
+            str(row["id"])
+            for row in dispatch._lane_rows(conn, "ready", eligible)
+        }
+        assert dispatchable_ids == set(outcome.child_ids)
+        assert historical not in dispatchable_ids
+        assert kb.get_task(conn, historical).status == "ready"
 
 
 def test_team_stop_archives_exact_session_root_then_real_decomposed_workers(

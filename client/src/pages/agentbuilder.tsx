@@ -542,6 +542,13 @@ export default function AgentBuilder(): React.ReactElement {
     if (!worldViewBridge) throw new Error('worldview_turn_context_unavailable');
     return worldViewBridge.prepareRunImages();
   }, [workspaceView, worldViewBridge, worldViewCard?.id]);
+  // Entity: Building Modeling
+  // Relationship: Refreshes the mounted modeler from an observed Main/recipient completion, preserving the existing graph refresh owner.
+  const [modelingCompletedRunId, setModelingCompletedRunId] = useState('');
+  const refreshAfterProjectRun = useCallback((runId: string, waitForThinkCapture?: boolean) => {
+    setModelingCompletedRunId(runId);
+    return knowledgeGraphs.refreshAfterMainRun(runId, waitForThinkCapture);
+  }, [knowledgeGraphs.refreshAfterMainRun]);
   const {
     handleSend,
     messages,
@@ -560,7 +567,7 @@ export default function AgentBuilder(): React.ReactElement {
     deckId: BUILDER_DECK_ID,
     deckRevision,
     prepareRunImages,
-    onMainRunCompleted: knowledgeGraphs.refreshAfterMainRun,
+    onMainRunCompleted: refreshAfterProjectRun,
   });
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
@@ -1588,7 +1595,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const workspaceCompanionSurfaceHost = (
     workspaceView === 'nrgsim' && canvasProjectId ? <Suspense fallback={null}>
-      <NrgsimWorkspace key={canvasProjectId} projectId={canvasProjectId} inspectorContainer={modelingInspectorHost} />
+      <NrgsimWorkspace key={canvasProjectId} projectId={canvasProjectId} inspectorContainer={modelingInspectorHost} completedRunId={modelingCompletedRunId} />
     </Suspense> : <CompanionSurfaceHost
       workspaceView={workspaceView}
       knowledgeSurface={

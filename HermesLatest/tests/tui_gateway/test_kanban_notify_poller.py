@@ -340,6 +340,26 @@ class TestNotificationPollerLoopKanbanWiring:
         assert session["running"] is True  # poller claimed the turn
         assert not session.get("_kanban_pending")
 
+    def test_summary_only_completion_delivers_the_full_exact_result(self, monkeypatch):
+        tid = _create_subscribed_task()
+        full_summary = "summary-only result\n" + ("verified primary-source evidence " * 80)
+        _complete(tid, summary=full_summary)
+        session = self._poller_session(running=False)
+
+        stop, thread, emits, submits = self._start_poller(session, monkeypatch)
+        try:
+            assert self._wait_for(lambda: submits), "agent turn was never dispatched"
+        finally:
+            stop.set()
+            thread.join(timeout=5)
+
+        status_texts = [p["text"] for e, p in emits if e == "status.update" and p]
+        assert all(full_summary not in text for text in status_texts)
+        assert full_summary.strip() in submits[0][0]
+        assert submits[0][1]["display_metadata"]["task_results"] == {
+            tid: full_summary.strip(),
+        }
+
     def test_busy_session_buffers_then_flushes_when_idle(self, monkeypatch):
         tid = _create_subscribed_task()
         _complete(tid, summary="buffered while busy")

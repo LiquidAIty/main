@@ -275,6 +275,8 @@ async def dispatch_tool(
 
 
 def mcp_tool_timeout_seconds(name: str) -> float:
+    if name in {'building_model.read_case', 'building_model.edit_inputs'}:
+        return 960.0  # Existing Python rails worker: 900 s; HTTP forwarding: 930 s.
     definition = operation_definition(name)
     if definition is not None and definition.external_source_id == "openstudio":
         return 600.0

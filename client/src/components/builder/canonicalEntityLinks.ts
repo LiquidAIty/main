@@ -375,7 +375,10 @@ export function resolveCanonicalEntityFocusVisualId({
       ? visualId
       : null;
   }
-  if (request.view !== 'all'
+  const exactKnowFocus = Boolean(request.graphitiEpisodeId)
+    && request.view === 'knowgraph'
+    && request.members.some(member => member.authority === 'knowgraph');
+  if ((!exactKnowFocus && request.view !== 'all')
     || request.members.length !== 2
     || !joinedPresentation
     || joinedPresentation.projection.projectId !== request.projectId) return null;

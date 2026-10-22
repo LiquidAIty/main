@@ -354,7 +354,14 @@ class KanbanNotificationText(str):
         return instance
 
 
-def _format_kanban_event_text(sub: dict, task, ev, board_slug: str) -> Optional[str]:
+def _format_kanban_event_text(
+    sub: dict,
+    task,
+    ev,
+    board_slug: str,
+    *,
+    completed_result: str | None = None,
+) -> Optional[str]:
     """Single-line notification text for one kanban event; wording mirrors gateway/kanban_watchers.py (reads the same
     as on Telegram). None for silent kinds."""
     if (entry := _KANBAN_EVENT_FORMATTERS.get(getattr(ev, "kind", ""))) is None:
@@ -366,7 +373,7 @@ def _format_kanban_event_text(sub: dict, task, ev, board_slug: str) -> Optional[
     prefix = f"{glyph} " + (f"[{board_slug}] " if board_slug else "") + (f"@{who} " if who else "")
     display_text = f"{prefix}Kanban {task_id}{fmt(task, getattr(ev, 'payload', None) or {}, title)}"
     task_result = (
-        str(getattr(task, "result", None) or "").strip()
+        str(completed_result or getattr(task, "result", None) or "").strip()
         if str(getattr(ev, "kind", "") or "") == "completed"
         else ""
     )
@@ -424,7 +431,20 @@ def _kb_poll_board(_kb, slug: str, session_key: str) -> list:
             from gateway.kanban_watchers_notifier import diagnostic_event
             from gateway.warning_notifications import DiagnosticText
             for ev in events:
-                text = _format_kanban_event_text(sub, task, ev, slug)
+                completed_result = ""
+                if str(getattr(ev, "kind", "") or "") == "completed" and task:
+                    completed_result = str(
+                        getattr(task, "result", None)
+                        or _kb.latest_summary(conn, sub["task_id"])
+                        or ""
+                    ).strip()
+                text = _format_kanban_event_text(
+                    sub,
+                    task,
+                    ev,
+                    slug,
+                    completed_result=completed_result,
+                )
                 if text:
                     texts.append(DiagnosticText(text) if diagnostic_event(ev) else text)
             # Unsubscribe only on archive: ``done`` is reversible in review/controller flows, so keeping the sub lets a

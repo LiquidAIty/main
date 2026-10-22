@@ -84,6 +84,9 @@ def read_geometry(path: Path) -> dict:
             "handle": str(space.handle()), "name": space.nameString(),
             "floorArea": space.floorArea(), "volume": space.volume(),
             "thermalZoneHandle": str(zone.get().handle()) if zone.is_initialized() else None,
+            "storyHandle": str(space.buildingStory().get().handle()) if space.buildingStory().is_initialized() else None,
+            "thermalZoneName": zone.get().nameString() if zone.is_initialized() else None,
+            "conditioning": [e.iddObjectType().valueName().removeprefix("OS_") for e in zone.get().equipment()] if zone.is_initialized() else [],
         })
         for surface in space.surfaces():
             for face in [surface, *surface.subSurfaces()]:
@@ -112,6 +115,8 @@ def read_geometry(path: Path) -> dict:
                     "handle": str(face.handle()), "name": face.nameString(),
                     "objectType": "Surface" if is_surface else "SubSurface",
                     "surfaceType": face.surfaceType() if is_surface else face.subSurfaceType(),
+                    "boundary": surface.outsideBoundaryCondition(),
+                    "adjacentHandle": str(surface.adjacentSurface().get().handle()) if surface.adjacentSurface().is_initialized() else None,
                     "spaceHandle": str(space.handle()),
                     "parentHandle": str(space.handle()) if is_surface else str(surface.handle()),
                     "constructionHandle": str(construction.get().handle()) if construction.is_initialized() else None,
@@ -146,7 +151,9 @@ def read_geometry(path: Path) -> dict:
         "openstudioVersion": openstudio.openStudioVersion(), "units": "m",
         "site": {"latitude": model.getSite().latitude(), "longitude": model.getSite().longitude(),
                  "timeZone": model.getSite().timeZone(), "northAxis": model.getBuilding().northAxis()},
-        "spaces": sorted(spaces, key=lambda item: item["handle"]),
+        "spaces": sorted(spaces, key=lambda item: (item["name"], item["handle"])),
+        "stories": [{"handle": str(story.handle()), "name": story.nameString()} for story in sorted(model.getBuildingStorys(), key=lambda item: item.nominalZCoordinate().get() if item.nominalZCoordinate().is_initialized() else float('inf'))],
+        "floorArea": model.getBuilding().floorArea(),
         "objects": sorted(objects, key=lambda item: item["handle"]),
         "bounds": None if not all_vertices else {
             "min": [min(point[axis] for point in all_vertices) for axis in range(3)],

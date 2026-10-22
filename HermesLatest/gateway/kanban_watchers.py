@@ -293,15 +293,42 @@ class GatewayKanbanWatchersMixin:
                 if not _kanban_dispatch_allowed():
                     bad_ticks = 0
                 else:
+                    team_scope_only = bool(
+                        getattr(self, "_kanban_team_scope_only", False)
+                    )
+                    eligible_root_ids = None
+                    if team_scope_only:
+                        dispatch_epoch = str(
+                            getattr(self, "_kanban_team_dispatch_epoch", "") or ""
+                        ).strip()
+                        eligible_root_ids = await _to_thread_process_service(
+                            dispatcher.active_root_ids,
+                            dispatch_epoch,
+                        ) if dispatch_epoch else set()
+                    if team_scope_only and not eligible_root_ids:
+                        results = []
+                        bad_ticks = 0
+                        await self._sleep_between_ticks(interval)
+                        continue
                     # Re-read the auto-decompose toggle live so disabling it
                     # takes effect on the next tick, not on restart.
                     _ad_enabled, _ad_per_tick = _resolve_auto_decompose_settings(_load_config)
                     # See #49638.
                     if _ad_enabled:
-                        await _to_thread_process_service(dispatcher.auto_decompose_tick, _ad_per_tick)
-                    results = await _to_thread_process_service(dispatcher.tick_once)
+                        await _to_thread_process_service(
+                            dispatcher.auto_decompose_tick,
+                            _ad_per_tick,
+                            eligible_root_ids,
+                        )
+                    results = await _to_thread_process_service(
+                        dispatcher.tick_once,
+                        eligible_root_ids,
+                    )
                     any_spawned = _log_spawn_results(results)
-                    ready_pending = await _to_thread_process_service(dispatcher.ready_nonempty)
+                    ready_pending = await _to_thread_process_service(
+                        dispatcher.ready_nonempty,
+                        eligible_root_ids,
+                    )
                     bad_ticks = bad_ticks + 1 if ready_pending and not any_spawned else 0
                 now = int(time.time())
                 if bad_ticks >= _HEALTH_WINDOW and now - last_warn_at >= 300:

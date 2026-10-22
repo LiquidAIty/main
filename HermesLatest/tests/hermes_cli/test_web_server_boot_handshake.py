@@ -118,6 +118,38 @@ def test_lifespan_shutdown_joins_statedb_reconcile_worker(monkeypatch):
     assert not any(t.name == "statedb-eager-reconcile" for t in threading.enumerate())
 
 
+def test_headless_dispatcher_runs_the_existing_watcher_and_stops(monkeypatch):
+    """Headless serve owns the upstream dispatcher watcher in-process."""
+    from gateway.kanban_watchers import GatewayKanbanWatchersMixin
+
+    started = threading.Event()
+    stopped = threading.Event()
+
+    async def fake_watcher(self):
+        started.set()
+        while self._running:
+            await asyncio.sleep(0.01)
+        stopped.set()
+
+    monkeypatch.setattr(
+        GatewayKanbanWatchersMixin,
+        "_kanban_dispatcher_watcher",
+        fake_watcher,
+    )
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=web_server_mod._start_headless_kanban_dispatcher,
+        args=(stop, "epoch-test"),
+        daemon=True,
+    )
+    thread.start()
+    assert started.wait(timeout=2.0)
+    stop.set()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert stopped.is_set()
+
+
 # ---------------------------------------------------------------------------
 # Test 2 — get_status run_in_executor keeps event loop free for other requests
 # ---------------------------------------------------------------------------
@@ -185,4 +217,3 @@ def test_get_status_does_not_block_event_loop():
 # ---------------------------------------------------------------------------
 # Test 3 — no orphan accumulation: concurrent probes all receive 200
 # ---------------------------------------------------------------------------
-

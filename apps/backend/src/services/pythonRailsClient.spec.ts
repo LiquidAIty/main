@@ -7,6 +7,7 @@
  * Relationship: This file verifies the backend transports one fixed-purpose CodeGraph request and preserves the Python-owned response unchanged.
  */
 import { createServer, type Server } from 'node:http';
+import { Agent } from 'undici';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -43,6 +44,28 @@ describe('pythonRailsClient', () => {
     process.env = { ...envSnapshot };
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('uses an explicit modeling dispatcher without changing the default transport', async () => {
+    const dispatcher = new Agent({ headersTimeout: 930_000, bodyTimeout: 930_000 });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => '{}' });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await requestPythonRailsJson('/nrgsim/projects/p1', { method: 'POST' }, { timeoutMs: 930_000, dispatcher });
+      expect(fetchMock.mock.calls[0][1].dispatcher).toBe(dispatcher);
+      await requestPythonRailsJson('/health', { method: 'GET' });
+      expect(fetchMock.mock.calls[1][1]).not.toHaveProperty('dispatcher');
+    } finally { await dispatcher.close(); }
+  });
+
+  it('permits a delayed real response with an explicit dispatcher and still enforces abort', async () => {
+    const server = createServer((_request, response) => setTimeout(() => response.end('{"received":true}'), 80));
+    process.env.PYTHON_RAILS_URL = await listen(server);
+    const dispatcher = new Agent({ headersTimeout: 1000, bodyTimeout: 1000 });
+    try {
+      await expect(requestPythonRailsJson('/slow', { method: 'GET' }, { timeoutMs: 2000, dispatcher })).resolves.toEqual({ received: true });
+      await expect(requestPythonRailsJson('/slow', { method: 'GET' }, { timeoutMs: 10, dispatcher })).rejects.toMatchObject({ code: 'PYTHON_RAILS_UNAVAILABLE' });
+    } finally { await dispatcher.close(); await close(server); }
   });
 
   it('uses the configured Python rails URL and preserves HTTP error details', async () => {

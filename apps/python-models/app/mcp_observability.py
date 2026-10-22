@@ -48,6 +48,7 @@ CATALOG_SOURCE_PATHS = (
     os.path.join(_APP_ROOT, "python_models", "tool_registry.py"),
     os.path.join(_APP_ROOT, "python_models", "trading_tool_operations.py"),
     os.path.join(_APP_ROOT, "python_models", "worldsignals_tool_operations.py"),
+    os.path.join(_REPO_ROOT, "agent-products", "nrgsim", "services", "modeling_tools.py"),
 )
 
 

@@ -66,7 +66,7 @@ IDE/editor/compiler/executor is preserved; its broader hook-point design remains
 | `agent/card_turn_tools.py` | Profile MCP / Card Python | Narrows only already-loaded profile MCP tools, installs/restores the compact Script capability, and never registers a global or callback-provided application tool. |
 | `agent/card_script_tool.py` | Card Python | Validates the immutable Script contract, hashes, schemas, exact tool names/states and budgets; runs one child Python recipe and dispatches nested calls through the profile's registered tools. |
 | `tui_gateway/saved_card_turn.py` | Receiving-Card lifecycle | Validates Project/Card/conversation context, transports prepare/start/finish through the existing process-authenticated endpoint, binds current Project/deck/profile/Run headers, signs the short-lived internal profile-MCP bearer, serializes the same identity for one dispatcher-spawned synthesis root, and counts actual model plus Script tool calls. |
-| `hermes_cli/kanban_team.py` | AutoTeam / exact Stop | Owns the explicit Team task mode/policy, root construction/readback, staged saved-Card Run binding, activation, bounded decomposition-failure settlement, and fail-closed root-first archival of one exact source session's AutoTeam root and real decomposed workers through Hermes's existing archive owner. |
+| `hermes_cli/kanban_team.py` | AutoTeam / exact Stop | Owns the explicit Team task mode/policy, root construction/readback, staged saved-Card Run binding, activation, the current-host active-root ceiling, bounded decomposition-failure settlement, and fail-closed root-first archival of one exact source session's AutoTeam root and real decomposed workers through Hermes's existing archive owner. |
 | `hermes_cli/taskgraph_adapter.py` | Package-safe taskgraph adapter | Validates profiles and performs exact stage, authority-event binding, activation, and root/descendant readback through the existing Kanban database APIs; its CLI accepts one bounded JSON request and returns one bounded JSON result. |
 | `skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md` | Profile fencing | Bundled Builder guidance selected by the saved Builder Card and seeded by Hermes's existing fresh-profile skill sync; it adds no permission, loader or execution path. |
 
@@ -82,12 +82,14 @@ Files may appear in more than one family because one accepted turn carries all o
 | `agent/system_prompt.py` | Bot roster / profile fencing | `_profile_capability_parts`, `_post_workspace_parts`: describe only the authorized Bot roster and bind the prompt to the profile capability epoch. |
 | `agent/tool_executor.py` | Card Python | `_resolve_sequential_dispatch`: route `card_python` through agent-local authority before the ordinary registry. |
 | `agent/transports/codex_app_server_session.py` | Card Python / Bot roster | Preserve Codex app-server's vendored Dynamic Tools handshake and exact thread/turn/call identity for session-bound `message_agent`/`card_python`; no LiquidAIty callback executor is retained. |
-| `gateway/kanban_watchers_dispatcher.py` | AutoTeam | `_record_team_decomposition_failure`, `_decompose_one`: apply the breaker only to marked Team roots. |
+| `gateway/kanban_watchers_dispatcher.py` | AutoTeam | Apply the breaker only to marked Team roots and accept the headless host's exact activated-root ceiling for decomposition, dispatch and readiness without changing the normal GatewayRunner's unrestricted upstream behavior. |
+| `gateway/kanban_watchers.py` | AutoTeam | Let only the headless `serve` adapter opt into activated-Team-root scoping while the ordinary messaging GatewayRunner retains its shipped unrestricted dispatcher contract. |
 | `hermes_cli/config_defaults.py` | AutoTeam | `kanban.task_mode`: empty preserves shipped behavior; `team` is explicit profile configuration. |
 | `hermes_cli/kanban_db.py` | AutoTeam / Magnetic | Store Team workflow fields and `allowed_assignees`; inherit/narrow/enforce the creator-tree ceiling, build same-root Team synthesis context, and expose `append_task_event` so the Magnetic adapter records its authority event without importing Hermes's private `_append_event`. No custom claim capability is retained. |
 | `hermes_cli/kanban_db_connect.py` | Magnetic | Additive `allowed_assignees` column migration for existing Hermes task databases. |
-| `hermes_cli/kanban_db_dispatch.py` | AutoTeam / Magnetic / turn evidence | Record Team step/provider/model facts, enforce default-assignee ceiling, mark Team worker processes, remove every configured MCP server from decomposition/candidate workers, and bind one exact saved-Card context/internal secret only onto an authorized synthesis root. |
+| `hermes_cli/kanban_db_dispatch.py` | AutoTeam / Magnetic / turn evidence | Record Team step/provider/model facts, enforce default-assignee ceiling, optionally restrict spawn/readiness lanes to exact eligible task IDs, mark Team worker processes, remove every configured MCP server from decomposition/candidate workers, and bind one exact saved-Card context/internal secret only onto an authorized synthesis root. |
 | `hermes_cli/kanban_db_graph.py` | AutoTeam / Magnetic | Enforce/inherit the ceiling during decomposition and move a marked Team root to synthesis. |
+| `hermes_cli/web_server.py` | AutoTeam | After the socket binds, run Hermes's existing singleton-locked Kanban dispatcher watcher inside the canonical headless `serve` host, scoped to roots activated by that live host because no separate messaging GatewayRunner exists; stop and join it with the host lifecycle. |
 | `hermes_cli/kanban_decompose.py` | AutoTeam | Use the saved Team profile for bounded depth-one worker fanout and mandatory worker tasks. |
 | `gateway/run_notifications.py` | Turn evidence | Preserve originating Product Run identity on a background-process completion so the owning session can continue the exact still-open Run when required. |
 | `tools/bot_live_delivery.py` | Bot roster / Run lineage | Carry an optional parent Run ID on the existing durable at-most-once delivery ticket without changing its queue/claim/receipt owner. |
@@ -131,12 +133,12 @@ patch is absent and this file is byte-equal to the imported upstream baseline.
 These artifacts are regenerated once after authored source freezes. A later source defect that requires a
 second generation must stop for owner approval.
 
-Current frozen generation (2026-10-20):
+Current frozen generation (2026-10-21):
 
 - `gateway-contract.generated.ts` SHA-256
-  `B39B157037526EB2C35408FBC99617E640A0E33DC040D15AD8B8C0FC584098AE`
+  `532BC47730CE461D3EF82B575DC02E1479497E5E02B0A1A4ECA7CE3215F94FD4`
 - `gateway-contract.openrpc.json` SHA-256
-  `B6109370C6899FDE6DAAAABF9C1C4FD4E0AFE50502E8DB63B34488062F5A7471`
+  `E57769E84D8A162B4BBB6098E2DE95E4A358267CA5CC03481D67F084F022CDB5`
 
 ## Focused proof files
 

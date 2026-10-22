@@ -84,8 +84,29 @@ class InputTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 apply_edits(self.load(), [{"id": control.data["id"], "value": value}])
 
-    def test_deferred_hvac_is_not_published(self):
-        self.assertFalse(any(item.data["tab"] == "hvac" for item in bindings(self.load()).values()))
+    def test_existing_ideal_loads_is_published_without_inventing_packaged_equipment(self):
+        controls = [item.data for item in bindings(self.load()).values() if item.data['tab'] == 'hvac']
+        self.assertTrue(any(item['field'] == 'maximumHeatingSupplyAirTemperature' for item in controls))
+        self.assertTrue(any(item['field'] == 'heatingSetpointTemperatureSchedule' for item in controls))
+        self.assertFalse(any(item['field'] in ('ratedCOP','pressureRise','gasBurnerEfficiency') for item in controls))
+
+    def test_schedule_values_clone_locally_and_reject_crossed_thermostats(self):
+        from floor_geometry import create_core_floor
+        model = self.load(); create_core_floor(model)
+        thermostats = [zone.thermostatSetpointDualSetpoint().get() for zone in model.getThermalZones()]
+        target = thermostats[0]
+        original = str(target.heatingSetpointTemperatureSchedule().get().handle())
+        peers = {str(t.handle()):str(t.heatingSetpointTemperatureSchedule().get().handle()) for t in thermostats[1:]}
+        control = next(item.data for item in bindings(model).values() if item.data['objectHandle'] == str(target.handle())
+                       and item.data['field'].startswith('heatingSetpointTemperatureSchedule.entry.') and item.data['value'] == 21)
+        changed = apply_edits(model,[{'id':control['id'],'value':20}])
+        self.assertNotEqual(original,str(target.heatingSetpointTemperatureSchedule().get().handle()))
+        self.assertEqual(peers,{str(t.handle()):str(t.heatingSetpointTemperatureSchedule().get().handle()) for t in thermostats[1:]})
+        with tempfile.TemporaryDirectory(dir=ROOT/'.local') as folder:
+            path=Path(folder)/'schedule.osm'; model.save(str(path),False)
+            reopened=openstudio.model.Model.load(str(path)).get(); verify_edits(reopened,changed['expected'])
+            with self.assertRaisesRegex(ValueError,'Heating setpoint exceeds'):
+                apply_edits(reopened,[{'id':control['id'],'value':30}])
 
     def test_fanger_reuses_people_and_preparation_is_idempotent(self):
         model = self.load()

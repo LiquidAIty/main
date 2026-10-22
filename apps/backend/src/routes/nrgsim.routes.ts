@@ -1,10 +1,14 @@
 // Entity: Building Modeling
 // Relationship: Transports explicit modeling requests after resolving the authenticated user's owned Project; the browser supplies no files, commands or provider authority.
 import { Router } from 'express';
+import { Agent } from 'undici';
 import { requireOwnedProject } from './projectAccess';
 import { PythonRailsHttpError, requestPythonRailsJson } from '../services/pythonRailsClient';
 
 const router = Router();
+// A native simulation may be silent while executing. Abort, headers and body
+// deadlines agree; the global dispatcher and unrelated routes stay unchanged.
+const modelingTransport = { timeoutMs: 930_000, dispatcher: new Agent({ headersTimeout: 930_000, bodyTimeout: 930_000 }) };
 router.get('/projects/:projectId/runs/:runId/report', async (req, res) => {
   const owned = await requireOwnedProject(req, res, String(req.params.projectId));
   if (!owned) return;
@@ -14,7 +18,7 @@ router.get('/projects/:projectId/runs/:runId/report', async (req, res) => {
     const result = await requestPythonRailsJson(`/nrgsim/projects/${encodeURIComponent(owned.projectId)}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ operation: 'report', caseId, runId: String(req.params.runId) }),
-    }, { timeoutMs: 930_000 });
+    }, modelingTransport);
     if (!result || typeof result !== 'object' || !('html' in result) || typeof result.html !== 'string') throw new Error('report_unavailable');
     res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'");
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -33,7 +37,7 @@ router.post('/projects/:projectId', async (req, res) => {
   try {
     const result = await requestPythonRailsJson(`/nrgsim/projects/${encodeURIComponent(owned.projectId)}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body),
-    }, { timeoutMs: 930_000 });
+    }, modelingTransport);
     res.json(result);
   } catch (error) {
     res.status(error instanceof PythonRailsHttpError ? error.status : 502).json({

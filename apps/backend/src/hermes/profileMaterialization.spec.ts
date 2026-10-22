@@ -71,6 +71,7 @@ function profile(ownerRef?: string): HermesProfileState {
     },
     skills: [],
     toolsets: [],
+    toolsets_pinned: true,
     mcp_servers: [{
       name: 'liquidaity',
       enabled: true,
@@ -97,6 +98,29 @@ describe('Hermes profile owner and request-context materialization', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it('pins an explicitly empty selection even when the unpinned readback also lists no ordinary toolsets', async () => {
+    const ownerRef=createHash('sha256').update('user-owner-one').digest('hex');
+    const selected={...card,runtimeOptions:{...card.runtimeOptions,tools:['canvas.inspect'],toolsets:[]}};
+    let current={...profile(ownerRef),toolsets_pinned:false,mcp_servers:[{name:'liquidaity',enabled:true,tool_filter:['canvas.inspect'],context_headers:null}]};
+    const configured: Record<string,unknown>[]=[];
+    const request=async <T>(method:string,params:Record<string,unknown>={})=>{
+      if(method==='mcp.servers.list') return {servers:[{name:'liquidaity',url:'http://127.0.0.1:8765/mcp',auth:''}]} as T;
+      if(method==='profiles.describe') return current as T;
+      if(method==='profiles.configure') {
+        configured.push(params);
+        expect(params.enabled_toolsets).toEqual([]);
+        current={...current,toolsets_pinned:true};
+        return {ok:true} as T;
+      }
+      throw new Error('unexpected_method:'+method);
+    };
+    await materializeSavedCardProfile(request,selected,'user-owner-one',current,[tool]);
+    expect(configured).toEqual([{name:'builder',enabled_toolsets:[]}]);
+    expect(current.mcp_servers[0].tool_filter).toEqual(['canvas.inspect']);
+    await materializeSavedCardProfile(request,selected,'user-owner-one',current,[tool]);
+    expect(configured).toHaveLength(1);
   });
 
   it('removes static Project context and claims one hashed owner without exposing the user ID', async () => {

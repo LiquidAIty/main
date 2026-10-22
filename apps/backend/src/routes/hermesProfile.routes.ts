@@ -265,10 +265,18 @@ router.post('/cards/:cardId/operations', async (req, res) => {
       });
       if (objectRecord(result).ok !== true) throw new Error('hermes_learning_edit_failed');
     } else if (method === 'mcp.servers.test') {
-      result = safeMcpTestResult(await resolved.client.request(method, {
+      const name = requiredText(params.name, 'mcp_server_name_required');
+      const probe = safeMcpTestResult(await resolved.client.request(method, {
         profile: resolved.card.profile,
-        name: requiredText(params.name, 'mcp_server_name_required'),
+        name,
       }));
+      // A successful temporary probe is not proof that the profile runtime has
+      // loaded the server. Preserve that distinction for the existing test action.
+      const status = objectRecord(await resolved.client.request('mcp.servers.status', { profile: resolved.card.profile }));
+      const loaded = (Array.isArray(status.servers) ? status.servers : []).map(objectRecord).find(server => server.name === name);
+      result = { ...probe, runtime: loaded ? {
+        name, status: loaded.status, connected: loaded.connected, disabled: loaded.disabled, tools: loaded.tools,
+      } : null };
     } else if (method === 'mcp.servers.oauth.start') {
       result = objectRecord(await resolved.client.request(method, {
         profile: resolved.card.profile,

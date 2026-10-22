@@ -32,6 +32,7 @@ export type HermesProfileState = {
   model?: { provider?: string; default?: string; openai_runtime?: string | null };
   skills?: Array<{ name?: string; enabled?: boolean }>;
   toolsets?: Array<{ name?: string; enabled?: boolean }>;
+  toolsets_pinned?: boolean;
   mcp_servers?: Array<{
     name?: string;
     enabled?: boolean;
@@ -354,7 +355,10 @@ function configuredProfileParams(
   if (!equalStrings(enabledSkills, expectedSkills)) params.disabled_skills = disabledSkills;
   const enabledToolsets = (current.toolsets || []).filter((item) => item.enabled === true)
     .map((item) => String(item.name || '').trim()).filter(Boolean);
-  if (!equalStrings(enabledToolsets, selectedToolsets)) params.enabled_toolsets = selectedToolsets;
+  // Missing is not an explicit empty selection. Hermes otherwise applies its
+  // surface defaults rather than the saved Card's ordinary-toolset ceiling.
+  if ((Array.isArray(options.toolsets) && current.toolsets_pinned !== true)
+    || !equalStrings(enabledToolsets, selectedToolsets)) params.enabled_toolsets = selectedToolsets;
   const enabledMcp = (current.mcp_servers || []).filter((item) => item.enabled === true)
     .map((item) => String(item.name || '').trim()).filter(Boolean);
   const currentMcpToolFilters = Object.fromEntries((current.mcp_servers || []).flatMap((item) => {

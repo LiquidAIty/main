@@ -8,6 +8,8 @@ export type InputControl = {
   kind: 'number' | 'boolean'; integer: boolean;
   detail?: boolean;
   sliderMax?: number;
+  scopeLabel?: string;
+  thermal?: { resistance: number; conductance: number; resistanceIP: number; basis: string };
   choices: null | { value: string | number; label: string }[];
 };
 export type InputValues = Record<string, number | string | boolean>;
@@ -38,6 +40,12 @@ export default function ModelInputs({ controls, values, disabled, onChange }: {
               disabled={disabled} onChange={event => onChange(control.id, event.target.value === '' ? '' : Number(event.target.value))}
               style={{ ...input, width: 90 }} />
           </div>}
+        {control.scopeLabel ? <span style={{ fontSize: 11, opacity: .75 }}>{control.scopeLabel}</span> : null}
+        {control.thermal ? <output aria-label="Assembly thermal resistance" style={{ fontSize: 11, lineHeight: 1.5 }}>
+          Rsi {control.thermal.resistance.toFixed(2)} m²·K/W · R-{control.thermal.resistanceIP.toFixed(1)} (IP)
+          <br />Conductance {control.thermal.conductance.toFixed(3)} W/m²·K
+          <br /><span style={{ opacity: .7 }}>{control.thermal.basis}{changed ? ' · saved assembly; updates after save' : ''}</span>
+        </output> : null}
       </label>;
     })}</div>;
     return <section key={group}>{fields.length > 1 || fields[0].label !== group ? <h3 style={{ fontSize: 12, margin: 0, color: GRAPH_THEME.accent.primary }}>{group}</h3> : null}

@@ -6,7 +6,8 @@ import os
 import unittest
 from pathlib import Path
 
-from results import channels, compare, series
+from results import channels, compare, series, connect
+from contextlib import closing
 
 
 class ResultsTest(unittest.TestCase):
@@ -49,6 +50,7 @@ class ResultsTest(unittest.TestCase):
         cases = [json.loads((root / (case + "-run.json")).read_text()) for case in ("baseline", "case1")]
         channel = next(item for item in channels(Path(cases[0]["sql"])) if item["name"] == "Zone Ideal Loads Supply Air Total Cooling Energy")
         result = compare(cases, channel)
+        self.assertFalse(result['energy']['normalizedByFloorArea'])
         self.assertEqual(len(result["energy"]["daily"]), 365)
         self.assertEqual(len(result["energy"]["monthly"]), 12)
         for index in range(2):
@@ -56,6 +58,7 @@ class ResultsTest(unittest.TestCase):
             self.assertAlmostEqual(result["summary"]["values"][index], expected)
             self.assertAlmostEqual(sum(period["values"][index][1] for period in result["energy"]["monthly"]), expected)
             self.assertAlmostEqual(sum(period["values"][index][1] for period in result["energy"]["daily"]), expected)
+            self.assertAlmostEqual(result['energy']['totalValues'][index],sum(sum(period['values'][index]) for period in result['energy']['monthly']))
 
     def test_same_run_aligns_without_changing_values(self):
         case = dict(caseId="baseline", runId="reader-test", revision="same-input", engine="25.2", weatherSha256="same-weather", sql=str(self.sql))
@@ -68,6 +71,43 @@ class ResultsTest(unittest.TestCase):
             compare([case, {**case, "weatherSha256": "different"}], self.channel)
         with self.assertRaisesRegex(ValueError, "start is after"):
             compare([case], self.channel, "2025-02-01T00:00", "2025-01-01T00:00")
+
+    def test_building_energy_sum_matches_independent_sql_total(self):
+        channel=next(item for item in channels(self.sql) if item.get('scope')=='building' and item['name']=='Zone Ideal Loads Supply Air Total Cooling Energy')
+        actual=series(self.sql,channel)
+        with closing(connect(self.sql)) as db:
+            expected=db.execute('''SELECT SUM(r.Value) FROM ReportData r
+                JOIN ReportDataDictionary d USING(ReportDataDictionaryIndex)
+                JOIN Time t USING(TimeIndex) JOIN EnvironmentPeriods e USING(EnvironmentPeriodIndex)
+                WHERE d.Name=? AND d.Units='J' AND d.ReportingFrequency='Hourly'
+                AND e.EnvironmentType=3 AND t.WarmupFlag=0''',(channel['name'],)).fetchone()[0]
+        self.assertAlmostEqual(sum(point['value'] for point in actual['points'].values())/3600000,expected/3600000)
+        self.assertTrue(actual['sourceKeys'])
+        with self.assertRaisesRegex(ValueError,'Only supported additive energy'):
+            series(self.sql,{**self.channel,'scope':'building'})
+
+    def test_area_difference_is_not_a_total_energy_saving(self):
+        channel=next(item for item in channels(self.sql) if item.get('scope')=='building')
+        case=dict(caseId='baseline',runId='reader-test',revision='same-input',engine='25.2',weatherSha256='same-weather',sql=str(self.sql),floorArea=20)
+        result=compare([case,{**case,'caseId':'area-test','floorArea':40}],channel)
+        self.assertIsNone(result['summary']['changePercent'][1])
+        self.assertAlmostEqual(result['summary']['perArea'][0],2*result['summary']['perArea'][1])
+        self.assertTrue(result['energy']['normalizedByFloorArea'])
+        self.assertAlmostEqual(result['energy']['perArea'][0],2*result['energy']['perArea'][1])
+
+    def test_named_baseline_second_in_list_uses_its_real_sql_total(self):
+        import json
+        root=self.sql.parents[3]
+        actual=[json.loads((root/(name+'-run.json')).read_text()) for name in ('case1','baseline')]
+        named=[{**actual[0],'caseId':'performance','floorArea':20},{**actual[1],'caseId':'case_123456789abc','floorArea':20}]
+        channel=next(item for item in channels(Path(named[1]['sql'])) if item['name']=='Zone Ideal Loads Supply Air Total Cooling Energy' and item['frequency']=='Hourly' and not item.get('scope'))
+        result=compare(named,channel,baseline_case_id='case_123456789abc')
+        values=result['summary']['values']
+        self.assertEqual(result['baselineCaseId'],'case_123456789abc')
+        self.assertEqual(result['summary']['changePercent'][1],0)
+        self.assertAlmostEqual(result['summary']['changePercent'][0],(values[0]-values[1])/abs(values[1])*100)
+        result=compare([{**named[0],'floorArea':40},named[1]],channel,baseline_case_id='case_123456789abc')
+        self.assertIsNone(result['summary']['changePercent'][0])
 
 
 if __name__ == "__main__":

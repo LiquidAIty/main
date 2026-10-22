@@ -22,9 +22,20 @@ def configured_outputs(model):
 
 def available_outputs(root: Path, case_id: str, model=None) -> list[dict]:
     receipt = root / (case_id + "-run.json")
-    if not receipt.exists():
-        return []
-    run = json.loads(receipt.read_text())
+    inherited = False
+    if receipt.exists():
+        run = json.loads(receipt.read_text())
+    else:
+        origin = model.getBuilding().additionalProperties().getFeatureAsString('output_dictionary_source') if model else None
+        if origin is None or not origin.is_initialized(): return []
+        reference = json.loads(origin.get())
+        run = None
+        for path in (root/'operations').glob('*/receipt.json'):
+            record = json.loads(path.read_text())
+            if record.get('operation')=='run' and record.get('status')=='success' and record.get('caseId')==reference.get('caseId') and record.get('runId')==reference.get('runId'):
+                run=record; break
+        if run is None: return []
+        inherited = True
     rdd = Path(run["sql"]).with_name("eplusout.rdd")
     if not rdd.is_file():
         return []
@@ -32,7 +43,8 @@ def available_outputs(root: Path, case_id: str, model=None) -> list[dict]:
     for line in rdd.read_text().splitlines():
         match = re.match(r"Output:Variable,\*,([^,]+),[^;]+;\s*!-\s*(.*?)\s*\[(.*?)\]", line)
         if match:
-            result.append({"name": match[1], "aggregation": match[2], "units": match[3], "sourceRunId": run["runId"]})
+            result.append({"name": match[1], "aggregation": match[2], "units": match[3], "sourceRunId": run["runId"],
+                           "sourceCaseId": run['caseId'], "inheritedDictionary": inherited})
     combined = {item["name"]: item for item in [*configured_outputs(model), *result]}
     return list(combined.values())
 

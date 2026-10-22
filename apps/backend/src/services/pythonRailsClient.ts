@@ -6,6 +6,9 @@
  * Entity: CodeGraph
  * Relationship: This file transports one fixed-purpose saved-Builder CodeGraph read without exposing raw provider operations to the browser.
  */
+// Entity: Building Modeling
+// Relationship: Accepts the NRGSIM caller's explicit long-request dispatcher without changing other Python rails consumers.
+import type { Dispatcher } from 'undici';
 
 function trimBaseUrl(value: string): string {
   return value.replace(/\/+$/, '');
@@ -30,6 +33,8 @@ const PYTHON_RAILS_TRANSPORT_CODES = new Set([
   'ETIMEDOUT',
   'UND_ERR_CONNECT_TIMEOUT',
   'UND_ERR_SOCKET',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
 ]);
 
 function isPythonRailsTransportError(error: any, timedOut: boolean): boolean {
@@ -74,7 +79,7 @@ export class PythonRailsUnavailableError extends Error {
 export async function requestPythonRailsJson(
   endpointPath: string,
   init: RequestInit,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; dispatcher?: Dispatcher } = {},
 ): Promise<unknown> {
   const controller = new AbortController();
   const requestedTimeout = Number(options.timeoutMs);
@@ -89,7 +94,9 @@ export async function requestPythonRailsJson(
   try {
     const baseUrl = pythonRailsBaseUrl();
     try {
-      const response = await fetch(`${baseUrl}${endpointPath}`, { ...init, signal: controller.signal });
+      const request: RequestInit & { dispatcher?: Dispatcher } = { ...init, signal: controller.signal };
+      if (options.dispatcher) request.dispatcher = options.dispatcher;
+      const response = await fetch(`${baseUrl}${endpointPath}`, request);
       const text = await response.text();
       let data: unknown = null;
       if (text) {

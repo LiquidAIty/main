@@ -3284,7 +3284,7 @@
     },
     {
       "name": "session.interrupt",
-      "summary": "Stop the running turn (and streaming TTS); retires the crash-recovery marker.",
+      "summary": "Stop the running turn, its requested AutoTeam tasks, and streaming TTS; retires the crash-recovery marker.",
       "params": [
         {
           "name": "params",
@@ -17802,6 +17802,21 @@
             "default": null,
             "title": "Notification Task Ids"
           },
+          "notification_task_results": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notification Task Results"
+          },
           "usage": {
             "anyOf": [
               {
@@ -30220,6 +30235,26 @@
             ],
             "default": null,
             "title": "Expected Submission Id"
+          },
+          "interrupt_team_tasks": {
+            "default": false,
+            "title": "Interrupt Team Tasks",
+            "type": "boolean"
+          },
+          "team_task_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Team Task Ids"
           }
         },
         "required": [
@@ -30257,6 +30292,21 @@
             ],
             "default": null,
             "title": "Turn Isolation"
+          },
+          "team_task_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Team Task Ids"
           }
         },
         "required": [

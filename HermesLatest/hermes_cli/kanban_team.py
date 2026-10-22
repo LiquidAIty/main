@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import json
+import os
 import re
 import sqlite3
 from collections.abc import Iterable, Mapping
@@ -39,6 +40,84 @@ TEAM_DECOMPOSITION_STEP = "decomposition"
 TEAM_WORKER_STEP = "worker"
 TEAM_SYNTHESIS_STEP = "synthesis"
 TEAM_CARD_RUN_EVENT = "team_card_run_bound"
+
+def active_team_root_ids(
+    conn: sqlite3.Connection,
+    dispatch_epoch: str,
+) -> set[str]:
+    """Nonterminal Team roots activated by this exact headless host epoch."""
+
+    epoch = str(dispatch_epoch or "").strip()
+    if not epoch:
+        return set()
+    rows = conn.execute(
+        "SELECT event.task_id, event.payload, task.status, "
+        "task.workflow_template_id, task.current_step_key "
+        "FROM task_events AS event "
+        "JOIN tasks AS task ON task.id = event.task_id "
+        "WHERE event.kind = 'team_root_activated' ORDER BY event.id",
+    ).fetchall()
+    active: set[str] = set()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if (
+            isinstance(payload, dict)
+            and str(payload.get("dispatch_epoch") or "") == epoch
+            and str(row["workflow_template_id"] or "") == TEAM_WORKFLOW_ID
+            and str(row["current_step_key"] or "") in {
+                TEAM_DECOMPOSITION_STEP, TEAM_SYNTHESIS_STEP,
+            }
+            and str(row["status"] or "") not in {"done", "archived"}
+        ):
+            active.add(str(row["task_id"]))
+    return active
+
+
+def active_team_task_ids(
+    conn: sqlite3.Connection,
+    root_ids: Iterable[str],
+) -> set[str]:
+    """Return live activated roots plus their exact validated Team workers."""
+
+    requested = set(str(value or "").strip() for value in root_ids)
+    requested.discard("")
+    if not requested:
+        return set()
+    placeholders = ",".join("?" for _ in requested)
+    rows = conn.execute(
+        f"SELECT id, status, session_id, workflow_template_id, current_step_key "
+        f"FROM tasks WHERE id IN ({placeholders})",
+        tuple(sorted(requested)),
+    ).fetchall()
+    active_roots = {
+        str(row["id"]): row
+        for row in rows
+        if str(row["workflow_template_id"] or "") == TEAM_WORKFLOW_ID
+        and str(row["current_step_key"] or "") in {
+            TEAM_DECOMPOSITION_STEP, TEAM_SYNTHESIS_STEP,
+        }
+        and str(row["status"] or "") not in {"done", "archived"}
+    }
+    eligible = set(active_roots)
+    for root_id, root in active_roots.items():
+        workers = conn.execute(
+            "SELECT task.id, task.session_id, task.workflow_template_id, "
+            "task.current_step_key FROM task_links AS link "
+            "JOIN tasks AS task ON task.id = link.parent_id "
+            "WHERE link.child_id = ?",
+            (root_id,),
+        ).fetchall()
+        for worker in workers:
+            if (
+                str(worker["session_id"] or "") == str(root["session_id"] or "")
+                and str(worker["workflow_template_id"] or "") == TEAM_WORKFLOW_ID
+                and str(worker["current_step_key"] or "") == TEAM_WORKER_STEP
+            ):
+                eligible.add(str(worker["id"]))
+    return eligible
 _CARD_RUN_ID = re.compile(r"^[A-Za-z0-9:_-]{1,128}$")
 
 
@@ -473,6 +552,10 @@ def activate_staged_team_root(conn: sqlite3.Connection, task_id: str) -> bool:
             {
                 "workflow_template_id": TEAM_WORKFLOW_ID,
                 "step_key": TEAM_DECOMPOSITION_STEP,
+                **({"dispatch_epoch": dispatch_epoch}
+                   if (dispatch_epoch := str(
+                       os.environ.get("HERMES_KANBAN_DISPATCH_EPOCH") or ""
+                   ).strip()) else {}),
             },
         )
     return True

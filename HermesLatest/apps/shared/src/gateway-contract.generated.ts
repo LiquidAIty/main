@@ -3299,11 +3299,14 @@ export interface SessionInterruptParams {
   profile?: string | null
   expected_hosted_task_id?: string | null
   expected_submission_id?: string | null
+  interrupt_team_tasks?: boolean
+  team_task_ids?: string[] | null
 }
 export interface SessionInterruptResult {
   status: InterruptStatus
   interrupted?: boolean | null
   turn_isolation?: boolean | null
+  team_task_ids?: string[] | null
 }
 export type InterruptStatus = 'interrupted' | 'not_interrupted'
 export interface SessionCorrectionParams {
@@ -4435,6 +4438,7 @@ export interface MessageCompletePayload {
   submission_id?: string | null
   notification_process_ids?: string[] | null
   notification_task_ids?: string[] | null
+  notification_task_results?: Record<string, string> | null
   usage?: Usage | null
   turn_usage?: Usage | null
   status?: TurnStatus | null
@@ -5114,7 +5118,7 @@ export interface RpcMethods {
   'session.foreign.preview': { params: SessionForeignIdParams; result: SessionForeignPreviewResult }
   /** The durable display transcript (ancestors included, row ids attached). */
   'session.history': { params: SessionHistoryParams; result: SessionHistoryResult }
-  /** Stop the running turn (and streaming TTS); retires the crash-recovery marker. */
+  /** Stop the running turn, its requested AutoTeam tasks, and streaming TTS; retires the crash-recovery marker. */
   'session.interrupt': { params: SessionInterruptParams; result: SessionInterruptResult }
   /** Human-facing stored sessions, most recent first (sub-agent / kanban sources denied). */
   'session.list': { params: SessionListParams; result: SessionListResult }

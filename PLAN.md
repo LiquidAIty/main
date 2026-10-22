@@ -269,45 +269,35 @@ and quick-Web evidence handoff remain outside this boundary.
 A lower tier never proves a higher one. No Magnetic mission, graph write, trading action, or service
 restart is authorized by this plan alone.
 
-## NRGSIM — first modeling checkpoint in progress
+## NRGSIM — restored modeler and explicit floors
 
-The 2026-10-20 owner PromptSpec places the general modeling app before simulation comparison:
-New Building → saved modeling Card → viewport/selection → human and agent property edits → save/reopen.
-OpenStudio is the engineering authority. `agent-products/nrgsim/` owns application references and the
-derived Pascal display; the upstream SDK and MCP are unchanged.
+The current owner-approved boundary is the restored Three.js modeler and the existing shared inspector
+in **Building Energy Modeler**, Project `38bd1429-e8e1-47ff-afef-d940aa8e8040`. The rejected Pascal/
+in-memory starter-model prototype is not current architecture and must not be restored.
 
-Implemented source joins one serialized, Project-owned OpenStudio MCP session to native-name Card
-tools and a Project-authenticated inspector route. The first bounded inspector edits are Thermal Zone
-multiplier and Lights Definition watts per Space floor area. Other object assignments remain inspectable;
-shared Material/Construction local exceptions are not exposed as direct edits.
+Saved OSM case files own engineering state. The authenticated Project route forwards to the single
+Python rails operation owner; transaction-scoped OpenStudio MCP/SDK operations stage, validate,
+save/reopen and revision-check edits. The original shoebox baseline, both glazing comparisons and their
+historical inputs/SQL remain preserved. Named cases, one core/perimeter floor and two explicit matched
+floors are implemented; actual annual runs completed with native zero-severe diagnostics. The upper
+story was edited through the loaded inspector and rerun. SQL comparisons retain exact channels/time,
+include building-energy aggregation with source keys and show floor area and energy intensity.
 
-Executed direct-MCP proof created a one-story SDK starter office with five Spaces, five Thermal Zones
-and 34 selectable Surface/SubSurface handles. Lighting changed from 10.7639104167097 to 8.0, then
-7.5 W/m²; the saved/reopened OSM retained 7.5 W/m². This is a development probe, not an AI or browser
-acceptance claim and not an Appendix G baseline. The host loaded the OpenStudio catalog; its internal
-domain route rejects missing process authority and its public route rejects an unowned Project.
+The separate packaged-rooftop experiment uses the installed System 3 recipe on a shoebox copy, not an
+Appendix G transformation. Its executed diagnostic runs and remaining physics warnings are recorded in
+`agent-products/nrgsim/CoderReport.md`; engine completion alone is not equipment-model acceptance.
 
-The first setup attempt, Run `req_987e77dccd6c46f9`, was incorrectly addressed to the connector's active
-Trading Project. It returned an empty `done/end` stream and created no Modeler Card or building there.
-The owner explicitly corrected the scope: use only **Building Energy Modeler**, created through the
-normal Project API as `38bd1429-e8e1-47ff-afef-d940aa8e8040`. Its default six system Cards contain none
-of Trader, Quant, Analyst, Shadowbroker or WorldSignals. The full saved Trading deck hash and revision
-were identical immediately before/after that Project creation; that does not claim its earlier shared
-development-stack restart was uninterrupted. Do not stop Trading Runs or restart shared services while
-the owner is actively working in Trading.
-
-Next: configure and prove the saved modeling Card in Building Energy Modeler only, coordinate any
-necessary shared-service reload, then finish the browser interaction through save/reopen. The latest
-Python catalog/display guards are not all proven loaded. Browser attachment/visual acceptance remains
-outstanding. Do not mark checkpoint A complete or claim a ready-to-use Project yet. Baseline/proposed
-comparison follows only after modeling acceptance and verification of the supported Appendix G
-transformation and edition.
-
-The owner explicitly deferred activation while using Trading. No automatic reload or later activation
-is authorized. Building Energy Modeler revision `81b95103-765c-4590-8727-8166241488ad` now has saved
-Main → ThinkGraph, Main → KnowGraph and Main → Builder flow edges. No agent was executed by that save.
-There is no Modeler Card yet: the loaded Card editor returned zero OpenStudio tools, so creating a
-correctly granted Modeler and its direct Main flow waits for the approved reload window. Modeler is
-not assigned to Magnetic; the factory's unrelated Team → Magnetic edge was preserved and remains
-unused by NRGSIM. The modeling launcher is gated by the current Project's authorized modeling Card,
-not added unconditionally to Trading or every other Project.
+The owner subsequently authorized Modeler's narrow migration: its obsolete six-tool contract is
+replaced with `building_model.read_case` and `building_model.edit_inputs`, forwarding to the same
+Python rails case owner. The other six Cards and topology read back unchanged. Saved grants and
+catalog presence do not yet establish live session discovery; exact agent evidence remains in the
+report. The NRGSIM-only long-request dispatcher has also carried a real edit lasting over five minutes.
+Construction assignment/R-value controls, a named installed Office/5A library selection, existing
+schedule-value editing and Ideal Loads inputs are implemented. The comparison UI now shows baseline
+plus one selectable performance case, retaining other files/history. Full OpenStudio feature parity
+is not claimed. A new named single-zone HVAC case has now completed with retained design days plus
+EPW-defined extreme weeks. Its native outputs and remaining frost/unmet-hours findings belong in the
+CoderReport. A genuine multizone system remains the next domain increment; unchanged historical cases
+are not to be rerun. The baseline selector and comparison use exact completed-run identities.
+Normal whole-app reloads were authorized for this task; no Git
+mutation, new container, upstream-source edit or REA-hold change is included.

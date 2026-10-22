@@ -11,6 +11,11 @@ from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 
+BUILDING_ENERGY = {
+    "Zone Ideal Loads Supply Air Total Heating Energy", "Zone Ideal Loads Supply Air Total Cooling Energy",
+    "Zone Lights Electricity Energy", "Zone Electric Equipment Electricity Energy",
+}
+
 
 def connect(path: Path):
     connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
@@ -28,9 +33,13 @@ def channels(path: Path) -> list[dict]:
               AND d.ReportingFrequency IN ('Hourly', 'Zone Timestep', 'HVAC System Timestep')
             ORDER BY d.Name, d.KeyValue, d.ReportingFrequency
         """).fetchall()
-    return [dict(id=json.dumps(list(row), separators=(",", ":")), name=row["Name"],
+    result = [dict(id=json.dumps(list(row), separators=(",", ":")), name=row["Name"],
                  key=row["KeyValue"], frequency=row["ReportingFrequency"], units=row["Units"])
             for row in rows]
+    aggregates = {(row['Name'],row['ReportingFrequency']) for row in rows if row['Name'] in BUILDING_ENERGY and row['Units']=='J'}
+    result.extend(dict(id=json.dumps([name,'building-total',frequency,'J'],separators=(',',':')),
+                       name=name,key='Building total',frequency=frequency,units='J',scope='building') for name,frequency in sorted(aggregates))
+    return result
 
 
 def series(path: Path, channel: dict) -> dict:
@@ -40,6 +49,24 @@ def series(path: Path, channel: dict) -> dict:
     selection. This reader uses the current ReportData schema, orders explicitly,
     and retains missing values rather than adopting its implicit sample spacing.
     """
+    if channel.get('scope') == 'building':
+        if channel['name'] not in BUILDING_ENERGY or channel['units'] != 'J':
+            raise ValueError('Only supported additive energy channels can be summed across the building')
+        keys=[item for item in channels(path) if not item.get('scope') and all(item[field]==channel[field] for field in ('name','units','frequency'))]
+        parts=[series(path,item) for item in keys]
+        if not parts:
+            return dict(points={},environment=None,aggregation=None)
+        if any(item['aggregation']!='Sum' for item in parts) or len({item['environment'] for item in parts})!=1:
+            raise ValueError('Building energy components differ in aggregation or environment')
+        joined={}
+        for time in sorted(set().union(*(item['points'] for item in parts))):
+            samples=[item['points'].get(time) for item in parts]
+            intervals={sample['intervalMinutes'] for sample in samples if sample}
+            if len(intervals)!=1:
+                raise ValueError('Building energy components have different intervals')
+            joined[time]=dict(value=sum(sample['value'] for sample in samples) if all(sample and sample['value'] is not None for sample in samples) else None,
+                              intervalMinutes=next(iter(intervals)),dst=next(sample['dst'] for sample in samples if sample))
+        return dict(points=joined,environment=parts[0]['environment'],aggregation='Sum',sourceKeys=[item['key'] for item in keys])
     with closing(connect(path)) as db:
         dictionaries = db.execute("""SELECT ReportDataDictionaryIndex, Type FROM ReportDataDictionary
             WHERE Name=? AND KeyValue IS ? AND ReportingFrequency=? AND Units IS ?""",
@@ -104,11 +131,15 @@ def energy_breakdown(cases, channel, rows):
                         totals[case_index][component] = None
                     elif totals[case_index][component] is not None:
                         totals[case_index][component] += value / 3600000
-    return {"title": group[0], "components": group[1], "units": "kWh",
+    totals=[sum(pair[index][component] for pair in buckets['daily'].values() for component in range(2))
+            if all(pair[index][component] is not None for pair in buckets['daily'].values() for component in range(2)) else None for index in range(len(cases))]
+    return {"title": group[0], "components": group[1], "units": "kWh", "totalValues": totals,
+            "normalizedByFloorArea": channel.get('scope')=='building',
+            "perArea": [total/case['floorArea'] if channel.get('scope')=='building' and total is not None and (case.get('floorArea') or 0)>0 else None for total,case in zip(totals,cases)],
             **{key: [{"period": period, "values": values} for period, values in periods.items()] for key, periods in buckets.items()}}
 
 
-def compare(cases: list[dict], channel: dict, start: str | None = None, end: str | None = None) -> dict:
+def compare(cases: list[dict], channel: dict, start: str | None = None, end: str | None = None, *, baseline_case_id: str = 'baseline') -> dict:
     if not 1 <= len(cases) <= 3:
         raise ValueError("Select one to three completed cases")
     for field in ("engine", "weatherSha256"):
@@ -152,13 +183,21 @@ def compare(cases: list[dict], channel: dict, start: str | None = None, end: str
         divisor = 3600000 if channel["units"] == "J" else 1
         totals = [sum(row["values"][index] for row in rows) / divisor
                   if all(row["values"][index] is not None for row in rows) else None for index in range(len(cases))]
-        baseline_index = next((index for index, case in enumerate(cases) if case["caseId"] == "baseline"), None)
+        baseline_index = next((index for index, case in enumerate(cases) if case["caseId"] == baseline_case_id), None)
         baseline = totals[baseline_index] if baseline_index is not None else None
         summary = {"units": "kWh" if channel["units"] == "J" else channel["units"], "values": totals,
                    "changePercent": [(value - baseline) / abs(baseline) * 100 if baseline not in (None, 0) and value is not None else None for value in totals]}
-    return {"channel": channel, "timeBasis": "interval-end/local-standard-time", "rows": rows, "hourly": hourly, "summary": summary,
+        areas=[case.get('floorArea') for case in cases]
+        baseline_area=areas[baseline_index] if baseline_index is not None else None
+        if baseline_area is not None:
+            summary['changePercent']=[value if area is not None and math.isclose(area,baseline_area,rel_tol=1e-6) else None for value,area in zip(summary['changePercent'],areas)]
+        if channel.get('scope')=='building' or (channel['units']=='J' and channel['key'] is None):
+            summary['perArea']=[value/area if value is not None and area and area>0 else None for value,area in zip(totals,areas)]
+            summary['perAreaUnits']=summary['units']+'/m²'
+    return {"baselineCaseId":baseline_case_id,"channel": channel, "timeBasis": "interval-end/local-standard-time", "rows": rows, "hourly": hourly, "summary": summary,
             "energy": energy_breakdown(cases, channel, rows),
             "cases": [{**{key: case[key] for key in ("caseId", "runId", "revision", "engine", "weatherSha256")},
                        "environment": item["environment"], "aggregation": item["aggregation"],
+                       "floorArea": case.get('floorArea'), "name": case.get('caseName'), "sourceKeys": item.get('sourceKeys',[channel['key']]),
                        "missing": sum(row["values"][index] is None for row in rows)}
                       for index, (case, item) in enumerate(zip(cases, data))]}

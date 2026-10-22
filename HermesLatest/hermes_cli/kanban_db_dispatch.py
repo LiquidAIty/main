@@ -1742,11 +1742,23 @@ def dispatch_profile_allowlist_summary() -> str:
             "profile, or the config could not be read — omit the key to allow any)")
 
 
-def _has_spawnable(conn: sqlite3.Connection, status: str) -> bool:
+def _has_spawnable(
+    conn: sqlite3.Connection,
+    status: str,
+    eligible_task_ids: Optional[set[str]] = None,
+) -> bool:
+    if eligible_task_ids is not None and not eligible_task_ids:
+        return False
+    scope_sql = ""
+    params: list[Any] = [status]
+    if eligible_task_ids is not None:
+        scope_sql = " AND id IN (" + ",".join("?" for _ in eligible_task_ids) + ")"
+        params.extend(sorted(eligible_task_ids))
     rows = conn.execute(
         "SELECT DISTINCT assignee FROM tasks "
-        "WHERE status = ? AND assignee IS NOT NULL AND claim_lock IS NULL",
-        (status,),
+        "WHERE status = ? AND assignee IS NOT NULL AND claim_lock IS NULL"
+        + scope_sql,
+        tuple(params),
     ).fetchall()
     if not rows:
         return False
@@ -1757,19 +1769,27 @@ def _has_spawnable(conn: sqlite3.Connection, status: str) -> bool:
     return any(profile_exists(row["assignee"]) for row in rows)
 
 
-def has_spawnable_ready(conn: sqlite3.Connection) -> bool:
+def has_spawnable_ready(
+    conn: sqlite3.Connection,
+    *,
+    eligible_task_ids: Optional[set[str]] = None,
+) -> bool:
     """True iff a ready+assigned+unclaimed task maps to a real Hermes profile.
 
     Lets health telemetry tell "stuck" (``0 spawned`` with spawnable work) from
     "correctly idle" (only control-plane lanes waiting on ``claim_task``). Falls
     back to "any assigned" when ``profile_exists`` is unimportable.
     """
-    return _has_spawnable(conn, "ready")
+    return _has_spawnable(conn, "ready", eligible_task_ids)
 
 
-def has_spawnable_review(conn: sqlite3.Connection) -> bool:
+def has_spawnable_review(
+    conn: sqlite3.Connection,
+    *,
+    eligible_task_ids: Optional[set[str]] = None,
+) -> bool:
     """:func:`has_spawnable_ready` for the review column."""
-    return _has_spawnable(conn, "review")
+    return _has_spawnable(conn, "review", eligible_task_ids)
 
 
 def review_dispatch_enabled() -> bool:
@@ -1945,6 +1965,7 @@ def dispatch_once(
     default_assignee: Optional[str] = None,
     max_in_progress_per_profile: Optional[int] = None,
     reconcile_orphans: bool = True,
+    eligible_task_ids: Optional[set[str]] = None,
 ) -> DispatchResult:
     """Run one dispatcher tick under the board's single-writer lock.
 
@@ -1968,6 +1989,7 @@ def dispatch_once(
             default_assignee=default_assignee,
             max_in_progress_per_profile=max_in_progress_per_profile,
             reconcile_orphans=reconcile_orphans,
+            eligible_task_ids=eligible_task_ids,
         )
 
     try:
@@ -2240,12 +2262,25 @@ def _tick_spawn_budget(
     return True, spawn_budget
 
 
-def _lane_rows(conn: sqlite3.Connection, status: str) -> list[sqlite3.Row]:
+def _lane_rows(
+    conn: sqlite3.Connection,
+    status: str,
+    eligible_task_ids: Optional[set[str]] = None,
+) -> list[sqlite3.Row]:
     """Unclaimed rows of one lane in dispatch order."""
+    if eligible_task_ids is not None and not eligible_task_ids:
+        return []
+    scope_sql = ""
+    params: list[Any] = []
+    if eligible_task_ids is not None:
+        scope_sql = " AND id IN (" + ",".join("?" for _ in eligible_task_ids) + ")"
+        params.extend(sorted(eligible_task_ids))
     return conn.execute(
         "SELECT id, assignee FROM tasks "
         f"WHERE status = '{status}' AND claim_lock IS NULL "
-        "ORDER BY priority DESC, created_at ASC"
+        + scope_sql
+        + " ORDER BY priority DESC, created_at ASC",
+        tuple(params),
     ).fetchall()
 
 
@@ -2313,6 +2348,7 @@ def _dispatch_once_locked(
     default_assignee: Optional[str] = None,
     max_in_progress_per_profile: Optional[int] = None,
     reconcile_orphans: bool = True,
+    eligible_task_ids: Optional[set[str]] = None,
 ) -> DispatchResult:
     """One dispatcher tick: reclaim stale/crashed running tasks, promote
     todo -> ready, then atomically claim each spawnable ready/review row and
@@ -2330,10 +2366,13 @@ def _dispatch_once_locked(
     if not may_spawn:
         return result
 
-    ready_rows = _lane_rows(conn, "ready")
+    ready_rows = _lane_rows(conn, "ready", eligible_task_ids)
     # Review rows are enumerated up front so the budget split can see whether
     # review work exists at all.
-    review_rows = _lane_rows(conn, "review") if review_dispatch_enabled() else []
+    review_rows = (
+        _lane_rows(conn, "review", eligible_task_ids)
+        if review_dispatch_enabled() else []
+    )
     # Per-profile cap. Deferred tasks go to skipped_per_profile_capped, not
     # skipped_unassigned — "busy, retry later" differs from "needs routing".
     # Resolved BEFORE the review reservation so the reservation can see which

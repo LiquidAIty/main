@@ -137,6 +137,25 @@ class _KanbanDispatcher:
     def _board_slugs(self) -> list:
         return _board_slugs(self.kb)
 
+    def active_root_ids(self, dispatch_epoch: str) -> set[str]:
+        """Activated Team roots carrying this exact live host epoch."""
+
+        from hermes_cli.kanban_team import active_team_root_ids
+
+        active: set[str] = set()
+        for slug in self._board_slugs():
+            conn = None
+            try:
+                conn = _kbc().connect(board=slug)
+                active.update(active_team_root_ids(conn, dispatch_epoch))
+            except Exception:
+                continue
+            finally:
+                if conn is not None:
+                    with contextlib.suppress(Exception):
+                        conn.close()
+        return active
+
     def board_db_fingerprint(self, slug: str) -> tuple[str, int | None, int | None]:
         path = self.kb.kanban_db_path(slug)
         try:
@@ -171,7 +190,11 @@ class _KanbanDispatcher:
         self.disabled_corrupt_boards.pop(slug, None)
         return True
 
-    def tick_once_for_board(self, slug: str) -> Optional[object]:
+    def tick_once_for_board(
+        self,
+        slug: str,
+        eligible_root_ids: Optional[set[str]] = None,
+    ) -> Optional[object]:
         """Run one dispatch_once for a specific board.
 
         The per-board DB is opened explicitly so boards never share a
@@ -186,7 +209,17 @@ class _KanbanDispatcher:
             # No explicit init_db(): connect() runs the migration once per
             # process (see the matching note in the notifier collector).
             conn = _kbc().connect(board=slug)
-            return _kbd().dispatch_once(conn, board=slug, **kwargs)
+            eligible_task_ids = None
+            if eligible_root_ids is not None:
+                from hermes_cli.kanban_team import active_team_task_ids
+
+                eligible_task_ids = active_team_task_ids(conn, eligible_root_ids)
+            return _kbd().dispatch_once(
+                conn,
+                board=slug,
+                eligible_task_ids=eligible_task_ids,
+                **kwargs,
+            )
         except Exception as exc:
             if self.is_corrupt_board_db_error(exc):
                 self.disabled_corrupt_boards[slug] = (fingerprint, time.monotonic())
@@ -206,11 +239,20 @@ class _KanbanDispatcher:
                 with contextlib.suppress(Exception):
                     conn.close()
 
-    def tick_once(self) -> list[tuple[str, Optional[object]]]:
+    def tick_once(
+        self,
+        eligible_root_ids: Optional[set[str]] = None,
+    ) -> list[tuple[str, Optional[object]]]:
         """Run one dispatch_once per board. Returns (slug, result) pairs."""
-        return [(slug, self.tick_once_for_board(slug)) for slug in self._board_slugs()]
+        return [
+            (slug, self.tick_once_for_board(slug, eligible_root_ids))
+            for slug in self._board_slugs()
+        ]
 
-    def ready_nonempty(self) -> bool:
+    def ready_nonempty(
+        self,
+        eligible_root_ids: Optional[set[str]] = None,
+    ) -> bool:
         """Is there a ready+assigned+unclaimed task on ANY board the dispatcher would spawn for?
 
         Control-plane lanes (e.g. ``orion-cc``) are pulled by terminals via
@@ -225,7 +267,18 @@ class _KanbanDispatcher:
             conn = None
             try:
                 conn = _kbc().connect(board=slug)
-                if kbd.has_spawnable_ready(conn) or (_review_probe and kbd.has_spawnable_review(conn)):
+                eligible_task_ids = None
+                if eligible_root_ids is not None:
+                    from hermes_cli.kanban_team import active_team_task_ids
+
+                    eligible_task_ids = active_team_task_ids(conn, eligible_root_ids)
+                if kbd.has_spawnable_ready(
+                    conn, eligible_task_ids=eligible_task_ids,
+                ) or (
+                    _review_probe and kbd.has_spawnable_review(
+                        conn, eligible_task_ids=eligible_task_ids,
+                    )
+                ):
                     return True
             except Exception:
                 continue
@@ -235,7 +288,11 @@ class _KanbanDispatcher:
                         conn.close()
         return False
 
-    def auto_decompose_tick(self, auto_decompose_per_tick: int) -> int:
+    def auto_decompose_tick(
+        self,
+        auto_decompose_per_tick: int,
+        eligible_root_ids: Optional[set[str]] = None,
+    ) -> int:
         """Auto-decompose up to N triage tasks across all boards into ready workgraphs.
 
         Runs before dispatch fans out; the per-tick cap keeps a bulk triage
@@ -263,6 +320,8 @@ class _KanbanDispatcher:
                         logger.debug("kanban auto-decompose: list_triage_ids failed on board %s (%s)", slug, exc)
                         triage_ids = []
                     for tid in triage_ids:
+                        if eligible_root_ids is not None and tid not in eligible_root_ids:
+                            continue
                         if attempted >= auto_decompose_per_tick:
                             break
                         attempted += 1

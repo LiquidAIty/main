@@ -1,6 +1,7 @@
 // Entity: Building Modeling
 // Relationship: Verifies the shared HTTP transport preserves Project ownership and Python failure responses without simulating engineering behavior.
 import express from 'express';
+import { Agent } from 'undici';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -28,7 +29,7 @@ describe('Project-owned modeling transport', () => {
   it('injects the canonical owned Project without changing domain arguments', async () => {
     mocks.rails.mockResolvedValue({ configured: true, cases: [] });
     expect((await post({ operation: 'state' })).status).toBe(200);
-    expect(mocks.rails).toHaveBeenCalledWith('/nrgsim/projects/canonical-owned-project', expect.objectContaining({ body: '{"operation":"state"}' }), { timeoutMs: 930_000 });
+    expect(mocks.rails).toHaveBeenCalledWith('/nrgsim/projects/canonical-owned-project', expect.objectContaining({ body: '{"operation":"state"}' }), { timeoutMs: 930_000, dispatcher: expect.any(Agent) });
   });
   it('does not invoke Python for an unowned Project', async () => {
     mocks.owned.mockImplementation(async (_req, res) => { res.status(404).json({ error: 'project_not_found' }); return null; });
@@ -50,7 +51,7 @@ describe('Project-owned modeling transport', () => {
     expect(response.headers.get('content-security-policy')).toContain("sandbox; default-src 'none'");
     expect(mocks.rails).toHaveBeenCalledWith('/nrgsim/projects/canonical-owned-project', expect.objectContaining({
       body: JSON.stringify({ operation: 'report', caseId: 'case1', runId: 'known-run' }),
-    }), { timeoutMs: 930_000 });
+    }), { timeoutMs: 930_000, dispatcher: expect.any(Agent) });
   });
   it('does not read a report for an unowned Project', async () => {
     mocks.owned.mockImplementation(async (_req, res) => { res.status(404).end(); return null; });
