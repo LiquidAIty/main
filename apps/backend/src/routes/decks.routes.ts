@@ -19,6 +19,9 @@ import {
   discardFreshMembership,
   listSavedCardsForProject,
 } from '../services/projectStore';
+import { hermesGateway } from '../services/hermesGateway';
+import { projectCardAuthority } from '../services/projectCardAuthority';
+import { startProjectCardSessions } from './mainSession.routes';
 import { requireOwnedProject } from './projectAccess';
 
 const router = Router();
@@ -28,7 +31,18 @@ router.get('/:projectId/decks/:deckId', async (req, res) => {
     const access = await requireOwnedProject(req, res, req.params.projectId);
     if (!access) return;
     const result = await getDeckDocument(access.projectId, req.params.deckId);
-    return res.json({ ok: true, projectId: access.projectId, ...result });
+    const response = res.json({ ok: true, projectId: access.projectId, ...result });
+    void Promise.all([
+      hermesGateway(),
+      projectCardAuthority(access.projectId, req.params.deckId),
+    ]).then(([client, authority]) => startProjectCardSessions(client, authority, {
+      projectId: access.projectId,
+      projectSessionId: access.projectId,
+      userId: access.ownerUserId,
+    })).catch((error) => {
+      console.error('Card session startup failed', error);
+    });
+    return response;
   } catch (err: any) {
     const status = err?.message === 'project_not_found' ? 404 : 500;
     return res.status(status).json({ ok: false, error: err?.message || 'deck_load_failed' });

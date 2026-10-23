@@ -147,15 +147,8 @@ def test_every_code_owned_publisher_contract_has_complete_effect_metadata():
         assert item["annotations"]["readOnlyHint"] is (item["access"] == "read")
 
 
-def test_live_catalog_preserves_title_security_and_effect_metadata():
-    definition = operation_definition("run_mag_one")
-    assert definition is not None
-    descriptor = operation_catalog_descriptor(definition)
-    assert descriptor["displayName"] == "Mag One"
-    assert descriptor["description"] == definition.description
-    assert descriptor["annotations"] == definition.annotations
-    assert descriptor["provider"] == "main_mcp"
-    assert descriptor["publications"] == ["card-profile", "external-mcp"]
+def test_retired_run_mag_one_tool_is_absent():
+    assert operation_definition("run_mag_one") is None
 
 
 def test_authenticated_projection_may_remove_only_declared_server_owned_fields():

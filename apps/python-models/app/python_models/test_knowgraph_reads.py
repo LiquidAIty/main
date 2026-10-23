@@ -409,7 +409,9 @@ def test_exact_entity_know_read_returns_first_class_knows_and_ids(
         "publisher": "Example",
         "evidence": "Exact evidence passage 3.",
     }
-    assert "ABOUT" in driver.calls[0][0]
+    assert "episode.entity_uuid" in driver.calls[0][0]
+    assert "ABOUT" not in driver.calls[0][0]
+    assert "MENTIONS" not in driver.calls[0][0]
     assert driver.calls[0][1]["limit"] == 2
 
 

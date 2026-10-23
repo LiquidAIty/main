@@ -296,6 +296,23 @@ def message_agent_tool(
         return _roster_err(f"No teammate named '{raw_target}' on this install, on a connected "
                            "machine, or on a registered peer. Pick a name from the roster "
                            "(roles are listed in your system prompt).")
+    raw_contexts = getattr(agent, "_bot_mode_card_contexts", None)
+    target_context = (
+        raw_contexts.get(resolved)
+        if isinstance(raw_contexts, dict)
+        else None
+    )
+    if isinstance(target_context, dict) and target_context.get("card_id") == "card_magentic":
+        return _start_magnetic_task(
+            target_profile=resolved,
+            target_label=f"@{_handle(resolved)}",
+            target_context=target_context,
+            source_profile=me,
+            body=body,
+            parent_run_id=parent_run_id,
+            tool_call_id=tool_call_id,
+            agent=agent,
+        )
     target_session_id = str(session_targets.get(resolved) or "").strip()
     if isinstance(session_targets_override, dict) and not target_session_id:
         return _err(f"Project session for @{_handle(resolved)} is unavailable; nothing was sent.")
@@ -312,12 +329,6 @@ def message_agent_tool(
             f"is invalid: {exc}. Nothing was submitted."
         )
     if task_mode == TEAM_TASK_MODE:
-        raw_contexts = getattr(agent, "_bot_mode_card_contexts", None)
-        target_context = (
-            raw_contexts.get(resolved)
-            if isinstance(raw_contexts, dict)
-            else None
-        )
         if not isinstance(target_context, dict):
             return _err(
                 f"Delivery to @{_handle(resolved)} requires the target saved Card context. "
@@ -346,6 +357,90 @@ def message_agent_tool(
                            parent_run_id=parent_run_id,
                            continue_card_run=continue_card_run,
                            notify_sender=notify_sender, **delivery)
+
+
+def _start_magnetic_task(
+    *,
+    target_profile: str,
+    target_label: str,
+    target_context: dict[str, str],
+    source_profile: str,
+    body: str,
+    parent_run_id: Optional[str],
+    tool_call_id: Optional[str],
+    agent: Any,
+) -> str:
+    """Submit one Bot Mode message through the existing saved Magnetic taskgraph owner."""
+
+    source_session = str(getattr(agent, "session_id", "") or "").strip()
+    call_id = str(tool_call_id or "").strip()
+    if not source_session or not call_id or not parent_run_id:
+        return _err(
+            f"Delivery to {target_label} requires the calling Card Run and unique tool-call id. "
+            "Nothing was submitted."
+        )
+    try:
+        from tools.kanban_tools import _resolve_notify_target
+
+        notify = _resolve_notify_target()
+    except Exception as exc:
+        return _err(
+            f"Delivery to {target_label} could not resolve its completion route: {exc}. "
+            "Nothing was submitted."
+        )
+    if (
+        not notify
+        or not str(notify.get("platform") or "").strip()
+        or not str(notify.get("chat_id") or "").strip()
+    ):
+        return _err(
+            f"Delivery to {target_label} requires a durable completion route. "
+            "Nothing was submitted."
+        )
+    run_id = "req_" + hashlib.sha256(
+        f"{source_session}\0{call_id}\0{target_profile}".encode("utf-8")
+    ).hexdigest()[:16]
+    notification = {
+        "sessionId": source_session,
+        "notifyPlatform": notify["platform"],
+        "notifyChatId": notify["chat_id"],
+        **({"notifyThreadId": notify["thread_id"]} if notify.get("thread_id") else {}),
+        **({"notifyUserId": notify["user_id"]} if notify.get("user_id") else {}),
+        **({"notifyUserIdAlt": notify["user_id_alt"]} if notify.get("user_id_alt") else {}),
+        **({"notifyChatType": notify["chat_type"]} if notify.get("chat_type") else {}),
+        **({"notifierProfile": notify["notifier_profile"]} if notify.get("notifier_profile") else {}),
+        **({"notifyDeliveryMode": notify["delivery_mode"]} if notify.get("delivery_mode") else {}),
+        **({"notifyDeliveryMetadata": notify["delivery_metadata"]}
+           if notify.get("delivery_metadata") else {}),
+    }
+    try:
+        from tui_gateway.saved_card_turn import start_saved_magnetic_turn
+
+        started = start_saved_magnetic_turn(
+            target_context,
+            run_id=run_id,
+            originating_run_id=parent_run_id,
+            source_profile=source_profile,
+            message=body,
+            notification=notification,
+        )
+    except Exception as exc:
+        logger.error("message_agent Magnetic submission failed: %s", exc, exc_info=True)
+        return _err(f"Delivery to {target_label} failed: {exc}. Nothing was submitted.")
+    root_id = str(started.get("hermesRootId") or "").strip()
+    if not root_id:
+        return _err(f"Delivery to {target_label} did not return a Hermes root. Nothing was submitted.")
+    return json.dumps({
+        "status": "queued",
+        "reply_delivery": "team",
+        "task_id": root_id,
+        "run_id": run_id,
+        "to": target_label,
+        "detail": (
+            f"PromptSpec submitted to {target_label}'s existing Mag One task graph. "
+            "Do not poll or resend; its native completion notification returns the synthesis."
+        ),
+    })
 
 
 def _start_team_task(

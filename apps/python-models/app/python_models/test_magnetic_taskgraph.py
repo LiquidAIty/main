@@ -77,6 +77,12 @@ def _execution_payload() -> dict[str, Any]:
                 "profile": "worker-b",
             },
         ],
+        "notification": {
+            "sessionId": "source-session",
+            "notifyPlatform": "api_server",
+            "notifyChatId": "source-session",
+            "notifyDeliveryMode": "notify+wake",
+        },
     }
 
 
@@ -209,6 +215,8 @@ def test_submit_reloads_idf_and_uses_validate_stage_bind_activate_order(monkeypa
     assert staged["workerProfiles"] == ["worker-a", "worker-b"]
     assert staged["workerAuthorities"] == _execution_payload()["workerAuthorities"]
     assert staged["directTeam"] is False
+    assert staged["sessionId"] == "source-session"
+    assert staged["notifyPlatform"] == "api_server"
     assert "both the orchestration root and the final result task" in staged["body"]
     assert result == {
         "ok": True,

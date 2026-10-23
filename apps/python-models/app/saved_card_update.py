@@ -35,7 +35,7 @@ _UPDATABLE_TOP_FIELDS = {"prompt", "title"}
 _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "script", "accessMode", "modelKey", "provider", "providerModelId",
     "subagentType", "subagentModel", "tools", "skills",
-    "toolsets", "mcpConnectionIds", "configuration", "subsystems",
+    "toolsets", "mcpConnectionIds", "configuration",
     "autoTools", "autoModel", "reasoningEffort",
 }
 
@@ -76,16 +76,6 @@ async def card_update_configuration(
     if "configuration" in updates and not isinstance(updates["configuration"], dict):
         raise ApplicationToolError("card_update_configuration_invalid")
     _validate_auto_flags(updates, operation="card_update")
-    if "subsystems" in updates:
-        from app.python_models.card_subsystem import normalize_card_subsystems
-
-        try:
-            updates = {
-                **updates,
-                "subsystems": normalize_card_subsystems(updates["subsystems"]),
-            }
-        except ValueError as error:
-            raise ApplicationToolError(str(error)) from error
     if "script" in updates:
         from app.python_models.card_script import (
             CardScriptValidationError,

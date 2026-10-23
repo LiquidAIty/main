@@ -78,17 +78,16 @@ def _attach_entity_knows(
     nodes: dict[str, dict[str, Any]],
     entity_ids: list[str],
 ) -> None:
-    """Attach at most two exact ABOUT episodes to each projected Entity."""
+    """Attach at most two Knows by exact stored Entity identity."""
 
     if not entity_ids:
         return
     rows = neo4j_rows(session.run(
         """
-        MATCH (episode:Episodic:Know)-[:ABOUT]->(entity:Entity)
-        WHERE coalesce(toString(entity.uuid), elementId(entity)) IN $entityIds
-          AND toString(entity.group_id) IN $projectScopeIds
+        MATCH (episode:Episodic:Know)
+        WHERE toString(episode.entity_uuid) IN $entityIds
           AND toString(episode.group_id) IN $projectScopeIds
-        RETURN coalesce(toString(entity.uuid), elementId(entity)) AS entity_id,
+        RETURN toString(episode.entity_uuid) AS entity_id,
                coalesce(toString(episode.uuid), elementId(episode)) AS episode_id,
                properties(episode) AS episode_props
         ORDER BY entity_id,

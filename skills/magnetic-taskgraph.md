@@ -13,9 +13,9 @@ Use this procedure for LiquidAIty's saved Magnetic Card and its Hermes task/depe
    the saved identity available through Hermes' SQLite task ledger; the meanings remain distinct.
 5. Resolve exact current Card revisions and Hermes bindings; never infer membership from titles, prompts,
    installed profiles, or global discovery.
-6. The transient Mag One input and selected provider references pass through the one canonical reloaded
-   `in.idf`. `run_mag_one` enters through the authenticated tool dispatcher and resolves the saved Magnetic
-   Card through its Python preparation owner.
+6. Main sends the reviewed Builder PromptSpec to `@Magnetic` through Hermes `message_agent`. The saved
+   Magnetic Card doorway passes that exact input through the canonical reloaded `in.idf` and its Python
+   preparation owner before the existing Hermes TaskGraph root is staged. There is no Mag One application tool.
 7. Hermes SQLite owns tasks, dependencies, attempts, assignment, retries, dispatch, and summaries.
    PostgreSQL keeps only the one outer product Run and final result; do not copy Hermes task rows.
 8. The root task carries an inherited assignee ceiling containing only the saved Mag One profile and the
@@ -29,7 +29,7 @@ Use this procedure for LiquidAIty's saved Magnetic Card and its Hermes task/depe
 
 ## Discovery
 
-Use Codebase Memory when available to resolve `run_mag_one`, `begin_run`,
+Use Codebase Memory when available to resolve `message_agent`, `start_magnetic_taskgraph`, `begin_run`,
 `agentgraph_topology.connected_hermes_card_targets`, `MagneticTasksTab`, and
 `magnetic_taskgraph_authority.py`, `magnetic_taskgraph_submission.py`, and
 `magnetic_taskgraph_readback.py`. Direct-read the

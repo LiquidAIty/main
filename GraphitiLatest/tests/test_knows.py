@@ -11,7 +11,6 @@ from graphiti_core.driver.driver import GraphProvider
 from graphiti_core.edges import Edge, EntityEdge
 from graphiti_core.graphiti import AddEpisodeResults, Graphiti
 from graphiti_core.knows import (
-    AboutEdge,
     KnowCitation,
     KnowDirection,
     KnowNode,
@@ -142,7 +141,7 @@ async def test_add_know_reuses_add_episode_and_preserves_saga(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_save_know_creates_one_about_attachment_with_typed_citation():
+async def test_save_know_stores_entity_identity_and_removes_attachment_edges():
     now = datetime(2026, 10, 20, tzinfo=timezone.utc)
     know = KnowNode.from_episode(
         _episode(now),
@@ -153,20 +152,13 @@ async def test_save_know_creates_one_about_attachment_with_typed_citation():
         direction=None,
         content_hash='b' * 64,
     )
-    about = AboutEdge(
-        uuid='about-1',
-        source_node_uuid=know.uuid,
-        target_node_uuid='entity-1',
-        group_id='g1',
-        created_at=now,
-    )
     driver = SimpleNamespace(
         provider=GraphProvider.NEO4J,
         execute_query=AsyncMock(
             side_effect=[
-                ([{'entity_uuids': []}], None, None),
+                ([{'entity_uuid': None}], None, None),
                 (
-                    [{'uuid': 'know-1', 'entity_uuid': 'entity-1', 'about_uuid': 'about-1'}],
+                    [{'uuid': 'know-1', 'entity_uuid': 'entity-1'}],
                     None,
                     None,
                 ),
@@ -174,12 +166,14 @@ async def test_save_know_creates_one_about_attachment_with_typed_citation():
         ),
     )
 
-    await know.save_know(driver, about)
+    await know.save_know(driver)
 
     query = driver.execute_query.await_args_list[1].args[0]
     params = driver.execute_query.await_args_list[1].kwargs
     assert 'SET know:Know' in query
-    assert 'MERGE (know)-[about:ABOUT]->(entity)' in query
+    assert "type(attachment) IN ['ABOUT', 'MENTIONS']" in query
+    assert 'FOREACH (edge IN attachments | DELETE edge)' in query
+    assert 'MERGE (know)-[about:ABOUT]->(entity)' not in query
     assert params['entity_uuid'] == 'entity-1'
     assert params['citation_url'] == 'https://example.com/report'
     assert params['citation_evidence'].startswith('Revenue increased')
@@ -260,7 +254,7 @@ async def test_add_know_retry_finishes_matching_episode_without_reingestion(monk
 
 
 @pytest.mark.asyncio
-async def test_save_know_rejects_a_second_about_entity():
+async def test_save_know_rejects_a_different_stored_entity_identity():
     now = datetime(2026, 10, 20, tzinfo=timezone.utc)
     know = KnowNode.from_episode(
         _episode(now),
@@ -271,22 +265,16 @@ async def test_save_know_rejects_a_second_about_entity():
         direction=None,
         content_hash='c' * 64,
     )
-    about = AboutEdge(
-        uuid='about-1',
-        source_node_uuid=know.uuid,
-        target_node_uuid='entity-1',
-        group_id='g1',
-        created_at=now,
-    )
     driver = SimpleNamespace(
         provider=GraphProvider.NEO4J,
         execute_query=AsyncMock(
-            return_value=([{'entity_uuids': ['different-entity']}], None, None)
+            return_value=([{'entity_uuid': 'different-entity'}], None, None)
         ),
     )
 
-    with pytest.raises(ValueError, match='different Entity'):
-        await know.save_know(driver, about)
+    with pytest.raises(ValueError) as error:
+        await know.save_know(driver)
+    assert str(error.value) == 'Know is already attached to a different Entity'
     assert driver.execute_query.await_count == 1
 
 
@@ -306,7 +294,7 @@ async def test_know_lookup_filters_after_optional_saga_matching():
     )
 
     query = driver.execute_query.await_args.args[0]
-    assert query.index('WITH know, about, entity, saga') < query.index(
+    assert query.index('WITH know, saga') < query.index(
         'WHERE know.group_id = $group_id'
     )
 
@@ -501,103 +489,26 @@ async def test_resolve_know_entity_creates_when_exact_name_is_absent(monkeypatch
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ('entity_created', 'other_references', 'deleted'),
-    (
-        (False, None, False),
-        (True, 1, False),
-        (True, 0, True),
-    ),
-)
-async def test_remove_know_episode_preserves_reused_or_still_referenced_entity(
-    monkeypatch,
-    entity_created: bool,
-    other_references: int | None,
-    deleted: bool,
-):
+async def test_remove_know_episode_without_attachment_edges_preserves_entity(monkeypatch):
     now = datetime(2026, 10, 20, tzinfo=timezone.utc)
     episode = _episode(now)
-    entity = EntityNode(
-        uuid='entity-1',
-        name='Example Corp',
-        group_id='g1',
-        created_at=now,
-    )
-    responses = [
-        (
-            [{'entity_uuid': 'entity-1', 'entity_created': entity_created}],
-            None,
-            None,
-        ),
-        ([{'episode_count': 1}], None, None),
-    ]
-    if other_references is not None:
-        responses.append(([{'other_references': other_references}], None, None))
     driver = SimpleNamespace(
         provider=GraphProvider.NEO4J,
-        execute_query=AsyncMock(side_effect=responses),
-    )
-    graphiti = Graphiti.__new__(Graphiti)
-    graphiti.driver = driver
-    monkeypatch.setattr(EpisodicNode, 'get_by_uuid', AsyncMock(return_value=episode))
-    monkeypatch.setattr(EntityEdge, 'get_by_uuids', AsyncMock(return_value=[]))
-    monkeypatch.setattr(
-        graphiti_module,
-        'get_mentioned_nodes',
-        AsyncMock(return_value=[entity]),
-    )
-    delete_edges = AsyncMock(return_value=None)
-    delete_nodes = AsyncMock(return_value=None)
-    delete_episode = AsyncMock(return_value=None)
-    monkeypatch.setattr(Edge, 'delete_by_uuids', delete_edges)
-    monkeypatch.setattr(Node, 'delete_by_uuids', delete_nodes)
-    monkeypatch.setattr(EpisodicNode, 'delete', delete_episode)
-
-    await graphiti.remove_episode(episode.uuid)
-
-    expected_nodes = [entity.uuid] if deleted else []
-    delete_nodes.assert_awaited_once_with(driver, expected_nodes)
-    delete_episode.assert_awaited_once_with(driver)
-
-
-@pytest.mark.asyncio
-async def test_remove_know_episode_audits_about_target_without_mentions(monkeypatch):
-    now = datetime(2026, 10, 20, tzinfo=timezone.utc)
-    episode = _episode(now)
-    entity = EntityNode(
-        uuid='entity-1',
-        name='Example Corp',
-        group_id='g1',
-        created_at=now,
-    )
-    driver = SimpleNamespace(
-        provider=GraphProvider.NEO4J,
-        execute_query=AsyncMock(
-            side_effect=[
-                (
-                    [{'entity_uuid': 'entity-1', 'entity_created': True}],
-                    None,
-                    None,
-                ),
-                ([{'episode_count': 0}], None, None),
-                ([{'other_references': 0}], None, None),
-            ]
-        ),
+        execute_query=AsyncMock(),
     )
     graphiti = Graphiti.__new__(Graphiti)
     graphiti.driver = driver
     monkeypatch.setattr(EpisodicNode, 'get_by_uuid', AsyncMock(return_value=episode))
     monkeypatch.setattr(EntityEdge, 'get_by_uuids', AsyncMock(return_value=[]))
     monkeypatch.setattr(graphiti_module, 'get_mentioned_nodes', AsyncMock(return_value=[]))
-    monkeypatch.setattr(EntityNode, 'get_by_uuid', AsyncMock(return_value=entity))
     monkeypatch.setattr(Edge, 'delete_by_uuids', AsyncMock(return_value=None))
     delete_nodes = AsyncMock(return_value=None)
+    delete_episode = AsyncMock(return_value=None)
     monkeypatch.setattr(Node, 'delete_by_uuids', delete_nodes)
-    monkeypatch.setattr(EpisodicNode, 'delete', AsyncMock(return_value=None))
+    monkeypatch.setattr(EpisodicNode, 'delete', delete_episode)
 
     await graphiti.remove_episode(episode.uuid)
 
-    reference_query = driver.execute_query.await_args_list[2].args[0]
-    assert 'WITH other_mentions, count(DISTINCT other_know) AS other_knows' in reference_query
-    assert 'RETURN other_mentions + other_knows AS other_references' in reference_query
-    delete_nodes.assert_awaited_once_with(driver, ['entity-1'])
+    driver.execute_query.assert_not_awaited()
+    delete_nodes.assert_awaited_once_with(driver, [])
+    delete_episode.assert_awaited_once_with(driver)

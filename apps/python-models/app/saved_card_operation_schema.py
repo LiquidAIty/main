@@ -96,7 +96,6 @@ def saved_card_operation_schema(name: str) -> dict[str, Any]:
             "autoModel": {"type": "boolean"},
             "configuration": {"type": "object"},
             "script": {"type": "object"},
-            "subsystems": {"type": "array", "items": {"type": "object"}},
         }
         properties = {
             **identity,

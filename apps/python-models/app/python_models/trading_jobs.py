@@ -11,7 +11,6 @@ from uuid import UUID, uuid4
 
 from psycopg.rows import dict_row
 
-from app.python_models.card_subsystem import normalize_card_subsystems
 from app.python_models.postgres import connect_postgres
 from app.python_models.trading_broker_observation import (
     lumibot_readiness,
@@ -63,21 +62,8 @@ def require_trading_card(
     extensions = result.get("runtime_extension_config")
     if not isinstance(extensions, dict):
         raise TradingBoundaryError("trading_card_extensions_required")
-    try:
-        subsystems = normalize_card_subsystems(extensions.get("subsystems"))
-    except ValueError as error:
-        raise TradingBoundaryError(str(error)) from error
-    attachment = next((item for item in subsystems if item["id"] == "lumibot"), None)
-    if (
-        attachment is None
-        or attachment.get("configurationSchema") != "trading.card.v1"
-        or set(attachment["adapter"]["capabilities"])
-        != {"state", "events", "commands", "artifacts", "readiness"}
-    ):
-        raise TradingBoundaryError("trading_card_lumibot_attachment_required")
     configuration = extensions.get("configuration") if isinstance(extensions, dict) else None
     result["configuration"] = normalize_trading_configuration(configuration)
-    result["subsystem"] = attachment
     return result
 
 

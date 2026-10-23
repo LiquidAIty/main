@@ -74,7 +74,6 @@ import useAgentBuilderKnowledgeGraphs from '../features/agentbuilder/state/useAg
 import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
 import TradingUI from './tradingui';
 import TradingUiInspectorPanel from '../features/trading/TradingUiInspectorPanel';
-import CardSubsystemTab from '../features/agentbuilder/subsystems/CardSubsystemTab';
 import MagneticTasksTab from '../features/agentbuilder/tasks/MagneticTasksTab';
 import {
   GRAPH_THEME,
@@ -94,7 +93,6 @@ import {
   BUILDER_CARD_ID,
   BUILDER_DECK_ID,
 } from '../features/agentbuilder/deck/newProjectDeck';
-import { readCardSubsystemAttachments } from '../features/agentbuilder/deck/cardSubsystems';
 import {
   buildProjectlessDeckDocument,
   buildQuickAddAssistCard,
@@ -390,10 +388,6 @@ export default function AgentBuilder(): React.ReactElement {
     }
     return () => { current = false; };
   }, [canvasProjectId]);
-  const registerCardLeave = useCallback((save: (() => Promise<boolean>) | null) => {
-    cardLeaveRef.current = save;
-  }, []);
-
   useEffect(() => {
     if (!shouldCloseCanvasInspector({
       workspaceView,
@@ -789,24 +783,27 @@ export default function AgentBuilder(): React.ReactElement {
   const selectedOrangeConnections = useMemo(() => {
     if (!selectedCard) return [];
     const nodeById = new Map(deck.nodes.map((node) => [node.id, node] as const));
-    const seen = new Set<string>();
-    return deck.edges.flatMap((edge) => {
-      if (
-        edge.edgeType !== 'flow'
-        || edge.enabled === false
-        || edge.source !== selectedCard.id
-      ) return [];
-      const direction = 'outgoing' as const;
-      const otherId = edge.target;
-      const other = nodeById.get(otherId);
-      const key = `${direction}:${otherId}`;
-      if (
-        !other
-        || other.enabled === false
-        || seen.has(key)
-      ) return [];
-      seen.add(key);
-      return [{ cardId: otherId, title: safeText(other.title || otherId), direction }];
+    const connectedIds = new Set<string>();
+    for (const edge of deck.edges) {
+      if (edge.enabled === false) continue;
+      if (edge.edgeType === 'flow' && edge.source === selectedCard.id) {
+        connectedIds.add(edge.target);
+      }
+      if (selectedCard.runtime.mode === 'main' && edge.edgeType === 'magentic_option') {
+        connectedIds.add(edge.source);
+        connectedIds.add(edge.target);
+      }
+    }
+    connectedIds.delete(selectedCard.id);
+    return [...connectedIds].flatMap((cardId) => {
+      const other = nodeById.get(cardId);
+      if (!other || other.enabled === false) return [];
+      return [{
+        cardId,
+        title: safeText(other.title || cardId),
+        direction: 'outgoing' as const,
+        prompt: String(other.prompt || ''),
+      }];
     });
   }, [deck.edges, deck.nodes, selectedCard]);
   const builderTabs = useMemo(() => {
@@ -819,17 +816,9 @@ export default function AgentBuilder(): React.ReactElement {
         && selectedCard.id !== builderCard?.id
         ? ['CLI']
         : []),
-      ...readCardSubsystemAttachments(selectedCard.runtimeOptions)
-        .filter((attachment) => attachment.cardTab.enabled)
-        .map((attachment) => attachment.label),
     ];
     return [...BUILDER_PROJECT_TABS];
   }, [selectedCard, mainCardId, builderCard?.id]);
-  const selectedCardSubsystem = useMemo(
-    () => readCardSubsystemAttachments(selectedCard?.runtimeOptions)
-      .find((attachment) => attachment.cardTab.enabled && attachment.label === tab) || null,
-    [selectedCard?.runtimeOptions, tab],
-  );
   const activeTabs = useMemo(() => {
     if (workspaceView === 'canvas') return builderTabs;
     return [];
@@ -1130,16 +1119,6 @@ export default function AgentBuilder(): React.ReactElement {
             cardTitlesByProfile={cardTitlesByProfile}
           />;
         }
-        if (selectedCardSubsystem) {
-          return <CardSubsystemTab
-            attachment={selectedCardSubsystem}
-            readinessEndpoint={selectedCardSubsystem.id === 'lumibot'
-              ? '/api/trading/readiness'
-              : selectedCardSubsystem.id === 'gods-eye'
-                ? '/api/worldview/readiness'
-              : null}
-          />;
-        }
         if (
           tab === 'CLI'
           && selectedCard.runtime.kind === 'hermes'
@@ -1181,7 +1160,6 @@ export default function AgentBuilder(): React.ReactElement {
                     cardId={selectedCard.id}
                     projectId={canvasProjectId}
                     deckId={BUILDER_DECK_ID}
-                    registerCardLeave={registerCardLeave}
                     activeTab={tab}
                     cardName={selectedCard.title}
                     onChangeCardName={handleRenameSelectedCard}

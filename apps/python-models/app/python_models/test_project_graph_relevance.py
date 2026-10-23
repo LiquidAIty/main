@@ -3,7 +3,7 @@
 # Entity: ThinkGraph
 # Relationship: This file verifies bounded Engraphis candidates exclude the distinct recent Think before relevance ranking.
 # Entity: KnowGraph
-# Relationship: This file verifies Graphiti search hydrates only exact ABOUT-linked first-class Knows for matched Entities.
+# Relationship: This file verifies Graphiti search hydrates only exact Entity-owned first-class Knows for matched Entities.
 # Entity: Jev Decisions
 # Relationship: This file verifies Jev ranks complete provider records against current context without rewarding mere recency.
 

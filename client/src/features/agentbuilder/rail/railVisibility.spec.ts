@@ -68,17 +68,30 @@ describe('product rail visibility', () => {
     expect(isWorldViewCard(worldSignals)).toBe(false);
   });
 
-  it('shows enabled saved product Cards without requiring orange or blue topology', () => {
+  it('does not show disconnected WorldSignals while preserving other enabled product surfaces', () => {
     expect(visible([
       worldView,
       worldSignals,
       trading,
     ])).toEqual({
       showKnowledge: true,
-      showWorldsignal: true,
+      showWorldsignal: false,
       showWorldview: true,
       showTrading: true,
     });
+  });
+
+  it('shows WorldSignals only when its saved Card is connected', () => {
+    const deck = {
+      nodes: [worldSignals],
+      edges: [{
+        id: 'worldsignals-flow',
+        source: 'card_main_chat',
+        target: worldSignals.id,
+        edgeType: 'flow' as const,
+      }],
+    };
+    expect(deriveVisibleRailItems({ deck, workspaceView: 'canvas' }).showWorldsignal).toBe(true);
   });
 
   it('keeps orange and blue wires independent from surface visibility', () => {

@@ -160,7 +160,7 @@ Core tools:
   excluded_entity_types and custom_extraction_instructions to steer extraction,
   previous_episode_uuids to supply explicit context, update_communities to refresh community summaries,
   and saga / saga_previous_episode_uuid to associate the episode with an ordered saga.
-- add_know: add one cited, interpreted Know as a normal episode with a single explicit ABOUT Entity
+- add_know: add one cited, interpreted Know with one exact stored Entity identity
   attachment. It retains ordinary extraction, hybrid retrieval, communities, and Saga membership.
 - get_know / search_knows / get_entity_knows: retrieve one exact Know, search globally, or follow its
   exact Entity attachment.
@@ -557,8 +557,8 @@ async def add_know(
 
     The target Entity is reused when ``entity_uuid`` or an exact existing name identifies it;
     otherwise Graphiti creates it. The Know is stored as an ``Episodic:Know`` node, receives
-    exactly one explicit ``ABOUT`` edge, and remains compatible with extraction-owned
-    ``MENTIONS``, hybrid episode retrieval, communities, temporal fields, and Sagas.
+    one exact Entity UUID property, removes Know attachment edges, and remains compatible
+    with hybrid episode retrieval, communities, temporal fields, and Sagas.
     """
 
     global graphiti_service, queue_service
@@ -673,7 +673,7 @@ async def get_entity_knows(
     group_id: str | None = None,
     max_knows: int = 10,
 ) -> KnowSearchResponse | ErrorResponse:
-    """Read durable Knows attached to one exact Entity by ``ABOUT``."""
+    """Read durable Knows by one exact stored Entity identity."""
 
     global graphiti_service
     if graphiti_service is None:

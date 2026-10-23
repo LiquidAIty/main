@@ -17,12 +17,62 @@ import { createHash } from 'node:crypto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { DeckCard } from '../types';
+import type { DeckCard, DeckDocument } from '../types';
 import type { ToolCatalogDescriptor } from '../services/mcp/toolCatalogMcpClient';
 import {
+  cardWithConnectedAgentSkills,
   materializeSavedCardProfile,
+  savedCardBotRoster,
   type HermesProfileState,
 } from './profileMaterialization';
+
+it('builds Main roster and prompt skills only from enabled wired Cards', () => {
+  const main = {
+    ...card,
+    id: 'main',
+    title: 'Main',
+    prompt: '# CARD_PROMPT_V1\n[ALL CONNECTED AGENTS]\nstale\n\n[ROLE]\nMain',
+    runtime: { kind: 'hermes', mode: 'main', profile: 'main' } as const,
+  };
+  const builder = {
+    ...card,
+    prompt: '# CARD_PROMPT_V1\n[ORCHESTRATOR SKILL]\nBuild exact artifacts.\n\n[ROLE]\nBuilder',
+  };
+  const analyst = {
+    ...card,
+    id: 'analyst', title: 'Analyst',
+    prompt: '# CARD_PROMPT_V1\n[ORCHESTRATOR SKILL]\nAssess sourced evidence.\n\n[ROLE]\nAnalyst',
+    runtime: { kind: 'hermes', mode: 'delegate', profile: 'analyst' } as const,
+  };
+  const magnetic = {
+    ...card,
+    id: 'magnetic', title: 'Magnetic',
+    prompt: '# CARD_PROMPT_V1\n[ORCHESTRATOR SKILL]\nRun the exact TaskGraph.\n\n[ROLE]\nMagnetic',
+    runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'magnetic' } as const,
+  };
+  const worldSignals = {
+    ...card,
+    id: 'worldsignals', title: 'WorldSignals',
+    prompt: '# CARD_PROMPT_V1\n[ORCHESTRATOR SKILL]\nRead live signals.\n\n[ROLE]\nWorldSignals',
+    runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldsignals' } as const,
+  };
+  const deck = {
+    id: 'deck', name: 'Deck', version: 1, promptTemplates: [],
+    nodes: [main, builder, analyst, magnetic, worldSignals],
+    edges: [
+      { id: 'main-builder', source: 'main', target: 'builder', edgeType: 'flow' },
+      { id: 'analyst-magnetic', source: 'analyst', target: 'magnetic', edgeType: 'magentic_option' },
+    ],
+  } as DeckDocument;
+
+  expect(savedCardBotRoster(deck, main)).toEqual(['builder', 'analyst', 'magnetic']);
+  const effective = cardWithConnectedAgentSkills(deck, main).prompt || '';
+  expect(effective).toContain('[BOT: @Builder]\nBuild exact artifacts.');
+  expect(effective).toContain('[BOT: @Analyst]\nAssess sourced evidence.');
+  expect(effective).toContain('[BOT: @Magnetic]\nRun the exact TaskGraph.');
+  expect(effective).not.toContain('@WorldSignals');
+  expect(effective).not.toContain('stale');
+});
 
 const card: DeckCard = {
   id: 'builder',

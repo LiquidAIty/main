@@ -215,7 +215,7 @@ class _CardCursor:
         return self.row
 
 
-def test_trading_card_qualifies_by_saved_hermes_subsystem_not_card_name() -> None:
+def test_trading_card_qualifies_by_saved_hermes_runtime_and_configuration() -> None:
     row = {
         "current_revision_id": str(uuid4()),
         "runtime_kind": "hermes",
@@ -223,17 +223,6 @@ def test_trading_card_qualifies_by_saved_hermes_subsystem_not_card_name() -> Non
         "runtime_profile": "isolated-profile",
         "runtime_extension_config": {
             "configuration": _configuration(),
-            "subsystems": [{
-                "id": "lumibot",
-                "label": "LumiBot",
-                "adapter": {
-                    "kind": "python",
-                    "contractVersion": "card-subsystem.v1",
-                    "capabilities": ["state", "events", "commands", "artifacts", "readiness"],
-                },
-                "cardTab": {"enabled": True},
-                "configurationSchema": "trading.card.v1",
-            }],
         },
     }
 
@@ -242,7 +231,9 @@ def test_trading_card_qualifies_by_saved_hermes_subsystem_not_card_name() -> Non
     )
 
     assert result["runtime_profile"] == "isolated-profile"
-    assert result["subsystem"]["id"] == "lumibot"
+    assert result["configuration"]["schemaVersion"] == "trading.card.v1"
+    assert result["configuration"]["trading"]["maxConcurrentJobs"] == 3
+    assert result["configuration"]["trading"]["brokerConnectionRef"] == "alpaca-paper"
 
 
 def test_trading_card_script_compiles_one_python_subsystem_boundary() -> None:

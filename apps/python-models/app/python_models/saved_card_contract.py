@@ -25,7 +25,6 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from app.python_models.card_script import CardScriptValidationError, saved_script
-from app.python_models.card_subsystem import normalize_card_subsystems
 from app.python_models.card_configuration_contracts import CardSubagentType
 
 class CardDomainError(ValueError):
@@ -290,11 +289,6 @@ def stable_card_record(card: dict[str, Any]) -> dict[str, Any]:
                 extensions["script"],
             )
         except CardScriptValidationError as error:
-            raise CardDomainError(str(error)) from error
-    if "subsystems" in extensions:
-        try:
-            extensions["subsystems"] = normalize_card_subsystems(extensions["subsystems"])
-        except ValueError as error:
             raise CardDomainError(str(error)) from error
     stable = {
         "cardId": required_text(card.get("id"), "card_id"),

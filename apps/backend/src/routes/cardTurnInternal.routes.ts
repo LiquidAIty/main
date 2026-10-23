@@ -14,6 +14,7 @@ import {
   startCardRun,
 } from '../services/cardRunLifecycle';
 import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import {
   projectCardAuthority,
   type ProjectCardBinding,
@@ -47,7 +48,6 @@ function exactTarget(
     candidate.card.id === cardId
     && candidate.profile.toLowerCase() === profile.toLowerCase()
     && candidate.card.runtime.kind === 'hermes'
-    && candidate.card.runtime.mode !== 'magentic_one'
   ));
   if (matches.length !== 1) throw new Error('card_turn_target_unavailable');
   return matches[0];
@@ -69,12 +69,57 @@ router.post('/', async (req, res) => {
   try {
     const authority = await projectCardAuthority(projectId, deckId);
     const target = exactTarget(authority, cardId, profile);
+    const senderProfile = String(req.body?.senderProfile || '').trim().toLowerCase();
+    const senderMatches = senderProfile
+      ? authority.cards.filter((candidate) => candidate.profile.toLowerCase() === senderProfile)
+      : [];
+    if (senderProfile && senderMatches.length !== 1) throw new Error('card_turn_sender_unavailable');
+    if (action === 'start_magnetic') {
+      if (
+        target.card.runtime.mode !== 'magentic_one'
+        || senderMatches.length !== 1
+        || senderMatches[0].card.id !== authority.main.card.id
+      ) throw new Error('magnetic_bot_delivery_unauthorized');
+      const runId = String(req.body?.runId || '').trim();
+      const originatingRunId = String(req.body?.originatingRunId || '').trim();
+      const message = String(req.body?.message || '').trim();
+      const notification = record(req.body?.notification);
+      if (!runId || !originatingRunId || !message || !Object.keys(notification).length) {
+        throw new Error('magnetic_bot_delivery_incomplete');
+      }
+      await readCardRun({
+        projectId,
+        deckId,
+        runId: originatingRunId,
+        cardId: senderMatches[0].card.id,
+        profile: senderMatches[0].profile,
+      });
+      const started = record(await requestPythonRailsJson('/magnetic/taskgraph/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          deckId,
+          conversationId,
+          callerCardId: senderMatches[0].card.id,
+          originatingRunId,
+          runId,
+          input: message,
+          dataAnchors: [],
+          notification,
+        }),
+      }, { timeoutMs: 180_000 }));
+      if (
+        started.ok !== true
+        || String(started.runId || '') !== runId
+        || !String(started.hermesRootId || '').trim()
+      ) throw new Error(String(started.error || 'magnetic_bot_delivery_start_failed'));
+      return res.json(started);
+    }
+    if (target.card.runtime.mode === 'magentic_one') {
+      throw new Error('card_turn_target_unavailable');
+    }
     if (action === 'prepare') {
-      const senderProfile = String(req.body?.senderProfile || '').trim().toLowerCase();
-      const senderMatches = senderProfile
-        ? authority.cards.filter((candidate) => candidate.profile.toLowerCase() === senderProfile)
-        : [];
-      if (senderProfile && senderMatches.length !== 1) throw new Error('card_turn_sender_unavailable');
       const originatingRunId = String(req.body?.originatingRunId || '').trim();
       if (originatingRunId) {
         const parentCard = senderMatches[0] || target;

@@ -243,8 +243,6 @@ function delegationSettings(options: Record<string, any>, current: HermesProfile
 export function savedCardBotRoster(deck: DeckDocument, card: DeckCard): string[] {
   const options = objectRecord(card.runtimeOptions);
   if (card.runtime.mode !== 'main' && options.orchestrator !== true) return [];
-  // Orange flow is Bot Mode authority. Blue magentic_option wiring belongs
-  // only to Magnetic worker selection and never broadens this roster.
   const cards = new Map(deck.nodes.flatMap((candidate) => (
     cardEnabled(candidate)
     && candidate.runtime.kind === 'hermes'
@@ -252,13 +250,85 @@ export function savedCardBotRoster(deck: DeckDocument, card: DeckCard): string[]
       ? [[candidate.id, candidate] as const]
       : []
   )));
+  if (card.runtime.mode === 'main') {
+    const connected = new Set(deck.edges.flatMap((edge) => {
+      if (edge.enabled === false) return [];
+      if (edge.edgeType === 'flow' && edge.source === card.id) return [edge.target];
+      if (edge.edgeType === 'magentic_option') return [edge.source, edge.target];
+      return [];
+    }));
+    connected.delete(card.id);
+    return [...new Set(deck.nodes.flatMap((candidate) => (
+      connected.has(candidate.id) && cards.has(candidate.id)
+        ? [candidate.runtime.profile]
+        : []
+    )))];
+  }
   return [...new Set(deck.edges.flatMap((edge) => {
     if (edge.enabled === false || edge.edgeType !== 'flow' || edge.source !== card.id) return [];
     const target = cards.get(edge.target);
-    return target && target.id !== card.id && target.runtime.mode !== 'magentic_one'
+    return target && target.id !== card.id
       ? [target.runtime.profile]
       : [];
   }))];
+}
+
+function promptSection(prompt: string, heading: string): string {
+  const lines = String(prompt || '').split('\n');
+  const marker = `[${heading}]`;
+  const start = lines.findIndex((line) => line.trim() === marker);
+  if (start < 0) return '';
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const value = lines[index].trim();
+    if (value.startsWith('[') && value.endsWith(']')) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(start + 1, end).join('\n').trim();
+}
+
+function withPromptSection(prompt: string, heading: string, content: string): string {
+  const lines = String(prompt || '').split('\n');
+  const marker = `[${heading}]`;
+  const start = lines.findIndex((line) => line.trim() === marker);
+  if (start >= 0) {
+    let end = lines.length;
+    for (let index = start + 1; index < lines.length; index += 1) {
+      const value = lines[index].trim();
+      if (value.startsWith('[') && value.endsWith(']')) {
+        end = index;
+        break;
+      }
+    }
+    lines.splice(start, end - start);
+  }
+  const remaining = lines.join('\n').trim();
+  return content.trim()
+    ? `${marker}\n${content.trim()}\n\n${remaining}`
+    : remaining;
+}
+
+export function cardWithConnectedAgentSkills(
+  deck: DeckDocument,
+  card: DeckCard,
+): DeckCard {
+  const profiles = new Set(savedCardBotRoster(deck, card).map((value) => value.toLowerCase()));
+  const blocks = deck.nodes.flatMap((target) => {
+    if (!profiles.has(target.runtime.profile.toLowerCase())) return [];
+    const skill = promptSection(String(target.prompt || ''), 'ORCHESTRATOR SKILL');
+    const title = String(target.title || target.runtime.profile).trim();
+    return [`[BOT: @${title}]\n${skill || 'This connected Card has no saved ORCHESTRATOR SKILL. Do not call it until the Card is configured.'}`];
+  });
+  return {
+    ...card,
+    prompt: withPromptSection(
+      String(card.prompt || ''),
+      'ALL CONNECTED AGENTS',
+      blocks.join('\n\n'),
+    ),
+  };
 }
 
 function configuredProfileParams(

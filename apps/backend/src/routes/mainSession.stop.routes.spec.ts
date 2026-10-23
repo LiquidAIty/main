@@ -1301,7 +1301,7 @@ describe('Main direct-recipient stop settlement', () => {
     }));
   });
 
-  it('attributes an explicitly addressed AutoTeam result to the addressed Card', async () => {
+  it('settles the child Task result and attributes the final synthesis to Main', async () => {
     const fake = teamWaitingGateway();
     gatewayMocks.hermesGateway.mockResolvedValue(fake.client);
     projectMocks.projectCardAuthority.mockResolvedValue(authority());
@@ -1330,16 +1330,16 @@ describe('Main direct-recipient stop settlement', () => {
     fake.complete();
     const stream = await streamRequest;
 
-    expect(stream).toContain('Builder team result');
-    expect(stream).not.toContain('Main relay after the completed task.');
-    expect(stream).toContain('"label":"Builder"');
+    expect(stream).toContain('Main relay after the completed task.');
+    expect(stream).not.toContain('"label":"Builder"');
+    expect(stream).toContain('"label":"Main"');
     expect(conversationMocks.appendConversationReplyOnce).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.objectContaining({
-          content: 'Builder team result',
+          content: 'Main relay after the completed task.',
           speaker: expect.objectContaining({
-            cardId: 'builder',
-            profile: 'builder',
+            cardId: 'card-main',
+            profile: 'main',
           }),
           linkedEvidenceIds: ['know-one'],
         }),
@@ -1444,15 +1444,13 @@ describe('Main direct-recipient stop settlement', () => {
     }));
   });
 
-  it('stops Main and the exact recipient, cancels the outer Run, and persists no partial reply', async () => {
-    let markRecipientWaiting!: () => void;
-    const recipientWaiting = new Promise<void>((resolve) => { markRecipientWaiting = resolve; });
-    const fakeGateway = gateway(markRecipientWaiting);
-    gatewayMocks.hermesGateway.mockResolvedValue(fakeGateway);
+  it('keeps @Name inside Main and uses Hermes notification delivery without a session map', async () => {
+    const fake = notificationWaitingGateway();
+    gatewayMocks.hermesGateway.mockResolvedValue(fake.client);
     projectMocks.projectCardAuthority.mockResolvedValue(authority());
     const { baseUrl } = await serve();
 
-    const chatRequest = fetch(`${baseUrl}/api/main/session/chat`, {
+    const chat = await fetch(`${baseUrl}/api/main/session/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1463,15 +1461,17 @@ describe('Main direct-recipient stop settlement', () => {
         clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000002',
       }),
     });
-
-    const chat = await chatRequest;
     const streamRequest = chat.text();
-    await Promise.race([
-      recipientWaiting,
-      streamRequest.then((text) => {
-        throw new Error(`chat_ended_before_recipient_wait:${text}`);
-      }),
-    ]);
+    await fake.waiting;
+    const promptSubmit = vi.mocked(fake.client.request).mock.calls.find(
+      ([method]) => method === 'prompt.submit',
+    );
+    expect(promptSubmit?.[1]).toMatchObject({
+      text: '@Builder investigate the exact issue',
+      bot_mode_reply_delivery: 'notification',
+    });
+    expect(promptSubmit?.[1]).not.toHaveProperty('bot_mode_sessions');
+
     const stopped = await fetch(`${baseUrl}/api/main/session/stop`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1485,9 +1485,7 @@ describe('Main direct-recipient stop settlement', () => {
 
     expect(stopped.status).toBe(200);
     expect(await stopped.json()).toEqual({ ok: true, runId: 'run-one', state: 'stopping' });
-    expect((fakeGateway.request as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([method]) => method === 'session.interrupt',
-    ).map(([, params]) => params)).toEqual(expect.arrayContaining([
+    expect(fake.interrupts).toEqual(expect.arrayContaining([
       {
         session_id: 'live-main',
         expected_submission_id: 'run-one',
@@ -1495,12 +1493,11 @@ describe('Main direct-recipient stop settlement', () => {
       },
       {
         session_id: 'live-builder',
-        expected_submission_id: '__bot_dm__delivery-one',
+        expected_submission_id: '__bot_dm__delivery-notify',
       },
     ]));
     expect(chat.status).toBe(200);
     expect(stream).toContain('"state":"cancelled"');
-    expect(stream).not.toContain('partial result that must not persist');
     expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
       runId: 'run-one',
       state: 'cancelled',
@@ -1508,7 +1505,6 @@ describe('Main direct-recipient stop settlement', () => {
       errorCode: 'hermes_turn_cancelled',
     }));
     expect(conversationMocks.appendConversationReplyOnce).not.toHaveBeenCalled();
-    expect(conversationMocks.appendConversationTurn).toHaveBeenCalledOnce();
   });
 
 });

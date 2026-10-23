@@ -48,11 +48,9 @@ from graphiti_core.helpers import (
 )
 from graphiti_core.llm_client import LLMClient, OpenAIClient
 from graphiti_core.knows import (
-    AboutEdge,
     KnowCitation,
     KnowDirection,
     KnowNode,
-    about_uuid,
     know_content_hash,
     know_episode_content,
     know_uuid,
@@ -140,7 +138,6 @@ class AddEpisodeResults(BaseModel):
 class AddKnowResults(BaseModel):
     know: KnowNode
     entity: EntityNode
-    about_edge: AboutEdge
     episode_results: AddEpisodeResults | None
     created: bool
     entity_created: bool
@@ -1344,8 +1341,8 @@ class Graphiti:
 
         A Know remains a normal episode for extraction, temporal ordering, hybrid
         retrieval, communities, and Saga membership. The additional ``Know`` label
-        and sole ``ABOUT`` edge preserve its typed, explicit Entity attachment;
-        extraction-owned ``MENTIONS`` edges remain independent.
+        stores its exact Entity UUID as data. Know records retain no ``ABOUT`` or
+        ``MENTIONS`` attachment edges.
         """
 
         observation = observation.strip()
@@ -1381,18 +1378,9 @@ class Graphiti:
         if existing is not None:
             if existing.entity_uuid != entity.uuid:
                 raise ValueError('Know content is already attached to a different Entity')
-            existing_about = AboutEdge(
-                uuid=about_uuid(existing.uuid, entity.uuid),
-                source_node_uuid=existing.uuid,
-                target_node_uuid=entity.uuid,
-                group_id=group_id,
-                created_at=existing.created_at,
-                entity_created=existing.entity_created,
-            )
             return AddKnowResults(
                 know=existing,
                 entity=entity,
-                about_edge=existing_about,
                 episode_results=None,
                 created=False,
                 entity_created=False,
@@ -1447,20 +1435,12 @@ class Graphiti:
             direction=direction,
             content_hash=digest,
         )
-        about = AboutEdge(
-            uuid=about_uuid(know.uuid, entity.uuid),
-            source_node_uuid=know.uuid,
-            target_node_uuid=entity.uuid,
-            group_id=group_id,
-            created_at=know.created_at,
-            entity_created=entity_created,
-        )
-        await know.save_know(driver, about)
+        know.entity_created = entity_created
+        await know.save_know(driver)
         know = await KnowNode.get_by_uuid(driver, know.uuid)
         return AddKnowResults(
             know=know,
             entity=entity,
-            about_edge=about,
             episode_results=episode_results,
             created=True,
             entity_created=entity_created,
@@ -2082,27 +2062,6 @@ class Graphiti:
 
         # Find nodes mentioned by the episode
         nodes = await get_mentioned_nodes(self.driver, [episode])
-        attachment_by_entity: dict[str, bool] = {}
-        if self.driver.provider != GraphProvider.KUZU:
-            attachment_rows, _, _ = await self.driver.execute_query(
-                """
-                MATCH (episode:Episodic {uuid: $episode_uuid})
-                      -[about:ABOUT]->(entity:Entity)
-                RETURN entity.uuid AS entity_uuid,
-                       coalesce(about.entity_created, false) AS entity_created
-                """,
-                episode_uuid=episode.uuid,
-                routing_='r',
-            )
-            attachment_by_entity = {
-                str(row['entity_uuid']): bool(row.get('entity_created'))
-                for row in attachment_rows
-                if row.get('entity_uuid')
-            }
-            mentioned_ids = {node.uuid for node in nodes}
-            for entity_uuid in attachment_by_entity:
-                if entity_uuid not in mentioned_ids:
-                    nodes.append(await EntityNode.get_by_uuid(self.driver, entity_uuid))
         # We should delete all nodes that are only mentioned in the deleted episode
         nodes_to_delete: list[EntityNode] = []
         for node in nodes:
@@ -2110,28 +2069,7 @@ class Graphiti:
             records, _, _ = await self.driver.execute_query(query, uuid=node.uuid, routing_='r')
 
             for record in records:
-                if node.uuid not in attachment_by_entity:
-                    if record['episode_count'] == 1:
-                        nodes_to_delete.append(node)
-                    continue
-                if not attachment_by_entity[node.uuid]:
-                    continue
-                reference_records, _, _ = await self.driver.execute_query(
-                    """
-                    MATCH (entity:Entity {uuid: $entity_uuid})
-                    OPTIONAL MATCH (other_episode:Episodic)-[:MENTIONS]->(entity)
-                    WHERE other_episode.uuid <> $episode_uuid
-                    WITH entity, count(DISTINCT other_episode) AS other_mentions
-                    OPTIONAL MATCH (other_know:Episodic:Know)-[:ABOUT]->(entity)
-                    WHERE other_know.uuid <> $episode_uuid
-                    WITH other_mentions, count(DISTINCT other_know) AS other_knows
-                    RETURN other_mentions + other_knows AS other_references
-                    """,
-                    episode_uuid=episode.uuid,
-                    entity_uuid=node.uuid,
-                    routing_='r',
-                )
-                if reference_records and reference_records[0]['other_references'] == 0:
+                if record['episode_count'] == 1:
                     nodes_to_delete.append(node)
 
         await Edge.delete_by_uuids(self.driver, [edge.uuid for edge in edges_to_delete])

@@ -45,6 +45,20 @@ function hasEnabledCard(
   ));
 }
 
+function hasConnectedEnabledCard(
+  deck: Pick<DeckDocument, 'nodes' | 'edges'>,
+  predicate: (card: AgentCardInstance) => boolean,
+): boolean {
+  return deck.nodes.some((node) => (
+    node.enabled !== false
+    && predicate(node)
+    && deck.edges.some((edge) => (
+      edge.enabled !== false
+      && (edge.source === node.id || edge.target === node.id)
+    ))
+  ));
+}
+
 export function deriveVisibleRailItems({
   deck,
   workspaceView,
@@ -57,7 +71,7 @@ export function deriveVisibleRailItems({
     showKnowledge: true,
     showWorldsignal:
       workspaceView === 'worldsignal' ||
-      hasEnabledCard(deck.nodes, isWorldSignalsAgentCard),
+      hasConnectedEnabledCard(deck, isWorldSignalsAgentCard),
     showWorldview:
       workspaceView === 'worldview' ||
       hasEnabledCard(deck.nodes, isWorldViewCard),

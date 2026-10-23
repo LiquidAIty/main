@@ -1,4 +1,4 @@
-"""Application operation for the saved Magnetic Card."""
+"""Internal execution owner for the saved Magnetic Card."""
 
 # Entity: Magnetic TaskGraph
 # Relationship: This file submits one approved mission to the saved Mag One Card, observes the same Hermes root, reports progress, and returns its actual terminal synthesis.
@@ -11,21 +11,12 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
-import time
 from typing import Any
-from uuid import uuid4
 
-from app.python_models.operation_definition import OperationDefinition
 from app.python_models.magnetic_taskgraph_authority import MagneticTaskGraphError
-from app.python_models.graph_reference_contracts import grounded_data_anchors_schema
-from mcp.types import CallToolResult, TextContent
 
 
 _MAGNETIC_TERMINAL_STATES = frozenset({"completed", "blocked", "failed", "cancelled"})
-_MAGNETIC_COMPLETION_WAIT_SECONDS = 540.0
-_MAGNETIC_POLL_SECONDS = 1.0
 
 
 def _task_metrics(result: dict[str, Any]) -> dict[str, int]:
@@ -65,47 +56,6 @@ def _record_progress(run_id: str, result: dict[str, Any], metrics: dict[str, int
         or observed.get("updated") is not True
     ):
         raise MagneticTaskGraphError("magnetic_taskgraph_outer_run_progress_invalid")
-
-
-def _wait_for_completion(
-    run_id: str,
-    hermes_root_id: str,
-    *,
-    timeout_seconds: float = _MAGNETIC_COMPLETION_WAIT_SECONDS,
-    poll_seconds: float = _MAGNETIC_POLL_SECONDS,
-) -> tuple[dict[str, Any], dict[str, int]]:
-    """Wait inside the exact Mag One invocation; never create a background supervisor."""
-
-    from app.python_models.magnetic_taskgraph_readback import read_magnetic_taskgraph
-
-    deadline = time.monotonic() + max(0.0, timeout_seconds)
-    last_progress: tuple[Any, ...] | None = None
-    while True:
-        result = read_magnetic_taskgraph({"hermesRootId": hermes_root_id})
-        if str(result.get("hermesRootId") or "").strip() != hermes_root_id:
-            raise MagneticTaskGraphError("magnetic_taskgraph_root_identity_mismatch")
-        metrics = _task_metrics(result)
-        state = str(result.get("state") or "").strip()
-        if state in _MAGNETIC_TERMINAL_STATES:
-            return result, metrics
-        progress = (
-            result.get("hermesRunId"), result.get("hermesStatus"),
-            metrics["tasksCompleted"], metrics["tasksTotal"], metrics["activeWorkers"],
-        )
-        if progress != last_progress:
-            _record_progress(run_id, result, metrics)
-            last_progress = progress
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return ({
-                **result,
-                "ok": True,
-                "runId": run_id,
-                "completionPending": True,
-                "outerRunSettled": False,
-                "error": "magnetic_taskgraph_completion_timeout",
-            }, metrics)
-        time.sleep(min(max(0.01, poll_seconds), remaining))
 
 
 def _failure_fields(result: dict[str, Any], state: str) -> dict[str, str]:
@@ -185,9 +135,33 @@ def reconcile_magnetic_taskgraph_run(
     }
 
 
-def _execute_mag_one(
-    *, input: str, data_anchors: list[Any], project_id: str,
+def cancel_magnetic_taskgraph_run(
+    run_id: str,
+    hermes_root_id: str,
+) -> dict[str, Any]:
+    from app.python_models.magnetic_taskgraph_authority import call_hermes_taskgraph_adapter
+
+    cancelled = call_hermes_taskgraph_adapter({
+        "action": "cancel_root",
+        "runId": run_id,
+        "rootId": hermes_root_id,
+    })
+    root = cancelled.get("root")
+    if not isinstance(root, dict) or str(root.get("taskId") or "").strip() != hermes_root_id:
+        raise MagneticTaskGraphError("magnetic_taskgraph_cancel_readback_invalid")
+    result = reconcile_magnetic_taskgraph_run(run_id, hermes_root_id)
+    if result.get("state") != "cancelled" or result.get("outerRunSettled") is not True:
+        raise MagneticTaskGraphError("magnetic_taskgraph_cancel_settlement_invalid")
+    return {
+        **result,
+        "archivedTaskIds": cancelled.get("archivedTaskIds") or [],
+    }
+
+
+def start_magnetic_taskgraph(
+    *, run_id: str, input: str, data_anchors: list[Any], project_id: str,
     deck_id: str, conversation_id: str, caller_card_id: str,
+    originating_run_id: str, notification: dict[str, Any],
 ) -> dict[str, Any]:
     from app.python_models.card_invocation_preparation import (
         resolve_magnetic_taskgraph_card,
@@ -197,7 +171,6 @@ def _execute_mag_one(
     from app.python_models.saved_card_contract import CardDomainError
     from app.python_models.magnetic_taskgraph_submission import submit_magnetic_taskgraph
 
-    run_id = f"req_{uuid4().hex[:16]}"
     run_prepared = False
     root_accepted = False
     hermes_root_id = ""
@@ -208,6 +181,7 @@ def _execute_mag_one(
             "deckId": target["deckId"],
             "cardId": target["cardId"],
             "senderCardId": caller_card_id,
+            "originatingRunId": originating_run_id,
             "runId": run_id,
             "correlationId": run_id,
             "conversationId": conversation_id or "main",
@@ -221,15 +195,20 @@ def _execute_mag_one(
         execution = prepared.get("magneticTaskGraph")
         if not isinstance(execution, dict):
             raise MagneticTaskGraphError("magnetic_taskgraph_contract_missing")
-        accepted = submit_magnetic_taskgraph(execution)
+        accepted = submit_magnetic_taskgraph({
+            **execution,
+            "notification": notification,
+        })
         hermes_root_id = str(accepted.get("hermesRootId") or "").strip()
         if not hermes_root_id:
             raise MagneticTaskGraphError("magnetic_taskgraph_hermes_root_id_required")
         root_accepted = True
-        result, metrics = _wait_for_completion(run_id, hermes_root_id)
-        if result.get("completionPending") is True:
-            return result
-        return _settle_terminal_result(run_id, result, metrics)
+        return {
+            **accepted,
+            "ok": True,
+            "runId": run_id,
+            "outerRunSettled": False,
+        }
     except (CardDomainError, MagneticTaskGraphError) as error:
         failed_run_settled = False
         if run_prepared and not root_accepted:
@@ -255,71 +234,3 @@ def _execute_mag_one(
             "outerRunSettled": failed_run_settled,
             "error": str(error),
         }
-
-
-async def run_mag_one(
-    *, input: str, dataAnchors: list[Any] | None = None,
-    projectId: str, deckId: str, conversationId: str,
-    _callerCardId: str,
-) -> CallToolResult:
-    anchors = [
-        {**anchor, "required": True} if isinstance(anchor, dict) else anchor
-        for anchor in (dataAnchors or [])
-    ]
-    result = await asyncio.to_thread(
-        _execute_mag_one,
-        input=input,
-        data_anchors=anchors,
-        project_id=projectId,
-        deck_id=deckId,
-        conversation_id=conversationId,
-        caller_card_id=_callerCardId,
-    )
-    return CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(result, ensure_ascii=False))],
-        structuredContent=result,
-        isError=result.get("ok") is False,
-    )
-
-
-def mag_one_operation_definitions(
-    external: frozenset[str],
-) -> list[OperationDefinition]:
-    return [
-        OperationDefinition(
-            canonical_id="run_mag_one",
-            title="Mag One",
-            description=(
-                "Main only: submit one explicitly approved mission and deliberately selected "
-                "graph references to the saved Magnetic Card's existing Hermes Mag One execution. "
-                "The authenticated runtime supplies Project, Card, conversation, and Run authority; "
-                "the saved blue topology supplies the exact worker ceiling. This starts real work, "
-                "waits on that exact Hermes root, and returns its actual terminal result."
-            ),
-            parameters_schema={
-                "type": "object",
-                "properties": {
-                    "input": {"type": "string", "minLength": 1},
-                    "dataAnchors": grounded_data_anchors_schema(),
-                },
-                "required": ["input"],
-                "additionalProperties": False,
-            },
-            handler=run_mag_one,
-            available=True,
-            publishers=external,
-            access="write",
-            namespace="main",
-            grant_eligible=True,
-            grant_profiles=frozenset({"main"}),
-            annotations={
-                "readOnlyHint": False,
-                "destructiveHint": False,
-                "idempotentHint": False,
-                "openWorldHint": False,
-            },
-            dispatcher_context_arguments=frozenset({
-                "projectId", "deckId", "conversationId", "_callerCardId",
-            }),
-        ),
-    ]

@@ -1,10 +1,10 @@
 /**
  * Entity: Main Chat
- * Relationship: This file verifies Main uses the saved Project session closure and classifies Hermes completion, failure, and interruption without inventing a result.
+ * Relationship: This file verifies Main binds only its already-started Project session and classifies Hermes completion, failure, and interruption without inventing a result.
  * Entity: Hermes Card Sessions
- * Relationship: This file verifies only Main, an explicitly addressed recipient, and that recipient's downstream orange closure receive resumed Project sessions.
+ * Relationship: This file verifies a Main request does not restart every Card or construct a duplicate profile-to-session map.
  * Entity: Bot Mode Delegation
- * Relationship: This file verifies explicit @Card routing accepts only the exact orange roster and requires a complete direct Hermes delivery receipt.
+ * Relationship: This file verifies the actual message_agent target reported by Hermes maps to one saved Bot identity.
  * Entity: Run Ledger
  * Relationship: This file verifies interrupted and cancelled Hermes completions remain cancellation evidence rather than completed Run results.
  */
@@ -56,8 +56,6 @@ vi.mock('../services/projectStore', async () => {
 
 import {
   cardSession,
-  directRecipientSubmissionId,
-  explicitlyAddressedCard,
   hermesCompletionError,
   messageAgentTargetMatchesCard,
 } from './mainSession.routes';
@@ -111,7 +109,7 @@ function gateway(): HermesGatewayClient {
 }
 
 describe('Main Project-session closure', () => {
-  it('restores an addressed orchestrator and its downstream orange closure only', async () => {
+  it('binds Main once with the full enabled Bot roster and no duplicate session map', async () => {
     const mainCard = card('card-main', 'main', 'main');
     const signalCard = card('card-signal', 'signal');
     signalCard.runtimeOptions = { orchestrator: true };
@@ -126,6 +124,12 @@ describe('Main Project-session closure', () => {
       edges: [
         { id: 'main-signal', source: mainCard.id, target: signalCard.id, edgeType: 'flow' },
         { id: 'signal-worldsignals', source: signalCard.id, target: worldSignalsCard.id, edgeType: 'flow' },
+        {
+          id: 'magnetic-workers',
+          source: worldSignalsCard.id,
+          target: unrelatedCard.id,
+          edgeType: 'magentic_option',
+        },
       ],
       version: 1,
     } as DeckDocument;
@@ -146,29 +150,19 @@ describe('Main Project-session closure', () => {
         projectSessionId: 'project-1',
         userId: 'user-1',
       },
-      cards[1],
     );
 
-    expect(Object.keys(result.cardSessions).sort()).toEqual([
-      'main', 'signal', 'worldsignals',
+    expect(Object.keys(result.cardSessions)).toEqual(['main']);
+    expect(result.cardSessions.main.botModeRoster).toEqual([
+      'signal', 'worldsignals', 'unrelated',
     ]);
-    expect(result.cardSessions.main.botModeRoster).toEqual(['signal']);
-    expect(result.cardSessions.main.botModeSessions).toEqual({
-      signal: 'stored-signal',
-    });
-    expect(result.cardSessions.signal.botModeRoster).toEqual(['worldsignals']);
-    expect(result.cardSessions.signal.botModeSessions).toEqual({
-      worldsignals: 'stored-worldsignals',
-    });
-    expect(result.cardSessions.worldsignals.botModeRoster).toEqual([]);
-    expect(result.cardSessions).not.toHaveProperty('unrelated');
+    expect(result.cardSessions.main).not.toHaveProperty('botModeSessions');
     const resumeCalls = vi.mocked(client.request).mock.calls
       .filter(([method]) => method === 'session.resume');
-    expect(resumeCalls).toHaveLength(3);
+    expect(resumeCalls).toHaveLength(1);
     expect(resumeCalls.every(([_method, params]) => params?.eager_build === true)).toBe(true);
-    expect(resumeCalls.map(([_method, params]) => params?.profile).sort()).toEqual([
-      'main', 'signal', 'worldsignals',
-    ]);
+    expect(resumeCalls.map(([_method, params]) => params?.profile)).toEqual(['main']);
+    expect(resumeCalls[0]?.[1]).not.toHaveProperty('bot_mode_sessions');
     const materializeCalls = profileMocks.materializeSavedCardProfile.mock.calls.length;
     await cardSession(
       client,
@@ -179,7 +173,6 @@ describe('Main Project-session closure', () => {
         projectSessionId: 'project-1',
         userId: 'user-1',
       },
-      cards[1],
     );
     expect(profileMocks.materializeSavedCardProfile).toHaveBeenCalledTimes(materializeCalls);
   });
@@ -196,17 +189,7 @@ describe('Main Project-session closure', () => {
 
 });
 
-describe('direct saved-Card delivery correlation', () => {
-  it('rejects an explicit address that is absent from the exact orange roster', () => {
-    const target = binding(card('card-builder', 'builder'));
-    target.address = 'Builder';
-
-    expect(explicitlyAddressedCard('normal Main question', [target])).toBeNull();
-    expect(explicitlyAddressedCard('@Builder make this precise', [target])).toBe(target);
-    expect(() => explicitlyAddressedCard('@Trader compare these', [target]))
-      .toThrow('main_address_not_authorized:trader');
-  });
-
+describe('saved Bot event correlation', () => {
   it('recognizes only the exact authorized profile or saved address', () => {
     const target = binding(card('card-world-signals', 'worldsignals'));
     target.address = 'WorldSignals';
@@ -215,23 +198,5 @@ describe('direct saved-Card delivery correlation', () => {
     expect(messageAgentTargetMatchesCard('@WorldSignals', target)).toBe(true);
     expect(messageAgentTargetMatchesCard('World Signals', target)).toBe(false);
     expect(messageAgentTargetMatchesCard('world', target)).toBe(false);
-  });
-
-  it('accepts only a complete direct Hermes admission receipt', () => {
-    expect(directRecipientSubmissionId({
-      delivery_id: 'delivery-one',
-      process_id: 'process-one',
-      reply_delivery: 'direct',
-    })).toBe('__bot_dm__delivery-one');
-
-    for (const invalid of [
-      { delivery_id: '', process_id: 'process-one', reply_delivery: 'direct' },
-      { delivery_id: 'delivery-one', process_id: '', reply_delivery: 'direct' },
-      { delivery_id: 'delivery-one', process_id: 'process-one', reply_delivery: 'notification' },
-      { delivery_id: 'delivery-one', process_id: 'process-one', reply_delivery: 'direct', notification_error: 'failed' },
-    ]) {
-      expect(() => directRecipientSubmissionId(invalid))
-        .toThrow('hermes_addressed_delivery_correlation_missing');
-    }
   });
 });

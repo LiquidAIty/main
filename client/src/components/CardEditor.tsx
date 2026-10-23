@@ -1,21 +1,19 @@
 // Entity: Saved Cards
-// Relationship: This file edits one saved Card's title, prompt, runtime, model, reasoning, delegation, skills, tools, connections, subsystems, and optional Script configuration.
+// Relationship: This file edits one saved Card's title, prompt, runtime, model, reasoning, delegation, skills, tools, connections, orchestrator skill, and optional Python source.
 // Entity: Agent Builder
 // Relationship: This file owns the human-facing Prompt, Runtime, Memory, Skills, Tools, and Script editing surfaces inside the construction workspace.
 // Entity: IDD
 // Relationship: This file loads the current Card-editor field and choice projection instead of maintaining a second runtime configuration dictionary.
 // Entity: Hermes Profiles
-// Relationship: This file reads effective profile state, learning details, and MCP server configuration and submits explicit profile edits and connection tests.
+// Relationship: This file reads effective profile state and learning details without exposing transport diagnostics or interactive MCP authentication in every Card editor.
 // Entity: Tool Catalog
 // Relationship: This file searches and selects live profile-eligible capabilities while preserving unresolved saved selections and the Card's explicit grant ceiling.
 // Entity: Card Scripts
 // Relationship: This file mounts the saved Python Script editor and persists only the visible Script configuration returned by that bounded editor.
-// Entity: Credentials
-// Relationship: This file initiates, polls, cancels, and reports explicit Hermes MCP OAuth authorization without storing provider secrets in Card configuration.
 // Entity: Run Ledger
 // Relationship: This file reads the selected Card's latest runtime and token metrics for display without starting or reconciling a Run.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   AgentCardRuntimeOptions,
@@ -24,10 +22,8 @@ import type {
 import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
 import {
   applyHermesProfileOperation,
-  connectHermesMcpOAuth,
   loadHermesProfile,
   loadHermesLearningDetail,
-  testHermesMcp,
   type HermesProfileView,
 } from '../features/agentbuilder/hermesProfileClient';
 
@@ -162,11 +158,11 @@ interface CardEditorProps {
   onChangeCardName?: (value: string) => void;
   localConfig?: CardEditorConfig | null;
   onSaveLocalConfig?: (config: CardEditorConfig) => void | Promise<void>;
-  registerCardLeave?: (save: (() => Promise<boolean>) | null) => void;
   orangeConnections?: Array<{
     cardId: string;
     title: string;
     direction: 'incoming' | 'outgoing';
+    prompt?: string;
   }>;
 }
 
@@ -211,6 +207,7 @@ type PromptFields = {
   memoryPolicy: string;
   outputExpectations: string;
   connectedAgents: string;
+  orchestratorSkill: string;
 };
 
 const PROMPT_HEADINGS: Record<string, keyof PromptFields> = {
@@ -219,6 +216,7 @@ const PROMPT_HEADINGS: Record<string, keyof PromptFields> = {
   OUTPUT_EXPECTATIONS: 'outputExpectations', OUTPUT_CONTRACT: 'outputExpectations',
   OUTPUT_REQUIREMENTS: 'outputExpectations',
   ALL_CONNECTED_AGENTS: 'connectedAgents', ALL_AGENTS_CONNECTED: 'connectedAgents',
+  ORCHESTRATOR_SKILL: 'orchestratorSkill',
 };
 
 function promptHeadingKey(label: string): string {
@@ -233,6 +231,7 @@ const CANONICAL_PROMPT_HEADING: Record<keyof PromptFields, string> = {
   memoryPolicy: 'MEMORY_POLICY',
   outputExpectations: 'OUTPUT_EXPECTATIONS',
   connectedAgents: 'ALL CONNECTED AGENTS',
+  orchestratorSkill: 'ORCHESTRATOR SKILL',
 };
 
 function promptHeadings(template: string) {
@@ -291,7 +290,7 @@ function promptFieldRanges(template: string) {
 function parsePromptTemplate(template: string): PromptFields & Record<string, string> {
   const fields: PromptFields & Record<string, string> = {
     role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '', outputExpectations: '',
-    connectedAgents: '',
+    connectedAgents: '', orchestratorSkill: '',
   };
   for (const range of promptFieldRanges(template)) fields[range.key] = template.slice(range.start, range.end);
   return fields;
@@ -332,13 +331,16 @@ export function CardEditor({
   onChangeCardName,
   localConfig,
   onSaveLocalConfig,
-  registerCardLeave,
   orangeConnections = [],
 }: CardEditorProps) {
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
   const outboundOrangeConnections = orangeConnections.filter(
     (connection) => connection.direction === 'outgoing',
   );
+  const generatedConnectedAgents = useMemo(() => outboundOrangeConnections.map((connection) => {
+    const skill = parsePromptTemplate(String(connection.prompt || '')).orchestratorSkill.trim();
+    return `[BOT: @${connection.title}]\n${skill || 'This connected Card has no saved ORCHESTRATOR SKILL. Do not call it until the Card is configured.'}`;
+  }).join('\n\n'), [outboundOrangeConnections]);
   const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
   const [runtimeMetrics, setRuntimeMetrics] = useState<RuntimeMetrics | null>(null);
   const [runtimeMetricsLoading, setRuntimeMetricsLoading] = useState(false);
@@ -386,10 +388,6 @@ export function CardEditor({
     limit: 100,
     hasMore: false,
   });
-  const [toolDictionaryQuery, setToolDictionaryQuery] = useState('');
-  const [toolDictionaryNamespace, setToolDictionaryNamespace] = useState('');
-  const [toolDictionaryOffset, setToolDictionaryOffset] = useState(0);
-  const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(true);
   const [toolDictionaryBusy, setToolDictionaryBusy] = useState(true);
   const [toolOptionsError, setToolOptionsError] = useState(false);
   const [promptText, setPromptText] = useState('');
@@ -401,6 +399,7 @@ export function CardEditor({
     memoryPolicy: '',
     outputExpectations: '',
     connectedAgents: '',
+    orchestratorSkill: '',
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState<Record<string, boolean>>({});
   const [toolsText, setToolsText] = useState('');
@@ -419,12 +418,6 @@ export function CardEditor({
   const [hermesLearningDraft, setHermesLearningDraft] = useState('');
   const [hermesLearningStatus, setHermesLearningStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [hermesLearningError, setHermesLearningError] = useState<string | null>(null);
-  const [hermesMcpChecks, setHermesMcpChecks] = useState<Record<string, {
-    status: 'checking' | 'connected' | 'failed';
-    toolCount: number;
-    error: string | null;
-  }>>({});
-  const hermesMcpOAuthControllersRef = useRef<Map<string, AbortController>>(new Map());
   const draftDirtyRef = useRef(false);
   useEffect(() => {
     setCardNameDraft(cardName);
@@ -540,6 +533,7 @@ export function CardEditor({
     const savedScript = localConfig.runtime_options?.script
       ? structuredClone(localConfig.runtime_options.script)
       : blankCardScript();
+    savedScript.enabled = Boolean(savedScript.source.trim());
     const cachedScript = scriptDraftCacheRef.current.get(cardId);
     const preserveUnsavedScript = Boolean(
       cachedScript
@@ -644,11 +638,6 @@ export function CardEditor({
   // Hermes profile readback is identity-scoped and deliberately independent from
   // unsaved Card drafts. Card save never mutates the bound profile.
   }, [isLocalConfigMode, projectId, deckId, cardId, acceptHermesProfileReadback]);
-
-  useEffect(() => () => {
-    for (const controller of hermesMcpOAuthControllersRef.current.values()) controller.abort();
-    hermesMcpOAuthControllersRef.current.clear();
-  }, [projectId, deckId, cardId]);
 
 
   const markDraftDirty = () => {
@@ -813,89 +802,6 @@ export function CardEditor({
     }
   }, [projectId, deckId, cardId]);
 
-  const checkHermesMcpServer = useCallback(async (serverName: string) => {
-    if (!projectId || !deckId || !cardId) return;
-    setHermesMcpChecks((current) => ({
-      ...current,
-      [serverName]: { status: 'checking', toolCount: 0, error: null },
-    }));
-    try {
-      const result = await testHermesMcp({ projectId, deckId, cardId, serverName });
-      setHermesMcpChecks((current) => ({
-        ...current,
-        [serverName]: {
-          status: result.ok ? 'connected' : 'failed',
-          toolCount: result.tools.length,
-          error: result.error,
-        },
-      }));
-    } catch (error) {
-      setHermesMcpChecks((current) => ({
-        ...current,
-        [serverName]: {
-          status: 'failed',
-          toolCount: 0,
-          error: error instanceof Error ? error.message : 'Connection check failed.',
-        },
-      }));
-    }
-  }, [projectId, deckId, cardId]);
-
-  const connectHermesMcpServer = useCallback(async (serverName: string) => {
-    if (!projectId || !deckId || !cardId) return;
-    const authorizationWindow = window.open('about:blank', '_blank');
-    if (!authorizationWindow) {
-      setHermesMcpChecks((current) => ({
-        ...current,
-        [serverName]: {
-          status: 'failed',
-          toolCount: 0,
-          error: 'The authorization window was blocked.',
-        },
-      }));
-      return;
-    }
-    authorizationWindow.opener = null;
-    hermesMcpOAuthControllersRef.current.get(serverName)?.abort();
-    const controller = new AbortController();
-    hermesMcpOAuthControllersRef.current.set(serverName, controller);
-    setHermesMcpChecks((current) => ({
-      ...current,
-      [serverName]: { status: 'checking', toolCount: 0, error: null },
-    }));
-    try {
-      const result = await connectHermesMcpOAuth({
-        projectId,
-        deckId,
-        cardId,
-        serverName,
-        signal: controller.signal,
-        authorizationWindow,
-      });
-      if (controller.signal.aborted) return;
-      acceptHermesProfileReadback(result);
-      setHermesMcpChecks((current) => ({
-        ...current,
-        [serverName]: { status: 'connected', toolCount: result.toolCount, error: null },
-      }));
-    } catch (error) {
-      authorizationWindow.close();
-      if (controller.signal.aborted) return;
-      setHermesMcpChecks((current) => ({
-        ...current,
-        [serverName]: {
-          status: 'failed',
-          toolCount: 0,
-          error: error instanceof Error ? error.message : 'MCP OAuth failed.',
-        },
-      }));
-    } finally {
-      if (hermesMcpOAuthControllersRef.current.get(serverName) === controller) {
-        hermesMcpOAuthControllersRef.current.delete(serverName);
-      }
-    }
-  }, [projectId, deckId, cardId, acceptHermesProfileReadback]);
-
   const saveCurrentDraft = useCallback(async (): Promise<void> => {
       const learningRevision = hermesLearningRevisionRef.current;
       const profileState = hermesProfileReadbackRef.current;
@@ -954,11 +860,6 @@ export function CardEditor({
     return () => window.clearTimeout(timer);
   }, [draftRevision, saveOnCardLeave]);
 
-  useEffect(() => {
-    registerCardLeave?.(saveOnCardLeave);
-    return () => registerCardLeave?.(null);
-  }, [registerCardLeave, saveOnCardLeave]);
-
   const availableModels = provider ? modelsByProvider[provider] || [] : [];
   const subagentCatalogOptions = Object.entries(modelsByProvider).flatMap(([catalogProvider, models]) => (
     models.map((model) => ({ provider: catalogProvider, ...model }))
@@ -991,10 +892,6 @@ export function CardEditor({
     toolDictionaryPage.selectedKnownReferences,
     toolDictionaryPage.unresolvedSelectedIds,
   );
-  const availableToolRows = toolDictionaryPage.references.filter((reference) =>
-    !savedToolNames.includes(reference.canonicalId)
-    && !showSelectedToolsOnly,
-  );
   const toggleTool = (name: string, checked: boolean) => {
     const next = checked
       ? savedToolNames.includes(name) ? savedToolNames : [...savedToolNames, name]
@@ -1016,11 +913,10 @@ export function CardEditor({
             projectId,
             deckId,
             cardId,
-            query: toolDictionaryQuery,
-            offset: String(toolDictionaryOffset),
-            limit: '100',
+            query: '',
+            offset: '0',
+            limit: '200',
           });
-          if (toolDictionaryNamespace) params.set('namespace', toolDictionaryNamespace);
           if (savedToolNames.length) params.set('selectedIds', savedToolNames.join(','));
           const response = await fetch(`/api/idd/tools?${params}`, {
             signal: controller.signal,
@@ -1035,7 +931,7 @@ export function CardEditor({
             unresolvedSelectedIds: Array.isArray(payload.unresolvedSelectedIds) ? payload.unresolvedSelectedIds : [],
             namespaces: Array.isArray(payload.namespaces) ? payload.namespaces : [],
             total: Number.isFinite(payload.total) ? payload.total : 0,
-            offset: Number.isFinite(payload.offset) ? payload.offset : toolDictionaryOffset,
+            offset: 0,
             limit: Number.isFinite(payload.limit) ? payload.limit : 100,
             hasMore: payload.hasMore === true,
           });
@@ -1068,9 +964,6 @@ export function CardEditor({
     deckId,
     cardId,
     savedToolNames.join('\u0000'),
-    toolDictionaryNamespace,
-    toolDictionaryOffset,
-    toolDictionaryQuery,
   ]);
 
   const renderSectionBody = (sectionTab: string) => {
@@ -1080,6 +973,24 @@ export function CardEditor({
         && (runtimeMode === 'main' || orchestratorEnabled);
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <label style={{ display: 'grid', gap: 7, color: '#E0DED5', fontSize: 12 }}>
+            <span style={{ fontWeight: 700 }}>Orchestrator skill</span>
+            <span style={{ color: '#80969F', fontSize: 10.5 }}>
+              Describe this Card's specialty, tools, invocation conditions, required input,
+              and expected result for a connected orchestrator.
+            </span>
+            <textarea
+              aria-label="Orchestrator skill"
+              value={promptParts.orchestratorSkill}
+              onChange={(event) => {
+                setPromptParts((current) => ({ ...current, orchestratorSkill: event.target.value }));
+                setPromptPartsTouched((current) => ({ ...current, orchestratorSkill: true }));
+                markDraftDirty();
+              }}
+              rows={7}
+            />
+          </label>
+
           {runtimeKind === 'hermes' && runtimeMode !== 'magentic_one' ? (
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#E0DED5', fontSize: 12 }}>
               <input
@@ -1119,22 +1030,13 @@ export function CardEditor({
               </span>
               <textarea
                 aria-label="All connected agents"
-                value={promptParts.connectedAgents}
-                placeholder={outboundOrangeConnections
-                  .map((connection) => (
-                    `${connection.title} is a connected teammate. Describe when and why this Card should call it.`
-                  ))
-                  .join('\n')}
-                onChange={(event) => {
-                  setPromptParts((current) => ({ ...current, connectedAgents: event.target.value }));
-                  setPromptPartsTouched((current) => ({ ...current, connectedAgents: true }));
-                  markDraftDirty();
-                }}
+                value={generatedConnectedAgents}
+                readOnly
                 rows={Math.max(5, Math.min(10, outboundOrangeConnections.length + 3))}
                 style={{
                   width: '100%',
                   padding: 10,
-                  background: '#2B2B2B',
+                  background: 'rgba(20,24,28,0.52)',
                   color: '#FFF',
                   border: '1px solid rgba(242,166,74,.26)',
                   borderRadius: 8,
@@ -1164,7 +1066,7 @@ export function CardEditor({
                   style={{
                     width: '100%',
                     padding: 8,
-                    background: '#2B2B2B',
+                    background: 'rgba(20,24,28,0.52)',
                     color: '#FFF',
                     border: '1px solid #3A3A3A',
                     borderRadius: 8,
@@ -1189,7 +1091,7 @@ export function CardEditor({
               style={{
                 width: '100%',
                 padding: 10,
-                background: '#2B2B2B',
+                background: 'rgba(20,24,28,0.52)',
                 color: '#FFF',
                 border: '1px solid #3A3A3A',
                 borderRadius: 8,
@@ -1216,7 +1118,7 @@ export function CardEditor({
               style={{
                 width: '100%',
                 padding: 10,
-                background: '#2B2B2B',
+                background: 'rgba(20,24,28,0.52)',
                 color: '#FFF',
                 border: '1px solid #3A3A3A',
                 borderRadius: 8,
@@ -1243,7 +1145,7 @@ export function CardEditor({
               style={{
                 width: '100%',
                 padding: 10,
-                background: '#2B2B2B',
+                background: 'rgba(20,24,28,0.52)',
                 color: '#FFF',
                 border: '1px solid #3A3A3A',
                 borderRadius: 8,
@@ -1270,7 +1172,7 @@ export function CardEditor({
               style={{
                 width: '100%',
                 padding: 10,
-                background: '#2B2B2B',
+                background: 'rgba(20,24,28,0.52)',
                 color: '#FFF',
                 border: '1px solid #3A3A3A',
                 borderRadius: 8,
@@ -1297,7 +1199,7 @@ export function CardEditor({
               style={{
                 width: '100%',
                 padding: 10,
-                background: '#2B2B2B',
+                background: 'rgba(20,24,28,0.52)',
                 color: '#FFF',
                 border: '1px solid #3A3A3A',
                 borderRadius: 8,
@@ -1324,7 +1226,7 @@ export function CardEditor({
                   markDraftDirty();
                 }}
                 rows={5}
-                style={{ width: '100%', padding: 10, background: '#2B2B2B', color: '#FFF',
+                style={{ width: '100%', padding: 10, background: 'rgba(20,24,28,0.52)', color: '#FFF',
                   border: '1px solid #3A3A3A', borderRadius: 8, fontFamily: 'monospace',
                   fontSize: 13, resize: 'vertical' }}
               />
@@ -1351,7 +1253,7 @@ export function CardEditor({
       return (
         <section
           data-testid="agent-manager-skills"
-          style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
+          style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid rgba(126,232,226,.18)', borderRadius: 8, background: 'rgba(24,34,36,0.44)' }}
         >
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Skills</div>
           <textarea
@@ -1405,7 +1307,7 @@ export function CardEditor({
                                 padding: '4px 7px',
                                 border: '1px solid #3A4A4F',
                                 borderRadius: 999,
-                                background: '#18201F',
+                                background: 'rgba(20,31,31,0.46)',
                                 color: '#B8C8CD',
                                 fontSize: 10.5,
                                 cursor: 'pointer',
@@ -1436,7 +1338,7 @@ export function CardEditor({
                       markHermesLearningDirty();
                     }}
                     rows={10}
-                    style={{ width: '100%', minWidth: 0, padding: 10, background: '#161A1B', color: '#D5E4E8', border: '1px solid #42565C', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
+                    style={{ width: '100%', minWidth: 0, padding: 10, background: 'rgba(14,20,22,0.48)', color: '#D5E4E8', border: '1px solid rgba(126,232,226,.2)', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
                   />
                 </section>
               ) : null}
@@ -1605,7 +1507,7 @@ export function CardEditor({
                 style={{
                   width: '100%',
                   padding: 8,
-                  background: '#2B2B2B',
+                  background: 'rgba(20,24,28,0.52)',
                   color: '#FFF',
                   border: '1px solid #3A3A3A',
                   borderRadius: 8,
@@ -1646,53 +1548,9 @@ export function CardEditor({
               {autoToolsField?.label || 'Auto Tools'} with Jev · choose only from this Card's selected authorized tools
             </label>
           ) : null}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
-            <input
-              value={toolDictionaryQuery}
-              onChange={(event) => {
-                setToolDictionaryQuery(event.target.value);
-                setToolDictionaryOffset(0);
-              }}
-              placeholder="Search ID, name, namespace, or description"
-              aria-label="Search tools"
-            />
-            <select
-              value={toolDictionaryNamespace}
-              onChange={(event) => {
-                setToolDictionaryNamespace(event.target.value);
-                setToolDictionaryOffset(0);
-              }}
-              aria-label="Filter tools by namespace"
-            >
-              <option value="">All namespaces</option>
-              {toolDictionaryPage.namespaces.map((namespace) => (
-                <option key={namespace} value={namespace}>{namespace}</option>
-              ))}
-            </select>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ color: '#91A9B8', fontSize: 11 }}>
-              <input
-                type="checkbox"
-                checked={showSelectedToolsOnly}
-                onChange={(event) => setShowSelectedToolsOnly(event.target.checked)}
-              />{' '}
-              Selected only
-            </label>
-            <button
-              type="button"
-              disabled={!savedToolNames.length}
-              onClick={() => {
-                setToolsText('');
-                markDraftDirty();
-              }}
-            >
-              Clear selected
-            </button>
-            <span style={{ color: '#80969F', fontSize: 11 }}>
-              {toolDictionaryBusy ? 'Loading tools…' : !toolOptionsError ? `${toolDictionaryPage.total.toLocaleString()} tools` : null}
-            </span>
-          </div>
+          {toolDictionaryBusy ? (
+            <div style={{ color: '#80969F', fontSize: 11 }}>Loading selected tools…</div>
+          ) : null}
           {toolOptionsError ? (
             <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
               Tool options unavailable. Saved selections are unchanged.
@@ -1725,12 +1583,12 @@ export function CardEditor({
                         toggleTool(tool.name, event.target.checked);
                       }
                     }}
-                    aria-label={`Include ${tool.title || tool.name}`}
+                    aria-label={`Include ${tool.name}`}
                   />
                   <span>
-                    <span title={tool.description} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
-                      {tool.title || tool.name}
-                    </span>
+                    <code style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
+                      {tool.name}
+                    </code>
                     <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
                       {tool.availability === 'stale' ? ' · Unavailable in current catalog' : ''}
                       {tool.availability === 'disabled' ? ' · Currently unavailable' : ''}
@@ -1740,199 +1598,10 @@ export function CardEditor({
               ))}
             </div>
           ) : null}
-          {!showSelectedToolsOnly && availableToolRows.length ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-                Available
-              </div>
-              {availableToolRows.map((tool) => (
-                <label
-                  key={tool.canonicalId}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '18px 1fr',
-                    gap: 8,
-                    alignItems: 'start',
-                    padding: '7px 8px',
-                    border: '1px solid #3A4A4F',
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={savedToolNames.includes(tool.canonicalId)}
-                    disabled={!tool.available}
-                    onChange={(event) => toggleTool(tool.canonicalId, event.target.checked)}
-                    aria-label={`Include ${tool.displayName || tool.canonicalId}`}
-                  />
-                  <span>
-                    <span title={tool.shortDescription} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
-                      {tool.displayName || tool.canonicalId}
-                    </span>
-                    <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
-                      {!tool.available ? ' · Unavailable in current catalog' : ''}
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          ) : !selectedToolRows.length && !toolDictionaryBusy && !toolOptionsError ? (
+          {!selectedToolRows.length && !toolDictionaryBusy && !toolOptionsError ? (
             <div style={{ color: '#91A9B8', fontSize: 11 }}>
-              {showSelectedToolsOnly
-                ? 'No tools are selected for this card.'
-                : 'No tools match this search.'}
+              No tools are selected for this Card.
             </div>
-          ) : null}
-          {!showSelectedToolsOnly && !toolDictionaryBusy && !toolOptionsError ? (
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <button
-                type="button"
-                disabled={toolDictionaryOffset <= 0}
-                onClick={() => setToolDictionaryOffset(Math.max(0, toolDictionaryOffset - 100))}
-              >
-                Previous
-              </button>
-              <span style={{ color: '#80969F', fontSize: 11 }}>
-                {toolDictionaryPage.total
-                  ? `${toolDictionaryPage.offset + 1}-${Math.min(toolDictionaryPage.offset + toolDictionaryPage.limit, toolDictionaryPage.total)}`
-                  : '0'}
-              </span>
-              <button
-                type="button"
-                disabled={!toolDictionaryPage.hasMore}
-                onClick={() => setToolDictionaryOffset(toolDictionaryPage.offset + toolDictionaryPage.limit)}
-              >
-                Next
-              </button>
-            </div>
-          ) : null}
-          <section
-            aria-label="Hermes capabilities"
-            style={{ display: 'grid', gap: 8, marginTop: 8, padding: '10px 12px', border: '1px solid #3A4A4F', borderRadius: 8 }}
-          >
-            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Hermes</div>
-            <div style={{ color: '#91A9B8', fontSize: 11 }}>
-              Select individual Hermes tools in the Tools catalog above. Toolsets remain optional bundles.
-            </div>
-            <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
-              Hermes toolsets
-              <textarea
-                aria-label="Hermes toolsets"
-                value={toolsetsText}
-                onChange={(event) => {
-                  setToolsetsText(event.target.value);
-                  markDraftDirty();
-                }}
-                placeholder="One Hermes toolset ID per line"
-                rows={4}
-              />
-            </label>
-          </section>
-          <section
-            aria-label="External connections"
-            style={{ display: 'grid', gap: 8, padding: '10px 12px', border: '1px solid #3A4A4F', borderRadius: 8 }}
-          >
-            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>External connections</div>
-            <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
-              External MCP connection references
-              <textarea
-                aria-label="External MCP connection references"
-                value={mcpConnectionIdsText}
-                onChange={(event) => {
-                  setMcpConnectionIdsText(event.target.value);
-                  markDraftDirty();
-                }}
-                placeholder="One configured connection ID per line"
-                rows={4}
-              />
-            </label>
-          </section>
-          {runtimeKind === 'hermes' && hermesProfileState ? (
-            <section
-              data-testid="effective-hermes-runtime"
-              style={{
-                display: 'grid',
-                gap: 8,
-                padding: '10px 12px',
-                border: '1px solid #3A4A4F',
-                borderRadius: 8,
-                background: '#202827',
-              }}
-            >
-              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-                Effective runtime / diagnostics
-              </div>
-              <div style={{ color: '#91A9B8', fontSize: 11 }}>
-                Profile {hermesProfileState.binding.profile} · saved Card authority is materialized into this Hermes profile and read back before use.
-              </div>
-              <details>
-                <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
-                  Effective Hermes toolsets · {hermesProfileState.profile.toolsets.filter((toolset) => toolset.enabled).length} enabled
-                </summary>
-                <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
-                  {hermesProfileState.profile.toolsets.map((toolset) => (
-                    <div key={toolset.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
-                      {toolset.label || toolset.name} · {toolset.enabled ? 'enabled' : 'disabled'}
-                      {typeof toolset.tool_count === 'number' ? ` · ${toolset.tool_count} tools` : ''}
-                    </div>
-                  ))}
-                </div>
-              </details>
-              {hermesProfileState.profile.mcpServers.length ? hermesProfileState.profile.mcpServers.map((server) => {
-                const checked = hermesMcpChecks[server.name];
-                return (
-                  <div
-                    key={server.name}
-                    style={{
-                      display: 'grid',
-                      gap: 5,
-                      padding: '8px 9px',
-                      border: '1px solid #344542',
-                      borderRadius: 6,
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <div style={{ color: '#D5E4E8', fontSize: 11.5 }}>
-                        {server.name} · {server.enabled ? 'enabled' : 'disabled'} · {server.credentialStatus.replace('_', ' ')}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void (
-                          server.auth === 'oauth' && server.credentialStatus !== 'configured'
-                            ? connectHermesMcpServer(server.name)
-                            : checkHermesMcpServer(server.name)
-                        )}
-                        disabled={!server.enabled || checked?.status === 'checking'}
-                      >
-                        {checked?.status === 'checking'
-                          ? server.auth === 'oauth' && server.credentialStatus !== 'configured'
-                            ? 'Authorizing…'
-                            : 'Checking…'
-                          : server.auth === 'oauth' && server.credentialStatus !== 'configured'
-                            ? 'Sign in'
-                            : 'Check connection'}
-                      </button>
-                    </div>
-                    <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                      {server.transport}
-                      {server.toolFilter.length ? ` · ${server.toolFilter.join(', ')}` : ''}
-                    </div>
-                    {checked ? (
-                      <div style={{ color: checked.status === 'connected' ? '#72D7C7' : checked.status === 'failed' ? '#FFA2A2' : '#80969F', fontSize: 10.5 }}>
-                        {checked.status === 'connected'
-                          ? `Connected · ${checked.toolCount} MCP tools discovered`
-                          : checked.status === 'failed'
-                            ? checked.error || 'Connection failed.'
-                            : 'Checking connection…'}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              }) : (
-                <div style={{ color: '#80969F', fontSize: 11 }}>No Hermes MCP connections are configured.</div>
-              )}
-            </section>
           ) : null}
         </div>
       );
@@ -1954,7 +1623,7 @@ export function CardEditor({
               aria-label="Runtime usage"
               style={{
                 display: 'flex', gap: 18, padding: '9px 11px', border: '1px solid #3A4A4F',
-                borderRadius: 8, background: '#202827', color: '#D5E4E8', fontSize: 11.5,
+                borderRadius: 8, background: 'rgba(24,34,36,0.44)', color: '#D5E4E8', fontSize: 11.5,
               }}
             >
               <span>
@@ -2027,7 +1696,7 @@ export function CardEditor({
           padding: '12px 14px',
           borderRadius: 8,
           border: '1px solid #3A3A3A',
-          background: '#1F1F1F',
+          background: 'rgba(15,18,22,0.46)',
           color: '#E0DED5',
           fontSize: 12,
         }}

@@ -151,8 +151,6 @@ async function resolveTerminalBinding(input: {
     cwd,
     attach: channel,
     bot_mode_roster: binding.botModeRoster.join(','),
-    bot_mode_sessions: Object.entries(binding.botModeSessions)
-      .map(([profile, sessionId]) => `${profile}=${sessionId}`).join(','),
   });
   return {
     projectId: input.projectId,

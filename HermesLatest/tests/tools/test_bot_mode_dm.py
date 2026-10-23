@@ -1131,6 +1131,43 @@ def test_project_team_target_uses_exact_saved_card_context(tmp_path, monkeypatch
     assert captured["parent_run_id"] is None
 
 
+def test_project_magnetic_target_uses_bot_mode_without_a_target_session(tmp_path, monkeypatch):
+    home = _managed_home(tmp_path, teammates=("card_magentic",))
+    agent = _FakeAgent(home, title="Project 00000000-0000-0000-0000-000000000001")
+    agent._bot_mode_roster = ["card_magentic"]
+    agent._bot_mode_sessions = {}
+    target_context = {
+        "endpoint": "http://127.0.0.1:4000/api/card-turn",
+        "project_id": "project-one",
+        "deck_id": "deck-one",
+        "conversation_id": "project-one",
+        "card_id": "card_magentic",
+        "profile": "card_magentic",
+    }
+    agent._bot_mode_card_contexts = {"card_magentic": target_context}
+    captured = {}
+    monkeypatch.setattr(
+        bot_mode_dm,
+        "_start_magnetic_task",
+        lambda **kwargs: captured.update(kwargs) or json.dumps({
+            "status": "queued", "reply_delivery": "team",
+            "task_id": "mag-root", "run_id": "req_mag",
+        }),
+    )
+
+    result = json.loads(bot_mode_dm.message_agent_tool(
+        target="@card_magentic",
+        message="One Builder-authored PromptSpec.",
+        tool_call_id="call-magnetic",
+        agent=agent,
+    ))
+
+    assert result["task_id"] == "mag-root"
+    assert captured["target_context"] == target_context
+    assert captured["body"] == "One Builder-authored PromptSpec."
+    assert captured["tool_call_id"] == "call-magnetic"
+
+
 def test_team_submission_stages_card_run_before_exact_activation(tmp_path, monkeypatch):
     from hermes_cli import kanban_db_connect, kanban_team
     from tools import kanban_tools
@@ -1239,6 +1276,70 @@ def test_team_submission_stages_card_run_before_exact_activation(tmp_path, monke
     assert bind_calls[0][2] == {
         "context": target_context,
         "run_id": "req_team_run",
+    }
+
+
+def test_magnetic_submission_uses_existing_taskgraph_owner_and_native_notification(tmp_path, monkeypatch):
+    from tools import kanban_tools
+    from tui_gateway import saved_card_turn
+
+    route = {
+        "platform": "api_server",
+        "chat_id": "source-session",
+        "thread_id": None,
+        "user_id": None,
+        "user_id_alt": None,
+        "chat_type": "dm",
+        "notifier_profile": "main",
+        "delivery_mode": "notify+wake",
+        "delivery_metadata": {"source": "bot-mode"},
+    }
+    monkeypatch.setattr(kanban_tools, "_resolve_notify_target", lambda: route)
+    captured = {}
+    monkeypatch.setattr(
+        saved_card_turn,
+        "start_saved_magnetic_turn",
+        lambda context, **kwargs: captured.update({"context": context, **kwargs}) or {
+            "ok": True,
+            "runId": kwargs["run_id"],
+            "hermesRootId": "mag-root",
+        },
+    )
+    target_context = {
+        "endpoint": "http://127.0.0.1:4000/api/card-turn",
+        "project_id": "project-one",
+        "deck_id": "deck-one",
+        "conversation_id": "project-one",
+        "card_id": "card_magentic",
+        "profile": "card_magentic",
+    }
+    agent = _FakeAgent(tmp_path)
+
+    result = json.loads(bot_mode_dm._start_magnetic_task(
+        target_profile="card_magentic",
+        target_label="@card_magentic",
+        target_context=target_context,
+        source_profile="main",
+        body="One Builder-authored PromptSpec.",
+        parent_run_id="req_parent",
+        tool_call_id="call-one",
+        agent=agent,
+    ))
+
+    assert result["status"] == "queued"
+    assert result["reply_delivery"] == "team"
+    assert result["task_id"] == "mag-root"
+    assert result["run_id"] == captured["run_id"]
+    assert captured["message"] == "One Builder-authored PromptSpec."
+    assert captured["originating_run_id"] == "req_parent"
+    assert captured["notification"] == {
+        "sessionId": "sess-1",
+        "notifyPlatform": "api_server",
+        "notifyChatId": "source-session",
+        "notifyChatType": "dm",
+        "notifierProfile": "main",
+        "notifyDeliveryMode": "notify+wake",
+        "notifyDeliveryMetadata": {"source": "bot-mode"},
     }
 
 

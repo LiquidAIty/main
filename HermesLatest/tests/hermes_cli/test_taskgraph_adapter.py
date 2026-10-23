@@ -22,6 +22,10 @@ def _stage_request() -> dict:
         ],
         "createdBy": "card_magentic",
         "directTeam": False,
+        "sessionId": "source-session",
+        "notifyPlatform": "api_server",
+        "notifyChatId": "source-session",
+        "notifyDeliveryMode": "notify+wake",
     }
 
 
@@ -69,6 +73,25 @@ def test_stage_activate_and_read_use_one_existing_kanban_root(tmp_path, monkeypa
     assert json.loads(events[0]["payload"]) == {
         "workers": _stage_request()["workerAuthorities"],
     }
+
+
+def test_cancel_root_archives_the_exact_magnetic_execution(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setattr(taskgraph_adapter, "_hermes_home", lambda: home)
+    staged = taskgraph_adapter.stage_root(_stage_request())
+    root_id = staged["root"]["taskId"]
+    taskgraph_adapter.activate_root({
+        "action": "activate_root", "rootId": root_id, "directTeam": False,
+    })
+
+    cancelled = taskgraph_adapter.cancel_root({
+        "action": "cancel_root", "rootId": root_id, "runId": "run-one",
+    })
+
+    assert cancelled["root"]["taskId"] == root_id
+    assert cancelled["root"]["status"] == "archived"
+    assert root_id in cancelled["archivedTaskIds"]
 
 
 def test_duplicate_stage_is_idempotent_and_rejects_authority_drift(tmp_path, monkeypatch):

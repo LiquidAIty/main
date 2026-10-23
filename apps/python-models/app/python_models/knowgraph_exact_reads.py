@@ -67,7 +67,7 @@ def _read_knowgraph_entity_knows(
     *,
     limit: int,
 ) -> list[dict[str, Any]]:
-    """Read bounded Knows attached by exact structural ABOUT edges."""
+    """Read bounded Knows by their exact stored Entity identity."""
 
     entity_id = str(graphiti_entity_id or "").strip()
     if not entity_id:
@@ -78,9 +78,11 @@ def _read_knowgraph_entity_knows(
         with driver.session(database=database) as session:
             rows = neo4j_rows(session.run(
                 """
-                MATCH (episode:Episodic:Know)-[:ABOUT]->(entity:Entity)
+                MATCH (entity:Entity)
                 WHERE (elementId(entity) = $entityId OR toString(entity.uuid) = $entityId)
                   AND toString(entity.group_id) IN $scopeIds
+                MATCH (episode:Episodic:Know)
+                WHERE toString(episode.entity_uuid) = coalesce(toString(entity.uuid), elementId(entity))
                   AND toString(episode.group_id) IN $scopeIds
                 RETURN coalesce(toString(episode.uuid), elementId(episode)) AS episodeId,
                        coalesce(toString(entity.uuid), elementId(entity)) AS entityId,
@@ -153,7 +155,7 @@ def read_recent_knowgraph_knows(
     *,
     limit: int = 1,
 ) -> list[dict[str, Any]]:
-    """Read the newest exact ABOUT Knows across one Project."""
+    """Read the newest exact Entity-owned Knows across one Project."""
 
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 12:
         raise DataAnchorError("knowgraph_recent_know_limit_invalid")
@@ -163,9 +165,12 @@ def read_recent_knowgraph_knows(
         with driver.session(database=database) as session:
             rows = neo4j_rows(session.run(
                 """
-                MATCH (episode:Episodic:Know)-[:ABOUT]->(entity:Entity)
-                WHERE toString(entity.group_id) IN $scopeIds
-                  AND toString(episode.group_id) IN $scopeIds
+                MATCH (episode:Episodic:Know)
+                WHERE toString(episode.group_id) IN $scopeIds
+                  AND episode.entity_uuid IS NOT NULL
+                MATCH (entity:Entity)
+                WHERE coalesce(toString(entity.uuid), elementId(entity)) = toString(episode.entity_uuid)
+                  AND toString(entity.group_id) IN $scopeIds
                 RETURN coalesce(toString(episode.uuid), elementId(episode)) AS episodeId,
                        coalesce(toString(entity.uuid), elementId(entity)) AS entityId,
                        properties(episode) AS properties

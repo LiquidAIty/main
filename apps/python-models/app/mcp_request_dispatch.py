@@ -23,7 +23,6 @@ from mcp.types import CallToolResult, TextContent
 
 MCP_CALL_TIMEOUT_SECONDS = 30.0
 ENGRAPHIS_OPERATION_TIMEOUT_SECONDS = 120.0
-MAG_ONE_COMPLETION_TIMEOUT_SECONDS = 570.0
 MAIN_SUBMIT_COMPLETION_TIMEOUT_SECONDS = 570.0
 
 
@@ -287,8 +286,6 @@ def mcp_tool_timeout_seconds(name: str) -> float:
         # Engraphis semantic reads may cold-load the embedding/reranking stack.
         # Keep one bounded provider-family budget instead of per-tool exceptions.
         return ENGRAPHIS_OPERATION_TIMEOUT_SECONDS
-    if name == "run_mag_one":
-        return MAG_ONE_COMPLETION_TIMEOUT_SECONDS
     if name == "main.submit":
         return MAIN_SUBMIT_COMPLETION_TIMEOUT_SECONDS
     return MCP_CALL_TIMEOUT_SECONDS

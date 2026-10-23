@@ -8,7 +8,6 @@ import { authMiddleware } from '../middleware/auth';
 import builderIddRoutes from './builderIdd.routes';
 import cardOptionsRoutes from './cardOptions.routes';
 import cardRunReadRoutes from './cardRunRead.routes';
-import cardScriptRoutes from './cardScript.routes';
 import knowGraphReadRoutes from './knowGraphRead.routes';
 import knowGraphWriteRoutes from './knowGraphWrite.routes';
 import thinkGraphRoutes from './thinkGraph.routes';
@@ -36,7 +35,7 @@ router.use('/health', health);
 // bridge before browser auth so it cannot be converted into a local-user session.
 router.use('/worldview', worldviewInternalRoutes);
 router.use('/card-turn', cardTurnInternalRoutes);
-router.use('/cards', authMiddleware, cardOptionsRoutes, cardRunReadRoutes, cardScriptRoutes);
+router.use('/cards', authMiddleware, cardOptionsRoutes, cardRunReadRoutes);
 router.use('/main/session', authMiddleware, mainSessionRoutes);
 router.use('/card-terminals', authMiddleware, cardTerminalRoutes);
 router.use('/hermes-profile', authMiddleware, hermesProfileRoutes);

@@ -191,6 +191,12 @@ def stage_root(request: dict[str, Any]) -> dict[str, Any]:
     tenant = _text(request.get("tenant"), "tenant")
     title = _text(request.get("title"), "title")[:200]
     body = _text(request.get("body"), "body")
+    session_id = _text(request.get("sessionId"), "session_id")
+    notify_platform = _text(request.get("notifyPlatform"), "notify_platform")
+    notify_chat_id = _text(request.get("notifyChatId"), "notify_chat_id")
+    notify_metadata = request.get("notifyDeliveryMetadata")
+    if notify_metadata is not None and not isinstance(notify_metadata, dict):
+        raise TaskGraphAdapterError("notify_delivery_metadata_invalid")
     worker_profiles = request.get("workerProfiles")
     if not isinstance(worker_profiles, list) or not worker_profiles:
         raise TaskGraphAdapterError("worker_profiles_invalid")
@@ -219,6 +225,16 @@ def stage_root(request: dict[str, Any]) -> dict[str, Any]:
                 model_override=model,
                 provider_override=provider,
                 allowed_assignees=[profile],
+                session_id=session_id,
+                notify_platform=notify_platform,
+                notify_chat_id=notify_chat_id,
+                notify_thread_id=request.get("notifyThreadId"),
+                notify_user_id=request.get("notifyUserId"),
+                notify_user_id_alt=request.get("notifyUserIdAlt"),
+                notify_chat_type=request.get("notifyChatType"),
+                notifier_profile=request.get("notifierProfile"),
+                notify_delivery_mode=request.get("notifyDeliveryMode"),
+                notify_delivery_metadata=notify_metadata,
                 initial_status="blocked",
             )
         else:
@@ -235,6 +251,7 @@ def stage_root(request: dict[str, Any]) -> dict[str, Any]:
                 model_override=model,
                 provider_override=provider,
                 allowed_assignees=allowed_assignees,
+                session_id=session_id,
                 initial_status="blocked",
             )
             root = kanban_db.get_task(connection, root_id)
@@ -248,10 +265,27 @@ def stage_root(request: dict[str, Any]) -> dict[str, Any]:
             or root.provider_override != provider
             or root.model_override != model
             or root.body != body
+            or root.session_id != session_id
             or list(root.allowed_assignees or []) != expected_allowed
         ):
             raise TaskGraphAdapterError("root_stage_readback_mismatch")
         _bind_authorities(connection, kanban_db, root.id, request.get("workerAuthorities"))
+        if not direct_team:
+            from hermes_cli.kanban_db_notify import add_notify_sub
+
+            add_notify_sub(
+                connection,
+                task_id=root.id,
+                platform=notify_platform,
+                chat_id=notify_chat_id,
+                thread_id=request.get("notifyThreadId"),
+                user_id=request.get("notifyUserId"),
+                user_id_alt=request.get("notifyUserIdAlt"),
+                chat_type=request.get("notifyChatType"),
+                notifier_profile=request.get("notifierProfile"),
+                delivery_mode=request.get("notifyDeliveryMode"),
+                delivery_metadata=notify_metadata,
+            )
         return {"ok": True, "root": _task_projection(root), "directTeam": direct_team}
 
 
@@ -314,6 +348,34 @@ def _execution_task_ids(connection: Any, root_id: str) -> list[str]:
     return ordered
 
 
+def cancel_root(request: dict[str, Any]) -> dict[str, Any]:
+    db_path, kanban_db, connect = _store()
+    root_id = _text(request.get("rootId"), "root_id")
+    run_id = _text(request.get("runId"), "run_id")
+    with connect.connect_closing(db_path) as connection:
+        root = kanban_db.get_task(connection, root_id)
+        if root is None:
+            raise TaskGraphAdapterError("root_not_found")
+        if root.tenant != f"mag-one:{run_id}":
+            raise TaskGraphAdapterError("root_run_identity_mismatch")
+        task_ids = _execution_task_ids(connection, root_id)
+        archived: list[str] = []
+        for task_id in task_ids:
+            task = kanban_db.get_task(connection, task_id)
+            if task is None or task.status in {"done", "archived"}:
+                continue
+            if kanban_db.archive_task(connection, task_id):
+                archived.append(task_id)
+        root = kanban_db.get_task(connection, root_id)
+        if root is None or root.status not in {"done", "archived"}:
+            raise TaskGraphAdapterError("root_cancel_readback_invalid")
+        return {
+            "ok": True,
+            "root": _task_projection(root),
+            "archivedTaskIds": archived,
+        }
+
+
 def _redacted_summary(value: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -374,6 +436,7 @@ def dispatch(request: dict[str, Any]) -> dict[str, Any]:
         "validate_profiles": validate_profiles,
         "stage_root": stage_root,
         "activate_root": activate_root,
+        "cancel_root": cancel_root,
         "read_root": read_root,
     }
     handler = handlers.get(action)

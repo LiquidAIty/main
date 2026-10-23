@@ -25,6 +25,33 @@ from app.python_models.magnetic_taskgraph_authority import (
 )
 
 
+def _notification(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise MagneticTaskGraphError("magnetic_taskgraph_notification_invalid")
+    required = {
+        "sessionId": _required_text(value.get("sessionId"), "magnetic_taskgraph_session_id"),
+        "notifyPlatform": _required_text(
+            value.get("notifyPlatform"), "magnetic_taskgraph_notify_platform",
+        ),
+        "notifyChatId": _required_text(
+            value.get("notifyChatId"), "magnetic_taskgraph_notify_chat_id",
+        ),
+    }
+    optional = {
+        key: value.get(key)
+        for key in (
+            "notifyThreadId", "notifyUserId", "notifyUserIdAlt", "notifyChatType",
+            "notifierProfile", "notifyDeliveryMode", "notifyDeliveryMetadata",
+        )
+        if value.get(key) is not None
+    }
+    if "notifyDeliveryMetadata" in optional and not isinstance(
+        optional["notifyDeliveryMetadata"], dict,
+    ):
+        raise MagneticTaskGraphError("magnetic_taskgraph_notification_invalid")
+    return {**required, **optional}
+
+
 def _root_body(mission: str, worker_text: str) -> str:
     return (
         "You are the saved Magnetic orchestrator for this Mag One mission. This Hermes task is "
@@ -112,6 +139,7 @@ def _validated_magnetic_submission(payload: dict[str, Any]) -> dict[str, Any]:
             workers, payload.get("workerAuthorities"),
         ),
         "directTeam": _direct_team_worker(workers),
+        "notification": _notification(payload.get("notification")),
     }
 
 
@@ -124,6 +152,7 @@ def submit_magnetic_taskgraph(payload: dict[str, Any]) -> dict[str, Any]:
     worker_identities = request["workerIdentities"]
     worker_authorities = request["workerAuthorities"]
     direct_team = request["directTeam"]
+    notification = request["notification"]
     tenant = f"mag-one:{run_id}"
 
     if direct_team is None:
@@ -159,6 +188,7 @@ def submit_magnetic_taskgraph(payload: dict[str, Any]) -> dict[str, Any]:
             spec.get("hermesProfile"), "magnetic_taskgraph_hermes_profile",
         ).lower(),
         "directTeam": direct_team is not None,
+        **notification,
     })
     staged_root = staged.get("root")
     if not isinstance(staged_root, dict):

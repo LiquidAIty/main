@@ -113,7 +113,7 @@ def read_entity_context(
 
         def exact_know_retriever(_project: str, _query: str, requested: int):
             if not graphiti_entity_id:
-                return [], [], {"retrieval": "graphiti_exact_about"}
+                return [], [], {"retrieval": "graphiti_exact_entity"}
             return (
                 read_knowgraph_entity_knows(
                     projectId, str(graphiti_entity_id), limit=requested,
@@ -122,7 +122,7 @@ def read_entity_context(
                     projectId, str(graphiti_entity_id),
                     limit=min(24, max(12, requested * 2)),
                 ),
-                {"retrieval": "graphiti_exact_about"},
+                {"retrieval": "graphiti_exact_entity"},
             )
 
         grounding = build_project_graph_grounding(

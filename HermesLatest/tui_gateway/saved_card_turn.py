@@ -281,6 +281,37 @@ def start_saved_card_turn(prepared: dict[str, Any], session_key: str) -> None:
     })
 
 
+def start_saved_magnetic_turn(
+    context: dict[str, str],
+    *,
+    run_id: str,
+    originating_run_id: str,
+    source_profile: str,
+    message: str,
+    notification: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = normalize_card_turn_context(context)
+    if normalized is None or normalized["card_id"] != "card_magentic":
+        raise RuntimeError("magnetic_card_turn_context_invalid")
+    if not _RUN_ID.fullmatch(run_id) or not _RUN_ID.fullmatch(originating_run_id):
+        raise RuntimeError("magnetic_card_run_identity_invalid")
+    if not _PROFILE.fullmatch(source_profile) or not str(message or "").strip():
+        raise RuntimeError("magnetic_card_turn_input_invalid")
+    result = _post(normalized, "start_magnetic", {
+        "runId": run_id,
+        "originatingRunId": originating_run_id,
+        "senderProfile": source_profile,
+        "message": str(message).strip(),
+        "notification": notification,
+    })
+    if (
+        str(result.get("runId") or "") != run_id
+        or not str(result.get("hermesRootId") or "").strip()
+    ):
+        raise RuntimeError("magnetic_card_turn_start_identity_mismatch")
+    return result
+
+
 def finish_saved_card_turn(
     prepared: dict[str, Any],
     *,

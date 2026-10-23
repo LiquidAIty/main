@@ -1,56 +1,16 @@
 // Entity: Card Scripts
-// Relationship: This file verifies the editor presents the positive recipe grammar, bounded starter, canonical examples, exact tool modes, and code-first Monaco controls.
+// Relationship: Verifies the real single-file Python editor and source-owned activation contract.
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  editorOptions,
-  SCRIPT_EXAMPLES,
-  SCRIPT_SECTIONS,
-  STARTER_SCRIPT,
-  TOOL_MODE_COMPLETIONS,
-  symbolAtPosition,
-} from './CardScriptEditor';
+import { editorOptions, scriptWithSource } from './CardScriptEditor';
 
-describe('CardScriptEditor Monaco contract', () => {
-  it('keeps the executable starter limited to the three model-tool recipe sections', () => {
-    for (const section of SCRIPT_SECTIONS) {
-      expect(STARTER_SCRIPT).toContain(`# region ${section}`);
-    }
-    expect(STARTER_SCRIPT.split('# region ')).toHaveLength(4);
-    expect(STARTER_SCRIPT.split('# endregion')).toHaveLength(4);
-    expect(STARTER_SCRIPT).toContain('"mode": "tool_recipe"');
-    expect(STARTER_SCRIPT).toContain('Accepted grammar: one literal contract');
-    expect(STARTER_SCRIPT).toContain('from hermes_tools import SCRIPT, input, output, tools');
-    expect(STARTER_SCRIPT).toContain('output.emit({');
-    expect(STARTER_SCRIPT).not.toContain('card.subagents');
-    expect(STARTER_SCRIPT).not.toContain('delegate_task');
-  });
-
-  it('offers disabled-by-default examples using only canonical graph operations', () => {
-    expect(SCRIPT_EXAMPLES.map((example) => example.id)).toEqual([
-      'thinkgraph-context', 'knowgraph-evidence',
-    ]);
-    const examples = SCRIPT_EXAMPLES.map((example) => example.source).join('\n');
-    expect(examples).toContain('engraphis_recall_context');
-    expect(examples).toContain('engraphis_get_memory');
-    expect(examples).toContain('graphiti.search_nodes');
-    expect(examples).toContain('graphiti.search_memory_facts');
-    expect(examples).toContain('graphiti.get_episodes');
-    expect(examples).not.toContain('think.context');
-    expect(examples).not.toContain('know.context');
-  });
-
-  it('uses the compact code-first Monaco feature set', () => {
+describe('CardScriptEditor', () => {
+  it('keeps the compact real Python editor controls', () => {
     const options = editorOptions();
-    expect(options.theme).toBe('liquidaity-sublime');
-    expect(options.minimap).toMatchObject({
-      enabled: true,
-      size: 'fit',
-      showSlider: 'mouseover',
-      renderCharacters: false,
-    });
     expect(options).toMatchObject({
+      language: 'python',
+      theme: 'liquidaity-sublime',
       automaticLayout: true,
       folding: true,
       smoothScrolling: true,
@@ -58,26 +18,34 @@ describe('CardScriptEditor Monaco contract', () => {
       multiCursorModifier: 'alt',
       wordWrap: 'off',
     });
-    expect(options.guides).toMatchObject({
-      indentation: true,
-      highlightActiveIndentation: true,
+    expect(options.minimap).toMatchObject({
+      enabled: true,
+      size: 'fit',
+      showSlider: 'mouseover',
+      renderCharacters: false,
     });
   });
 
-  it('documents the exact Python-owned tool modes for completion and hover', () => {
-    expect(TOOL_MODE_COMPLETIONS.map(({ label, value }) => ({ label, value }))).toEqual([
-      { label: 'OFF', value: 0 },
-      { label: 'SCRIPT', value: 1 },
-      { label: 'AGENT', value: 2 },
-      { label: 'BOTH', value: 3 },
-    ]);
-    expect(TOOL_MODE_COMPLETIONS.every((mode) => mode.documentation.length > 40)).toBe(true);
-    for (const mode of TOOL_MODE_COMPLETIONS) {
-      expect(symbolAtPosition({
-        getLineContent: () => mode.label,
-        getWordAtPosition: () => ({ word: mode.label }),
-      } as never, { lineNumber: 1, column: 2 })).toBe(mode.label);
-    }
+  it('derives activation only from real nonblank Python source', () => {
+    const script = {
+      enabled: false,
+      source: '',
+      version: 1,
+      sourceHash: 'old-source',
+      compiledHash: 'old-compiled',
+      paletteFingerprint: 'old-palette',
+      compiled: { mode: 'tool_recipe' as const },
+      lastValidation: { status: 'valid' },
+    };
+    expect(scriptWithSource(script, 'print("ready")\n')).toMatchObject({
+      enabled: true,
+      source: 'print("ready")\n',
+      sourceHash: '',
+      compiledHash: '',
+      paletteFingerprint: '',
+      compiled: {},
+      lastValidation: {},
+    });
+    expect(scriptWithSource(script, '   ').enabled).toBe(false);
   });
-
 });

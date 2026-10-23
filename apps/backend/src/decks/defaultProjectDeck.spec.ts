@@ -80,7 +80,6 @@ describe('backend-owned default Project deck', () => {
         'canvas.inspect',
         'project_graph.list_entities',
         'project_graph.read_entity_context',
-        'run_mag_one',
         'worldview.set_capability',
       ],
     });

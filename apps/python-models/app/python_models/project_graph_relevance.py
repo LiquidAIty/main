@@ -282,7 +282,7 @@ def _jev_relevance(
                     if authority == "thinkgraph" else
                     "Rate which exact stored sourced Know is most directly useful to the current "
                     "idea. A Know is one verified observation, a separate interpretation, one "
-                    "inspectable citation and exactly one ABOUT Entity attachment. It may support, "
+                    "inspectable citation and one exact stored Entity identity. It may support, "
                     "challenge, or contextualize an explicit proposition. Rate the complete stored "
                     "record without inventing a fixed sentiment balance. "
                 )

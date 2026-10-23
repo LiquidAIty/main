@@ -561,10 +561,10 @@ The Graphiti MCP server exposes the following tools:
   Supports the bi-temporal `reference_time`, `excluded_entity_types`, `custom_extraction_instructions`,
   `previous_episode_uuids`, `update_communities`, and `saga` / `saga_previous_episode_uuid`.
 - `add_know`: Add one cited, interpreted `Episodic:Know` through ordinary episode extraction and optional
-  Saga membership, with exactly one explicit `ABOUT` attachment to a reused or newly created Entity.
+  Saga membership, with one exact stored Entity identity and no attachment edge.
 - `get_know`: Read one exact Know by the stable UUID returned when intake is accepted.
 - `search_knows`: Search Knows using Graphiti's episode full-text candidates and cross-encoder reranking.
-- `get_entity_knows`: Read Knows attached to one exact Entity through `ABOUT`.
+- `get_entity_knows`: Read Knows by one exact stored Entity identity.
 - `add_triplet`: Add a single fact (source entity -> fact -> target entity) directly, bypassing extraction.
 - `search_nodes`: Search the knowledge graph for relevant entities; supports `entity_types` and `center_node_uuid`.
 - `search_memory_facts`: Search for relevant facts (edges); supports `edge_types`, `center_node_uuid`,

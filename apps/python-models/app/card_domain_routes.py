@@ -206,3 +206,45 @@ def magnetic_taskgraph_status(payload: dict[str, Any]):
         return read_magnetic_taskgraph(payload)
     except MagneticTaskGraphError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@router.post("/magnetic/taskgraph/start")
+def magnetic_taskgraph_start(payload: dict[str, Any]):
+    try:
+        from app.mag_one_operation import start_magnetic_taskgraph
+
+        data_anchors = payload.get("dataAnchors")
+        notification = payload.get("notification")
+        if not isinstance(data_anchors, list) or not isinstance(notification, dict):
+            raise MagneticTaskGraphError("magnetic_taskgraph_start_contract_invalid")
+        result = start_magnetic_taskgraph(
+            run_id=str(payload.get("runId") or "").strip(),
+            input=str(payload.get("input") or "").strip(),
+            data_anchors=data_anchors,
+            project_id=str(payload.get("projectId") or "").strip(),
+            deck_id=str(payload.get("deckId") or "").strip(),
+            conversation_id=str(payload.get("conversationId") or "").strip(),
+            caller_card_id=str(payload.get("callerCardId") or "").strip(),
+            originating_run_id=str(payload.get("originatingRunId") or "").strip(),
+            notification=notification,
+        )
+        if result.get("ok") is not True:
+            raise MagneticTaskGraphError(
+                str(result.get("error") or "magnetic_taskgraph_start_failed")
+            )
+        return result
+    except (CardDomainError, MagneticTaskGraphError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@router.post("/magnetic/taskgraph/cancel")
+def magnetic_taskgraph_cancel(payload: dict[str, Any]):
+    try:
+        from app.mag_one_operation import cancel_magnetic_taskgraph_run
+
+        return cancel_magnetic_taskgraph_run(
+            str(payload.get("runId") or "").strip(),
+            str(payload.get("hermesRootId") or "").strip(),
+        )
+    except (CardDomainError, MagneticTaskGraphError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
