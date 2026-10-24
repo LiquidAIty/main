@@ -106,21 +106,16 @@ candidate-worker, scheduler, task-store, or worker-pool behavior is current or p
 - Ordinary agent-to-agent work enters only through `message_agent` and the exact saved wire-derived roster.
 - Every recognised enabled wire contributes messaging reachability. Blue has additional deferred Magnetic
   membership meaning; it does not start work.
-- The application materializes saved Card profiles, resumes the exact external titled session or creates it
-  only after explicit not-found, prepares Main's existing Run/IDF, and transports canonical events.
 - The connected runtime owns inference, delivery, recipient execution, transcripts, queues, retries, and
   completion. LiquidAIty has no direct target runner, reply-wait protocol, task-progress mirror, or separate
   Magnetic runtime owner.
-- Main steering and Stop remain existing HTTP/Run responsibilities. A dispatch acknowledgement is never
-  recipient completion, and active-agent counts come only from actual active product Runs.
 - Team automatic work and Magnetic task execution remain paused until ordinary messaging passes live proof.
 
 ## Current gaps before live acceptance
 
 These are acceptance gaps, not permission to expand the current runtime:
 
-1. The loaded application has not yet proven one real Main `message_agent` call, recipient execution and
-   reply, unauthorized-target rejection, busy delivery, failure/Stop handling, or accurate activity count.
+1. The rejected Main messaging entry has been removed; live Main messaging acceptance is unavailable.
 2. Main's approved quick-Web direction is not present in its source-default toolsets.
 3. Main's source-default prompt describes ThinkGraph/KnowGraph use, but the server's default new-Project
    topology does not attach those orange edges.
@@ -163,9 +158,8 @@ The bounded publish-preparation pass now has the following separate results:
   `sourceCurrent=true`. The connected LiquidAIty tool's real `main.context` returned that receipt.
 - The catalog now includes the source-default KnowGraph `graphiti.get_status` grant, human-facing
   provider titles, accurate Engraphis side-effect copy, frozen-catalog `listChanged=false`, and a
-  multi-file source identity. The current cached development-plugin surface must still be refreshed or
-  reconnected before its discovery snapshot can expose current `main.submit` metadata. Plugin Management
-  cannot manage this created-by-owner development reference as a public installed plugin.
+  multi-file source identity. Plugin Management cannot manage this created-by-owner development reference
+  as a public installed plugin.
 - The existing saved Project correctly retained its own revisions and grants. External calls to
   `graphiti.get_status` and `graphiti.search_nodes` returned `tool_not_granted`; no source-default rewrite
   or saved-Card mutation was applied to bypass persisted authority.

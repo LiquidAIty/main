@@ -318,16 +318,14 @@ def test_external_main_entries_use_verified_project_binding_not_card_grants(monk
     monkeypatch.setattr(
         mcp_catalog_runtime,
         "published_mcp_tool_names",
-        lambda: frozenset({"main.context", "main.submit", "canvas.inspect"}),
+        lambda: frozenset({"main.context", "canvas.inspect"}),
     )
 
     assert mcp_request_dispatch.request_tool_is_allowed("main.context") is True
-    assert mcp_request_dispatch.request_tool_is_allowed("main.submit") is True
     assert mcp_request_dispatch.request_tool_is_allowed("canvas.inspect") is True
 
     monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: None)
     assert mcp_request_dispatch.request_tool_is_allowed("main.context") is False
-    assert mcp_request_dispatch.request_tool_is_allowed("main.submit") is False
 
 
 def test_authenticated_catalog_keeps_external_main_entries_outside_saved_grants(monkeypatch):
@@ -345,11 +343,11 @@ def test_authenticated_catalog_keeps_external_main_entries_outside_saved_grants(
     monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: context)
     tools = [
         Tool(name=name, inputSchema={"type": "object", "properties": {}})
-        for name in ("main.context", "main.submit", "canvas.inspect", "card.create")
+        for name in ("main.context", "canvas.inspect", "card.create")
     ]
 
     assert [tool.name for tool in mcp_catalog_projection.catalog_for_request(tools)] == [
-        "main.context", "main.submit", "canvas.inspect",
+        "main.context", "canvas.inspect",
     ]
     context["mainEntryAuthorized"] = False
     assert [tool.name for tool in mcp_catalog_projection.catalog_for_request(tools)] == [

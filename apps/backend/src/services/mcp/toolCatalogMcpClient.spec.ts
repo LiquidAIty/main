@@ -35,7 +35,6 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
       'engraphis_remember',
       'agentgraph.inspect',
       'main.context',
-      'main.submit',
     ]));
     // Obsolete model-facing graph and agent-fabric wrappers are all gone.
     expect(names).not.toContain('thinkgraph.process_conversation_pair');

@@ -178,19 +178,6 @@ boundary. Exact external names, environment variables, protocol fields, and path
 and in deployment configuration. LiquidAIty does not launch a per-Card process, own a session registry,
 supervise delivery or retries, or open a second agent/terminal execution path.
 
-The restored Main doorway is `apps/backend/src/routes/mainSession.routes.ts`, mounted with browser
-authentication at `/api/main/session`. It persists user messages before Python Run preparation and
-transports canonical runtime events and completions. Main receives the complete ordered agent roster derived
-from every recognised enabled wire; blue remains messageable and has only deferred additional Magnetic
-meaning. Prompt introductions and target authorization use the same roster. Main addresses agents only with
-`message_agent`; LiquidAIty neither executes nor impersonates a recipient.
-
-`cardRuntime/mainTurn.ts` closes one HTTP/SSE turn only on that submitted turn's canonical completion event.
-It does not parse a dispatch acknowledgement into completion or wait for a later reply turn. Consequently,
-real recipient reply delivery through the loaded Main surface remains a live-acceptance requirement, not a
-source-proven fact. No application Card-turn endpoint, direct target runner, copied delivery queue, or
-sender-to-target invocation authority remains.
-
 Main is the sole headless Card. `cardRuntime/cardSessions.ts` maps saved Card/profile authority to the exact
 external titled-session contract. It asks the external owner to resume that title and creates only after an
 explicit not-found response; it does not list, select, activate, recover, queue, or retry sessions. Builder's

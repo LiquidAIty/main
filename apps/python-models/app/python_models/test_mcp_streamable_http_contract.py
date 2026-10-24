@@ -285,7 +285,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             second_catalog, second_context, second_identity, second_cbm_client, second_protocol = second
             assert first_catalog == second_catalog
             assert first_catalog == [
-                "calculator", "cbm.search_graph", "main.context", "main.submit",
+                "calculator", "cbm.search_graph", "main.context",
             ]
             assert card_one[0] == card_two[0]
             assert card_one[0] == ["cbm.search_graph"]

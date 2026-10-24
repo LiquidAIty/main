@@ -16,7 +16,6 @@ def test_public_server_metadata_is_goal_directed_and_uses_only_advertised_tools(
     assert mcp_host._PUBLIC_MCP_NAME == "LiquidAIty"
     assert mcp_host._PUBLIC_MCP_DESCRIPTION.startswith("Use LiquidAIty when")
     assert "Use only tools advertised for this connection" in mcp_host._PUBLIC_MCP_DESCRIPTION
-    assert "main.submit" not in mcp_host._PUBLIC_MCP_DESCRIPTION
     assert "accepted operation is not completed work" in mcp_host._PUBLIC_MCP_DESCRIPTION
     context = operation_definition("main.context")
     assert context is not None
