@@ -38,7 +38,6 @@ async function cardRunStatus(
     cardId,
     runId: String(latest.runId || ''),
     state: String(latest.state || ''),
-    activeWorkers: finiteNumber(latest.activeWorkers),
   };
 }
 

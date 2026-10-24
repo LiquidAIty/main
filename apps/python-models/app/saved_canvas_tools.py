@@ -222,7 +222,7 @@ def _upsert_wire_in_deck(
             for key in (source, target)
         )
         if bus_count != 1:
-            raise ApplicationToolError("wire_magnetic_taskgraph_endpoint_required")
+            raise ApplicationToolError("wire_magnetic_endpoint_required")
     for edge in edges:
         same_endpoints = (
             {edge["source"], edge["target"]} == {source, target}

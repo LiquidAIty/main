@@ -12,8 +12,8 @@ from __future__ import annotations
 # Entity: AgentGraph
 # Relationship: This file verifies Run history remains SQL-owned while optional conversation scope and truthful lifecycle observations use AgentGraph without controlling the Run.
 #
-# Entity: Magnetic TaskGraph
-# Relationship: This file verifies one Magnetic outer Run retains its exact Hermes root, projects only blue-connected saved workers, accepts bounded progress, and settles final synthesis.
+# Entity: Magnetic Membership
+# Relationship: This file verifies one Magnetic outer Run retains its exact provider root and settles final synthesis without an application task-progress mirror.
 
 from datetime import datetime, timezone
 
@@ -83,7 +83,6 @@ def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
     return {
         "projectId": "project-one",
         "deckId": "deck-one",
-        "runtimeOwner": "mag_one" if runtime.get("mode") == "magentic_one" else "hermes",
         "cardIdentity": {"cardId": "card-one", "title": "Card"},
         "cardRevisionId": "revision-one",
         "idf": materialized.idf.model_dump(),
@@ -356,7 +355,7 @@ def test_new_run_fails_closed_when_root_input_files_cannot_persist(
     }]
 
 
-def test_hermes_begin_run_returns_the_same_card_identity_at_both_transport_levels(
+def test_begin_run_returns_the_same_card_identity_at_both_transport_levels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepared = _prepared_grounded_runtime({
@@ -391,33 +390,6 @@ def test_hermes_begin_run_returns_the_same_card_identity_at_both_transport_level
     assert result["hermesTransport"]["cardIdentity"]["cardId"] == "card-one"
     assert result["hermesTransport"]["request"]["runtime"]["profile"] == "main"
 
-def test_mag_one_run_has_no_application_owned_execution_envelope(monkeypatch):
-    prepared = _prepared_grounded_runtime({
-        "kind": "hermes", "mode": "magentic_one", "profile": "card-one",
-    })
-    monkeypatch.setattr(
-        card_run_preparation,
-        "accept_run_request",
-        lambda _payload: _accepted_run_snapshot(),
-    )
-    monkeypatch.setattr(
-        card_invocation_preparation, "prepare_run_invocation",
-        lambda _payload, **_kwargs: prepared,
-    )
-    monkeypatch.setattr(card_run_preparation, "_insert_run", lambda *a, **kw: ("run-one", "correlation-one", True))
-    monkeypatch.setattr(card_run_inputs, "retain_required_run_idf", _fake_retain_idf)
-    monkeypatch.setattr(agentgraph_run_observations, "observe_run_preparation_complete", lambda *a, **kw: True)
-    result = card_run_preparation.begin_run({
-        "runId": "run-one", "correlationId": "correlation-one",
-        "assignment": "test task",
-    })
-    assert "magneticTaskGraph" not in result
-    assert result["hermesTransport"] is None
-    assert result["inputFile"] == {
-        "idfPath": "in.idf", "idfSha256": "idf", "idfBytes": 1,
-    }
-
-
 def test_run_projection_does_not_present_requested_model_as_effective() -> None:
     projected = card_run_readback.run_projection({
         "run_id": "pending-run",
@@ -428,7 +400,6 @@ def test_run_projection_does_not_present_requested_model_as_effective() -> None:
 
     assert projected["provider"] is None
     assert projected["model"] is None
-    assert projected["activeWorkers"] is None
     assert projected["toolCallCount"] is None
     assert projected["inputTokens"] is None
     assert projected["outputTokens"] is None
@@ -500,123 +471,9 @@ def test_run_starts_only_from_exact_correlated_submission_evidence(
     }]
 
 
-def test_magnetic_run_progress_casts_numeric_hermes_run_id_to_persisted_text(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    statements: list[tuple[str, object]] = []
-
-    class Cursor:
-        rowcount = 1
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, query, params=None):
-            statements.append((str(query), params))
-
-        def fetchone(self):
-            return ("t_retained_root",)
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    monkeypatch.setattr(card_run_execution, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_run_observations, "observe_run_progress", lambda *_args, **_kwargs: True)
-
-    result = card_run_execution.update_run_progress({
-        "runId": "run-one",
-        "hermesRootId": "t_retained_root",
-        "hermesRunId": 18,
-        "hermesStatus": "running",
-        "tasksCompleted": 2,
-        "tasksTotal": 5,
-        "activeWorkers": 1,
-        "providerTotalTokens": 0,
-        "costStatus": "unknown",
-    })
-
-    query, params = statements[0]
-    assert "WHEN %s AND run.state='pending' THEN 'running'" in query
-    assert "provider_turn_ref=COALESCE(%s::text, provider_turn_ref)" in query
-    assert "run.runtime_kind='hermes'" in query
-    assert "run.runtime_mode='magentic_one'" in query
-    assert "revision.card_id='card_magentic'" in query
-    assert "revision.runtime_profile='card_magentic'" in query
-    assert "run.runtime_mode!='magentic_one'" not in query
-    assert "run.provider_thread_ref IS NULL OR run.provider_thread_ref=%s" in query
-    assert "provider_total_tokens=COALESCE(%s, provider_total_tokens)" in query
-    assert "cost_status=COALESCE(%s, cost_status)" in query
-    assert params[3] == 18
-    assert result["hermesRootId"] == "t_retained_root"
-    assert result["updated"] is True
-
-def test_magnetic_run_progress_refuses_to_rebind_outer_run_root(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class Cursor:
-        rowcount = 0
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, _query, _params=None):
-            return None
-
-        def fetchone(self):
-            return None
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    monkeypatch.setattr(card_run_execution, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_run_observations, "observe_run_progress",
-        lambda *_args, **_kwargs: pytest.fail("rejected rebind wrote telemetry"),
-    )
-
-    assert card_run_execution.update_run_progress({
-        "runId": "run-one",
-        "hermesRootId": "t_conflicting_root",
-        "hermesStatus": "running",
-    }) == {
-        "ok": True,
-        "runId": "run-one",
-        "hermesRootId": None,
-        "updated": False,
-        "telemetryWritten": False,
-    }
-
 @pytest.mark.parametrize(
     ("owner", "function", "payload", "error"),
     [
-        (
-            card_run_execution,
-            card_run_execution.update_run_progress,
-            {
-                "runId": "run-one", "hermesRootId": "root-one",
-                "hermesStatus": "running", "providerTotalTokens": True,
-            },
-            "run_provider_total_tokens_invalid",
-        ),
         (
             card_run_settlement,
             card_run_settlement.finish_run,
@@ -808,10 +665,9 @@ def test_finish_run_accepts_mag_one_hermes_root_and_final_task_without_fake_sess
     result = card_run_settlement.finish_run({
         "runId": "run-mag-one",
         "state": "completed",
-        "finalResult": "Exact Hermes synthesis",
+        "finalResult": "Exact synthesis",
         "providerThreadRef": "t_mag_root",
         "providerTurnRef": "t_mag_final",
-        "hermesStatus": "done",
     })
 
     update_query, update_params = next(
@@ -825,12 +681,12 @@ def test_finish_run_accepts_mag_one_hermes_root_and_final_task_without_fake_sess
     assert result["updated"] is True
     assert result["state"] == "completed"
     assert result["runRecord"]["runtimeProfile"] == "card_magentic"
-    assert result["runRecord"]["hermesRootId"] == "t_mag_root"
+    assert result["runRecord"]["providerThreadRef"] == "t_mag_root"
     assert result["runRecord"]["provider"] is None
     assert result["runRecord"]["model"] is None
 
 
-def test_accepted_run_request_is_pending_scoped_and_has_no_hermes_run(
+def test_accepted_run_request_is_pending_scoped_and_has_no_provider_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statements: list[tuple[str, tuple | None]] = []
@@ -899,7 +755,7 @@ def test_accepted_run_request_is_pending_scoped_and_has_no_hermes_run(
     insert_params = next(params for query, params in statements if "INSERT INTO" in query)
     assert insert_params[-1] == datetime(2026, 10, 1, 20, 0, tzinfo=timezone.utc)
     assert result["state"] == "pending"
-    assert result["hermesRunId"] is None
+    assert "providerTurnRef" not in result
     assert result["acceptedAt"] == "2026-10-01T20:00:00+00:00"
     assert observed[0]["project_id"] == "project-one"
     assert observed[0]["deck_id"] == "deck-one"

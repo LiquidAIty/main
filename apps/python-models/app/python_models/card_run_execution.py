@@ -2,9 +2,6 @@
 # Entity: Run Ledger
 # Relationship: This file starts one accepted Run from exact submission/session evidence and persists bounded execution state, usage, cost, and progress fields.
 #
-# Entity: Magnetic TaskGraph
-# Relationship: This file accepts aggregate task counts and active-worker progress only for the exact saved Mag One root and runtime binding.
-#
 # Entity: AgentGraph
 # Relationship: This file emits execution-start and progress observations only after the matching durable Run transition succeeds.
 
@@ -23,11 +20,6 @@ from app.python_models.saved_card_contract import (
     utc_now,
 )
 
-
-HERMES_TASK_STATUSES = {
-    "triage", "todo", "scheduled", "ready", "running",
-    "blocked", "review", "done", "archived",
-}
 
 _COST_STATUSES = {"actual", "estimated", "included", "unknown"}
 
@@ -51,7 +43,7 @@ def optional_cost_status(payload: dict[str, Any]) -> str | None:
 
 
 def start_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Mark one exact accepted Run running from Hermes submission-start evidence."""
+    """Mark one exact accepted Run running from external submission-start evidence."""
 
     run_id = required_text(payload.get("runId"), "run_id")
     correlation_id = required_text(payload.get("correlationId"), "correlation_id")
@@ -117,106 +109,6 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
         "submissionId": submission_id,
         "state": "running",
         "startedAt": started_at.isoformat() if isinstance(started_at, datetime) else None,
-        "updated": updated,
-        "telemetryWritten": telemetry_written,
-    }
-
-
-def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
-    """Update the existing Run with Hermes aggregate progress only."""
-
-    run_id = required_text(payload.get("runId"), "run_id")
-    hermes_root_id = required_text(payload.get("hermesRootId"), "hermes_root_id")
-    hermes_status = required_text(payload.get("hermesStatus"), "hermes_status").lower()
-    if hermes_status not in HERMES_TASK_STATUSES:
-        raise CardDomainError("hermes_task_status_invalid")
-    provider_total_tokens = optional_nonnegative_integer(
-        payload, "providerTotalTokens",
-    )
-    cost_status = optional_cost_status(payload)
-
-    def count(name: str) -> int | None:
-        value = payload.get(name)
-        if value is None:
-            return None
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise CardDomainError(f"{name}_invalid")
-        return value
-
-    counts = {
-        name: count(name)
-        for name in (
-            "tasksCompleted", "tasksTotal", "activeWorkers", "toolCallCount",
-            "providerInputTokens", "providerOutputTokens", "providerCachedTokens",
-            "providerReasoningTokens",
-        )
-    }
-    execution_active = hermes_status == "running" or bool(
-        counts["activeWorkers"] is not None and counts["activeWorkers"] > 0
-    )
-    with connect_postgres() as connection, connection.cursor() as cursor:
-        cursor.execute(
-            """
-            UPDATE ag_catalog.agent_runs AS run SET
-              state=CASE
-                WHEN %s AND run.state='pending' THEN 'running'
-                ELSE run.state
-              END,
-              started_at=CASE
-                WHEN %s THEN COALESCE(run.started_at, NOW())
-                ELSE run.started_at
-              END,
-              provider_thread_ref=COALESCE(run.provider_thread_ref, %s),
-              provider_turn_ref=COALESCE(%s::text, provider_turn_ref),
-              hermes_phase=%s,
-              hermes_task_completed_count=COALESCE(%s, hermes_task_completed_count),
-              hermes_task_total_count=COALESCE(%s, hermes_task_total_count),
-              hermes_active_worker_count=COALESCE(%s, hermes_active_worker_count),
-              tool_call_count=COALESCE(%s, tool_call_count),
-              provider_input_tokens=COALESCE(%s, provider_input_tokens),
-              provider_output_tokens=COALESCE(%s, provider_output_tokens),
-              provider_cached_tokens=COALESCE(%s, provider_cached_tokens),
-              provider_reasoning_tokens=COALESCE(%s, provider_reasoning_tokens),
-              provider_total_tokens=COALESCE(%s, provider_total_tokens),
-              cost_status=COALESCE(%s, cost_status),
-              total_cost_usd=COALESCE(%s, total_cost_usd)
-            FROM ag_catalog.agent_card_revisions AS revision
-            WHERE run.run_id=%s
-              AND revision.revision_id=run.target_card_revision_id
-              AND run.state IN ('pending','running')
-              AND (run.provider_thread_ref IS NULL OR run.provider_thread_ref=%s)
-              AND run.runtime_kind='hermes'
-              AND run.runtime_mode='magentic_one'
-              AND revision.card_id='card_magentic'
-              AND revision.runtime_profile='card_magentic'
-            RETURNING run.provider_thread_ref
-            """,
-            (
-                execution_active, execution_active,
-                hermes_root_id,
-                payload.get("hermesRunId"), hermes_status,
-                counts["tasksCompleted"], counts["tasksTotal"],
-                counts["activeWorkers"], counts["toolCallCount"],
-                counts["providerInputTokens"], counts["providerOutputTokens"],
-                counts["providerCachedTokens"], counts["providerReasoningTokens"],
-                provider_total_tokens, cost_status,
-                payload.get("totalCostUsd"), run_id, hermes_root_id,
-            ),
-        )
-        row = cursor.fetchone()
-        effective_hermes_root_id = row[0] if row is not None else None
-        updated = cursor.rowcount == 1 and effective_hermes_root_id == hermes_root_id
-    telemetry_written = (
-        agentgraph_run_observations.observe_run_progress(
-            run_id, hermes_status, payload
-        )
-        if updated
-        else False
-    )
-    return {
-        "ok": True,
-        "runId": run_id,
-        "hermesRootId": effective_hermes_root_id,
         "updated": updated,
         "telemetryWritten": telemetry_written,
     }

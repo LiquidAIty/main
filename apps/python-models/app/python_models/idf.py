@@ -194,7 +194,7 @@ def load_idf(
 def runtime_projection(
     materialized: _contract.MaterializedIdf,
 ) -> dict[str, Any]:
-    """Mechanically project Hermes runtime fields from reloaded IDF bytes."""
+    """Mechanically project runtime fields from reloaded IDF bytes."""
 
     idf = materialized.idf
     stable = idf.stableSavedCardContext

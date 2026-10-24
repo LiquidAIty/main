@@ -8,9 +8,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
-import tomllib
 from typing import Any
 
 _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,16 +28,16 @@ from mcp.types import CallToolRequestParams, CallToolResult, ListResourcesResult
 MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
 _PUBLIC_MCP_NAME = "LiquidAIty"
 
-def _hermes_package_version() -> str:
+def _application_version() -> str:
     try:
-        with open(os.path.join(_REPO_ROOT, "HermesLatest", "pyproject.toml"), "rb") as package_file:
-            package = tomllib.load(package_file)
-        version = str((package.get("project") or {}).get("version") or "").strip()
+        with open(os.path.join(_REPO_ROOT, "package.json"), encoding="utf-8") as package_file:
+            package = json.load(package_file)
+        version = str(package.get("version") or "").strip()
         return version or "unknown"
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return "unknown"
 
-_MCP_IMPLEMENTATION_VERSION = _hermes_package_version()
+_MCP_IMPLEMENTATION_VERSION = _application_version()
 _PUBLIC_MCP_DESCRIPTION = (
     "Use LiquidAIty when the user asks to inspect or operate an authenticated Project, "
     "saved Card, AgentGraph, CodeGraph, ThinkGraph, KnowGraph, WorldView, or supported "

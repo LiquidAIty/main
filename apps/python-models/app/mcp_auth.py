@@ -6,7 +6,7 @@
 # Relationship: This file supplies the MCP host's OAuth resource contract, token verifier, authenticated request context, and internal-principal validation.
 # Entity: Projects
 # Relationship: This file resolves a verified external identity to one owner-scoped Project context and rejects absent or malformed Project bindings.
-# Entity: Hermes Profiles
+# Entity: Card Profiles
 # Relationship: This file carries the validated saved-profile identity requested by a profile-owned MCP connection into the backend context lookup.
 # Entity: Tool Catalog
 # Relationship: This file validates the exact granted-tool set carried by authenticated external and materializer-read principals.
@@ -64,7 +64,7 @@ PROJECT_CONTEXT_FIELDS = frozenset(
 PROJECT_CONTEXT_TOOLS_FIELD = "grantedTools"
 PROJECT_CONTEXT_MAIN_ENTRY_FIELD = "mainEntryAuthorized"
 _REQUESTED_HERMES_PROFILE: ContextVar[str] = ContextVar(
-    "requested_hermes_profile", default="",
+    "requested_card_profile", default="",
 )
 _REQUESTED_PROJECT_ID: ContextVar[str] = ContextVar(
     "requested_project_id", default="",
@@ -80,15 +80,15 @@ _REQUESTED_RUN_ID: ContextVar[str] = ContextVar(
 )
 
 
-def set_requested_hermes_profile(profile: str) -> Token[str]:
+def set_requested_card_profile(profile: str) -> Token[str]:
     return _REQUESTED_HERMES_PROFILE.set(str(profile or "").strip())
 
 
-def reset_requested_hermes_profile(token: Token[str]) -> None:
+def reset_requested_card_profile(token: Token[str]) -> None:
     _REQUESTED_HERMES_PROFILE.reset(token)
 
 
-def requested_hermes_profile() -> str:
+def requested_card_profile() -> str:
     return _REQUESTED_HERMES_PROFILE.get()
 
 
@@ -291,7 +291,7 @@ def _resolve_external_project_context_sync(
                 "issuer": issuer,
                 "subject": subject,
                 "projectId": requested_project_id(),
-                "profile": requested_hermes_profile(),
+                "profile": requested_card_profile(),
                 "runId": requested_run_id(),
             }).encode("utf-8"),
             headers=headers,
@@ -319,7 +319,7 @@ def _resolve_internal_card_context_sync() -> dict[str, Any] | None:
             data=json.dumps({
                 "projectId": requested_project_id(),
                 "deckId": requested_deck_id(),
-                "profile": requested_hermes_profile(),
+                "profile": requested_card_profile(),
                 "conversationId": requested_conversation_id(),
                 "runId": requested_run_id(),
             }).encode("utf-8"),

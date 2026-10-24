@@ -1,5 +1,5 @@
 /**
- * Entity: Magnetic TaskGraph
+ * Entity: Magnetic Membership
  * Relationship: This file renders Magnetic as one compact canvas bus with a separate direct orange Card target and paired blue worker-membership handles.
  * Entity: Card Topology
  * Relationship: This file exposes the distinct connection handles used to author Magnetic's orange addressability and blue worker membership on the saved Card canvas.

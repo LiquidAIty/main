@@ -8,8 +8,8 @@
 # Relationship: This file validates and persists Card placement plus orange and blue edges while rejecting missing endpoints, duplicate connections, and invalid Magnetic membership.
 # Entity: AgentGraph
 # Relationship: This file keeps Project-local Card vertices and relationship records synchronized with the saved deck without making AGE the Card runtime authority.
-# Entity: Hermes Profiles
-# Relationship: This file enforces the permanent one-to-one saved Card and Hermes profile binding across Projects before writing a revision.
+# Entity: Card Profiles
+# Relationship: This file enforces the permanent one-to-one saved Card and profile binding across Projects before writing a revision.
 # Entity: Tool Catalog
 # Relationship: This file persists the exact tool, skill, toolset, and MCP connection grant rows belonging to each immutable Card revision.
 # Entity: Card Scripts
@@ -31,7 +31,7 @@ from app.python_models.saved_card_contract import (
     canonical_json,
     canonical_card_tools_and_toolsets,
     card_runtime,
-    is_magnetic_taskgraph_runtime,
+    is_magnetic_runtime,
     json_object,
     utc_now,
     required_text,
@@ -100,10 +100,10 @@ def _validated_deck_collections(
             raise CardDomainError(f"edge_endpoint_missing:{core['id']}")
         endpoints = (core["source"], core["target"])
         if core["edgeType"] == "magentic_option":
-            if sum(is_magnetic_taskgraph_runtime(card_runtime(cards[key]))
+            if sum(is_magnetic_runtime(card_runtime(cards[key]))
                    for key in endpoints) != 1:
                 raise CardDomainError(
-                    f"edge_magnetic_taskgraph_endpoint_required:{core['id']}"
+                    f"edge_magnetic_endpoint_required:{core['id']}"
                 )
             endpoints = tuple(sorted(endpoints))
         key = (core["edgeType"], *endpoints)
@@ -146,14 +146,14 @@ def _validated_project_code_folder(value: Any) -> str | None:
         raise CardDomainError("builder_project_code_folder_invalid")
     return folder
 
-def _lock_and_validate_hermes_profile_bindings(
+def _lock_and_validate_card_profile_bindings(
     cursor: Any,
     cards: list[dict[str, Any]],
 ) -> None:
-    """Serialize and enforce the permanent global Hermes profile binding.
+    """Serialize and enforce the permanent global Card profile binding.
 
     The same stable Card identity may be present in multiple Projects, but it
-    always keeps one Hermes profile and that profile can never become authority
+    always keeps one Card profile and that profile can never become authority
     for another Card identity. Lock both sides before reading either binding so
     concurrent saves cannot establish opposite mappings.
     """
@@ -617,7 +617,7 @@ def save_deck(
         with connection.cursor(row_factory=dict_row) as cursor:
             project = resolve_project_record(cursor, project_ref)
             project_id = str(project["id"])
-            _lock_and_validate_hermes_profile_bindings(cursor, incoming_nodes)
+            _lock_and_validate_card_profile_bindings(cursor, incoming_nodes)
             cursor.execute(
                 "SELECT 1 FROM ag_catalog.agent_decks WHERE project_id=%s AND deck_id=%s FOR UPDATE",
                 (project_id, deck_id),

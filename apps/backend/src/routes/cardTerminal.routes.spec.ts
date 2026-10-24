@@ -1,7 +1,7 @@
 // Entity: Card Terminals
 // Relationship: This file verifies terminal preflight and WebSocket upgrades preserve exact Card identity, normalize close frames, and refuse Main or Magnetic Cards.
-// Entity: Hermes Card Sessions
-// Relationship: This file verifies the terminal binds to the exact returned Hermes profile and session before exposing its same-origin stream path.
+// Entity: Card Sessions
+// Relationship: This file verifies the terminal binds to the exact returned Card profile and session before exposing its same-origin stream path.
 // Entity: Credentials
 // Relationship: This file verifies unauthenticated upgrades are refused and reusable Gateway credentials or upstream ports never enter the browser response.
 
@@ -14,10 +14,11 @@ import WebSocket from 'ws';
 import type { DeckCard, DeckDocument } from '../types';
 
 const mocks = vi.hoisted(() => ({
-  cardProjectSession: vi.fn(),
+  resolveCardSession: vi.fn(),
   getOwnedProjectByReference: vi.fn(),
   getUserBySessionId: vi.fn(),
-  hermesGateway: vi.fn(),
+  cardRuntimeGateway: vi.fn(),
+  openCardTerminalSocket: vi.fn(),
   projectCardAuthority: vi.fn(),
 }));
 
@@ -30,11 +31,13 @@ vi.mock('../services/projectStore', () => ({
 vi.mock('../services/projectCardAuthority', () => ({
   projectCardAuthority: mocks.projectCardAuthority,
 }));
-vi.mock('../services/hermesGateway', () => ({
-  hermesGateway: mocks.hermesGateway,
+vi.mock('../services/cardRuntimeGateway', () => ({
+  CARD_RUNTIME_CONTRACT: { kind: 'hermes' },
+  cardRuntimeGateway: mocks.cardRuntimeGateway,
+  openCardTerminalSocket: mocks.openCardTerminalSocket,
 }));
-vi.mock('../hermes/botMode', () => ({
-  cardProjectSession: mocks.cardProjectSession,
+vi.mock('../cardRuntime/cardSessions', () => ({
+  resolveCardSession: mocks.resolveCardSession,
 }));
 vi.mock('../services/workingDirectories', () => ({
   resolveBuilderProjectCodeDirectory: vi.fn(() => 'C:/Projects/LiquidAIty/main'),
@@ -103,8 +106,8 @@ describe('Card terminal authenticated proxy contract', () => {
       id: 'project-one',
       ownerUserId: 'owner-one',
     });
-    mocks.hermesGateway.mockResolvedValue({});
-    mocks.cardProjectSession.mockResolvedValue({
+    mocks.cardRuntimeGateway.mockResolvedValue({});
+    mocks.resolveCardSession.mockResolvedValue({
       sessionId: 'session-builder',
     });
     mocks.getUserBySessionId.mockResolvedValue(null);
@@ -118,7 +121,7 @@ describe('Card terminal authenticated proxy contract', () => {
     })));
   });
 
-  it('returns exact identity and same-origin path without a reusable Hermes credential', async () => {
+  it('returns exact identity and same-origin path without a reusable runtime credential', async () => {
     const baseUrl = await serve();
     const response = await fetch(
       `${baseUrl}/api/card-terminals/project-one/deck_builder/builder/open`,

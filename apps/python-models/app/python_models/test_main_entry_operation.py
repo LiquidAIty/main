@@ -74,8 +74,8 @@ def test_main_submit_parser_reports_real_stream_failure_without_success_shape():
     raw = "".join([
         _event("run", {"runId": "run-one", "cardId": "card_main_chat"}),
         _event("error", {
-            "runId": "run-one", "code": "hermes_gateway_closed_during_turn",
-            "message": "Hermes disconnected.",
+            "runId": "run-one", "code": "card_runtime_gateway_closed_during_turn",
+            "message": "Card runtime disconnected.",
         }),
         _event("end", {"runId": "run-one", "cardId": "card_main_chat"}),
     ])
@@ -83,8 +83,8 @@ def test_main_submit_parser_reports_real_stream_failure_without_success_shape():
     assert main_worldview_operations._main_submit_result(raw) == {
         "ok": False,
         "runId": "run-one",
-        "error": "hermes_gateway_closed_during_turn",
-        "errorMessage": "Hermes disconnected.",
+        "error": "card_runtime_gateway_closed_during_turn",
+        "errorMessage": "Card runtime disconnected.",
         "completionObserved": False,
         "streamEnded": True,
     }

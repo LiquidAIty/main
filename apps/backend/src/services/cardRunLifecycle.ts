@@ -1,7 +1,7 @@
 // Entity: Card Invocation
 // Relationship: This file submits one exact saved Card assignment for preparation and rejects any returned Card, revision, profile, conversation, or transport identity mismatch.
 // Entity: Run Ledger
-// Relationship: This file starts, reads, and finishes durable Runs while validating transition readback and normalizing bounded Hermes token and cost usage.
+// Relationship: This file starts, reads, and finishes durable Runs while validating transition readback and normalizing bounded runtime token and cost usage.
 
 import { randomUUID } from 'node:crypto';
 
@@ -27,7 +27,6 @@ export async function prepareCardRun(args: {
   dataAnchors: unknown[];
   images: unknown[];
   runId?: string;
-  senderCardId?: string;
   originatingRunId?: string;
 }): Promise<PreparedCardRun> {
   const runId = String(args.runId || '').trim()
@@ -45,7 +44,6 @@ export async function prepareCardRun(args: {
       correlationId: runId,
       conversationId: args.conversationId,
       assignment: args.message,
-      senderCardId: String(args.senderCardId || '').trim(),
       originatingRunId: String(args.originatingRunId || '').trim(),
       dataAnchors: args.dataAnchors,
       images: args.images,
@@ -140,23 +138,23 @@ export async function readCardRun(args: {
   return run;
 }
 
-export function hermesUsageFields(value: unknown): Record<string, number | null> {
+export function cardRuntimeUsageFields(value: unknown): Record<string, number | null> {
   const usage = record(value);
   const count = (...values: unknown[]): number | null => {
     const supplied = values.filter((item): item is number => typeof item === 'number');
     if (supplied.some((item) => (
       !Number.isSafeInteger(item) || Number(item) < 0
-    ))) throw new Error('hermes_usage_invalid');
+    ))) throw new Error('card_runtime_usage_invalid');
     return supplied.length > 0 ? Number(supplied[0]) : null;
   };
   const amount = (...values: unknown[]): number | null => {
     const supplied = values.filter((item): item is number => typeof item === 'number');
     if (supplied.some((item) => (
       !Number.isFinite(item) || Number(item) < 0
-    ))) throw new Error('hermes_usage_invalid');
+    ))) throw new Error('card_runtime_usage_invalid');
     return supplied.length > 0 ? Number(supplied[0]) : null;
   };
-  // Hermes exposes both canonical uncached buckets (`input`/`output`) and the
+  // The external event exposes canonical uncached buckets (`input`/`output`) and the
   // provider-facing totals (`prompt`/`completion`). Run accounting records the
   // provider totals, with cache reads and reasoning retained as their subsets.
   const providerInputTokens = count(usage.prompt, usage.input, usage.prompt_tokens, usage.input_tokens);
@@ -173,7 +171,7 @@ export function hermesUsageFields(value: unknown): Record<string, number | null>
       && providerCachedTokens > providerInputTokens
     || providerReasoningTokens !== null && providerOutputTokens !== null
       && providerReasoningTokens > providerOutputTokens
-  ) throw new Error('hermes_usage_invalid');
+  ) throw new Error('card_runtime_usage_invalid');
   return {
     providerInputTokens,
     providerOutputTokens,

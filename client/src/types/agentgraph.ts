@@ -3,12 +3,12 @@
  * Relationship: This file defines the client-side saved deck, immutable Card revision identity, and saved Card configuration types consumed by the Canvas and editor.
  * Entity: Card Topology
  * Relationship: This file defines saved Card placement and the explicit flow, magentic_option, and invalid edge classifications rendered by the Canvas.
- * Entity: Bot Mode Delegation
- * Relationship: This file defines the saved orchestrator setting and directed orange flow edge used for Card-to-Card authority.
- * Entity: Magnetic TaskGraph
- * Relationship: This file defines blue magentic_option worker membership independently from orange delegation authority.
- * Entity: Hermes Profiles
- * Relationship: This file defines the saved Hermes mode, profile, provider, model, subagent, skill, toolset, and MCP selections edited for a Card.
+ * Entity: Agent Messaging
+ * Relationship: This file defines the saved orchestrator setting and recognised wires used for Card-hosted agent reachability.
+ * Entity: Magnetic Membership
+ * Relationship: This file defines blue magentic_option membership as an additional deferred meaning on an otherwise messageable wire.
+ * Entity: Card Profiles
+ * Relationship: This file defines the saved runtime mode, profile, provider, model, subagent, skill, toolset, and MCP selections edited for a Card.
  * Entity: Card Scripts
  * Relationship: This file transports the versioned saved Card Script source and Python-owned execution state while Agent Builder presents only the editable source.
  */
@@ -35,7 +35,7 @@ export type AgentCardRuntimeOptions = {
   /** Saved outbound orange Card-to-Card delegation authority. Main has this
    * authority by its runtime role; another non-Magnetic Card must opt in. */
   orchestrator?: boolean;
-  /** Temporary Hermes children for one Card turn. This is unrelated to
+  /** Temporary delegated children for one Card turn. This is unrelated to
    * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
   subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
@@ -78,8 +78,8 @@ export type AgentCardRuntimeOptions = {
   /** Let one Run-scoped Jev request narrow this Card's own authorized tools.
    * It never grants tools or changes the saved selection. */
   autoTools?: boolean;
-  /** Saved desired model for bounded Hermes delegated children and
-   * background skill review. Hermes profile/readback remains effective truth. */
+  /** Saved desired model for bounded delegated children and
+   * background skill review. Profile readback remains effective truth. */
   subagentModel?: {
     provider: string;
     accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';

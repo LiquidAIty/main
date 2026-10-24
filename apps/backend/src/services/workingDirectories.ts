@@ -1,5 +1,5 @@
 /**
- * Entity: Hermes Card Sessions
+ * Entity: Card Sessions
  * Relationship: This file creates each product Card session's durable neutral workspace outside the application repository and temporary storage.
  * Entity: Builder Card
  * Relationship: This file resolves the saved Builder Card's Project code directory while rejecting traversal, reserved names, repository overlap, and escaped paths.
@@ -44,7 +44,7 @@ export function resolveRepoRoot(): string {
  * Neutral working directory for a non-coding product Card session.
  *
  * It remains outside both the application repository and the OS temporary
- * directory so Hermes cannot discover repository instructions by walking up
+ * directory so the connected runtime cannot discover repository instructions by walking up
  * from an ordinary product conversation.
  */
 export function resolveProductChatWorkingDirectory(scope?: string): string {

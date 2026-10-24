@@ -9,7 +9,7 @@ const conversation = vi.hoisted(() => ({
   settle: vi.fn(async () => ({})),
 }));
 const runtime = vi.hoisted(() => ({
-  attachImages: vi.fn(async () => undefined),
+  attachMainImages: vi.fn(async () => undefined),
   execute: vi.fn(),
   session: vi.fn(async () => ({
     sessionId: 'stored-main',
@@ -40,26 +40,22 @@ vi.mock('../conversations/store', () => ({
   getConversationMessages: conversation.history,
   settleConversationMessage: conversation.settle,
 }));
-vi.mock('../hermes/botMode', () => ({
-  attachImages: runtime.attachImages,
-  botRosterCards: (_authority: unknown, source: { profile: string }) => (
-    source.profile === 'main' ? [{
-      card: { id: 'knowgraph' },
-      cardRevisionId: 'revision-knowgraph',
-      profile: 'knowgraph',
-      title: 'KnowGraph',
-      address: 'KnowGraph',
-    }] : []
-  ),
-  executeHermesTurn: runtime.execute,
-  mainProjectSession: runtime.session,
+vi.mock('../cardRuntime/cardSessions', () => ({
+  resolveMainSession: runtime.session,
 }));
-vi.mock('../services/hermesGateway', () => ({
-  hermesGateway: vi.fn(async () => gateway),
+vi.mock('../cardRuntime/mainTurn', () => ({
+  attachMainImages: runtime.attachMainImages,
+  executeMainTurn: runtime.execute,
+}));
+vi.mock('../cardRuntime/profileMaterialization', () => ({
+  savedCardAgentRoster: () => ['knowgraph'],
+}));
+vi.mock('../services/cardRuntimeGateway', () => ({
+  cardRuntimeGateway: vi.fn(async () => gateway),
 }));
 vi.mock('../services/cardRunLifecycle', () => ({
   finishCardRun: runs.finish,
-  hermesUsageFields: () => ({}),
+  cardRuntimeUsageFields: () => ({}),
   prepareCardRun: runs.prepare,
   startCardRun: runs.start,
 }));
@@ -78,7 +74,13 @@ vi.mock('../services/projectCardAuthority', () => ({
       title: 'Main',
       address: 'Main',
     },
-    cards: [],
+    cards: [{
+      card: { id: 'knowgraph', runtime: { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' } },
+      cardRevisionId: 'revision-knowgraph',
+      profile: 'knowgraph',
+      title: 'KnowGraph',
+      address: 'KnowGraph',
+    }],
   })),
 }));
 vi.mock('../services/mcp/internalMcpAuth', () => ({
@@ -127,7 +129,7 @@ function chatBody() {
   };
 }
 
-describe('Main web route over Hermes Bot communication', () => {
+describe('Main web route over Card agent communication', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     gateway.request.mockImplementation(async (method: string) => (
@@ -187,7 +189,7 @@ describe('Main web route over Hermes Bot communication', () => {
     expect(conversation.appendReply).toHaveBeenCalledOnce();
   });
 
-  it('returns the exact wired Bot roster in history', async () => {
+  it('returns the exact wired agent roster in history', async () => {
     const response = await fetch(
       `${baseUrl}/api/main/session/history?projectId=project-one&deckId=deck-one`,
     );
@@ -253,7 +255,7 @@ describe('Main web route over Hermes Bot communication', () => {
       await args.onAdmitted();
       return new Promise((_resolve, reject) => {
         rejectTurn = reject;
-        args.stopSignal.addEventListener('abort', () => reject(new Error('hermes_turn_cancelled')));
+        args.stopSignal.addEventListener('abort', () => reject(new Error('card_turn_cancelled')));
       });
     });
     const chat = fetch(`${baseUrl}/api/main/session/chat`, {

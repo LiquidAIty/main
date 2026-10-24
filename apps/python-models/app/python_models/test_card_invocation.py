@@ -153,7 +153,6 @@ def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
     return {
         "projectId": "project-one",
         "deckId": "deck-one",
-        "runtimeOwner": "mag_one" if runtime.get("mode") == "magentic_one" else "hermes",
         "cardIdentity": {"cardId": "card-one", "title": "Card"},
         "cardRevisionId": "revision-one",
         "idf": materialized.idf.model_dump(),
@@ -167,7 +166,7 @@ def _destination_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:
     sender = _main_bot("sender", runtime={"kind": "hermes", "mode": "main", "profile": "sender"})
     hermes = _agent(
         "hermes",
-        prompt="Hermes saved prompt",
+        prompt="Saved Card prompt",
         runtime={"kind": "hermes", "mode": "delegate", "profile": "research"},
     )
     hermes["runtimeOptions"] = {
@@ -196,7 +195,6 @@ def _destination_payload(card_id: str) -> dict:
         "deckId": "deck-one",
         "runId": f"run-{card_id}",
         "cardId": card_id,
-        "senderCardId": "sender",
         "assignment": "Use every supplied declaration.",
     }
 
@@ -436,7 +434,7 @@ def test_enabled_flow_edge_does_not_project_a_conversational_target_into_the_run
     assert _REMOVED_PROFILE_TARGET_PROJECTION not in invocation
     assert _REMOVED_PROFILE_TARGET_PROJECTION not in invocation["idf"]
 
-def test_hermes_flow_keeps_formal_run_and_conversation_surfaces_separate(
+def test_card_flow_keeps_formal_run_and_conversation_surfaces_separate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     invocation = _delegation_invocation(
@@ -444,7 +442,6 @@ def test_hermes_flow_keeps_formal_run_and_conversation_surfaces_separate(
         edges=[{"source": "parent", "target": "child", "edgeType": "flow"}],
         parent_runtime={"kind": "hermes", "mode": "main", "profile": "main"},
     )
-    assert invocation["runtimeOwner"] == "hermes"
     assert invocation["cardIdentity"] == {"cardId": "parent", "title": "parent"}
     assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
     assert _REMOVED_PROFILE_TARGET_PROJECTION not in invocation
@@ -614,7 +611,7 @@ def test_selected_helper_and_mag_one_graph_data_is_validated_without_creating_a_
 
     assert card_invocation_preparation.prepare_run_invocation(payload) is prepared
 
-def test_ordinary_hermes_cards_keep_the_existing_unrestricted_preparation(
+def test_ordinary_cards_keep_the_existing_unrestricted_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepared = _prepared_grounded_runtime({
@@ -630,145 +627,7 @@ def test_ordinary_hermes_cards_keep_the_existing_unrestricted_preparation(
 
     assert card_invocation_preparation.prepare_run_invocation({}) is prepared
 
-def test_magnetic_taskgraph_card_may_invoke_only_a_saved_blue_worker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mag_one = _agent(
-        "mag-one",
-        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"},
-    )
-    worker = _agent(
-        "worker",
-        runtime={"kind": "hermes", "mode": "delegate", "profile": "worker"},
-    )
-    for number, card in enumerate((mag_one, worker), start=1):
-        card["_cardRevisionId"] = f"revision-{number}"
-        card["_cardRevision"] = 1
-        card["_cardRevisionSha256"] = f"sha-{number}"
-    loaded = {
-        "projectId": "00000000-0000-0000-0000-000000000001",
-        "deck": {
-            "nodes": [mag_one, worker],
-            "edges": [{
-                "source": "worker",
-                "target": "mag-one",
-                "edgeType": "magentic_option",
-            }],
-        },
-    }
-    monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: loaded)
-    payload = {
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "runId": "run-worker",
-        "cardId": "worker",
-        "senderCardId": "mag-one",
-        "assignment": "bounded worker task",
-    }
-    assert card_invocation_preparation.materialize_invocation(payload)["runtimeOwner"] == "hermes"
-    loaded["deck"]["edges"] = []
-    with pytest.raises(saved_card_contract.CardDomainError, match="card_invocation_edge_authority_required"):
-        card_invocation_preparation.materialize_invocation(payload)
-
-def test_one_enabled_saved_magnetic_card_resolves_without_a_control_wire(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    main = _agent(
-        "main",
-        runtime={"kind": "hermes", "mode": "main", "profile": "main"},
-    )
-    mag_one = _agent(
-        "mag-one",
-        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"},
-    )
-    for number, card in enumerate((main, mag_one), start=1):
-        card["_cardRevisionId"] = f"revision-{number}"
-        card["_cardRevision"] = 1
-        card["_cardRevisionSha256"] = f"sha-{number}"
-    loaded = {
-        "projectId": "00000000-0000-0000-0000-000000000001",
-        "deck": {
-            "nodes": [main, mag_one],
-            "edges": [],
-        },
-    }
-    monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: loaded)
-    assert card_invocation_preparation.resolve_magnetic_taskgraph_card(
-        "project-one", "deck-one"
-    ) == {
-        "projectId": "00000000-0000-0000-0000-000000000001",
-        "deckId": "deck-one",
-        "cardId": "mag-one",
-    }
-    mag_one["enabled"] = False
-    with pytest.raises(
-        saved_card_contract.CardDomainError,
-        match="magnetic_taskgraph_card_identity_ambiguous",
-    ):
-        card_invocation_preparation.resolve_magnetic_taskgraph_card("project-one", "deck-one")
-    mag_one.pop("enabled")
-    loaded["deck"]["nodes"].append(_agent(
-        "other-mag",
-        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "other-mag"},
-    ))
-    with pytest.raises(
-        saved_card_contract.CardDomainError,
-        match="magnetic_taskgraph_card_identity_ambiguous",
-    ):
-        card_invocation_preparation.resolve_magnetic_taskgraph_card("project-one", "deck-one")
-
-def test_main_mode_invokes_magnetic_across_orange_bot_authority(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    main = _main_bot(
-        "main",
-        runtime={"kind": "hermes", "mode": "main", "profile": "main"},
-    )
-    main["runtimeOptions"]["orchestrator"] = False
-    magnetic = _agent(
-        "magnetic",
-        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "magnetic"},
-    )
-    for number, card in enumerate((main, magnetic), start=1):
-        card["_cardRevisionId"] = f"revision-{number}"
-        card["_cardRevision"] = 1
-        card["_cardRevisionSha256"] = f"sha-{number}"
-    loaded = {
-        "projectId": "00000000-0000-0000-0000-000000000001",
-        "deck": {"nodes": [main, magnetic], "edges": [{
-            "id": "main-magnetic",
-            "source": "main",
-            "target": "magnetic",
-            "edgeType": "flow",
-        }]},
-    }
-    monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: loaded)
-    payload = {
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "runId": "run-magnetic",
-        "cardId": "magnetic",
-        "senderCardId": "main",
-        "assignment": "approved Magnetic mission",
-    }
-    assert card_invocation_preparation.materialize_invocation(payload)["runtimeOwner"] == "mag_one"
-    loaded["deck"]["edges"] = []
-    with pytest.raises(saved_card_contract.CardDomainError, match="card_invocation_edge_authority_required"):
-        card_invocation_preparation.materialize_invocation(payload)
-    loaded["deck"]["edges"] = [{
-        "id": "main-magnetic",
-        "source": "main",
-        "target": "magnetic",
-        "edgeType": "flow",
-    }]
-    main["runtime"] = {"kind": "hermes", "mode": "delegate", "profile": "main"}
-    main["runtimeOptions"]["orchestrator"] = True
-    assert card_invocation_preparation.materialize_invocation(payload)["runtimeOwner"] == "mag_one"
-    main["runtimeOptions"]["orchestrator"] = False
-    with pytest.raises(saved_card_contract.CardDomainError, match="card_invocation_edge_authority_required"):
-        card_invocation_preparation.materialize_invocation(payload)
-
-def test_disabled_flow_edge_materializes_no_delegation_transport(
+def test_saved_tool_selection_does_not_depend_on_canvas_edge_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     invocation = _delegation_invocation(
@@ -861,7 +720,6 @@ def test_ordinary_materialization_never_loads_builder_dictionary(monkeypatch, ru
     monkeypatch.setattr(idd, "load_input_data_dictionary", lambda: (_ for _ in ()).throw(
         AssertionError("ordinary Run must not load builder data")))
     payload = _destination_payload("hermes")
-    payload.pop("senderCardId")
     invocation = card_invocation_preparation.materialize_invocation(payload)
     assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
 
@@ -871,7 +729,7 @@ def test_receiving_card_materializes_its_own_exact_call_data(
     loaded = _destination_fixture(monkeypatch)
     hermes = card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
 
-    assert hermes["idf"]["stableSavedCardContext"]["instructions"] == "Hermes saved prompt"
+    assert hermes["idf"]["stableSavedCardContext"]["instructions"] == "Saved Card prompt"
     assert hermes["idf"]["stableSavedCardContext"]["runtime"] == {
         "kind": "hermes", "mode": "delegate", "profile": "research",
     }
@@ -885,11 +743,10 @@ def test_receiving_card_materializes_its_own_exact_call_data(
     loaded["deck"]["edges"] = [
         edge for edge in loaded["deck"]["edges"] if edge["target"] != "hermes"
     ]
-    with pytest.raises(
-        saved_card_contract.CardDomainError,
-        match="card_invocation_edge_authority_required",
-    ):
-        card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
+    without_edge = card_invocation_preparation.materialize_invocation(
+        _destination_payload("hermes")
+    )
+    assert without_edge["cardIdentity"] == hermes["cardIdentity"]
 
 def test_idf_materialization_requires_an_actual_run_identity(
     monkeypatch: pytest.MonkeyPatch,

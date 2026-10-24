@@ -67,7 +67,7 @@ kind = "boundary"
 source = "app.python_models.idf_contract.ActualGraphData"
 [types.RuntimeObject]
 kind = "boundary"
-source = "app.python_models.card_configuration_contracts.HermesRuntime"
+source = "app.python_models.card_configuration_contracts.CardRuntime"
 
 # Stable IDs determine variable names, independently of their display labels.
 [objects.mission]
@@ -139,4 +139,4 @@ fields = [
 
 [cardEditor.schemas]
 CardConfiguration = "app.python_models.card_configuration_contracts.CardConfiguration"
-HermesRuntime = "app.python_models.card_configuration_contracts.HermesRuntime"
+CardRuntime = "app.python_models.card_configuration_contracts.CardRuntime"

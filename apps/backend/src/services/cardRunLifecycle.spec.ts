@@ -1,7 +1,7 @@
 // Entity: Card Invocation
-// Relationship: This file verifies preparation rejects mismatched Project, deck, conversation, Card, revision, profile, and Hermes transport identities.
+// Relationship: This file verifies preparation rejects mismatched Project, deck, conversation, Card, revision, profile, and runtime transport identities.
 // Entity: Run Ledger
-// Relationship: This file verifies accepted Runs settle identity failures and record only nonnegative, internally consistent Hermes usage.
+// Relationship: This file verifies accepted Runs settle identity failures and record only nonnegative, internally consistent runtime usage.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -19,7 +19,7 @@ vi.mock('./pythonRailsClient', async (importOriginal) => ({
 }));
 
 import {
-  hermesUsageFields,
+  cardRuntimeUsageFields,
   prepareCardRun,
   readCardRun,
 } from './cardRunLifecycle';
@@ -177,7 +177,7 @@ describe('Card Run lifecycle identities', () => {
   });
 
   it('accepts only nonnegative internally consistent usage', () => {
-    expect(hermesUsageFields({
+    expect(cardRuntimeUsageFields({
       input: 10,
       prompt: 13,
       output: 5,
@@ -202,7 +202,7 @@ describe('Card Run lifecycle identities', () => {
       { prompt: 2, cache_read: 3 },
       { completion: 2, reasoning: 3 },
     ]) {
-      expect(() => hermesUsageFields(invalid)).toThrow('hermes_usage_invalid');
+      expect(() => cardRuntimeUsageFields(invalid)).toThrow('card_runtime_usage_invalid');
     }
   });
 });

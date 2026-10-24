@@ -7,7 +7,7 @@
  * Relationship: This file verifies quick-add creates exactly one unique editable Assist Card and does not mutate existing saved Cards.
  * Entity: Card Topology
  * Relationship: This file verifies quick-add preserves every existing edge and leaves the new Card unattached at a valid open position.
- * Entity: Hermes Profiles
+ * Entity: Card Profiles
  * Relationship: This file verifies each quick-added Assist receives one unique delegate profile and the expected saved model defaults.
  */
 
@@ -50,7 +50,7 @@ function quickAddDeck(): DeckDocument {
 }
 
 describe('buildQuickAddAssistCard', () => {
-  it('creates exactly one new unattached Hermes Card from client-local defaults', () => {
+  it('creates exactly one new unattached agent Card from client-local defaults', () => {
     const deck = quickAddDeck();
     const { nextDeck, nextNode } = buildQuickAddAssistCard(
       deck,

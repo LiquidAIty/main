@@ -1,4 +1,4 @@
-// Entity: Hermes Profiles
+// Entity: Card Profiles
 // Relationship: This file defines the canonical configured provider/model identities that saved Card profiles may select.
 // Entity: IDD
 // Relationship: This file projects the exact configured model records consumed by the IDD-backed Card editor selector.

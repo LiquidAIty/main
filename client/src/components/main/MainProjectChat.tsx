@@ -1,7 +1,7 @@
 /**
  * Entity: Main Chat
  * Relationship: This file renders the Project conversation and bounded composer, preserving drafts on rejected submissions and showing transport failures outside assistant speech.
- * Entity: Bot Mode Delegation
+ * Entity: Agent Messaging
  * Relationship: This file offers @Card completion only from Main's server-supplied authorized direct roster and renders the actual replying Card identity.
  * Entity: Card Invocation
  * Relationship: This file submits exact user text and bounded image records through the one Main invocation callback while keeping the composer available during active work.
@@ -469,7 +469,7 @@ export default function MainProjectChat({
   onSend: (t: string, runInput?: MainChatRunInput) => void | boolean;
   knowledgeProjectId: string;
   colors: MainProjectChatColors;
-  /** A real Hermes turn is active; the composer remains available. */
+  /** A real Card turn is active; the composer remains available. */
   busy?: boolean;
   /** The send request is opening. */
   connecting?: boolean;

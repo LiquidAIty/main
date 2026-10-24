@@ -1,7 +1,7 @@
 """Exact-revision saved Card configuration updates."""
 # Entity: Saved Cards
 # Relationship: This file validates and applies an exact-revision saved Card configuration update and returns the persisted revision readback.
-# Entity: Hermes Profiles
+# Entity: Card Profiles
 # Relationship: This file validates updates to the Card's saved provider, model, reasoning, subagent, skill, toolset, and MCP selections without changing runtime identity.
 # Entity: Tool Catalog
 # Relationship: This file accepts only exact normalized capability lists and rejects tools unavailable to saved Card grants.
@@ -142,12 +142,12 @@ async def card_update_configuration(
             "subagentModel" in updates
             and (card.get("runtime") or {}).get("kind") != "hermes"
         ):
-            raise ApplicationToolError("card_update_subagent_model_requires_hermes")
+            raise ApplicationToolError("card_update_subagent_model_requires_card_runtime")
         if (
             "subagentType" in updates
             and (card.get("runtime") or {}).get("kind") != "hermes"
         ):
-            raise ApplicationToolError("card_update_subagent_type_requires_hermes")
+            raise ApplicationToolError("card_update_subagent_type_requires_card_runtime")
         current_options = card.get("runtimeOptions")
         if not isinstance(current_options, dict):
             current_options = {}
@@ -177,7 +177,7 @@ async def card_update_configuration(
                 access_mode=updates.get(
                     "accessMode", current_options.get("accessMode")
                 ),
-                hermes=(card.get("runtime") or {}).get("kind") == "hermes",
+                supported=(card.get("runtime") or {}).get("kind") == "hermes",
             )
         for key in _UPDATABLE_TOP_FIELDS:
             if key in updates:

@@ -1,8 +1,8 @@
 /**
  * Entity: Main Chat
- * Relationship: Owns authenticated Main chat, history, stop, and voice HTTP transport while Hermes owns profile sessions and Bot delivery.
+ * Relationship: Owns authenticated Main chat, history, stop, and voice HTTP transport while the connected runtime owns profile sessions and agent delivery.
  * Entity: Run Ledger
- * Relationship: Records one outer saved-Card Run around the actual Main turn and standard Hermes completion.
+ * Relationship: Records one outer saved-Card Run around the actual Main turn and canonical completion.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -18,16 +18,15 @@ import {
 } from '../conversations/store';
 import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
 import {
-  attachImages,
-  botRosterCards,
-  executeHermesTurn,
-  mainProjectSession,
-  type ProjectCardSession,
-} from '../hermes/botMode';
-import { hermesGateway, type HermesGatewayClient } from '../services/hermesGateway';
+  resolveMainSession,
+  type CardSessionBinding,
+} from '../cardRuntime/cardSessions';
+import { attachMainImages, executeMainTurn } from '../cardRuntime/mainTurn';
+import { savedCardAgentRoster } from '../cardRuntime/profileMaterialization';
+import { cardRuntimeGateway, type CardRuntimeClient } from '../services/cardRuntimeGateway';
 import {
   finishCardRun,
-  hermesUsageFields,
+  cardRuntimeUsageFields,
   prepareCardRun,
   startCardRun,
   type PreparedCardRun,
@@ -51,8 +50,8 @@ type ProjectAuthorization = {
 
 type LiveMainTurn = {
   runId: string;
-  client: HermesGatewayClient;
-  binding: ProjectCardSession;
+  client: CardRuntimeClient;
+  binding: CardSessionBinding;
   profile: string;
 };
 
@@ -68,7 +67,6 @@ type MainAdmission = {
 
 type ActiveRun = LiveMainTurn & {
   abortController: AbortController;
-  phase: 'running' | 'waiting';
 };
 
 const activeMainByScope = new Map<string, MainAdmission>();
@@ -103,6 +101,18 @@ function participant(card: ProjectCardBinding): ConversationParticipant {
   };
 }
 
+function agentRosterCards(
+  authority: ProjectCardAuthority,
+  source: ProjectCardBinding,
+): ProjectCardBinding[] {
+  const byProfile = new Map(authority.cards.map((card) => [card.profile.toLowerCase(), card]));
+  return savedCardAgentRoster(authority.deck, source.card).map((profile) => {
+    const card = byProfile.get(profile.toLowerCase());
+    if (!card) throw new Error(`card_agent_roster_identity_missing:${profile}`);
+    return card;
+  });
+}
+
 function requestedParticipant(
   message: string,
   authority: ProjectCardAuthority,
@@ -123,7 +133,7 @@ function requestedParticipant(
   if (!address || (following && ![' ', '\t', '\r', '\n'].includes(following))) {
     throw new Error('main_address_invalid');
   }
-  const matches = botRosterCards(authority, authority.main).filter((card) => (
+  const matches = agentRosterCards(authority, authority.main).filter((card) => (
     String(card.address || '').toLowerCase() === address.toLowerCase()
   ));
   if (matches.length !== 1) throw new Error(`main_address_not_authorized:${address.toLowerCase()}`);
@@ -270,8 +280,8 @@ function inputProviderMessageId(runId: string, ordinal: number): string {
 
 async function settleRun(args: {
   run: PreparedCardRun;
-  binding: ProjectCardSession | null;
-  result?: Awaited<ReturnType<typeof executeHermesTurn>>;
+  binding: CardSessionBinding | null;
+  result?: Awaited<ReturnType<typeof executeMainTurn>>;
   error?: unknown;
   cancelled?: boolean;
   inputMessageIds: string[];
@@ -282,9 +292,9 @@ async function settleRun(args: {
     runId: args.run.runId,
     state: args.cancelled ? 'cancelled' : args.error ? 'failed' : 'completed',
     finalResult: args.result?.text,
-    errorCode: args.cancelled ? 'hermes_turn_cancelled' : args.error ? 'hermes_turn_failed' : undefined,
+    errorCode: args.cancelled ? 'card_turn_cancelled' : args.error ? 'card_turn_failed' : undefined,
     errorSummary: args.cancelled
-      ? 'hermes_turn_cancelled'
+      ? 'card_turn_cancelled'
       : args.error instanceof Error ? args.error.message : args.error ? String(args.error) : undefined,
     hermesSessionRef: args.binding?.sessionId,
     providerTurnRef: args.result?.providerTurnRef,
@@ -293,7 +303,7 @@ async function settleRun(args: {
     model: String(provider.model || requestedProvider.providerModelId || ''),
     toolCallCount: args.result?.toolCalls || 0,
     inputMessageIds: args.inputMessageIds,
-    ...(args.result ? hermesUsageFields(args.result.event.payload?.usage) : {}),
+    ...(args.result ? cardRuntimeUsageFields(args.result.event.payload?.usage) : {}),
   });
 }
 
@@ -334,7 +344,7 @@ async function handleSteer(args: {
     }));
     const status = String(submitted.status || '');
     if (!['steered', 'redirected', 'queued'].includes(status)) {
-      throw new Error(`hermes_steer_rejected:${status || 'unknown'}`);
+      throw new Error(`card_steer_rejected:${status || 'unknown'}`);
     }
     args.admission.inputMessageIds.push(args.clientMessageId);
     await settleConversationMessage({
@@ -487,24 +497,24 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     assistantMessageId: clientReplyMessageId,
   };
   writeSse(res, 'run', { ...identity, state: 'preparing' });
-  let binding: ProjectCardSession | null = null;
+  let binding: CardSessionBinding | null = null;
   let userSettled = false;
   let runSettled = false;
   let streamedText = '';
   const abortController = new AbortController();
   const activeKey = runKey(projectId, deckId, userId, run.runId);
   try {
-    const client = await hermesGateway();
-    binding = await mainProjectSession(client, authority, {
+    const client = await cardRuntimeGateway();
+    binding = await resolveMainSession(client, authority, {
       projectId,
       projectSessionId: conversationId,
       userId,
     });
     const live: LiveMainTurn = { runId: run.runId, client, binding, profile: main.profile };
     resolveAdmission(admission, live);
-    const active: ActiveRun = { ...live, abortController, phase: 'running' };
+    const active: ActiveRun = { ...live, abortController };
     activeRuns.set(activeKey, active);
-    await attachImages(client, binding, main.profile, run.request.images);
+    await attachMainImages(client, binding, main.profile, run.request.images);
     writeSse(res, 'session', {
       ...identity,
       sessionId: binding.sessionId,
@@ -515,7 +525,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
           : [],
       },
     });
-    const result = await executeHermesTurn({
+    const result = await executeMainTurn({
       client,
       binding,
       profile: main.profile,
@@ -539,10 +549,6 @@ mainSessionRoutes.post('/chat', async (req, res) => {
         ]);
         userSettled = true;
         writeSse(res, 'run', { ...identity, state: 'running' });
-      },
-      onWaitingForBotReply: () => {
-        active.phase = 'waiting';
-        if (activeMainByScope.get(key) === admission) activeMainByScope.delete(key);
       },
       onEvent: (event) => {
         if (event.type === 'message.delta') {
@@ -582,7 +588,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     }
     writeSse(res, 'done', { ...identity, fullText: result.text });
   } catch (error) {
-    const cancelled = error instanceof Error && error.message === 'hermes_turn_cancelled';
+    const cancelled = error instanceof Error && error.message === 'card_turn_cancelled';
     rejectAdmission(admission, error);
     if (!userSettled) {
       await settleConversationMessage({
@@ -607,8 +613,8 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     } else {
       writeSse(res, 'error', {
         ...identity,
-        code: error instanceof Error ? error.message : 'hermes_turn_failed',
-        message: error instanceof Error ? error.message : 'The Hermes turn failed.',
+        code: error instanceof Error ? error.message : 'card_turn_failed',
+        message: error instanceof Error ? error.message : 'The Card turn failed.',
         correlationId: run.runId,
         route: '/api/main/session/chat',
         status: 502,
@@ -637,7 +643,7 @@ mainSessionRoutes.get('/history', async (req, res) => {
     return res.json({
       ok: true,
       mainCardId: authority.main.card.id,
-      addressableAgents: botRosterCards(authority, authority.main).flatMap((card) => (
+      addressableAgents: agentRosterCards(authority, authority.main).flatMap((card) => (
         card.address ? [{
           cardId: card.card.id,
           cardRevisionId: card.cardRevisionId,
@@ -669,14 +675,12 @@ mainSessionRoutes.post('/stop', async (req, res) => {
   const active = activeRuns.get(key);
   if (!active) return res.status(409).json({ ok: false, error: 'no_active_turn' });
   try {
-    if (active.phase === 'running') {
-      const interrupted = record(await active.client.request('session.interrupt', {
-        session_id: active.binding.liveHandle,
-        profile: active.profile,
-      }));
-      if (!['interrupted', 'not_interrupted'].includes(String(interrupted.status || ''))) {
-        throw new Error('hermes_interrupt_result_invalid');
-      }
+    const interrupted = record(await active.client.request('session.interrupt', {
+      session_id: active.binding.liveHandle,
+      profile: active.profile,
+    }));
+    if (String(interrupted.status || '') !== 'interrupted') {
+      throw new Error('card_interrupt_not_confirmed');
     }
     active.abortController.abort();
     return res.json({ ok: true, runId: expectedRunId, state: 'stopping' });
@@ -695,15 +699,15 @@ mainSessionRoutes.post('/voice/start', async (req, res) => {
   if (!projectId || !deckId) return res.status(400).json({ ok: false, error: 'voice_scope_required' });
   const authorization = await authorizeProject(req, res, projectId);
   if (!authorization) return undefined;
-  let client: HermesGatewayClient;
-  let binding: ProjectCardSession;
+  let client: CardRuntimeClient;
+  let binding: CardSessionBinding;
   let main: ProjectCardBinding;
   let status: Record<string, any>;
   try {
     const authority = await projectCardAuthority(projectId, deckId);
     main = authority.main;
-    client = await hermesGateway();
-    binding = await mainProjectSession(client, authority, {
+    client = await cardRuntimeGateway();
+    binding = await resolveMainSession(client, authority, {
       projectId,
       projectSessionId: authorization.projectSessionId,
       userId: authorization.userId,
@@ -712,7 +716,7 @@ mainSessionRoutes.post('/voice/start', async (req, res) => {
       action: 'status', profile: main.profile, session_id: binding.liveHandle,
     }, 60_000));
     if (status.available === false || status.stt_available === false) {
-      return res.status(503).json({ ok: false, error: 'hermes_voice_unavailable' });
+      return res.status(503).json({ ok: false, error: 'card_voice_unavailable' });
     }
   } catch (error) {
     return res.status(503).json({
@@ -790,8 +794,8 @@ mainSessionRoutes.post('/voice/stop', async (req, res) => {
   try {
     const authority = await projectCardAuthority(projectId, deckId);
     const main = authority.main;
-    const client = await hermesGateway();
-    const binding = await mainProjectSession(client, authority, {
+    const client = await cardRuntimeGateway();
+    const binding = await resolveMainSession(client, authority, {
       projectId,
       projectSessionId: authorization.projectSessionId,
       userId: authorization.userId,

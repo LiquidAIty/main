@@ -5,7 +5,7 @@
  * Relationship: This file creates one editable Assist Card with a unique saved identity and preserves an exact loaded deck without merging browser defaults.
  * Entity: Card Topology
  * Relationship: This file validates saved edge endpoints and places a quick-added Card without creating or changing any orange or blue wire.
- * Entity: Hermes Profiles
+ * Entity: Card Profiles
  * Relationship: This file gives a quick-added Assist Card one unique delegate profile and carries the template's saved provider and model choices.
  */
 

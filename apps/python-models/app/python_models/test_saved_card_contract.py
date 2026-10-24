@@ -1,11 +1,11 @@
 # Entity: Saved Cards
 # Relationship: This file verifies canonical saved Card serialization, explicit runtime ownership, stable grants, and revision validation.
-# Entity: Hermes Profiles
-# Relationship: This file verifies permanent profile binding, supported Hermes modes, reasoning values, and parent/subagent runtime selections.
-# Entity: Bot Mode Delegation
-# Relationship: This file verifies only eligible ordinary Hermes Cards may save the orchestrator switch.
-# Entity: Magnetic TaskGraph
-# Relationship: This file verifies the Magnetic runtime remains distinct from ordinary Hermes Cards and rejects ordinary automatic selectors and orange orchestration.
+# Entity: Card Profiles
+# Relationship: This file verifies permanent profile binding, supported runtime modes, reasoning values, and parent/subagent runtime selections.
+# Entity: Agent Messaging
+# Relationship: This file verifies only eligible ordinary agent Cards may save the orchestrator switch.
+# Entity: Magnetic Membership
+# Relationship: This file verifies the Magnetic runtime remains distinct from ordinary agent Cards and rejects ordinary automatic selectors and orange orchestration.
 # Entity: Jev Decisions
 # Relationship: This file verifies AutoTools and AutoModel remain strict optional booleans on eligible non-Magnetic Cards.
 # Entity: Card Scripts
@@ -19,7 +19,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.python_models import (
-    card_invocation_authority,
+    card_invocation_configuration,
     saved_card_contract,
     saved_cards,
 )
@@ -52,7 +52,7 @@ def _destination_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:
     sender = _main_bot("sender", runtime={"kind": "hermes", "mode": "main", "profile": "sender"})
     hermes = _agent(
         "hermes",
-        prompt="Hermes saved prompt",
+        prompt="Saved Card prompt",
         runtime={"kind": "hermes", "mode": "delegate", "profile": "research"},
     )
     hermes["runtimeOptions"] = {
@@ -99,7 +99,7 @@ def test_reasoning_effort_uses_one_saved_and_invocation_enum(effort: str) -> Non
 
     saved_card_contract.validate_new_card_revision(card)
 
-    assert card_invocation_authority.saved_invocation_configuration(card)[
+    assert card_invocation_configuration.saved_invocation_configuration(card)[
         "reasoningEffort"
     ] == effort
 
@@ -118,7 +118,7 @@ def test_invalid_historical_reasoning_effort_is_readable_but_cannot_save_or_run(
         saved_card_contract.CardDomainError,
         match="card_reasoning_effort_invalid",
     ):
-        card_invocation_authority.saved_invocation_configuration(card)
+        card_invocation_configuration.saved_invocation_configuration(card)
 
 def test_existing_saved_hermes_card_profile_is_immutable() -> None:
     previous = saved_card_contract.stable_card_record(_agent(
@@ -152,7 +152,7 @@ def test_new_card_revision_validates_saved_orchestrator_authority():
     magnetic["runtimeOptions"]["orchestrator"] = True
     with pytest.raises(
         saved_card_contract.CardDomainError,
-        match="card_orchestrator_requires_non_magnetic_hermes",
+        match="card_orchestrator_requires_ordinary_card_runtime",
     ):
         saved_card_contract.validate_new_card_revision(magnetic)
 
@@ -180,7 +180,7 @@ def test_new_card_revision_validates_auto_flags_without_availability(field):
     magnetic["runtimeOptions"][field] = True
     with pytest.raises(
         saved_card_contract.CardDomainError,
-        match="requires_non_magnetic_hermes",
+        match="requires_ordinary_card_runtime",
     ):
         saved_card_contract.validate_new_card_revision(magnetic)
 
@@ -223,21 +223,21 @@ def test_saved_card_removes_retired_embedded_team_configuration() -> None:
             "modelKey": "gpt-5.6-terra", "providerModelId": "gpt-5.6-terra",
         },
     }
-    hermes = _agent(
-        "hermes-team",
+    agent = _agent(
+        "saved-team",
         runtime={"kind": "hermes", "mode": "delegate", "profile": "research"},
         runtimeOptions={**_agent("x")["runtimeOptions"], "team": team},
     )
-    assert "team" not in saved_card_contract.stable_card_record(hermes)["runtimeExtensions"]
+    assert "team" not in saved_card_contract.stable_card_record(agent)["runtimeExtensions"]
     legacy = _agent("old-card", runtimeOptions={**_agent("x")["runtimeOptions"], "team": team})
     assert "team" not in saved_card_contract.stable_card_record(legacy)["runtimeExtensions"]
 
 def test_retired_kanban_card_mode_is_not_a_runtime_contract() -> None:
     with pytest.raises(
         saved_card_contract.CardDomainError,
-        match="hermes_runtime_mode_unsupported:kanban",
+        match="card_runtime_mode_unsupported:kanban",
     ):
-        saved_card_contract.runtime_owner(_agent(
+        saved_card_contract.card_runtime(_agent(
             "retired-kanban",
             runtime={"kind": "hermes", "mode": "kanban", "profile": "retired-kanban"},
         ))
@@ -253,21 +253,17 @@ def test_stable_card_has_one_prompt_and_one_explicit_runtime() -> None:
         "kind": "hermes", "mode": "delegate", "profile": "helper"
     }
 
-def test_runtime_owner_is_exhaustive_over_the_explicit_runtime_union() -> None:
-    for mode in ("main", "delegate"):
-        assert saved_card_contract.runtime_owner(_agent(
+def test_card_runtime_is_exhaustive_over_the_explicit_runtime_union() -> None:
+    for mode in ("main", "delegate", "magentic_one"):
+        assert saved_card_contract.card_runtime(_agent(
             mode, runtime={"kind": "hermes", "mode": mode, "profile": mode}
-        )) == "hermes"
-    assert saved_card_contract.runtime_owner(_agent(
-        "mag-one",
-        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"},
-    )) == "mag_one"
+        )) == {"kind": "hermes", "mode": mode, "profile": mode}
     for invalid, error in (
         (None, "runtime_kind_required"),
         ({"kind": "hermes", "mode": "delegate"}, "runtime_profile_required"),
         ({"kind": "hermes", "mode": "unknown", "profile": "invalid"},
-         "hermes_runtime_mode_unsupported"),
+         "card_runtime_mode_unsupported"),
         ({"kind": "other", "mode": "assistant"}, "runtime_kind_unsupported"),
     ):
         with pytest.raises(saved_card_contract.CardDomainError, match=error):
-            saved_card_contract.runtime_owner(_agent("invalid", runtime=invalid))
+            saved_card_contract.card_runtime(_agent("invalid", runtime=invalid))

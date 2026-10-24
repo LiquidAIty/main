@@ -1,7 +1,7 @@
 /**
  * Entity: Main Chat
- * Relationship: This file verifies partial-answer retention on failure and one Main submission for each distinct Hermes voice transcript.
- * Entity: Bot Mode Delegation
+ * Relationship: This file verifies partial-answer retention on failure and one Main submission for each distinct voice transcript.
+ * Entity: Agent Messaging
  * Relationship: This file verifies exact @Card admission against the current Project roster and synchronous refusal of an unknown address.
  * Entity: Card Invocation
  * Relationship: This file verifies streamed partial text remains visible when the same invocation later fails.
@@ -246,7 +246,7 @@ describe('Main stream retention and voice finality', () => {
     ]));
   });
 
-  it('submits a Hermes voice transcript without requiring a non-existent final flag', async () => {
+  it('submits a voice transcript without requiring a non-existent final flag', async () => {
     clientMocks.streamVoiceCapture.mockImplementationOnce(async ({ onEvent }) => {
       const transcript = {
         kind: 'transcript' as const,

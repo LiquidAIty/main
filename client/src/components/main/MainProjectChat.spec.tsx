@@ -2,7 +2,7 @@
 /**
  * Entity: Main Chat
  * Relationship: This file verifies the bounded conversation viewport, draft-preserving composer, voice controls, and visible transport-error presentation.
- * Entity: Bot Mode Delegation
+ * Entity: Agent Messaging
  * Relationship: This file verifies @Card suggestions come only from the supplied direct roster and completed replies display the actual recipient identity.
  * Entity: Card Invocation
  * Relationship: This file verifies exact user text and accepted image records reach the one invocation callback while rejected submissions preserve the draft.
@@ -289,7 +289,7 @@ describe('MainProjectChat', () => {
     expect(onVoiceStop).toHaveBeenCalledOnce();
   });
 
-  it('shows Hermes history rejoin and prevents a send until it completes', () => {
+  it('shows history rejoin and prevents a send until it completes', () => {
     const onSend = vi.fn();
     render(
       <MainProjectChat
@@ -674,7 +674,7 @@ describe('MainProjectChat', () => {
     expect(scroller.scrollTop).toBe(readerPosition);
   });
 
-  it('shows a Hermes transport failure as status instead of assistant speech', () => {
+  it('shows a runtime transport failure as status instead of assistant speech', () => {
     render(
       <MainProjectChat
         messages={[]}

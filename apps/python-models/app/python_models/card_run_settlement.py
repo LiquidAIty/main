@@ -1,9 +1,9 @@
 """Terminal settlement for durable Card Runs."""
 # Entity: Run Ledger
-# Relationship: This file validates terminal state and idempotently settles provider identity, usage, cost, errors, results, and bounded task aggregates on the durable Run.
+# Relationship: This file validates terminal state and idempotently settles provider identity, usage, cost, errors, and results on the durable Run.
 #
-# Entity: Hermes Card Sessions
-# Relationship: This file requires the persisted and supplied Hermes session, root, submission, provider, and model evidence to agree before successful settlement.
+# Entity: Card Sessions
+# Relationship: This file requires persisted and supplied session, root, submission, provider, and model evidence to agree before successful settlement.
 #
 # Entity: AgentGraph
 # Relationship: This file records terminal Run completion or failure only after the durable Run row was actually updated.
@@ -17,7 +17,6 @@ from psycopg.rows import dict_row
 
 from app.python_models import agentgraph_run_observations
 from app.python_models.card_run_execution import (
-    HERMES_TASK_STATUSES,
     optional_cost_status,
     optional_nonnegative_integer,
 )
@@ -59,9 +58,6 @@ def _validated_run_settlement_request(payload: dict[str, Any]) -> dict[str, Any]
         payload, "providerTotalTokens",
     )
     cost_status = optional_cost_status(payload)
-    hermes_status = str(payload.get("hermesStatus") or "").strip().lower() or None
-    if hermes_status is not None and hermes_status not in HERMES_TASK_STATUSES:
-        raise CardDomainError("hermes_task_status_invalid")
     child_provider = str(payload.get("provider") or "").strip()
     child_model = str(payload.get("model") or "").strip()
     if bool(child_provider) != bool(child_model):
@@ -71,7 +67,6 @@ def _validated_run_settlement_request(payload: dict[str, Any]) -> dict[str, Any]
         "state": state,
         "providerTotalTokens": provider_total_tokens,
         "costStatus": cost_status,
-        "hermesStatus": hermes_status,
         "childProvider": child_provider,
         "childModel": child_model,
         "inputMessageIds": _input_message_ids(payload),
@@ -184,10 +179,6 @@ def _apply_terminal_run_settlement(
           cost_status=COALESCE(%s, cost_status),
           tool_call_count=COALESCE(%s, tool_call_count),
           total_cost_usd=COALESCE(%s, total_cost_usd),
-          hermes_phase=%s,
-          hermes_task_completed_count=COALESCE(%s, hermes_task_completed_count),
-          hermes_task_total_count=COALESCE(%s, hermes_task_total_count),
-          hermes_active_worker_count=COALESCE(%s, hermes_active_worker_count),
           final_result=%s
         WHERE run_id=%s AND state IN ('pending','running')
         """,
@@ -202,8 +193,6 @@ def _apply_terminal_run_settlement(
             payload.get("providerCachedTokens"), payload.get("providerReasoningTokens"),
             request["providerTotalTokens"], request["costStatus"],
             payload.get("toolCallCount"), payload.get("totalCostUsd"),
-            request["hermesStatus"], payload.get("tasksCompleted"),
-            payload.get("tasksTotal"), payload.get("activeWorkers"),
             payload.get("finalResult"),
             request["runId"],
         ),
@@ -222,8 +211,6 @@ def _apply_terminal_run_settlement(
                provider_reasoning_tokens, provider_total_tokens, cost_status,
                tool_call_count, total_cost_usd,
                auto_tools_decision, auto_model_decision,
-               hermes_phase, hermes_task_completed_count,
-               hermes_task_total_count, hermes_active_worker_count,
                final_result
         FROM ag_catalog.agent_runs WHERE run_id=%s
         """,

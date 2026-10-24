@@ -2,8 +2,8 @@
 
 # Entity: Saved Cards
 # Relationship: This file validates create and update inputs against the saved Card contract before any deck persistence occurs.
-# Entity: Hermes Profiles
-# Relationship: This file validates provider access mode, stable profile runtime, subagent type, subagent model, and reasoning selections used by Hermes profiles.
+# Entity: Card Profiles
+# Relationship: This file validates provider access mode, stable profile runtime, subagent type, subagent model, and reasoning selections used by Card profiles.
 # Entity: Tool Catalog
 # Relationship: This file normalizes exact capability lists and rejects saved tool selections that are not eligible in the canonical catalog.
 
@@ -119,18 +119,18 @@ def _validate_card_provider_selection(
 
 
 def _validate_card_runtime_authority(
-    *, provider: Any, access_mode: Any, hermes: bool,
+    *, provider: Any, access_mode: Any, supported: bool,
 ) -> dict[str, Any]:
     from app.python_models.saved_card_contract import (
         CardDomainError,
-        validate_saved_hermes_runtime_authority,
+        validate_saved_card_runtime_authority,
     )
 
     try:
-        return validate_saved_hermes_runtime_authority(
+        return validate_saved_card_runtime_authority(
             provider,
             access_mode,
-            hermes=hermes,
+            supported=supported,
         )
     except CardDomainError as error:
         raise ApplicationToolError(str(error)) from error
@@ -181,5 +181,5 @@ def _validate_auto_flags(
             raise ApplicationToolError(f"{operation}_{error_field}_invalid")
         if field in source and runtime_mode == "magentic_one":
             raise ApplicationToolError(
-                f"{operation}_{error_field}_requires_non_magnetic_hermes"
+                f"{operation}_{error_field}_requires_ordinary_card_runtime"
             )

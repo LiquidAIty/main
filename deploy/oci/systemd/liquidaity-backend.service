@@ -1,8 +1,8 @@
 [Unit]
 Description=LiquidAIty backend
-Requires=liquidaity-infrastructure.service liquidaity-hermes.service
+Requires=liquidaity-infrastructure.service liquidaity-card-runtime.service
 Wants=liquidaity-python-rails.service liquidaity-knowgraph.service
-After=network-online.target liquidaity-infrastructure.service liquidaity-hermes.service liquidaity-python-rails.service liquidaity-knowgraph.service
+After=network-online.target liquidaity-infrastructure.service liquidaity-card-runtime.service liquidaity-python-rails.service liquidaity-knowgraph.service
 PartOf=liquidaity.target
 
 [Service]

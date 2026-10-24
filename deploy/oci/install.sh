@@ -51,10 +51,19 @@ grep -q '"node_modules/lightningcss-linux-x64-gnu"' "$APP_ROOT/package-lock.json
   || fail "linux_frontend_optional_dependency_missing_from_lockfile"
 [[ -r "$ENV_FILE" ]] || fail "environment_file_missing:$ENV_FILE"
 
-if grep -Ev '^[[:space:]]*(#|$)' "$ENV_FILE" \
-  | grep -Eq '<[^>]+>|CHANGE_ME|example\.com|public-fqdn|auth0-tenant'; then
+resolved_env=""
+while IFS= read -r env_line || [[ -n "$env_line" ]]; do
+  trimmed_line="${env_line#"${env_line%%[![:space:]]*}"}"
+  case "$trimmed_line" in
+    ""|\#*) continue ;;
+  esac
+  resolved_env+="$trimmed_line"$'\n'
+done < "$ENV_FILE"
+case "$resolved_env" in
+  *"<"*">"*|*"CHANGE_ME"*|*"example.com"*|*"public-fqdn"*|*"auth0-tenant"*)
   fail "environment_contains_unresolved_placeholders"
-fi
+  ;;
+esac
 
 set -a
 # shellcheck disable=SC1090
@@ -71,7 +80,9 @@ required_values=(
 for name in "${required_values[@]}"; do
   [[ -n "${!name:-}" ]] || fail "missing_required_config:$name"
 done
-[[ "$LIQUIDAITY_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || fail "invalid_liquidaity_domain"
+case "$LIQUIDAITY_DOMAIN" in
+  ""|*[!A-Za-z0-9.-]*) fail "invalid_liquidaity_domain" ;;
+esac
 [[ "$LIQUIDAITY_PUBLIC_BASE_URL" == "https://$LIQUIDAITY_DOMAIN" ]] \
   || fail "public_base_url_mismatch"
 [[ "$MCP_PUBLIC_RESOURCE_URL" == "https://$LIQUIDAITY_DOMAIN/mcp" ]] \
@@ -84,11 +95,14 @@ done
   || fail "mcp_loopback_transport_mismatch"
 [[ "${MCP_OAUTH_ENFORCED:-}" == true ]] || fail "mcp_oauth_must_be_enforced"
 [[ "${HERMES_GATEWAY_URL:-}" == ws://127.0.0.1:9119/api/ws ]] \
-  || fail "hermes_gateway_url_mismatch"
+  || fail "card_runtime_gateway_url_mismatch"
 [[ "${HERMES_HOME:-}" == /opt/liquidaity/HermesLatest/.hermes ]] \
-  || fail "hermes_home_mismatch"
-[[ "$HERMES_DASHBOARD_SESSION_TOKEN" =~ ^[a-f0-9]{64}$ ]] \
-  || fail "invalid_hermes_dashboard_session_token"
+  || fail "card_runtime_home_mismatch"
+[[ ${#HERMES_DASHBOARD_SESSION_TOKEN} -eq 64 ]] \
+  || fail "invalid_card_runtime_session_token"
+case "$HERMES_DASHBOARD_SESSION_TOKEN" in
+  *[!a-f0-9]*) fail "invalid_card_runtime_session_token" ;;
+esac
 [[ ${#LIQUIDAITY_INTERNAL_MCP_SECRET} -ge 32 ]] || fail "internal_mcp_secret_too_short"
 
 if ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
@@ -137,10 +151,10 @@ prepare_python_environment "$APP_ROOT/apps/python-models/.venv" \
 prepare_python_environment "$APP_ROOT/services/knowgraph/.venv" \
   "$APP_ROOT/services/knowgraph/requirements.txt"
 
-# Hermes is a controlled runtime. This package uses its verified public entrypoint but does not
+# The Card runtime is controlled upstream. This package uses its verified public entrypoint but does not
 # build or mutate it. A supported Linux environment and retained profile state must be migrated.
-[[ -x "$APP_ROOT/HermesLatest/.venv/bin/python" ]] || fail "hermes_linux_environment_required"
-[[ -s "$APP_ROOT/HermesLatest/.hermes/config.yaml" ]] || fail "hermes_profile_state_required"
+[[ -x "$APP_ROOT/HermesLatest/.venv/bin/python" ]] || fail "card_runtime_linux_environment_required"
+[[ -s "$APP_ROOT/HermesLatest/.hermes/config.yaml" ]] || fail "card_runtime_profile_state_required"
 
 rendered_caddy=$(mktemp)
 trap 'rm -f "$rendered_caddy"' EXIT
@@ -151,6 +165,10 @@ caddy validate --config /etc/caddy/Caddyfile
 for unit in "$DEPLOY_ROOT"/systemd/*.service "$DEPLOY_ROOT"/systemd/*.target; do
   install -o root -g root -m 0644 "$unit" "/etc/systemd/system/$(basename "$unit")"
 done
+if systemctl list-unit-files liquidaity-hermes.service >/dev/null 2>&1; then
+  systemctl disable --now liquidaity-hermes.service || true
+  rm -f /etc/systemd/system/liquidaity-hermes.service
+fi
 systemd-analyze verify /etc/systemd/system/liquidaity-*.service \
   /etc/systemd/system/liquidaity.target
 systemctl daemon-reload

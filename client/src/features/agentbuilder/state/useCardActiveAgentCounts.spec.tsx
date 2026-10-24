@@ -26,20 +26,20 @@ const deck = {
   version: 1,
 } as DeckDocument;
 
-describe('Hermes event-derived Card activity', () => {
+describe('Run-derived Card activity', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('shows one Card Run plus the exact active Hermes worker count', async () => {
+  it('shows one agent only for each actual active Card Run', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({
         ok: true,
         results: [
-          { cardId: 'main', state: 'running', activeWorkers: 0 },
+          { cardId: 'main', state: 'running' },
           { cardId: 'knowgraph', state: 'running', activeWorkers: 3 },
         ],
         failedCardIds: [],
@@ -51,7 +51,7 @@ describe('Hermes event-derived Card activity', () => {
     }));
     await waitFor(() => expect(result.current.activeAgentCounts).toEqual({
       main: 1,
-      knowgraph: 4,
+      knowgraph: 1,
     }));
     expect(result.current.activeCardIds).toEqual(['main', 'knowgraph']);
     unmount();
@@ -64,8 +64,8 @@ describe('Hermes event-derived Card activity', () => {
       json: async () => ({
         ok: true,
         results: [
-          { cardId: 'main', state: 'completed', activeWorkers: 0 },
-          { cardId: 'knowgraph', state: 'running', activeWorkers: -1 },
+          { cardId: 'main', state: 'completed' },
+          { cardId: 'knowgraph', state: 9 },
         ],
         failedCardIds: [],
       }),

@@ -7,7 +7,7 @@ cannot become the active runtime presentation.
 """
 
 # Entity: Card Scripts
-# Relationship: This file compiles one saved Card's bounded Python tool recipe against its current grants into the exact per-turn Hermes Script contract.
+# Relationship: This file compiles one saved Card's bounded Python tool recipe against its current grants into the exact per-turn external Script contract.
 
 from __future__ import annotations
 
@@ -678,7 +678,7 @@ def runtime_card_script_definition(
     enabled_tools: list[str],
     presented_tools: list[str],
 ) -> dict[str, Any] | None:
-    """Mechanically project one already-compiled IDF Script into Hermes' turn contract."""
+    """Mechanically project one already-compiled IDF Script into the external turn contract."""
 
     if presentation_mode != "script":
         return None

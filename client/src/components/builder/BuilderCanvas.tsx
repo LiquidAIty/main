@@ -32,7 +32,7 @@ import type {
   DeckEdge,
   DeckEdgeType,
 } from '../../types/agentgraph';
-import { hasMainBotAuthority, normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
+import { hasAgentOrchestratorAuthority, normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
 import {
   GRAPH_THEME,
   graphPillButtonStyle,
@@ -204,7 +204,7 @@ function resolveCanvasConnectionEdgeType(
   if (sourceIsBus && targetIsBus) return null;
 
   if (targetIsBus && connection.targetHandle === MAGNETIC_DIRECT_HANDLE) {
-    return hasMainBotAuthority(sourceNode) && targetNode.enabled !== false
+    return hasAgentOrchestratorAuthority(sourceNode) && targetNode.enabled !== false
       ? 'flow'
       : null;
   }
@@ -214,7 +214,7 @@ function resolveCanvasConnectionEdgeType(
   }
 
   const targetProfile = targetNode.runtime.kind === 'hermes' ? targetNode.runtime.profile.trim().toLowerCase() : '';
-  if (!hasMainBotAuthority(sourceNode)
+  if (!hasAgentOrchestratorAuthority(sourceNode)
     || targetNode.enabled === false
     || targetNode.runtime.kind !== 'hermes'
     || targetNode.runtime.mode === 'magentic_one'
@@ -243,8 +243,8 @@ export function toFlowEdges(
     const sourceNode = nodeById.get(edge.source) as AgentCardInstance | undefined;
     const targetNode = nodeById.get(edge.target) as AgentCardInstance | undefined;
     if (!sourceNode || !targetNode) return [];
-    const sourceCanOrchestrate = hasMainBotAuthority(sourceNode);
-    const targetCanOrchestrate = hasMainBotAuthority(targetNode);
+    const sourceCanOrchestrate = hasAgentOrchestratorAuthority(sourceNode);
+    const targetCanOrchestrate = hasAgentOrchestratorAuthority(targetNode);
     const targetIsMagnetic = targetNode.runtime.kind === 'hermes'
       && targetNode.runtime.mode === 'magentic_one';
     return {
@@ -410,7 +410,7 @@ export function isPlainConnectionAllowedForDocument(
     const target = nodeById.get(targetId);
     if (!source || !target) return false;
     if (type === 'flow') {
-      if (!hasMainBotAuthority(source)) return false;
+      if (!hasAgentOrchestratorAuthority(source)) return false;
       if (target.runtime.kind === 'hermes' && target.runtime.mode === 'magentic_one') return null;
       return { workerId: targetId, masterId: sourceId };
     }

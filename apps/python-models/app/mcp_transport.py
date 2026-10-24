@@ -6,8 +6,8 @@
 # Relationship: This file protects the public Streamable HTTP endpoint with OAuth verification, bearer challenges, host checks, and origin checks.
 # Entity: Tool Catalog
 # Relationship: This file initializes the canonical tool catalog before accepting requests and exposes catalog health and readiness without rebuilding the catalog per client.
-# Entity: Hermes Profiles
-# Relationship: This file binds validated Project, Run, and Hermes profile headers to one request context for profile-owned MCP connections.
+# Entity: Card Profiles
+# Relationship: This file binds validated Project, Run, and Card profile headers to one request context for profile-owned MCP connections.
 
 from __future__ import annotations
 
@@ -121,7 +121,7 @@ class _SafeRequestTraceMiddleware:
             )
 
 
-class _HermesProfileContextMiddleware:
+class _CardProfileContextMiddleware:
     """Bind one profile name from the profile-owned MCP connection to this request."""
 
     _PROFILE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -152,7 +152,7 @@ class _HermesProfileContextMiddleware:
         run_id = raw_run if not raw_run or re.fullmatch(
             r"^[A-Za-z0-9:_-]{1,128}$", raw_run,
         ) else "__invalid__"
-        profile_token = mcp_auth.set_requested_hermes_profile(profile)
+        profile_token = mcp_auth.set_requested_card_profile(profile)
         project_token = mcp_auth.set_requested_project_id(project_id)
         deck_token = mcp_auth.set_requested_deck_id(deck_id)
         conversation_token = mcp_auth.set_requested_conversation_id(conversation_id)
@@ -164,7 +164,7 @@ class _HermesProfileContextMiddleware:
             mcp_auth.reset_requested_conversation_id(conversation_token)
             mcp_auth.reset_requested_deck_id(deck_token)
             mcp_auth.reset_requested_project_id(project_token)
-            mcp_auth.reset_requested_hermes_profile(profile_token)
+            mcp_auth.reset_requested_card_profile(profile_token)
 
 
 async def run_streamable_http(
@@ -359,7 +359,7 @@ async def run_streamable_http(
         ]
     else:
         routes = [*health_routes, Mount("/", app=endpoint)]
-    http_app = _SafeRequestTraceMiddleware(_HermesProfileContextMiddleware(
+    http_app = _SafeRequestTraceMiddleware(_CardProfileContextMiddleware(
         Starlette(routes=routes, lifespan=lifespan)
     ))
     config = uvicorn.Config(

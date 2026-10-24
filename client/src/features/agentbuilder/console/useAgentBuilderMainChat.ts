@@ -1,9 +1,9 @@
 /**
  * Entity: Main Chat
- * Relationship: This file owns the Project-scoped Main conversation view, history, streamed partial replies, error state, and one final submission per Hermes voice capture.
+ * Relationship: This file owns the Project-scoped Main conversation view, history, streamed partial replies, error state, and one final submission per voice capture.
  * Entity: Projects
  * Relationship: This file resets conversation, authority, voice, and active-stream state whenever the active Project changes.
- * Entity: Bot Mode Delegation
+ * Entity: Agent Messaging
  * Relationship: This file admits an explicit @Card only when it exactly matches the current server-supplied roster and preserves the observed recipient as the reply speaker.
  * Entity: Card Invocation
  * Relationship: This file assembles one Main Run request from exact user text, bounded images, and selected references and retains partial text on failure or cancellation.
@@ -11,8 +11,8 @@
  * Relationship: This file tracks the real active Run identity for stop requests and refuses to interrupt without an observed Run ID.
  * Entity: Data Anchors
  * Relationship: This file converts selected reference order into bounded Run priorities without changing provider identity or resolved data.
- * Entity: Hermes Card Sessions
- * Relationship: This file loads Project conversation history and consumes chat, stop, and voice events from Main's saved Hermes session.
+ * Entity: Card Sessions
+ * Relationship: This file loads Project conversation history and consumes chat, stop, and voice events from Main's saved Card session.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -22,7 +22,7 @@ import {
   loadSessionHistory,
   type AddressableAgent,
   type GraphRecordIdentity,
-  type HermesSessionEvent,
+  type MainSessionEvent,
   type MainConversationMessage,
   type MainConversationParticipant,
   type MainRunImage,
@@ -395,7 +395,7 @@ export default function useAgentBuilderMainChat({
           priority: order === 0 ? 0 : -order,
         })),
         signal: controller.signal,
-        onEvent: (event: HermesSessionEvent) => {
+        onEvent: (event: MainSessionEvent) => {
           if (
             (event.projectId && event.projectId !== canvasProjectId)
             || (event.deckId && event.deckId !== deckId)

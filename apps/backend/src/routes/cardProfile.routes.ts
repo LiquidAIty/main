@@ -1,8 +1,8 @@
 /**
- * Entity: Hermes Profiles
+ * Entity: Card Profiles
  * Relationship: This file resolves the exact saved Card profile and exposes bounded learning and profile operations only after Project, Card, and single-owner authorization.
  * Entity: Authentication
- * Relationship: This file requires the authenticated Project owner and rejects cross-owner or non-Hermes Card profile access before contacting the Hermes gateway.
+ * Relationship: This file requires the authenticated Project owner and rejects cross-owner or incompatible Card profile access before contacting the external runtime.
  * Entity: Credentials
  * Relationship: This file exposes bounded MCP OAuth start, poll, cancel, and connection-test operations while redacting token-shaped failure details.
  * Entity: Tool Catalog
@@ -14,13 +14,17 @@ import { Router, type Request, type Response } from 'express';
 import {
   ensureSavedCardProfile,
   materializeSavedCardProfile,
-  savedCardBotRoster,
-  type HermesProfileState,
-} from '../hermes/profileMaterialization';
-import { hermesGateway, type HermesGatewayClient } from '../services/hermesGateway';
+  savedCardAgentRoster,
+  type CardProfileState,
+} from '../cardRuntime/profileMaterialization';
+import {
+  CARD_RUNTIME_CONTRACT,
+  cardRuntimeGateway,
+  type CardRuntimeClient,
+} from '../services/cardRuntimeGateway';
 import { readToolCatalog } from '../services/mcp/toolCatalogMcpClient';
 import {
-  assertHermesProfileOwner,
+  assertCardProfileOwner,
   getOwnedProjectByReference,
 } from '../services/projectStore';
 import {
@@ -35,8 +39,8 @@ const router = Router();
 type AuthorizedCard = {
   authority: ProjectCardAuthority;
   card: ProjectCardBinding;
-  client: HermesGatewayClient;
-  profile: HermesProfileState;
+  client: CardRuntimeClient;
+  profile: CardProfileState;
 };
 
 function requiredText(value: unknown, error: string): string {
@@ -55,7 +59,7 @@ function errorStatus(error: unknown): number {
   const message = error instanceof Error ? error.message : String(error);
   if (message === 'deck_not_found' || message === 'card_not_found') return 404;
   if (message.endsWith('_required') || message.endsWith('_unsupported')) return 400;
-  if (message.endsWith('_access_denied') || message === 'hermes_profile_owner_conflict') return 403;
+  if (message.endsWith('_access_denied') || message === 'card_profile_owner_conflict') return 403;
   return 503;
 }
 
@@ -68,7 +72,7 @@ async function resolveAuthorizedCard(
 ): Promise<AuthorizedCard | null> {
   const userId = String((req as Request & { userId?: string }).userId || '').trim();
   if (!userId) {
-    res.status(401).json({ ok: false, error: 'hermes_profile_authentication_required' });
+    res.status(401).json({ ok: false, error: 'card_profile_authentication_required' });
     return null;
   }
   const projectId = requiredText(projectIdValue, 'project_id_required');
@@ -76,17 +80,17 @@ async function resolveAuthorizedCard(
   const cardId = requiredText(cardIdValue, 'card_id_required');
   const project = await getOwnedProjectByReference(projectId, userId);
   if (!project || project.ownerUserId !== userId) {
-    res.status(403).json({ ok: false, error: 'hermes_profile_access_denied' });
+    res.status(403).json({ ok: false, error: 'card_profile_access_denied' });
     return null;
   }
   const authority = await projectCardAuthority(projectId, deckId);
   const matches = authority.cards.filter((candidate) => candidate.card.id === cardId);
-  if (matches.length !== 1 || matches[0].card.runtime.kind !== 'hermes') {
+  if (matches.length !== 1 || matches[0].card.runtime.kind !== CARD_RUNTIME_CONTRACT.kind) {
     throw new Error('card_not_found');
   }
   const card = matches[0];
-  await assertHermesProfileOwner(card.profile, userId);
-  const client = await hermesGateway();
+  await assertCardProfileOwner(card.profile, userId);
+  const client = await cardRuntimeGateway();
   const request = <T>(method: string, params: Record<string, unknown> = {}) => (
     client.request<T>(method, params)
   );
@@ -105,12 +109,12 @@ async function resolveAuthorizedCard(
     existing,
     toolCatalog.tools,
     toolCatalog.unavailableFamilies,
-    savedCardBotRoster(authority.deck, card.card),
+    savedCardAgentRoster(authority.deck, card.card),
   );
   return { authority, card, client, profile };
 }
 
-function mcpServerView(value: unknown, profile: HermesProfileState) {
+function mcpServerView(value: unknown, profile: CardProfileState) {
   const server = objectRecord(value);
   const name = String(server.name || '').trim();
   if (!name) return null;
@@ -220,7 +224,7 @@ function safeMcpTestResult(value: unknown) {
     credentialStatus: result.ok === true || result.oauth_tokens_present === true
       ? 'configured'
       : 'not_configured',
-    error: result.ok === true ? null : error || 'Hermes MCP connection failed',
+    error: result.ok === true ? null : error || 'Card MCP connection failed',
   };
 }
 
@@ -251,23 +255,23 @@ router.post('/cards/:cardId/operations', async (req, res) => {
       req.params.cardId,
     );
     if (!resolved) return undefined;
-    const method = requiredText(req.body?.method, 'hermes_profile_method_required');
+    const method = requiredText(req.body?.method, 'card_profile_method_required');
     const params = objectRecord(req.body?.params);
     let result: unknown;
     if (method === 'learning.detail') {
       result = await resolved.client.request(method, {
         profile: resolved.card.profile,
-        id: requiredText(params.id, 'hermes_learning_node_required'),
+        id: requiredText(params.id, 'card_learning_node_required'),
       });
-      if (objectRecord(result).ok !== true) throw new Error('hermes_learning_detail_failed');
+      if (objectRecord(result).ok !== true) throw new Error('card_learning_detail_failed');
     } else if (method === 'learning.edit') {
-      if (typeof params.content !== 'string') throw new Error('hermes_learning_content_required');
+      if (typeof params.content !== 'string') throw new Error('card_learning_content_required');
       result = await resolved.client.request(method, {
         profile: resolved.card.profile,
-        id: requiredText(params.id, 'hermes_learning_node_required'),
+        id: requiredText(params.id, 'card_learning_node_required'),
         content: params.content,
       });
-      if (objectRecord(result).ok !== true) throw new Error('hermes_learning_edit_failed');
+      if (objectRecord(result).ok !== true) throw new Error('card_learning_edit_failed');
     } else if (method === 'mcp.servers.test') {
       const name = requiredText(params.name, 'mcp_server_name_required');
       const probe = safeMcpTestResult(await resolved.client.request(method, {
@@ -290,23 +294,23 @@ router.post('/cards/:cardId/operations', async (req, res) => {
         objectRecord(result).ok !== true
         || !String(objectRecord(result).session_id || '').trim()
         || !String(objectRecord(result).auth_url || '').trim()
-      ) throw new Error('hermes_mcp_oauth_start_failed');
+      ) throw new Error('card_mcp_oauth_start_failed');
     } else if (method === 'mcp.servers.oauth.poll') {
       result = objectRecord(await resolved.client.request(method, {
         profile: resolved.card.profile,
         name: requiredText(params.name, 'mcp_server_name_required'),
         session_id: requiredText(params.session_id, 'mcp_oauth_session_required'),
       }));
-      if (objectRecord(result).ok !== true) throw new Error('hermes_mcp_oauth_poll_failed');
+      if (objectRecord(result).ok !== true) throw new Error('card_mcp_oauth_poll_failed');
     } else if (method === 'mcp.servers.oauth.cancel') {
       result = objectRecord(await resolved.client.request(method, {
         profile: resolved.card.profile,
         name: requiredText(params.name, 'mcp_server_name_required'),
         session_id: requiredText(params.session_id, 'mcp_oauth_session_required'),
       }));
-      if (objectRecord(result).ok !== true) throw new Error('hermes_mcp_oauth_cancel_failed');
+      if (objectRecord(result).ok !== true) throw new Error('card_mcp_oauth_cancel_failed');
     } else {
-      throw new Error('hermes_profile_method_unsupported');
+      throw new Error('card_profile_method_unsupported');
     }
     const readback = method === 'mcp.servers.test'
       ? null

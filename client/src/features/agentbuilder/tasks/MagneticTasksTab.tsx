@@ -1,6 +1,6 @@
 /**
- * Entity: Magnetic TaskGraph
- * Relationship: This file renders inspect-only Hermes task dependencies, saved Card assignments, bounded handoffs, and exact current states for the selected Magnetic Run.
+ * Entity: Magnetic Tasks
+ * Relationship: This file renders inspect-only task dependencies, saved Card assignments, bounded handoffs, and exact current states for the selected Magnetic Run.
  * Entity: Run Ledger
  * Relationship: This file reads the current outer Run status and displays task attempts and the same root identity without creating or mutating work.
  */
@@ -25,7 +25,7 @@ import {
   graphGlassPillStyle,
 } from '../../../components/graph/graphVisualTokens';
 
-export const HERMES_TASK_STATUSES = [
+export const TASK_STATUSES = [
   'triage',
   'todo',
   'scheduled',
@@ -37,33 +37,32 @@ export const HERMES_TASK_STATUSES = [
   'archived',
 ] as const;
 
-export type HermesTaskStatus = (typeof HERMES_TASK_STATUSES)[number];
+export type TaskStatus = (typeof TASK_STATUSES)[number];
 
-type HermesTaskAttempt = {
+type TaskAttempt = {
   runId: string | number;
   status: string;
 };
 
-export type MagneticHermesTask = {
+export type MagneticTask = {
   taskId: string;
   title: string;
   assignee: string | null;
-  status: HermesTaskStatus;
+  status: TaskStatus;
   dependencyIds: string[];
-  latestAttempt: HermesTaskAttempt | null;
+  latestAttempt: TaskAttempt | null;
   resultAvailable: boolean;
   handoffSummary: string | null;
 };
 
 type MagneticRunStatus = {
   runId: string;
-  hermesRootId: string | null;
+  rootTaskId: string | null;
   state: string;
-  hermesStatus: HermesTaskStatus | null;
-  hermesTasks: MagneticHermesTask[];
+  tasks: MagneticTask[];
 };
 
-const VALID_TASK_STATUSES = new Set<string>(HERMES_TASK_STATUSES);
+const VALID_TASK_STATUSES = new Set<string>(TASK_STATUSES);
 const ACTIVE_REFRESH_MS = 2_000;
 const QUIET_REFRESH_MS = 10_000;
 const STATUS_REQUEST_TIMEOUT_MS = 8_000;
@@ -84,13 +83,13 @@ function exactBoundedText(value: unknown, limit: number): string | null {
   return value;
 }
 
-function hermesTaskStatus(value: unknown): HermesTaskStatus | null {
+function taskStatus(value: unknown): TaskStatus | null {
   const candidate = text(value).toLowerCase();
-  return VALID_TASK_STATUSES.has(candidate) ? candidate as HermesTaskStatus : null;
+  return VALID_TASK_STATUSES.has(candidate) ? candidate as TaskStatus : null;
 }
 
 export function taskStatusLabel(
-  status: HermesTaskStatus,
+  status: TaskStatus,
   _dependencyCount = 0,
 ): string {
   switch (status) {
@@ -111,12 +110,12 @@ export function readMagneticRunStatus(value: unknown): MagneticRunStatus | null 
   const source = value as Record<string, unknown>;
   const runId = text(source.runId);
   if (!runId) return null;
-  const tasks = Array.isArray(source.hermesTasks)
-    ? source.hermesTasks.flatMap((entry): MagneticHermesTask[] => {
+  const tasks = Array.isArray(source.tasks)
+    ? source.tasks.flatMap((entry): MagneticTask[] => {
       if (!entry || typeof entry !== 'object') return [];
       const task = entry as Record<string, unknown>;
       const taskId = text(task.taskId);
-      const status = hermesTaskStatus(task.status);
+      const status = taskStatus(task.status);
       if (!taskId || !status) return [];
       const rawAttempt = task.latestAttempt;
       const attempt = rawAttempt && typeof rawAttempt === 'object'
@@ -152,15 +151,14 @@ export function readMagneticRunStatus(value: unknown): MagneticRunStatus | null 
     : [];
   return {
     runId,
-    hermesRootId: text(source.hermesRootId) || null,
+    rootTaskId: text(source.providerThreadRef) || null,
     state: text(source.state),
-    hermesStatus: hermesTaskStatus(source.hermesStatus),
-    hermesTasks: tasks,
+    tasks,
   };
 }
 
 function taskTone(
-  status: HermesTaskStatus,
+  status: TaskStatus,
   dependencyCount = 0,
 ): { border: string; color: string; background: string } {
   const visibleStatus = taskStatusLabel(status, dependencyCount);
@@ -184,11 +182,11 @@ function taskTone(
 }
 
 type MagneticTaskNodeData = {
-  task: MagneticHermesTask;
+  task: MagneticTask;
   assignmentLabel: string;
 };
 
-type MagneticTaskGraphNode = Node<MagneticTaskNodeData, 'magneticTask'>;
+type MagneticTaskNode = Node<MagneticTaskNodeData, 'magneticTask'>;
 
 function assignmentLabel(
   assignee: string | null,
@@ -199,11 +197,11 @@ function assignmentLabel(
   return savedTitle || 'Unmapped';
 }
 
-export function buildMagneticTaskGraph(
-  tasks: MagneticHermesTask[],
+export function buildMagneticTaskLayout(
+  tasks: MagneticTask[],
   cardTitlesByProfile: Readonly<Record<string, string>> = {},
 ): {
-  nodes: MagneticTaskGraphNode[];
+  nodes: MagneticTaskNode[];
   edges: Edge[];
 } {
   const byId = new Map(tasks.map((task) => [task.taskId, task]));
@@ -226,7 +224,7 @@ export function buildMagneticTaskGraph(
     return depth;
   };
 
-  const layers = new Map<number, MagneticHermesTask[]>();
+  const layers = new Map<number, MagneticTask[]>();
   for (const task of tasks) {
     const depth = depthFor(task.taskId);
     const layer = layers.get(depth) ?? [];
@@ -240,7 +238,7 @@ export function buildMagneticTaskGraph(
 
   const nodes = [...layers.entries()]
     .sort(([left], [right]) => left - right)
-    .flatMap(([depth, layer]) => layer.map((task, index): MagneticTaskGraphNode => ({
+    .flatMap(([depth, layer]) => layer.map((task, index): MagneticTaskNode => ({
       id: task.taskId,
       type: 'magneticTask',
       position: {
@@ -270,7 +268,7 @@ export function buildMagneticTaskGraph(
   return { nodes, edges };
 }
 
-function MagneticTaskNode({ data, selected }: NodeProps<MagneticTaskGraphNode>): React.ReactElement {
+function MagneticTaskCard({ data, selected }: NodeProps<MagneticTaskNode>): React.ReactElement {
   const task = data.task;
   const tone = taskTone(task.status, task.dependencyIds.length);
   const statusLabel = taskStatusLabel(task.status, task.dependencyIds.length);
@@ -324,7 +322,7 @@ function MagneticTaskNode({ data, selected }: NodeProps<MagneticTaskGraphNode>):
   );
 }
 
-const MAGNETIC_TASK_NODE_TYPES = { magneticTask: MagneticTaskNode };
+const MAGNETIC_TASK_NODE_TYPES = { magneticTask: MagneticTaskCard };
 
 function SelectedTaskDetails({
   task,
@@ -333,10 +331,10 @@ function SelectedTaskDetails({
   allTasks,
   cardTitlesByProfile,
 }: {
-  task: MagneticHermesTask;
+  task: MagneticTask;
   rootTaskId: string | null;
   runId: string;
-  allTasks: MagneticHermesTask[];
+  allTasks: MagneticTask[];
   cardTitlesByProfile: Readonly<Record<string, string>>;
 }): React.ReactElement {
   const statusLabel = taskStatusLabel(task.status, task.dependencyIds.length);
@@ -398,7 +396,7 @@ export default function MagneticTasksTab({
   const [error, setError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<
-    ReactFlowInstance<MagneticTaskGraphNode, Edge> | null
+    ReactFlowInstance<MagneticTaskNode, Edge> | null
   >(null);
   const graphHostRef = useRef<HTMLDivElement | null>(null);
 
@@ -472,20 +470,20 @@ export default function MagneticTasksTab({
     };
   }, [refresh]);
 
-  const taskGraph = useMemo(
-    () => buildMagneticTaskGraph(run?.hermesTasks ?? [], cardTitlesByProfile),
+  const taskLayout = useMemo(
+    () => buildMagneticTaskLayout(run?.tasks ?? [], cardTitlesByProfile),
     [cardTitlesByProfile, run],
   );
   const selectedTask = useMemo(() => (
-    run?.hermesTasks.find((task) => task.taskId === selectedTaskId) ?? null
+    run?.tasks.find((task) => task.taskId === selectedTaskId) ?? null
   ), [run, selectedTaskId]);
   const rootTask = useMemo(() => (
-    run?.hermesTasks.find((task) => task.taskId === run.hermesRootId) ?? null
+    run?.tasks.find((task) => task.taskId === run.rootTaskId) ?? null
   ), [run]);
   const graphHeight = useMemo(() => Math.min(
     720,
-    Math.max(260, ...taskGraph.nodes.map((node) => node.position.y + TASK_NODE_HEIGHT + 24)),
-  ), [taskGraph.nodes]);
+    Math.max(260, ...taskLayout.nodes.map((node) => node.position.y + TASK_NODE_HEIGHT + 24)),
+  ), [taskLayout.nodes]);
 
   useEffect(() => {
     const host = graphHostRef.current;
@@ -506,7 +504,7 @@ export default function MagneticTasksTab({
   }, [flowInstance, graphHeight]);
 
   useEffect(() => {
-    if (selectedTaskId && !run?.hermesTasks.some((task) => task.taskId === selectedTaskId)) {
+    if (selectedTaskId && !run?.tasks.some((task) => task.taskId === selectedTaskId)) {
       setSelectedTaskId(null);
     }
   }, [run, selectedTaskId]);
@@ -530,7 +528,7 @@ export default function MagneticTasksTab({
       <div style={graphDrawerSectionStyle({ padding: '10px 11px', borderRadius: 8 })}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <span style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 10 }}>
-            {run.hermesTasks.length}
+            {run.tasks.length}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
             {error ? (
@@ -538,28 +536,24 @@ export default function MagneticTasksTab({
                 Stale
               </span>
             ) : null}
-            {run.hermesStatus ? (
+            {run.state ? (
             <span
-              title={run.hermesStatus}
-              style={graphGlassPillStyle({
-                color: taskTone(run.hermesStatus, rootTask?.dependencyIds.length ?? 0).color,
-                borderColor: taskTone(run.hermesStatus, rootTask?.dependencyIds.length ?? 0).border,
-                background: taskTone(run.hermesStatus, rootTask?.dependencyIds.length ?? 0).background,
-              })}
+              title={run.state}
+              style={graphGlassPillStyle({ color: GRAPH_THEME.drawer.inputMuted })}
             >
-              {taskStatusLabel(run.hermesStatus, rootTask?.dependencyIds.length ?? 0)}
+              {run.state}
             </span>
             ) : null}
           </div>
         </div>
       </div>
-      {run.hermesTasks.length === 0 ? (
+      {run.tasks.length === 0 ? (
         <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12 }}>Empty</div>
       ) : (
         <>
           <div
             ref={graphHostRef}
-            data-testid="magnetic-task-graph"
+            data-testid="magnetic-task-layout"
             style={{
               height: graphHeight,
               minHeight: 260,
@@ -569,10 +563,10 @@ export default function MagneticTasksTab({
               background: 'rgba(5, 12, 17, 0.34)',
             }}
           >
-            <ReactFlow<MagneticTaskGraphNode, Edge>
-              key={`${run.runId}:${taskGraph.nodes.map((node) => node.id).join('|')}`}
-              nodes={taskGraph.nodes}
-              edges={taskGraph.edges}
+            <ReactFlow<MagneticTaskNode, Edge>
+              key={`${run.runId}:${taskLayout.nodes.map((node) => node.id).join('|')}`}
+              nodes={taskLayout.nodes}
+              edges={taskLayout.edges}
               nodeTypes={MAGNETIC_TASK_NODE_TYPES}
               nodesDraggable={false}
               nodesConnectable={false}
@@ -597,9 +591,9 @@ export default function MagneticTasksTab({
           {selectedTask ? (
             <SelectedTaskDetails
               task={selectedTask}
-              rootTaskId={run.hermesRootId}
+              rootTaskId={run.rootTaskId}
               runId={run.runId}
-              allTasks={run.hermesTasks}
+              allTasks={run.tasks}
               cardTitlesByProfile={cardTitlesByProfile}
             />
           ) : null}

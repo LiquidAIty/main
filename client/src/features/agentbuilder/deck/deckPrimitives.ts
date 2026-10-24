@@ -56,8 +56,8 @@ export function normalizeRuntimeOptions(
 }
 
 /** Orange flow authority belongs to Main or an explicitly enabled saved
- * non-Magnetic Hermes orchestrator Card. */
-export function hasMainBotAuthority(card: AgentCardInstance): boolean {
+ * non-Magnetic orchestrator Card. */
+export function hasAgentOrchestratorAuthority(card: AgentCardInstance): boolean {
   const options = card.runtimeOptions;
   return card.kind === 'agent'
     && card.runtime.kind === 'hermes'
@@ -69,7 +69,7 @@ export function hasMainBotAuthority(card: AgentCardInstance): boolean {
 /** Recognise ONLY the two real edge types — mirrors the backend contract
  * (decks/store.ts). Anything else is 'invalid': visible on the canvas but
  * authorising nothing. The old default returned 'flow' (invocation authority)
- * for typos and corrupt data, which is how Main→Hermes delegation silently
+ * for typos and corrupt data, which is how Main-to-agent messaging silently
  * died twice (C-1). */
 export function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
   const type = safeText(value).trim().toLowerCase();

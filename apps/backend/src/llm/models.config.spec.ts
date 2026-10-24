@@ -1,4 +1,4 @@
-// Entity: Hermes Profiles
+// Entity: Card Profiles
 // Relationship: This file verifies pinned provider/model identities remain valid saved profile choices without compatibility aliases.
 // Entity: IDD
 // Relationship: This file verifies each configured registry key projects exactly once into the Card editor model options with one canonical default.

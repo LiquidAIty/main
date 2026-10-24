@@ -1,7 +1,7 @@
 // Entity: Run Ledger
-// Relationship: This file polls inspect-only status for each saved Card with bounded backoff and accepts only exact active Run and worker counts.
+// Relationship: This file polls inspect-only status for each saved Card with bounded backoff and counts only actual active Runs.
 // Entity: Card Topology
-// Relationship: This file projects the truthful parent-plus-worker count and active Card identities used by the topology canvas.
+// Relationship: This file projects truthful active Card identities used by the topology canvas without inferring worker activity.
 
 import { useEffect, useMemo, useState } from 'react';
 
@@ -10,7 +10,6 @@ import type { DeckDocument } from '../../../types/agentgraph';
 type CardRunActivity = {
   cardId: string;
   state: string;
-  activeWorkers: number | null;
 };
 
 const ACTIVE_RUN_STATES = new Set(['pending', 'running']);
@@ -91,25 +90,13 @@ export default function useCardActiveAgentCounts({
           || !requested.has(status.cardId)
           || observed.has(status.cardId)
           || typeof status.state !== 'string'
-          || (
-            status.activeWorkers !== null
-            && (
-              !Number.isSafeInteger(status.activeWorkers)
-              || status.activeWorkers < 0
-            )
-          )
         ) {
           failureCount += 1;
           continue;
         }
         observed.add(status.cardId);
         if (!ACTIVE_RUN_STATES.has(String(status.state || ''))) continue;
-        const childWorkers = typeof status.activeWorkers === 'number'
-          && Number.isSafeInteger(status.activeWorkers)
-          && status.activeWorkers > 0
-          ? status.activeWorkers
-          : 0;
-        nextCounts[status.cardId] = 1 + childWorkers;
+        nextCounts[status.cardId] = 1;
       }
       setActiveAgentCounts((current) => (
         Object.keys(current).length === Object.keys(nextCounts).length

@@ -116,7 +116,6 @@ SERVER_OWNED_ARGUMENTS = {
     "conversationId",
     "correlationId",
     "senderAgentId",
-    "senderCardId",
     "parentRunId",
     "originatingRunId",
     "_callerCardId",

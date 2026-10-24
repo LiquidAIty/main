@@ -7,8 +7,8 @@
  * Relationship: This file verifies hydration preserves exact Cards, prompts, revisions, provider/model choices, and optional Card deletion.
  * Entity: Card Topology
  * Relationship: This file verifies hydration preserves every saved orange, blue, or unrecognized edge without inventing a template chain.
- * Entity: Hermes Profiles
- * Relationship: This file verifies each saved Card retains its one explicit Hermes mode and stable profile identity through browser hydration.
+ * Entity: Card Profiles
+ * Relationship: This file verifies each saved Card retains its one explicit runtime mode and stable profile identity through browser hydration.
  * Entity: Tool Catalog
  * Relationship: This file verifies saved tool grants remain byte-for-byte authoritative and are never replaced by browser defaults.
  */
@@ -176,7 +176,7 @@ describe('agentbuilder authoring flow', () => {
     ]);
   });
 
-  it('keeps a Hermes profile in the one explicit runtime identity', () => {
+  it('keeps a Card profile in the one explicit runtime identity', () => {
     const deck = createDeck([
       createCard('card_saved_helper', { kind: 'hermes', mode: 'delegate', profile: 'saved-helper' }, {
         runtimeOptions: {
@@ -338,7 +338,7 @@ describe('agentbuilder authoring flow', () => {
     knowgraph.runtimeOptions = {
       ...knowgraph.runtimeOptions,
       provider: 'openrouter',
-      modelKey: 'saved-hermes-model',
+      modelKey: 'saved-card-model',
       tools: ['clear_graph'],
     };
     const savedEdges = JSON.parse(JSON.stringify(stale.edges));
@@ -366,7 +366,7 @@ describe('agentbuilder authoring flow', () => {
     });
     expect(hydratedKnowgraph?.runtimeOptions).toMatchObject({
       provider: 'openrouter',
-      modelKey: 'saved-hermes-model',
+      modelKey: 'saved-card-model',
     });
     expect(hydrated.edges).toMatchObject(savedEdges);
   });

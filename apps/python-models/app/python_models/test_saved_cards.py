@@ -2,13 +2,13 @@ from __future__ import annotations
 
 # Entity: Saved Cards
 # Relationship: This file verifies immutable Card revision forking, optimistic deck saves, stable Card identity, and portable Project configuration.
-# Entity: Hermes Profiles
+# Entity: Card Profiles
 # Relationship: This file verifies global Card-to-profile bindings lock deterministically and reject profile reuse by another saved Card identity.
 # Entity: Card Topology
 # Relationship: This file verifies orange and blue edge identity, endpoint validity, unique public addresses, Card placement, and Project-local membership persistence.
-# Entity: Bot Mode Delegation
+# Entity: Agent Messaging
 # Relationship: This file verifies orange flow endpoints require exact unique one-word saved Card addresses.
-# Entity: Magnetic TaskGraph
+# Entity: Magnetic Membership
 # Relationship: This file verifies blue membership is direction-independent and contains exactly one Magnetic endpoint.
 # Entity: AgentGraph
 # Relationship: This file verifies a saved Card revision update also preserves the exact Project-local AGE Card presence.
@@ -60,7 +60,7 @@ def test_global_profile_binding_locks_sorted_before_collision_read() -> None:
     ]
 
     with pytest.raises(saved_card_contract.CardDomainError, match="card_profile_duplicate:alpha"):
-        saved_cards._lock_and_validate_hermes_profile_bindings(Cursor(), cards)
+        saved_cards._lock_and_validate_card_profile_bindings(Cursor(), cards)
 
     assert [params for query, params in calls if "pg_advisory_xact_lock" in query] == [
         ("card-id:a-card",),
@@ -84,7 +84,7 @@ def test_global_profile_binding_allows_same_card_and_profile_in_another_project(
         def fetchone(self):
             return None
 
-    saved_cards._lock_and_validate_hermes_profile_bindings(
+    saved_cards._lock_and_validate_card_profile_bindings(
         Cursor(),
         [_agent(
             "shared-card",
@@ -123,7 +123,7 @@ def test_global_profile_binding_rejects_one_card_id_with_another_profile() -> No
         saved_card_contract.CardDomainError,
         match="card_profile_mismatch:shared-card",
     ):
-        saved_cards._lock_and_validate_hermes_profile_bindings(
+        saved_cards._lock_and_validate_card_profile_bindings(
             Cursor(),
             [_agent(
                 "shared-card",
@@ -219,7 +219,7 @@ def test_wire_blue_save_identity_is_unordered_and_preserves_endpoint_handles():
         document['edges'] = [{**forward, 'source': source, 'target': target}]
         with pytest.raises(
             saved_card_contract.CardDomainError,
-            match='magnetic_taskgraph_endpoint_required',
+            match='magnetic_endpoint_required',
         ):
             saved_cards._validated_deck_collections(document, 'd')
 

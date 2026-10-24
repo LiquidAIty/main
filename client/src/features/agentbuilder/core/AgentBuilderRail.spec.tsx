@@ -2,7 +2,7 @@
 
 /**
  * Entity: Agent Builder
- * Relationship: This file verifies rail destinations, callbacks, saved-Card entry, shared lunar styling, and absence of retired Kanban or terminal launchers.
+ * Relationship: This file verifies rail destinations, callbacks, saved-Card entry, shared lunar styling, and absence of retired task-board or terminal launchers.
  */
 
 import React, { act } from 'react';
@@ -205,14 +205,14 @@ describe('AgentBuilderRail product destinations', () => {
     expect(onOpen).toHaveBeenCalledOnce();
   });
 
-  it('exposes no Kanban product or Hermes terminal launcher in the rail', () => {
+  it('exposes no task-board product or runtime terminal launcher in the rail', () => {
     const host = render(
       <AgentBuilderRail
         {...baseProps}
         visibleRailItems={baseVisibility}
       />,
     );
-    expect(host.querySelector('[data-testid="rail-hermes-kanban-button"]')).toBeNull();
-    expect(host.querySelector('[data-testid="rail-hermes-terminal-button"]')).toBeNull();
+    expect(host.querySelector('[data-testid="rail-task-board-button"]')).toBeNull();
+    expect(host.querySelector('[data-testid="rail-runtime-terminal-button"]')).toBeNull();
   });
 });

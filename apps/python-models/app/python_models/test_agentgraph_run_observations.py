@@ -1,11 +1,11 @@
 """Focused contracts for truthful AGE Run and artifact observations."""
 
 # Entity: AgentGraph
-# Relationship: This file verifies only exact lifecycle, Hermes identity, assignment, lineage, and artifact events produce confirmed AGE observations while unmatched writes report false.
+# Relationship: This file verifies only exact lifecycle, runtime identity, lineage, and artifact events produce confirmed AGE observations while unmatched writes report false.
 # Entity: Run Ledger
 # Relationship: This file verifies AgentGraph copies only canonical Run readback fields and never invents timing, token, worker, or result state.
 # Entity: Card Invocation
-# Relationship: This file verifies invocation acceptance, preparation, and real Hermes start events require the exact returned Run identity.
+# Relationship: This file verifies invocation acceptance, preparation, and real start events require the exact returned Run identity.
 
 from __future__ import annotations
 
@@ -109,16 +109,10 @@ def test_exact_acceptance_failure_and_start_events_require_the_returned_run(
     ) is False
 
 
-def test_preparation_completion_confirms_run_assignment_and_lineage(
+def test_preparation_completion_confirms_run_and_lineage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def responder(query: str, params: dict[str, Any], _columns: str):
-        if "ASSIGNED_TO" in query:
-            return [{
-                "sender_id": params["senderId"],
-                "target_id": params["targetId"],
-                "run_id": params["runId"],
-            }]
         if "CHILD_RUN" in query:
             return [{
                 "parent_run_id": params["parentRunId"],
@@ -138,7 +132,6 @@ def test_preparation_completion_confirms_run_assignment_and_lineage(
     assert agentgraph_run_observations.observe_run_preparation_complete(
         prepared,
         {
-            "senderCardId": "card-parent",
             "originatingRunId": "run-parent",
         },
         run_id="run-one",
@@ -146,7 +139,7 @@ def test_preparation_completion_confirms_run_assignment_and_lineage(
         preparation_started_at=started_at,
         ended_at=ended_at,
     ) is True
-    assert len(statements) == 3
+    assert len(statements) == 2
     run_query, run_params, _columns = statements[0]
     assert "run.preparationState='completed'" in run_query
     assert "run.state=" not in run_query
@@ -164,39 +157,6 @@ def test_preparation_completion_confirms_run_assignment_and_lineage(
         correlation_id="correlation-one",
         preparation_started_at=started_at,
         ended_at=ended_at,
-    ) is False
-
-
-def test_progress_copies_only_exact_hermes_identity_without_inventing_run_chronology(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    statements = _install_observer(monkeypatch, _run_row)
-
-    assert agentgraph_run_observations.observe_run_progress(
-        "run-one",
-        "running",
-        {
-            "hermesRootId": "root-one",
-            "hermesRunId": "turn-one",
-            "activeWorkers": 3,
-            "providerCachedTokens": 99,
-        },
-    ) is True
-    query, params, _columns = statements[0]
-    assert params == {
-        "runId": "run-one",
-        "hermesRootId": "root-one",
-        "hermesRunId": "turn-one",
-        "hermesStatus": "running",
-    }
-    assert "run.state" not in query
-    assert "run.startedAt" not in query
-    assert "activeWorker" not in query
-    assert "providerCachedTokens" not in query
-
-    _install_observer(monkeypatch, lambda *_args: [])
-    assert agentgraph_run_observations.observe_run_progress(
-        "run-one", "running", {},
     ) is False
 
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=LiquidAIty Hermes Gateway
+Description=LiquidAIty Card runtime gateway
 After=network-online.target
 Wants=network-online.target
 PartOf=liquidaity.target

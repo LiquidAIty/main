@@ -11,7 +11,7 @@ import routes from "./routes";
 import { requestJsonBodyLimit } from "./services/requestPayloadLimits";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closeToolCatalogMcpClient } from "./services/mcp/toolCatalogMcpClient";
-import { closeHermesGateway } from "./services/hermesGateway";
+import { closeCardRuntimeGateway } from "./services/cardRuntimeGateway";
 import { listenAfterRequiredMigrations } from "./db/migrations";
 import {
   closeCardTerminalProxy,
@@ -154,7 +154,7 @@ function installShutdownHooks() {
   const shutdown = async () => {
     try {
       closeCardTerminalProxy();
-      closeHermesGateway();
+      closeCardRuntimeGateway();
       if (backendServer) await closeServer(backendServer);
       await closeToolCatalogMcpClient();
     } catch {

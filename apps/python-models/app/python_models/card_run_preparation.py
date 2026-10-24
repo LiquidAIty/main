@@ -3,7 +3,7 @@
 # Relationship: This file accepts one durable pending Run, preserves idempotent identity, records selection decisions, and settles preparation failures against that same row.
 #
 # Entity: Card Invocation
-# Relationship: This file invokes the saved Card preparation boundary and returns the exact Hermes transport identity for ordinary Card execution.
+# Relationship: This file invokes the saved Card preparation boundary and returns the exact external transport identity for ordinary Card execution.
 #
 # Entity: IDF
 # Relationship: This file retains and reloads the one canonical IDF before exposing any runtime request or Magnetic mission.
@@ -11,7 +11,7 @@
 # Entity: AgentGraph
 # Relationship: This file records acceptance, successful preparation, and preparation-failure observations only around corresponding durable Run transitions.
 #
-# Entity: Magnetic TaskGraph
+# Entity: Magnetic Membership
 # Relationship: This file projects the saved Mag One orchestrator and exact blue-connected worker authorities into one bounded root task packet.
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def accept_run_request(payload: dict[str, Any]) -> dict[str, Any]:
     """Persist one accepted outer Card request before fallible preparation.
 
     The row is the existing product Run authority in ``pending`` state. It is
-    not evidence that a Hermes Run, provider call, or tool call exists.
+    not evidence that an external Run, provider call, or tool call exists.
     """
 
     project_ref = required_text(payload.get("projectId"), "project_id")
@@ -147,7 +147,6 @@ def accept_run_request(payload: dict[str, Any]) -> dict[str, Any]:
         "acceptedAt": accepted_at_value.isoformat(),
         "preparationStartedAt": preparation_started_at.isoformat(),
         "state": str(existing.get("state") or "pending"),
-        "hermesRunId": str(existing.get("provider_turn_ref") or "") or None,
         "created": created,
         "telemetryWritten": observed,
     }
@@ -260,7 +259,6 @@ def _fail_accepted_run_preparation(
         "state": "failed",
         "errorCode": error_code,
         "errorSummary": error_summary,
-        "hermesRunId": None,
         "updated": updated,
         "telemetryWritten": observed,
     }
@@ -275,7 +273,7 @@ def _insert_run(
     idf = prepared["idf"]
     runtime = idf["stableSavedCardContext"]["runtime"]
     provider = idf["stableSavedCardContext"]["provider"]
-    execution_kind = "hermes" if prepared.get("runtimeOwner") == "mag_one" else runtime["kind"]
+    execution_kind = runtime["kind"]
     auto_tools_decision = prepared.get("autoToolsDecision")
     auto_model_decision = prepared.get("autoModelDecision")
     auto_tools_json = _decision_json(auto_tools_decision, "auto_tools_decision")
@@ -409,7 +407,7 @@ def _begin_accepted_run(
     payload: dict[str, Any],
     accepted: dict[str, Any],
 ) -> dict[str, Any]:
-    """Create one Run, retain its one IDF, then expose one Hermes request."""
+    """Create one Run, retain its one IDF, then expose one external request."""
 
     current_request = required_content(payload.get("assignment"), "assignment")
     prepared = card_invocation_preparation.prepare_run_invocation(
@@ -419,7 +417,6 @@ def _begin_accepted_run(
     run_id = required_text(payload.get("runId"), "run_id")
     correlation_id = required_text(payload.get("correlationId"), "correlation_id")
     card_identity = prepared["cardIdentity"]
-    owner = prepared["runtimeOwner"]
     resolved_run_id, resolved_correlation_id, created = _insert_run(
         prepared,
         run_id=run_id,
@@ -456,5 +453,5 @@ def _begin_accepted_run(
             "request": runtime_input,
             "inputFile": input_files,
             "cardIdentity": card_identity,
-        } if owner == "hermes" else None,
+        },
     }

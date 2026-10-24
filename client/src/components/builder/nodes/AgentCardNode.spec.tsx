@@ -125,7 +125,7 @@ describe('AgentCardNode shared Card geometry', () => {
     const badge = screen.getByTestId('active-agent-count');
     expect(badge.textContent).toBe('3');
     expect(screen.getByText('Test Agent').parentElement?.contains(badge)).toBe(true);
-    expect(screen.queryByTestId('kanban-card-run-status')).toBeNull();
+    expect(screen.queryByTestId('task-board-card-run-status')).toBeNull();
     expect(document.body.textContent).not.toContain('Root');
     expect(document.body.textContent).not.toContain('tasks');
     expect(document.body.textContent).not.toContain('Tokens');
@@ -172,7 +172,7 @@ describe('AgentCardNode shared Card geometry', () => {
         }}
       />,
     );
-    expect(screen.queryByTestId('hermes-learning-indicator')).toBeNull();
+    expect(screen.queryByTestId('card-learning-indicator')).toBeNull();
     expect(screen.queryByTestId('active-agent-count')).toBeNull();
   });
 });

@@ -7,7 +7,7 @@
 // Entity: Projects
 // Relationship: This file binds external context to one Project actually owned by the granted local user.
 // Entity: Saved Cards
-// Relationship: This file resolves one enabled persisted Hermes Card and returns only its exact profile, caller identity, and saved tool ceiling.
+// Relationship: This file resolves one enabled persisted Card and returns only its exact profile, caller identity, and saved tool ceiling.
 // Entity: Run Ledger
 // Relationship: This file accepts an optional parent Run only when it matches the resolved Card and remains pending or running.
 // Entity: IDD
@@ -19,6 +19,7 @@ import { resolveExternalIdentityProjectGrant } from '../auth/externalIdentityGra
 import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
 import { getDeckDocument } from '../decks/deckDomainClient';
 import { readCardRun } from '../services/cardRunLifecycle';
+import { CARD_RUNTIME_CONTRACT } from '../services/cardRuntimeGateway';
 import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { materializeCardEditor } from './builderIdd.routes';
@@ -59,7 +60,7 @@ mcpInternalRoutes.post('/context', async (req, res) => {
     }
     const { deck } = await getDeckDocument(project.id, DEFAULT_PROJECT_DECK_ID);
     const matchingCards = (deck?.nodes || []).filter((card) => (
-      card.runtime.kind === 'hermes'
+      card.runtime.kind === CARD_RUNTIME_CONTRACT.kind
       && card.enabled !== false
       && (
         profile
@@ -68,7 +69,7 @@ mcpInternalRoutes.post('/context', async (req, res) => {
       )
     ));
     if (matchingCards.length !== 1) {
-      return res.status(409).json({ ok: false, error: 'persisted_hermes_profile_unavailable' });
+      return res.status(409).json({ ok: false, error: 'persisted_card_profile_unavailable' });
     }
     const matchedCard = matchingCards[0];
     const grantedTools = exactStrings(objectRecord(matchedCard.runtimeOptions).tools);
@@ -122,11 +123,11 @@ mcpInternalRoutes.post('/card-context', async (req, res) => {
     const authority = await projectCardAuthority(projectId, deckId);
     const matches = authority.cards.filter((candidate) => (
       candidate.card.enabled !== false
-      && candidate.card.runtime.kind === 'hermes'
+      && candidate.card.runtime.kind === CARD_RUNTIME_CONTRACT.kind
       && candidate.profile.toLowerCase() === profile
     ));
     if (matches.length !== 1) {
-      return res.status(409).json({ ok: false, error: 'persisted_hermes_profile_unavailable' });
+      return res.status(409).json({ ok: false, error: 'persisted_card_profile_unavailable' });
     }
     const matched = matches[0];
     const run = await readCardRun({

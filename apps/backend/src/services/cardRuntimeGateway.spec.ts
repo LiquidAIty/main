@@ -1,8 +1,8 @@
 /**
- * Entity: Hermes Card Sessions
- * Relationship: This file verifies the shared Hermes session-gateway connection closes failed attempts and preserves a newer replacement client against stale finalizers.
+ * Entity: Card Runtime Transport
+ * Relationship: This file verifies the shared external connection closes failed attempts and preserves a newer replacement client against stale finalizers.
  * Entity: Credentials
- * Relationship: This file verifies that plaintext Hermes gateway credentials are accepted only for loopback origins and are rejected when embedded in configured URLs.
+ * Relationship: This file verifies that plaintext runtime credentials are accepted only for loopback origins and are rejected when embedded in configured URLs.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,18 +19,18 @@ vi.mock('./workingDirectories', () => ({
 }));
 
 import {
-  closeHermesGateway,
-  hermesGateway,
-  resolveHermesGatewayUrl,
-  type HermesGatewayClient,
-  type HermesGatewayEvent,
-} from './hermesGateway';
+  cardRuntimeGateway,
+  closeCardRuntimeGateway,
+  resolveCardRuntimeGatewayUrl,
+  type CardRuntimeClient,
+  type CardRuntimeEvent,
+} from './cardRuntimeGateway';
 
-function client(connect: () => Promise<void>): HermesGatewayClient & {
+function client(connect: () => Promise<void>): CardRuntimeClient & {
   closed: number;
-  emitEvent(event: HermesGatewayEvent): void;
+  emitEvent(event: CardRuntimeEvent): void;
 } {
-  const eventHandlers = new Set<(event: HermesGatewayEvent) => void>();
+  const eventHandlers = new Set<(event: CardRuntimeEvent) => void>();
   const stateHandlers = new Set<(state: string) => void>();
   return {
     connectionState: 'connecting',
@@ -74,24 +74,24 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  closeHermesGateway();
+  closeCardRuntimeGateway();
   vi.resetAllMocks();
 });
 
-describe('Hermes Gateway lifecycle', () => {
+describe('Card runtime gateway lifecycle', () => {
   it('allows plaintext only on loopback and rejects URL-carried credentials', () => {
-    expect(resolveHermesGatewayUrl({
+    expect(resolveCardRuntimeGatewayUrl({
       HERMES_GATEWAY_URL: 'ws://127.0.0.1:9119/api/ws',
       HERMES_DASHBOARD_SESSION_TOKEN: 'b'.repeat(64),
     })).toBe(`ws://127.0.0.1:9119/api/ws?token=${'b'.repeat(64)}`);
-    expect(() => resolveHermesGatewayUrl({
+    expect(() => resolveCardRuntimeGatewayUrl({
       HERMES_GATEWAY_URL: 'ws://gateway.example/api/ws',
       HERMES_DASHBOARD_SESSION_TOKEN: 'b'.repeat(64),
-    })).toThrow('hermes_gateway_url_invalid');
-    expect(() => resolveHermesGatewayUrl({
+    })).toThrow('card_runtime_gateway_url_invalid');
+    expect(() => resolveCardRuntimeGatewayUrl({
       HERMES_GATEWAY_URL: `wss://gateway.example/api/ws?token=${'c'.repeat(64)}`,
       HERMES_DASHBOARD_SESSION_TOKEN: 'b'.repeat(64),
-    })).toThrow('hermes_gateway_url_invalid');
+    })).toThrow('card_runtime_gateway_url_invalid');
   });
 
   it('closes a failed client before allowing a clean retry', async () => {
@@ -103,10 +103,10 @@ describe('Hermes Gateway lifecycle', () => {
     });
     mocks.constructors.push(() => failed, () => ready);
 
-    await expect(hermesGateway()).rejects.toThrow('connect_failed');
+    await expect(cardRuntimeGateway()).rejects.toThrow('connect_failed');
     expect(failed.closed).toBe(1);
-    await expect(hermesGateway()).resolves.toBe(ready);
-    await expect(hermesGateway()).resolves.toBe(ready);
+    await expect(cardRuntimeGateway()).resolves.toBe(ready);
+    await expect(cardRuntimeGateway()).resolves.toBe(ready);
     expect(mocks.tsImport).toHaveBeenCalledTimes(2);
     expect(mocks.constructorOptions).toEqual([
       expect.objectContaining({
@@ -134,16 +134,16 @@ describe('Hermes Gateway lifecycle', () => {
     });
     mocks.constructors.push(() => first, () => second);
 
-    const originalAttempt = hermesGateway();
+    const originalAttempt = cardRuntimeGateway();
     const originalOutcome = originalAttempt.catch(error => error as Error);
     await vi.waitFor(() => expect(rejectFirst).toBeTypeOf('function'));
-    closeHermesGateway();
-    const replacement = hermesGateway();
+    closeCardRuntimeGateway();
+    const replacement = cardRuntimeGateway();
     rejectFirst!(new Error('old_attempt_finished'));
 
     expect(await originalOutcome).toBeInstanceOf(Error);
     await expect(replacement).resolves.toBe(second);
-    await expect(hermesGateway()).resolves.toBe(second);
+    await expect(cardRuntimeGateway()).resolves.toBe(second);
     expect(mocks.tsImport).toHaveBeenCalledTimes(2);
   });
 });

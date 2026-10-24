@@ -8,8 +8,8 @@
  * Entity: Card Topology
  * Relationship: This file creates and compensates Project-local Card membership and placement records without creating a new Card revision or wire.
  *
- * Entity: Hermes Profiles
- * Relationship: This file proves one stable logical profile is referenced by exactly one authenticated owner before any reusable Hermes profile surface is accessed.
+ * Entity: Card Profiles
+ * Relationship: This file proves one stable logical profile is referenced by exactly one authenticated owner before any reusable Card profile surface is accessed.
 
  * Entity: Authentication
  * Relationship: This file scopes Project and reusable Card access to the exact authenticated owner identity supplied by the route boundary.
@@ -18,6 +18,7 @@
 import { randomUUID } from 'crypto';
 import { pool } from '../db/pool';
 import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
+import { CARD_RUNTIME_CONTRACT } from './cardRuntimeGateway';
 import type { ProjectSummary } from '../types/project';
 
 export type OwnedProject = ProjectSummary & {
@@ -202,13 +203,13 @@ export async function getOwnedProjectByReference(
   };
 }
 
-export async function assertHermesProfileOwner(
+export async function assertCardProfileOwner(
   runtimeProfile: string,
   ownerUserId: string,
 ): Promise<void> {
   const profile = String(runtimeProfile || '').trim().toLowerCase();
   const owner = String(ownerUserId || '').trim();
-  if (!profile || !owner) throw new Error('hermes_profile_owner_required');
+  if (!profile || !owner) throw new Error('card_profile_owner_required');
   const { rows } = await pool.query(
     `SELECT DISTINCT project.owner_user_id
      FROM ag_catalog.agent_cards AS card
@@ -216,14 +217,14 @@ export async function assertHermesProfileOwner(
        ON revision.revision_id=card.current_revision_id
      JOIN ag_catalog.projects AS project
        ON project.id=card.project_id
-     WHERE revision.runtime_kind='hermes'
-       AND LOWER(revision.runtime_profile)=$1
+      WHERE revision.runtime_kind=$2
+        AND LOWER(revision.runtime_profile)=$1
      ORDER BY project.owner_user_id`,
-    [profile],
+    [profile, CARD_RUNTIME_CONTRACT.kind],
   );
   const owners = rows.map((row) => String(row.owner_user_id || '').trim()).filter(Boolean);
   if (owners.length !== 1 || owners[0] !== owner) {
-    throw new Error('hermes_profile_owner_conflict');
+    throw new Error('card_profile_owner_conflict');
   }
 }
 
@@ -304,10 +305,10 @@ export async function attachSavedCardToProject(
          ON source_project.id=source_card.project_id
        WHERE revision.revision_id=$1 AND revision.card_id=$2
          AND source_project.owner_user_id=$3
-         AND revision.runtime_kind='hermes'
+          AND revision.runtime_kind=$4
          AND NULLIF(BTRIM(revision.runtime_profile), '') IS NOT NULL
        LIMIT 1`,
-      [input.cardRevisionId, input.cardId, ownerUserId],
+      [input.cardRevisionId, input.cardId, ownerUserId, CARD_RUNTIME_CONTRACT.kind],
     );
     if (!requestedRevision.rows.length) throw new Error('saved_card_not_available');
     const runtimeProfile = String(requestedRevision.rows[0].runtime_profile);

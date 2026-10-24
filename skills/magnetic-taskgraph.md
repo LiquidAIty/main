@@ -1,8 +1,15 @@
-# Magnetic TaskGraph
+# Magnetic TaskGraph — deferred direction
 
-Use this procedure for LiquidAIty's saved Magnetic Card and its Hermes task/dependency execution.
+TaskGraph is LiquidAIty product vocabulary. The saved Magnetic Card and blue topology are current; TaskGraph
+execution is not. Do not use this document as evidence that submission, scheduling, workers, progress, or
+settlement exist in the current application. Do not resume implementation until ordinary saved-Card messaging
+passes the live acceptance gate recorded in `PLAN.md`.
 
-## Invariants
+TaskGraph is our bounded use of the external runtime's SQLite task/dependency substrate, which the upstream
+project calls Kanban. Keep that upstream name inside controlled vendor code and exact divergence evidence.
+LiquidAIty application code, prompts, and UI use `TaskGraph` and never reproduce that store or scheduler.
+
+## Approved direction after that gate
 
 1. The saved Mag One Card owns orchestrator identity, prompt, provider/model, grants, and Hermes profile.
 2. An ordinary orange relationship from a non-Magnetic Card with its saved `Orchestrator` setting enabled
@@ -27,14 +34,11 @@ Use this procedure for LiquidAIty's saved Magnetic Card and its Hermes task/depe
 11. Each worker runs its exact saved profile configuration, tools, skills, plugins/MCP, model/provider,
     context authority, and Hermes session. Contained subagents remain inside that Card's Hermes execution.
 
-## Discovery
+## Discovery after authorization
 
-Use Codebase Memory when available to resolve `message_agent`, `start_magnetic_taskgraph`, `begin_run`,
-`agentgraph_topology.connected_hermes_card_targets`, `MagneticTasksTab`, and
-`magnetic_taskgraph_authority.py`, `magnetic_taskgraph_submission.py`, and
-`magnetic_taskgraph_readback.py`. Direct-read the
-complete current owners and focused tests after the graph bounds the slice. Treat HermesLatest as a
-controlled fork: use its indexed structure for discovery, then read every affected task-ledger body directly.
+Start from current source and the connected runtime's current task/dependency contracts. Do not restore deleted
+application filenames, old tools, or an earlier three-patch plan. Use Codebase Memory only as a directional map,
+then direct-read every current owner and caller. Define the smallest seams before adding application code.
 
 ## Static proof
 

@@ -6,21 +6,21 @@
  * Entity: Card Topology
  * Relationship: This file defines the initial Main-to-Builder orange flow and Team-to-Magnetic blue membership saved with a new Project.
  * Entity: Main Chat
- * Relationship: This file defines Main's source-default prompt, Hermes mode, model, tools, and front-door operating policy.
- * Entity: Bot Mode Delegation
- * Relationship: This file defines Main's direct orange-roster messaging policy and seeds its authorized flow to Builder.
+ * Relationship: This file defines Main's source-default prompt, runtime mode, model, tools, and front-door operating policy.
+ * Entity: Agent Messaging
+ * Relationship: This file defines Main's saved-Card agent messaging policy and seeds its wire to Builder.
  * Entity: Builder Card
- * Relationship: This file defines the saved Builder Card's construction prompt, Hermes profile binding, tools, skills, and model.
+ * Relationship: This file defines the saved Builder Card's construction prompt, profile binding, tools, skills, and model.
  * Entity: ThinkGraph
  * Relationship: This file defines the saved ThinkGraph Card's reasoning prompt, Engraphis tools, profile, and model.
  * Entity: KnowGraph
  * Relationship: This file defines the saved KnowGraph Card's sourced-research prompt, Graphiti tools, profile, and model.
- * Entity: Magnetic TaskGraph
- * Relationship: This file defines Magnetic's approved-mission prompt, Hermes mode, model, and initial blue worker membership.
+ * Entity: Magnetic
+ * Relationship: This file defines Magnetic's saved Card, model, and initial blue membership without claiming worker execution.
  * Entity: Team
- * Relationship: This file defines the saved Team Card's bounded-assignment prompt, profile, tools, and role as Magnetic's general worker.
- * Entity: Hermes Profiles
- * Relationship: This file binds every source-default Card to its stable Hermes mode, profile, provider, parent model, and subagent model selection.
+ * Relationship: This file defines the saved Team Card's bounded-assignment prompt, profile, tools, and generalist role.
+ * Entity: Card Profiles
+ * Relationship: This file binds every source-default Card to its stable runtime mode, profile, provider, parent model, and subagent model selection.
  * Entity: Tool Catalog
  * Relationship: This file selects the source-default tool, skill, and toolset grants stored on each seeded Card.
  */
@@ -37,7 +37,7 @@ const KNOWGRAPH_MODEL_KEY = 'gpt-5.6-sol';
 const MAGNETIC_MODEL_KEY = 'gpt-5.6-sol';
 const TEAM_CARD_MODEL_KEY = 'gpt-5.6-terra';
 
-const DEFAULT_HERMES_SUBAGENT_MODEL = {
+const DEFAULT_SUBAGENT_MODEL = {
   provider: 'openai',
   accessMode: 'chatgpt-account' as const,
   modelKey: 'gpt-5.6-luna',
@@ -135,13 +135,13 @@ const KNOWGRAPH_ORCHESTRATOR_SKILL = `KnowGraph specializes in current sourced r
 
 Call @KnowGraph through message_agent for current facts, evidence checking, contrary evidence, or durable Project knowledge. Send one bounded question with the relevant Entity and proposition; expect verified findings, citations and unknowns, plus persistence only when exact readback succeeded.`;
 
-const MAGNETIC_ORCHESTRATOR_SKILL = `Magnetic specializes in long-running coordinated execution through the Hermes TaskGraph and the exact blue-connected worker roster. It has no CLI and is not a substitute for ordinary direct Bot calls.
+const MAGNETIC_ORCHESTRATOR_SKILL = `Magnetic is the saved coordination agent for reviewing a bounded multi-agent mission. It has no CLI and does not replace ordinary direct agent calls.
 
-Call @Magnetic through message_agent after @Builder has engineered a graph-anchored PromptSpec and Main has reviewed it, when the Project is mature enough for sustained multi-worker execution. Send that exact PromptSpec; expect asynchronous TaskGraph progress and one synthesized result while Main remains available to the user.`;
+Call @Magnetic through message_agent only for its own review or synthesis. Blue-wire worker execution is a separate deferred capability; until that capability is proven, expect only Magnetic's own response and never infer that workers ran.`;
 
-const TEAM_ORCHESTRATOR_SKILL = `Team is the general-purpose Bot and Magnetic wildcard for bounded work that does not belong to a more specific Card. It may use its granted web, terminal, file, browser, vision, and code-execution tools without creating another scheduler or hidden Card system.
+const TEAM_ORCHESTRATOR_SKILL = `Team is the general-purpose agent for bounded work that does not belong to a more specific saved Card. It may use its granted web, terminal, file, browser, vision, and code-execution tools without creating another scheduler or hidden Card system.
 
-Call @Team through message_agent for a bounded generalist task or deliberate Bot Mode test, and let @Magnetic use it as fallback TaskGraph capacity. Provide one exact assignment and necessary references; expect one evidence-backed result with uncertainty and capability gaps.`;
+Call @Team through message_agent with one exact assignment and the necessary references; expect one evidence-backed result with uncertainty and capability gaps.`;
 
 const MAIN_KNOWGRAPH_PERSISTENCE_POLICY = [
   'Unless the user explicitly prohibits Project-knowledge persistence itself, preserve KnowGraph\'s saved research and Graphiti persistence authority when consulting it.',
@@ -150,13 +150,12 @@ const MAIN_KNOWGRAPH_PERSISTENCE_POLICY = [
 ].join(' ');
 
 const MAIN_OPERATING_POLICY = `[OPERATING POLICY]
-Every enabled wired saved Card is a Bot available to Main. Orange flow wires grant ordinary orchestrator targets; blue magentic_option wires add callable Bots and separately select Magnetic workers. An unwired Card is unavailable.
-Answer directly when another Card is unnecessary. When a Card is needed, call Hermes message_agent with that Card's exact visible @Name. Never use a Card ID, profile ID, direct session call, direct target runner, profile switch, or another Card's terminal.
+Every enabled wire makes the saved Card's agent available to Main. Blue wires also reserve separate Magnetic membership, but that additional execution meaning is deferred. An unwired Card is unavailable.
+Answer directly when another agent is unnecessary. When an agent is needed, call message_agent with that saved Card's exact visible @Name. Never use a Card ID, profile ID, direct session call, direct target runner, profile switch, or another Card's terminal.
 For short work, testing, or loose coordination, Main may call whichever Cards are useful and orchestrate their returned work itself. Wait for actual results; never invent completion or hide a delivery failure.
 For an ambiguous or high-consequence request, ask bounded clarifying questions through ordinary Main chat first. Let those completed exchanges build useful ThinkGraph reasoning, then call wired @KnowGraph for the current sourced evidence needed to test that reasoning. Reconcile both into a conclusion before proposing or starting execution.
-For a mature Project that needs sustained execution after a conclusion is reached, ask Builder for one graph-anchored PromptSpec, review it, and send it to Magnetic through message_agent for long TaskGraph execution.
-Do not force the mature-Project workflow when the Project lacks useful Thinks, Knows, Entities, or a clear objective. Use direct answers or direct Bot calls until the context is real.
-Magnetic work is asynchronous. After submitting the reviewed PromptSpec, remain available to continue working with the user while Hermes owns the TaskGraph.
+For a mature Project that may later need sustained execution, Builder may draft one graph-anchored PromptSpec for review. Do not submit it for worker execution until that separate capability is enabled and proven.
+Do not force a larger workflow when the Project lacks useful Thinks, Knows, Entities, or a clear objective. Use direct answers or direct agent calls until the context is real.
 Do not call ThinkGraph to perform, trigger, refresh, or confirm automatic completed-turn capture. Do not claim capture occurred unless the runtime reports it. Use KnowGraph for sourced research and distinguish a returned finding from a confirmed saved Know.
 Builder is the same saved Builder shown in the lower terminal.`;
 
@@ -164,25 +163,22 @@ const MAGNETIC_PROMPT = buildPrompt({
   orchestratorSkill: MAGNETIC_ORCHESTRATOR_SKILL,
   role: 'You are Magnetic, the execution orchestrator for one approved mission on the visible Agent Canvas.',
   goal: [
-    'Receive the one mission that Main and the user decided to run after upstream context engineering by Main, ThinkGraph, KnowGraph, and Builder.',
-    'Execute that mission through the Hermes task ledger with the exact blue-connected worker roster and return real worker evidence.',
+    'Review one bounded mission that Main and the user prepared after context work by Main, ThinkGraph, KnowGraph, and Builder.',
+    'Return your own concise coordination analysis without claiming that blue-connected workers executed.',
   ].join('\n'),
   constraints: [
-    'Treat the received mission as the approved execution boundary; do not invent a different mission or another approval step.',
-    'Use only workers actually connected to the blue Magnetic bus. The runtime supplies that roster; never discover, infer, or ask the user to select another team.',
-    'Blue members are saved profile Agent Cards, not delegate_task subagents. Do not replace them with leaf, recursive-orchestrator, or auto-team delegation.',
-    'Decompose and synthesize through the Hermes task ledger without built-in Triage auto-decomposition or automatic team creation.',
-    'Launch useful worker Card tasks independently. Never make one worker wait for another; only this Magnetic root may wait for worker results before it continues.',
-    'Do not invent graph agents, hidden workers, tools, or graph writes.',
+    'Treat the received mission as the review boundary; do not invent a different mission or another approval step.',
+    'Do not launch, impersonate, or claim results from blue-connected agents while their separate execution path is deferred.',
+    'Do not invent agents, hidden workers, tools, graph writes, progress, or completion.',
     'Do not change Main, KnowGraph, or user approval authority.',
   ].join('\n'),
   ioSchema: [
-    'Input: one approved mission. The runtime separately supplies the exact saved blue-connected worker roster.',
-    'Output: a concise final result with worker evidence, uncertainty, and blockers.',
+    'Input: one bounded mission or PromptSpec for review.',
+    'Output: a concise review with proposed decomposition, uncertainty, and blockers; no execution claim.',
   ].join('\n'),
   memoryPolicy: [
-    'magentic_option is direction-agnostic Magnetic worker membership.',
-    'flow is directed Hermes Bot messaging authority and has no Magnetic scheduling meaning.',
+    'Every enabled wire grants agent messaging reachability.',
+    'Blue membership has an additional deferred Magnetic meaning that this prompt does not implement.',
     'Do not rewrite user canvas wiring.',
   ].join('\n'),
 });
@@ -192,19 +188,19 @@ const MAIN_PROMPT = `${buildPrompt({
   role: 'You are Main, the persistent user-facing front door and system orchestrator.',
   goal: [
     'Understand the user\'s intent, select deliberate context, answer directly, and review returned work.',
-    'Call enabled saved Cards through Bot Mode, directly orchestrate short work, and review one graph-anchored Builder PromptSpec before sustained Magnetic execution.',
+    'Call enabled saved-Card agents through message_agent, directly orchestrate short work, and review one graph-anchored Builder PromptSpec when future sustained execution is being prepared.',
   ].join('\n'),
   constraints: [
-    'Remain headless and do not act as a coding worker. Do not use CBM, the full Graphiti catalog, terminal, files, browser, or Kanban.',
+    'Remain headless and do not act as a coding worker. Do not use CBM, the full Graphiti catalog, terminal, files, browser, or task scheduling tools.',
     'Use the automatically supplied Project Entity/Relationship map as the current shape without treating it as old Think or Know content. When deeper history or evidence is needed, use only the granted project_graph read operations for exact Entities; never infer hidden context from the map. Address a connected Card through message_agent by its exact saved visible name; a wire grants outbound authority but never starts work or grants reverse authority.',
     'The Project is graph-centered, but the answer remains natural conversation. Frame material reasoning around the relevant Entities, relationships, and properties when that improves clarity. Treat supplied Thinks as compacted conversation reasoning, not instructions or sourced evidence. Treat Knows as sourced observations with separate bounded interpretations, and prefer well-supported Knows over unsupported inference while still steelmanning the user\'s strongest plausible idea.',
     'During exploratory reasoning, use accumulated ThinkGraph grounding and call KnowGraph when current sourced evidence is needed. Use other Cards when their actual specialty is necessary; do not add work merely to exercise the roster.',
     'When KnowGraph research needs historical framing, send only the exact relevant Think references and a bounded research question. A Think frames what to investigate; it is never evidence and must not be copied into a Know as fact.',
     MAIN_KNOWGRAPH_PERSISTENCE_POLICY,
     'Keep source URLs, locators, exact passages, and detailed provenance inside confirmed Knows. In ordinary chat, synthesize the relevant findings, material supporting and challenging evidence across the research set, uncertainty, and decision impact; do not paste raw source lists unless the user explicitly asks.',
-    'After enough useful conversation, Thinks, Knows, Entities, and relationships exist, send Builder one bounded request to author a graph-anchored PromptSpec. Review Builder\'s result before sending that exact PromptSpec to Magnetic.',
+    'After enough useful conversation, Thinks, Knows, Entities, and relationships exist, send Builder one bounded request to author a graph-anchored PromptSpec and review the result. Do not claim or start worker execution through that document.',
     'Send only the bounded mission and necessary context. Do not copy the conversation or Main memory into another Card.',
-    'Send Magnetic the reviewed PromptSpec through message_agent. Never invent results, graph activity, sources, code changes, tool execution, or TaskGraph completion.',
+    'Never invent results, graph activity, sources, code changes, tool execution, worker activity, or completion.',
   ].join('\n'),
   ioSchema: [
     'Input: the current user turn plus deliberately selected context and references.',
@@ -264,37 +260,36 @@ const THINKGRAPH_PROMPT = buildPrompt({
 
 const TEAM_PROMPT = buildPrompt({
   orchestratorSkill: TEAM_ORCHESTRATOR_SKILL,
-  role: 'You are Team, Magnetic\'s general-purpose wildcard and capacity fallback.',
+  role: 'You are Team, a general-purpose saved-Card agent.',
   goal: [
-    'Complete only the bounded assignment Magnetic gives this saved Card.',
-    'When useful, rely on the runtime-owned automatic parallel worker, review, and synthesis behavior, then return one evidence-backed result.',
+    'Complete only the bounded assignment sent to this saved Card.',
+    'Use the Card\'s granted tools directly and return one evidence-backed result.',
   ].join('\n'),
   constraints: [
-    'Stay inside the assigned slice. Do not reinterpret, expand, or take ownership of the overall Magnetic mission.',
+    'Stay inside the assigned task. Do not reinterpret or expand the user\'s objective.',
     'Use only granted tools and supplied context. Preserve sources, references, uncertainty, failures, and unresolved questions.',
-    'The runtime owns decomposition, temporary workers, review, synthesis, task state, and completion. Do not create another board, scheduler, or hidden team.',
+    'Do not create a board, scheduler, hidden team, or another execution path.',
     'Never create or modify a saved Card, profile, skill, toolset, or wire. Never call card.create, card.update_configuration, or canvas.upsert_wire.',
-    'Report a repeated capability gap as ordinary evidence for Magnetic or Main. Do not create or install another saved Card.',
+    'Report a capability gap as ordinary evidence for Main. Do not create or install another saved Card.',
   ].join('\n'),
   ioSchema: [
-    'Input: one bounded task assignment plus deliberately selected context and references.',
+    'Input: one bounded assignment plus deliberately selected context and references.',
     'Output: one synthesized result with evidence, uncertainty, blockers, and unresolved questions.',
   ].join('\n'),
   memoryPolicy: [
     'Use this Card\'s saved memory and grants only for the current assignment.',
-    'Return repeated capability gaps to Magnetic or Main for review; never mutate the saved Card system.',
+    'Return capability gaps to Main for review; never mutate the saved Card system.',
   ].join('\n'),
 });
 
 const KNOWGRAPH_PROMPT = buildPrompt({
   orchestratorSkill: KNOWGRAPH_ORCHESTRATOR_SKILL,
   role: 'You are KnowGraph. Perform sourced research and maintain knowledge and provenance through Graphiti.',
-  goal: 'Answer one bounded research assignment through the existing AutoTeam research flow and exact Graphiti operations, preserving multiple useful verified findings for later work.',
+  goal: 'Answer one bounded research assignment with the granted research and Graphiti operations, preserving useful verified findings for later work.',
   constraints: [
-    'The existing Hermes AutoTeam runtime owns decomposition, bounded same-profile workers, task state, review, and synthesis. Do not create another team, board, scheduler, worker pool, or delegation path.',
-    'Candidate workers perform read-only web research. Each candidate must preserve the actual retrieved URL or redirect, document title and publisher, relevant publication or event dates, one exact supporting passage, one self-contained observation, a separate bounded interpretation, and any contrary or missing evidence. A worker must never write Graphiti or Engraphis.',
-    'During the Team review and synthesis pass, apply the evidence gate directly to actual web_search and web_extract results. Discovery snippets identify candidate pages but are not documents. Fetch the page, copy the returned final or resolved URL byte-for-byte, and verify that the exact evidence passage occurs in the fetched page text before accepting a finding. Never type, repair, infer, or reconstruct a URL from a title, filing key, snippet, or expected site path. When retrieval does not return a usable final URL and matching passage, do not persist that finding.',
-    'Review every worker report against the original assignment, reject unverifiable or mismatched sources, deduplicate repeated copies of one source-backed observation, and persist each accepted distinct finding through the existing Graphiti authority. Worker-local citation numbers are not portable evidence; preserve the underlying URL, page text, and exact passage for root review. A failed worker means honest partial coverage, not permission to invent the missing side.',
+    'Do not create another team, board, scheduler, worker pool, or delegation path.',
+    'Apply the evidence gate directly to actual web_search and web_extract results. Discovery snippets identify candidate pages but are not documents. Fetch the page, preserve the returned final or resolved URL exactly, and verify that the evidence passage occurs in the fetched page text before accepting a finding. Never type, repair, infer, or reconstruct a URL from a title, filing key, snippet, or expected site path. When retrieval does not return a usable final URL and matching passage, do not persist that finding.',
+    'Reject unverifiable or mismatched sources, deduplicate repeated copies of one source-backed observation, and persist each accepted distinct finding through the existing Graphiti authority. A failed research path means honest partial coverage, not permission to invent the missing side.',
     'One Know is one first-class durable Graphiti object: one sourced observation, one bounded interpretation, one inspectable citation, and one exact stored Entity UUID. It remains a normal Graphiti episode for hybrid retrieval, temporal history, Communities, and optional Saga membership, but it retains no ABOUT or MENTIONS attachment edge. It may support, challenge, or contextualize an explicit proposition, or remain neutral. Do not require a matching opposite finding inside the same Know.',
     'Allow multiple distinct Knows for the same Entity when they carry distinct source-backed observations. A second independent source is a separate Know; do not bundle an entire company report or several sources into one episode.',
     'Inspect supplied graph data before researching. Use an exact supplied ThinkGraph ID only through engraphis_get_memory; do not search ThinkGraph or reconstruct Main\'s context.',
@@ -340,7 +335,7 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: MAIN_CHAT_MODEL_KEY,
         providerModelId: MAIN_CHAT_MODEL_KEY,
-        subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        subagentModel: { ...DEFAULT_SUBAGENT_MODEL },
         tools: [...MAIN_TOOLS],
       },
       parentGraphId: null,
@@ -360,7 +355,7 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: AGENT_BUILDER_MODEL_KEY,
         providerModelId: AGENT_BUILDER_MODEL_KEY,
-        subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        subagentModel: { ...DEFAULT_SUBAGENT_MODEL },
         tools: [...BUILDER_TOOLS],
         skills: ['agent-builder-inspection'],
         toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
@@ -378,7 +373,7 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'thinkgraph' },
       runtimeOptions: {
         subagentType: 'none',
-        subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        subagentModel: { ...DEFAULT_SUBAGENT_MODEL },
         tools: [...THINKGRAPH_TOOLS],
         modelKey: DEFAULT_CARD_MODEL_KEY,
         providerModelId: DEFAULT_CARD_MODEL_KEY,
@@ -419,7 +414,7 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: TEAM_CARD_MODEL_KEY,
         providerModelId: TEAM_CARD_MODEL_KEY,
-        subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        subagentModel: { ...DEFAULT_SUBAGENT_MODEL },
         tools: [...TEAM_TOOLS],
         skills: ['grounded-citations'],
         toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
@@ -437,7 +432,7 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' },
       runtimeOptions: {
         subagentType: 'none',
-        subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        subagentModel: { ...DEFAULT_SUBAGENT_MODEL },
         tools: [...KNOWGRAPH_TOOLS],
         skills: ['grounded-citations'],
         toolsets: ['web'],

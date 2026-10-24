@@ -2,7 +2,7 @@
 
 // Entity: Card Terminals
 // Relationship: This file verifies terminal preflight accepts only the requested Card identity and an application-owned same-origin WebSocket path.
-// Entity: Hermes Card Sessions
+// Entity: Card Sessions
 // Relationship: This file verifies direct Gateway URLs and session readback for another Card are rejected before a terminal stream opens.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -51,7 +51,7 @@ describe('agentTerminalClient preflight', () => {
     );
   });
 
-  it('rejects a direct Hermes URL even when every identity field is present', async () => {
+  it('rejects a direct runtime URL even when every identity field is present', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({

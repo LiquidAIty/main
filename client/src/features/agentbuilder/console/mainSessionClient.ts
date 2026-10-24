@@ -1,9 +1,9 @@
 /**
  * Entity: Main Chat
- * Relationship: This file validates Main history and SSE identities, admits exactly one final turn result, closes at the explicit end frame, and carries Hermes voice events without inventing assistant output.
- * Entity: Hermes Card Sessions
- * Relationship: This file transports Main chat, history, stop, and voice requests to the one Project-scoped Hermes session route.
- * Entity: Bot Mode Delegation
+ * Relationship: This file validates Main history and SSE identities, admits exactly one final turn result, closes at the explicit end frame, and carries voice events without inventing assistant output.
+ * Entity: Card Sessions
+ * Relationship: This file transports Main chat, history, stop, and voice requests to the one Project-scoped Card session route.
+ * Entity: Agent Messaging
  * Relationship: This file validates the current server-supplied addressable Card roster and preserves requested and responding participant identities in streamed events.
  * Entity: Card Invocation
  * Relationship: This file submits exact user text, bounded images, and selected Data Anchors with unique message identities and rejects incomplete or conflicting completion frames.
@@ -39,7 +39,7 @@ export type MainConversationMessage = {
   linkedEvidenceIds?: string[];
 };
 
-export type HermesSessionEvent = {
+export type MainSessionEvent = {
   kind: string;
   projectId?: string;
   deckId?: string;
@@ -141,7 +141,7 @@ export async function streamSession(args: {
   message: string;
   images?: MainRunImage[];
   dataAnchors?: DataAnchor[];
-  onEvent: (event: HermesSessionEvent) => void;
+  onEvent: (event: MainSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
   let response: Response;
@@ -390,7 +390,7 @@ export async function loadSessionHistory(args: {
   };
 }
 
-export type HermesVoiceStreamEvent = {
+export type MainVoiceStreamEvent = {
   kind: 'ready' | 'status' | 'transcript' | 'error';
   projectId?: string;
   deckId?: string;
@@ -405,7 +405,7 @@ export async function streamVoiceCapture(args: {
   deckId: string;
   tts?: boolean;
   signal?: AbortSignal;
-  onEvent: (event: HermesVoiceStreamEvent) => void;
+  onEvent: (event: MainVoiceStreamEvent) => void;
 }): Promise<void> {
   const route = `${BASE}/voice/start`;
   const response = await fetch(route, {
@@ -434,7 +434,7 @@ export async function streamVoiceCapture(args: {
   let failure: SessionStreamError | null = null;
   const receive = (kind: string, data: Record<string, unknown>) => {
     if (!['ready', 'status', 'transcript', 'error'].includes(kind)) return;
-    const event = { ...data, kind } as HermesVoiceStreamEvent;
+    const event = { ...data, kind } as MainVoiceStreamEvent;
     if (
       (event.projectId && event.projectId !== args.projectId)
       || (event.deckId && event.deckId !== args.deckId)

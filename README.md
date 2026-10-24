@@ -2,8 +2,8 @@
 
 LiquidAIty is a persistent, Project-oriented agent workbench. A Project keeps durable saved Cards,
 their prompts and grants, provider-owned graph authorities, one Project human conversation, and explicit
-execution topology. Hermes executes saved Cards; LiquidAIty supplies authenticated product state,
-bounded context, transport, and presentation without replacing Hermes orchestration.
+execution topology. The connected Card runtime executes agents; LiquidAIty supplies authenticated product
+state, bounded context, transport, and presentation without replacing external execution ownership.
 
 This repository is in an MVP hardening phase. Current source is authoritative. Static source,
 deterministic tests, a loaded service, a real saved-Card Run, persisted readback, and visual acceptance
@@ -35,8 +35,8 @@ The server attaches six core saved Cards to a new agent Project by their current
 | Builder | Prompts, Cards, applications, UI, code, artifacts, and construction work |
 | ThinkGraph | Engraphis-backed Project reasoning; automatic User/Main-pair intake is not currently connected |
 | KnowGraph | Graphiti-backed sourced research, provenance, and queued Know ingestion |
-| Magnetic | Approved mission execution across an exact saved blue worker roster |
-| Team | Generic Hermes Team/Kanban work through the saved `team` profile |
+| Magnetic | Saved coordination agent; blue-worker execution remains deferred and unproven |
+| Team | General-purpose saved agent reached through ordinary agent messaging |
 
 Persisted PostgreSQL Card revisions and grants—not TypeScript seed objects—are runtime authority for an
 existing Project. WorldView, WorldSignals, Trading, and other domain Cards are specialized saved Cards
@@ -59,14 +59,14 @@ ID, semantic merger, or additional writer.
 
 ## Execution boundaries
 
-- **Ordinary Hermes delegation** is transient leaf or recursive child work when a saved Card enables it.
-- **Team** is the saved `card_team` profile's durable Hermes Kanban mode with Hermes-owned decomposition,
-  workers, review, and synthesis.
-- **Magnetic** is a separate saved-Card TaskGraph over an exact blue roster. Its root remains both the
-  orchestrator and final result task.
+- **Agent messaging** uses `message_agent` against the exact wire-derived agent roster; the external runtime
+  owns delivery, recipient execution, receipts, and completion.
+- **Team** remains a saved general-purpose agent. Automatic worker behavior is deferred until live proof.
+- **Magnetic** remains a saved coordination agent with blue membership. Its task execution path is deferred
+  until ordinary messaging is proven end to end.
 - **Python rails** owns deterministic Card/Run preparation, graph adapters, tool dispatch, IDF/IDD,
   validation, and settlement.
-- **The backend** owns authenticated HTTP/SSE transport, saved scope, Hermes Gateway translation,
+- **The backend** owns authenticated HTTP/SSE transport, saved scope, Card-runtime transport,
   profile/session binding, and event correlation.
 - **React/TypeScript** owns transport-facing UI and pixels, not semantic routing or graph meaning.
 
@@ -76,7 +76,7 @@ These distinctions are load-bearing:
 
 ### Current
 
-- Main's source-default Card has no Hermes Web toolset.
+- Main's source-default Card has no Web toolset.
 - Main is the fast front door: it answers straightforward requests normally, grounds uncertain material in
   both ThinkGraph reasoning and KnowGraph evidence, compares two plausible options when useful, and delegates
   sustained building/reasoning/research to the owning saved Card rather than performing it inline.

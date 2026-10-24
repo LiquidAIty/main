@@ -3,12 +3,12 @@
  * Relationship: This file defines the backend's canonical saved deck, immutable Card revision identity, and saved Card configuration transport types.
  * Entity: Card Topology
  * Relationship: This file defines saved Card placement and the explicit flow, magentic_option, and invalid edge classifications.
- * Entity: Bot Mode Delegation
- * Relationship: This file defines the saved orchestrator setting and directed orange flow edge used for Card-to-Card authority.
- * Entity: Magnetic TaskGraph
- * Relationship: This file defines blue magentic_option membership independently from orange delegation authority.
- * Entity: Hermes Profiles
- * Relationship: This file defines each saved Card's single Hermes runtime mode, profile, provider, model, subagent, skill, toolset, and MCP selections.
+ * Entity: Agent Messaging
+ * Relationship: This file defines the saved orchestrator setting and wire classifications used for Card-hosted agent reachability.
+ * Entity: Magnetic Membership
+ * Relationship: This file defines blue magentic_option membership as an additional deferred meaning on an otherwise messageable wire.
+ * Entity: Card Profiles
+ * Relationship: This file defines each saved Card's single runtime mode, profile, provider, model, subagent, skill, toolset, and MCP selections.
  * Entity: Card Scripts
  * Relationship: This file transports the versioned saved Card Script source and Python-owned execution state without making backend transport fields an editor surface.
  */
@@ -24,8 +24,8 @@ export type CardRuntime = {
   profile: string;
 };
 
-// flow = directed Hermes Bot messaging authority; magentic_option = BLUE Magnetic
-// task-ledger worker availability. Blue never starts or controls Magnetic.
+// Every recognised enabled wire grants agent messaging reachability.
+// magentic_option additionally records BLUE Magnetic membership; it starts no work.
 // 'invalid' is a real persisted classification, not an error case: an edge whose
 // type we do not recognise must stay visible and inert. Folding it into 'flow'
 // (the old default) silently gave malformed data a valid relationship type.
@@ -34,12 +34,12 @@ export type DeckEdgeType = 'magentic_option' | 'flow' | 'invalid';
 export type SavedCardConfiguration = {
   autoTools?: boolean;
   autoModel?: boolean;
-  /** Saved outbound orange Card-to-Card authority for an ordinary Hermes Card. */
+  /** Saved outbound Card-to-Card authority for an ordinary agent Card. */
   orchestrator?: boolean;
-  /** Temporary Hermes children for one Card turn. */
+  /** Temporary delegated children for one Card turn. */
   subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
-   * Python/Hermes capability. The receiving Card's IDF carries this exact value. */
+   * runtime capability. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;
   script?: {
     enabled?: boolean;
@@ -73,8 +73,8 @@ export type SavedCardConfiguration = {
   modelKey?: string | null;
   providerModelId?: string | null;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | null;
-  /** Saved desired model for bounded Hermes delegated children and
-   * background skill review. Hermes profile/readback remains effective truth. */
+  /** Saved desired model for bounded delegated children and
+   * background skill review. Profile readback remains effective truth. */
   subagentModel?: {
     provider: string;
     accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';

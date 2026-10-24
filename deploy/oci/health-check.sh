@@ -31,7 +31,7 @@ check_url() {
 }
 
 check_service liquidaity-infrastructure.service
-check_service liquidaity-hermes.service
+check_service liquidaity-card-runtime.service
 check_service liquidaity-python-rails.service
 check_service liquidaity-knowgraph.service
 check_service liquidaity-backend.service
@@ -42,9 +42,9 @@ check_url python-rails http://127.0.0.1:8003/health
 check_url knowgraph http://127.0.0.1:8001/health
 check_url mcp-ready http://127.0.0.1:8765/health/ready
 
-# Current first-party source exposes Hermes at its Gateway listener, not a separate health route.
+# The external Card runtime exposes its gateway listener, not a separate health route.
 timeout 5 bash -c '</dev/tcp/127.0.0.1/9119' \
-  || fail "hermes_gateway_listener_unavailable"
+  || fail "card_runtime_gateway_listener_unavailable"
 
 docker exec postgres pg_isready \
   -U "${POSTGRES_USER:?missing_required_config:POSTGRES_USER}" \
@@ -57,7 +57,19 @@ neo4j_response=$(curl --fail --silent --show-error --max-time 15 \
   --data '{"statements":[{"statement":"RETURN 1 AS ready"}]}' \
   http://127.0.0.1:7474/db/neo4j/tx/commit) \
   || fail "neo4j_not_ready"
-printf '%s' "$neo4j_response" | grep -Eq '"errors"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]' \
+printf '%s' "$neo4j_response" | node -e '
+let body = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { body += chunk; });
+process.stdin.on("end", () => {
+  try {
+    const response = JSON.parse(body);
+    if (!Array.isArray(response.errors) || response.errors.length !== 0) process.exit(1);
+  } catch {
+    process.exit(1);
+  }
+});
+' \
   || fail "neo4j_query_failed"
 
 [[ -s "$APP_ROOT/client/dist/index.html" ]] || fail "frontend_artifact_missing"

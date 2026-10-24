@@ -28,7 +28,7 @@ choose the region, shape, volume size, public IP, DNS name, SSH CIDR, firewall p
 | Python rails | `apps/python-models/.venv/bin/python -X utf8 -m uvicorn app.main:app --app-dir apps/python-models --host 127.0.0.1 --port 8003` | `127.0.0.1:8003` |
 | KnowGraph | `services/knowgraph/.venv/bin/python -X utf8 -m uvicorn app:app --app-dir services/knowgraph --host 127.0.0.1 --port 8001` | `127.0.0.1:8001` |
 | MCP | `apps/python-models/.venv/bin/python -X utf8 apps/python-models/app/mcp_host.py` | `127.0.0.1:8765` |
-| Hermes | `HermesLatest/.venv/bin/python -X utf8 -m hermes_cli.main -p default serve --host 127.0.0.1 --port 9119 --skip-build` | `127.0.0.1:9119` |
+| Card runtime | `HermesLatest/.venv/bin/python -X utf8 -m hermes_cli.main -p default serve --host 127.0.0.1 --port 9119 --skip-build` | `127.0.0.1:9119` |
 | PostgreSQL/AGE | root Compose service `postgres` | `127.0.0.1:5433` |
 | Neo4j | root Compose service `neo4j` | `127.0.0.1:7474`, `127.0.0.1:7687` |
 
@@ -40,7 +40,7 @@ absent, the MCP catalog must report the CBM family unavailable; this package doe
 
 Caddy exposes only `/api` and descendants to the backend, `/mcp` and the exact OAuth protected-resource
 metadata paths to the MCP host, and the built SPA for every other browser path. Python rails, KnowGraph,
-Hermes, databases, MCP health/catalog diagnostics, WorldSignals, Shadowbroker, and other optional products
+The Card runtime, databases, MCP health/catalog diagnostics, WorldSignals, Shadowbroker, and other optional products
 remain private. Caddy preserves SSE flushing, WebSocket upgrades, forwarded host/scheme/client IP, immutable
 asset caching, and SPA fallback. Its 32 MB body ceiling covers the current 20 MB JSON limit and the current
 25 MiB PDF upload plus multipart framing.
@@ -49,12 +49,12 @@ asset caching, and SPA fallback. Its 32 MB body ceiling covers the current 20 MB
 
 Install Ubuntu LTS AMD64, Caddy 2, Docker Engine with Compose v2, Git, Node `22.23.2`, npm `10.9.8`,
 Python 3.11 or newer with `venv`, and standard systemd utilities. Put the checkout at `/opt/liquidaity`.
-Migrate a supported Linux Hermes environment and retained `.hermes` state; this package deliberately does
-not build or modify controlled Hermes source. Install the external `codebase-memory-mcp` runtime if the
+Migrate the supported Linux Card runtime environment and retained external state; this package deliberately does
+not build or modify controlled upstream source. Install the external `codebase-memory-mcp` runtime if the
 production CodeGraph family is required.
 
 Create `/etc/liquidaity/liquidaity.env` from `env.example`. Replace every placeholder. Generate the database,
-bootstrap, MCP-internal, and 64-hex Hermes Gateway secrets on the host. Supply the final domain, Auth0 issuer,
+bootstrap, MCP-internal, and 64-hex Card runtime secrets on the host. Supply the final domain, Auth0 issuer,
 audience, client ID, scope, CORS origin, and optional provider credentials. Never commit the production file.
 
 Open only inbound TCP 22 from the owner-selected SSH CIDR and TCP 80/443 from the intended public audience.
@@ -84,7 +84,7 @@ optional-dependency correction; this OCI package does not change manifests, depe
 3. Run `sudo bash /opt/liquidaity/deploy/oci/install.sh` from `/opt/liquidaity`.
 4. Run `sudo bash /opt/liquidaity/deploy/oci/health-check.sh`.
 
-The installer fails on missing prerequisites, unresolved placeholders, build errors, missing Hermes state,
+The installer fails on missing prerequisites, unresolved placeholders, build errors, missing Card runtime state,
 an unrestored PostgreSQL authority, invalid Caddy/systemd configuration, or failed health. It uses `npm ci`,
 generates Prisma, builds backend and frontend, creates the two first-party Python environments from their
 current requirements, installs Caddy/systemd configuration, starts infrastructure first, then starts the
@@ -99,7 +99,7 @@ application target. It never initializes over retained application state.
 | ThinkGraph | `/opt/liquidaity/db/thinkgraph.sqlite` and any SQLite WAL/SHM siblings |
 | KnowGraph uploads | `/opt/liquidaity/services/knowgraph/uploads` |
 | KnowGraph graph content | Neo4j volume |
-| Hermes profiles, sessions, tasks | `/opt/liquidaity/HermesLatest/.hermes` |
+| Card runtime profiles and sessions | `/opt/liquidaity/HermesLatest/.hermes` |
 | Project workspaces | `/var/lib/liquidaity/workspaces` |
 | Builder code workspaces | `/var/lib/liquidaity/project-code` |
 | Canonical Run inputs | `/var/lib/liquidaity/run-inputs` |
@@ -125,7 +125,7 @@ The commands below are an operator procedure, not proof that a backup or restore
 6. Record the exact Git revision and the Docker volume names from `docker compose config --volumes`.
 
 Restore in this order: exact application revision; production environment; PostgreSQL/AGE; Neo4j; ThinkGraph;
-KnowGraph uploads; Hermes state; Project and Builder workspaces; Run inputs/artifacts; ownership and modes.
+KnowGraph uploads; Card runtime state; Project and Builder workspaces; Run inputs/artifacts; ownership and modes.
 Start `liquidaity-infrastructure.service`, verify both databases, then start `liquidaity.target`, then Caddy,
 and finally run the health check.
 
@@ -143,5 +143,5 @@ before returning to the deployment branch.
 Migrate all persistent authorities listed above from the workstation. Generate fresh host-only service
 secrets only when they do not replace retained identity or credentials. Generate Node build output, frontend
 build output, and first-party Python virtual environments on the VM. Migrate or separately prepare the
-supported Linux Hermes runtime and its retained state. Never commit the production environment, credentials,
-database exports, provider keys, OAuth secrets, Hermes state, Project data, uploads, or Run artifacts.
+supported Linux Card runtime and its retained state. Never commit the production environment, credentials,
+database exports, provider keys, OAuth secrets, Card runtime state, Project data, uploads, or Run artifacts.

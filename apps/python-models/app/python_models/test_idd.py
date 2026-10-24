@@ -16,7 +16,7 @@ from app.python_models.card_script import (
     saved_script,
     script_presentation,
 )
-from app.python_models.card_configuration_contracts import HermesRuntime
+from app.python_models.card_configuration_contracts import CardRuntime
 
 
 def test_literal_idd_is_the_only_loaded_builder_data() -> None:
@@ -31,7 +31,7 @@ def test_literal_idd_is_the_only_loaded_builder_data() -> None:
         "app.python_models.graph_reference_contracts.GraphReference"
     )
     assert dictionary["types"]["RuntimeObject"]["source"] == (
-        "app.python_models.card_configuration_contracts.HermesRuntime"
+        "app.python_models.card_configuration_contracts.CardRuntime"
     )
     relationships = {item["name"]: item for item in dictionary["relationships"]}
     assert relationships["FLOW"]["direction"] == "source-to-target"
@@ -86,7 +86,7 @@ def test_unknown_future_objects_remain_absent_until_declared() -> None:
 def test_runtime_errors_remain_at_the_executable_contract() -> None:
     secret = "sk-secret-that-must-never-appear"
     with pytest.raises(ValidationError):
-        HermesRuntime.model_validate({"kind": "hermes", "mode": secret, "profile": "helper"})
+        CardRuntime.model_validate({"kind": "hermes", "mode": secret, "profile": "helper"})
     with pytest.raises(CardScriptValidationError) as error:
         saved_script({"enabled": secret, "source": secret})
     assert str(error.value) == "card_script_configuration_invalid"

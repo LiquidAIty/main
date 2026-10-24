@@ -1,6 +1,6 @@
 // Entity: Card Terminals
 // Relationship: This file owns the xterm view, forwards input and resize events, renders streamed output, and disposes terminal resources on unmount.
-// Entity: Hermes Card Sessions
+// Entity: Card Sessions
 // Relationship: This file opens one session for the exact Project, deck, and Card identity while ignoring stale openings and output after retargeting.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -126,7 +126,7 @@ export default function AgentTerminalPanel({
   useEffect(() => {
     const needsOpen = !session;
     if (!terminalReady || !needsOpen || error) return;
-    const key = `${identityKey}:new:hermes-tui`;
+    const key = `${identityKey}:new:card-terminal`;
     let pending = pendingOpenRef.current;
     if (!pending || pending.key !== key) {
       pending = { key, promise: client.open(stableIdentity, sizeRef.current) };

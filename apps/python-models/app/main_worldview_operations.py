@@ -208,7 +208,7 @@ def main_worldview_operation_definitions(
             description=(
                 "Submit one bounded mission to the authenticated Project's unique saved Main "
                 "Card and wait for its actual completed result. Main preserves its saved Run, "
-                "IDF, Hermes session, and exact orange Card roster; a leading @Card may address "
+                "IDF, Card session, and exact agent roster; a leading @Card may address "
                 "only a currently authorized saved target. No caller-selected Project, Card, "
                 "profile, conversation, or Run identity is accepted."
             ),
@@ -310,7 +310,7 @@ def main_worldview_operation_definitions(
             canonical_id="worldview.action",
             title="Run a WorldView action",
             description=(
-                "Saved WorldView Hermes Card only: execute one existing God's Eye action "
+                "Saved WorldView Card only: execute one existing God's Eye action "
                 "against the currently mounted WorldView in this Project. Examples: "
                 "get_current_view_state, get_entity_context, track_entity, "
                 "focus_satellites, set_layer_visibility, zoom_to_globe. The current "

@@ -4,7 +4,7 @@
 # Relationship: This file verifies decision context contains only selected graph reference identity and provenance, never materialized records or attachment bytes.
 # Entity: Tool Catalog
 # Relationship: This file verifies AutoTools can only narrow the valid saved catalog baseline and returns that full baseline when Jev is unavailable.
-# Entity: Hermes Profiles
+# Entity: Card Profiles
 # Relationship: This file verifies AutoModel selects only compatible configured models while preserving the saved model as the durable default.
 
 from __future__ import annotations

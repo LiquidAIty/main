@@ -1,11 +1,11 @@
 """Truthful AGE Run and artifact observations."""
 
 # Entity: AgentGraph
-# Relationship: This file records exact accepted Run, preparation, Hermes identity, assignment, lineage, terminal-state, and artifact observations in AGE without controlling execution.
+# Relationship: This file records exact accepted Run, preparation, runtime identity, lineage, terminal-state, and artifact observations in AGE without controlling execution.
 # Entity: Run Ledger
 # Relationship: This file mirrors confirmed outer Run lifecycle and artifact evidence from the canonical PostgreSQL Run authority into AgentGraph observations.
 # Entity: Card Invocation
-# Relationship: This file observes invocation acceptance, preparation completion or failure, and real Hermes submission start without creating or authorizing a Card Run.
+# Relationship: This file observes invocation acceptance, preparation completion or failure, and real submission start without creating or authorizing a Card Run.
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def observe_run_acceptance(
     preparation_started_at: datetime,
     conversation_id: str | None,
 ) -> bool:
-    """Observe one real accepted outer request before Hermes preparation."""
+    """Observe one real accepted outer request before runtime preparation."""
 
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
@@ -124,7 +124,7 @@ def observe_run_execution_started(
     hermes_session_id: str,
     started_at: datetime,
 ) -> bool:
-    """Observe exact Hermes submission-start evidence for one accepted outer Run."""
+    """Observe exact submission-start evidence for one accepted outer Run."""
 
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
@@ -143,31 +143,6 @@ def observe_run_execution_started(
                     "submissionId": submission_id,
                     "hermesSessionId": hermes_session_id,
                     "startedAt": started_at.isoformat(),
-                },
-                "run_id agtype",
-            )
-        return len(observed) == 1 and str(observed[0].get("run_id") or "") == run_id
-    except Exception:
-        return False
-
-
-def observe_run_progress(run_id: str, hermes_status: str, payload: dict[str, Any]) -> bool:
-    try:
-        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            observed = agentgraph_query.execute_fixed_agentgraph_query(
-                cursor,
-                """
-                MATCH (run:Run {runId: $runId})
-                SET run.hermesRootId=$hermesRootId,
-                    run.hermesRunId=$hermesRunId,
-                    run.hermesStatus=$hermesStatus
-                RETURN run.runId
-                """,
-                {
-                    "runId": run_id,
-                    "hermesRootId": payload.get("hermesRootId"),
-                    "hermesRunId": payload.get("hermesRunId"),
-                    "hermesStatus": hermes_status,
                 },
                 "run_id agtype",
             )
@@ -232,40 +207,6 @@ def observe_run_preparation_complete(
                 or str(run_rows[0].get("run_id") or "") != run_id
             ):
                 return False
-
-            sender_id = str(payload.get("senderCardId") or "").strip()
-            if sender_id:
-                assignment_rows = agentgraph_query.execute_fixed_agentgraph_query(
-                    cursor,
-                    """
-                    MATCH (sender:Card {
-                      projectId: $projectId, deckId: $deckId, cardId: $senderId
-                    })
-                    MATCH (target:Card {
-                      projectId: $projectId, deckId: $deckId, cardId: $targetId
-                    })
-                    MERGE (sender)-[assignment:ASSIGNED_TO {runId: $runId}]->(target)
-                    SET assignment.correlationId=$correlationId
-                    RETURN sender.cardId, target.cardId, assignment.runId
-                    """,
-                    {
-                        "projectId": prepared["projectId"],
-                        "deckId": prepared["deckId"],
-                        "senderId": sender_id,
-                        "targetId": identity["cardId"],
-                        "runId": run_id,
-                        "correlationId": correlation_id,
-                    },
-                    "sender_id agtype, target_id agtype, run_id agtype",
-                )
-                if (
-                    len(assignment_rows) != 1
-                    or str(assignment_rows[0].get("sender_id") or "") != sender_id
-                    or str(assignment_rows[0].get("target_id") or "")
-                    != str(identity["cardId"])
-                    or str(assignment_rows[0].get("run_id") or "") != run_id
-                ):
-                    return False
 
             parent_run_id = str(payload.get("originatingRunId") or "").strip()
             if parent_run_id:

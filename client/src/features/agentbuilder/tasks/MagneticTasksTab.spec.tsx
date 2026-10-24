@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 /**
- * Entity: Magnetic TaskGraph
- * Relationship: This file verifies inspect-only Magnetic status renders exact Hermes task states, deterministic dependency layers, saved Card assignees, bounded details, idle state, and timeout.
+ * Entity: Magnetic Tasks
+ * Relationship: This file verifies inspect-only Magnetic status renders exact task states, deterministic dependency layers, saved Card assignees, bounded details, idle state, and timeout.
  * Entity: Run Ledger
  * Relationship: This file verifies the task view requests status only, preserves the selected Run identity, and exposes no execute or stop mutation.
  */
@@ -41,10 +41,10 @@ vi.mock('@xyflow/react', () => ({
 }));
 
 import MagneticTasksTab, {
-  buildMagneticTaskGraph,
+  buildMagneticTaskLayout,
   readMagneticRunStatus,
   taskStatusLabel,
-  type MagneticHermesTask,
+  type MagneticTask,
 } from './MagneticTasksTab';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
@@ -93,27 +93,26 @@ describe('MagneticTasksTab', () => {
     expect(taskStatusLabel('archived')).toBe('Stopped');
   });
 
-  it('reads only exact Hermes task statuses', () => {
+  it('reads only exact task statuses', () => {
     const result = readMagneticRunStatus({
       runId: 'run-1',
-      hermesRootId: 'root-1',
+      providerThreadRef: 'root-1',
       state: 'running',
-      hermesStatus: 'ready',
-      hermesTasks: [
+      tasks: [
         {
           taskId: 'task-ready', title: 'Ready', assignee: 'signal', status: 'ready', dependencyIds: [],
-          latestAttempt: { runId: 'hermes-run-2', status: 'waiting' },
+          latestAttempt: { runId: 'runtime-run-2', status: 'waiting' },
         },
         { taskId: 'task-invalid', title: 'Invalid', assignee: 'signal', status: 'unsupported', dependencyIds: [] },
         { taskId: 'task-invalid-two', title: 'Invalid', assignee: null, status: 'unknown', dependencyIds: [] },
       ],
     });
-    expect(result?.hermesStatus).toBe('ready');
-    expect(result?.hermesTasks.map((task) => task.taskId)).toEqual(['task-ready']);
-    expect(result?.hermesTasks[0]?.latestAttempt).toEqual({
-      runId: 'hermes-run-2', status: 'waiting',
+    expect(result?.rootTaskId).toBe('root-1');
+    expect(result?.tasks.map((task) => task.taskId)).toEqual(['task-ready']);
+    expect(result?.tasks[0]?.latestAttempt).toEqual({
+      runId: 'runtime-run-2', status: 'waiting',
     });
-    expect(result?.hermesTasks[0]).toMatchObject({
+    expect(result?.tasks[0]).toMatchObject({
       handoffSummary: null,
     });
   });
@@ -122,13 +121,13 @@ describe('MagneticTasksTab', () => {
     const task = (
       taskId: string,
       dependencyIds: string[],
-      status: MagneticHermesTask['status'] = 'ready',
-    ): MagneticHermesTask => ({
+      status: MagneticTask['status'] = 'ready',
+    ): MagneticTask => ({
       taskId, title: taskId, assignee: 'Magnetic', status, dependencyIds,
       latestAttempt: null, resultAvailable: false,
       handoffSummary: null,
     });
-    const graph = buildMagneticTaskGraph([
+    const graph = buildMagneticTaskLayout([
       task('root', []),
       task('research', ['root'], 'running'),
       task('summary', ['research'], 'blocked'),
@@ -145,7 +144,7 @@ describe('MagneticTasksTab', () => {
     expect(graph.nodes[0]?.data.assignmentLabel).toBe('Magnetic');
     expect(graph.nodes.every((node) => node.draggable === false && node.connectable === false)).toBe(true);
 
-    const parallel = buildMagneticTaskGraph([
+    const parallel = buildMagneticTaskLayout([
       task('one', []),
       task('two', []),
       task('root', ['one', 'two']),
@@ -162,10 +161,9 @@ describe('MagneticTasksTab', () => {
       ok: true,
       result: {
         runId: 'run-1',
-        hermesRootId: 'task-blocked',
+        providerThreadRef: 'task-blocked',
         state: 'completed',
-        hermesStatus: 'done',
-        hermesTasks: [
+        tasks: [
           {
             taskId: 'task-running', title: 'Collect evidence', assignee: 'liquidaity-signal', status: 'running',
             dependencyIds: [], latestAttempt: { runId: 'attempt-7', status: 'running', startedAt: null, endedAt: null },

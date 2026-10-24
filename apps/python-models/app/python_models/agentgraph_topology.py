@@ -4,10 +4,10 @@
 # Relationship: This file persists and loads Project-owned Card vertices and relationships through exact fixed AGE queries.
 # Entity: Card Topology
 # Relationship: This file validates saved Card addresses, endpoints, edge identity, direction, handles, enabled state, and one-Magnetic-bus-per-worker constraints.
-# Entity: Bot Mode Delegation
+# Entity: Agent Messaging
 # Relationship: This file derives one orchestrator Card's addressable targets only from enabled outbound orange flow edges and never grants reverse authority.
-# Entity: Magnetic TaskGraph
-# Relationship: This file derives Magnetic's callable saved worker roster only from enabled blue membership and preserves each worker's exact revision and Hermes profile.
+# Entity: Magnetic Membership
+# Relationship: This file derives Magnetic's saved worker membership only from enabled blue wires and preserves each worker's exact revision and Card profile.
 # Entity: Tool Catalog
 # Relationship: This file projects only compact saved tool identifiers as Magnetic assignment metadata and never grants a capability or copies tool schemas.
 # Entity: Team
@@ -23,7 +23,7 @@ from app.python_models.saved_card_contract import (
     CardDomainError,
     card_is_enabled,
     card_runtime,
-    is_magnetic_taskgraph_runtime,
+    is_magnetic_runtime,
     json_object,
     required_text,
     string_list,
@@ -174,7 +174,7 @@ def load_card_relationships(cursor: Any, project_id: str, deck_id: str) -> list[
 
 
 def card_has_orchestrator_authority(card: dict[str, Any]) -> bool:
-    """Return saved outbound orange authority for one non-Magnetic Hermes Card."""
+    """Return saved outbound authority for one non-Magnetic agent Card."""
     if card.get("kind") != "agent" or not card_is_enabled(card):
         return False
     try:
@@ -187,13 +187,13 @@ def card_has_orchestrator_authority(card: dict[str, Any]) -> bool:
     )
     return (
         runtime.get("kind") == "hermes"
-        and not is_magnetic_taskgraph_runtime(runtime)
+        and not is_magnetic_runtime(runtime)
         and (runtime.get("mode") == "main" or explicitly_enabled)
     )
 
 
-def _is_callable_magnetic_taskgraph_worker_card(card: dict[str, Any]) -> bool:
-    """Accept enabled saved delegate Cards with a callable Hermes runtime.
+def _is_callable_magnetic_worker_card(card: dict[str, Any]) -> bool:
+    """Accept enabled saved delegate Cards with a callable Card runtime.
 
     Orange orchestration authority and blue Magnetic availability are
     independent saved relationships.  A delegate may therefore remain a
@@ -230,13 +230,13 @@ def _validate_magnetic_bus_topology(
             target = cards.get(target_id)
             if source is None or target is None:
                 continue
-            source_is_magnetic = is_magnetic_taskgraph_runtime(card_runtime(source))
-            target_is_magnetic = is_magnetic_taskgraph_runtime(card_runtime(target))
+            source_is_magnetic = is_magnetic_runtime(card_runtime(source))
+            target_is_magnetic = is_magnetic_runtime(card_runtime(target))
             if source_is_magnetic == target_is_magnetic:
                 continue
             master_id = source_id if source_is_magnetic else target_id
             worker_id = target_id if source_is_magnetic else source_id
-            if not _is_callable_magnetic_taskgraph_worker_card(cards[worker_id]):
+            if not _is_callable_magnetic_worker_card(cards[worker_id]):
                 raise CardDomainError(f"card_master_conflict:{worker_id}")
             magnetic_masters.setdefault(worker_id, set()).add(master_id)
     for card_id, master_ids in magnetic_masters.items():
@@ -276,7 +276,7 @@ def validate_card_topology(nodes: list[dict[str, Any]], edges: list[dict[str, An
             raise CardDomainError(f"card_connection_controller_required:{edge['id']}")
 
 
-def connected_hermes_card_targets(
+def connected_agent_targets(
     card_id: str,
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
@@ -284,7 +284,7 @@ def connected_hermes_card_targets(
     edge_type: str,
     strict: bool = False,
 ) -> list[dict[str, Any]]:
-    """Project exact saved Hermes Card peers from one enabled connection type."""
+    """Project exact saved agent peers from one enabled connection type."""
     profiles = [
         str(runtime.get("profile") or "").strip().lower()
         for card in cards.values()
@@ -311,15 +311,15 @@ def connected_hermes_card_targets(
             continue
         if target is None:
             if strict:
-                raise CardDomainError(f"magnetic_taskgraph_worker_card_missing:{peer_id}")
+                raise CardDomainError(f"magnetic_worker_card_missing:{peer_id}")
             continue
         if target.get("kind") != "agent":
             if strict:
-                raise CardDomainError(f"magnetic_taskgraph_worker_card_invalid:{peer_id}")
+                raise CardDomainError(f"magnetic_worker_card_invalid:{peer_id}")
             continue
         if not card_is_enabled(target):
             if strict:
-                raise CardDomainError(f"magnetic_taskgraph_worker_card_disabled:{peer_id}")
+                raise CardDomainError(f"magnetic_worker_card_disabled:{peer_id}")
             continue
         try:
             runtime = card_runtime(target)
@@ -329,13 +329,13 @@ def connected_hermes_card_targets(
             continue
         if runtime.get("kind") != "hermes":
             if strict:
-                raise CardDomainError(f"magnetic_taskgraph_worker_runtime_invalid:{peer_id}")
+                raise CardDomainError(f"magnetic_worker_runtime_invalid:{peer_id}")
             continue
         # Orange FLOW may address the saved Magnetic Card itself. Blue
         # MAGENTIC_OPTION edges, by contrast, project only worker Cards.
-        if edge_type == "magentic_option" and is_magnetic_taskgraph_runtime(runtime):
+        if edge_type == "magentic_option" and is_magnetic_runtime(runtime):
             if strict:
-                raise CardDomainError(f"magnetic_taskgraph_worker_runtime_invalid:{peer_id}")
+                raise CardDomainError(f"magnetic_worker_runtime_invalid:{peer_id}")
             continue
         profile = runtime["profile"].strip().lower()
         if not _HERMES_PROFILE_ID_RE.fullmatch(profile):
@@ -348,7 +348,7 @@ def connected_hermes_card_targets(
             continue
         revision_id = str(target.get("_cardRevisionId") or "").strip()
         if strict and not revision_id:
-            raise CardDomainError(f"magnetic_taskgraph_worker_revision_missing:{peer_id}")
+            raise CardDomainError(f"magnetic_worker_revision_missing:{peer_id}")
         options = json_object(target.get("runtimeOptions"), "runtime_options")
         seen.add(peer_id)
         direct.append({
@@ -387,7 +387,7 @@ def materialize_magnetic_worker_capabilities(
     """Add compact saved-tool facts to exact workers.
 
     This is assignment metadata only. It grants no tool, carries no schemas or
-    datasets, and does not replace the worker Card's Hermes profile.
+    datasets, and does not replace the worker Card's profile.
     """
 
     saved_by_card: dict[str, list[str]] = {}
@@ -396,7 +396,7 @@ def materialize_magnetic_worker_capabilities(
         card = cards.get(card_id)
         if card is None:
             raise CardDomainError(
-                f"magnetic_taskgraph_worker_card_missing:{card_id or 'missing'}"
+                f"magnetic_worker_card_missing:{card_id or 'missing'}"
             )
         options = json_object(card.get("runtimeOptions"), "runtime_options")
         saved = string_list(options.get("tools"), "tools")
@@ -423,7 +423,7 @@ def direct_orchestrator_targets(
     source = cards.get(card_id)
     if source is None or not card_has_orchestrator_authority(source):
         return []
-    return connected_hermes_card_targets(
+    return connected_agent_targets(
         card_id,
         cards,
         [edge for edge in edges if edge.get("source") == card_id],

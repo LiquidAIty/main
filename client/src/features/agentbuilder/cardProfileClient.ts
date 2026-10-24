@@ -1,13 +1,13 @@
 /**
- * Entity: Hermes Profiles
+ * Entity: Card Profiles
  * Relationship: This file loads one authorized saved Card's profile and learning state and applies only the bounded profile operations exposed by the backend.
  * Entity: Credentials
  * Relationship: This file manages the validated loopback OAuth start, poll, approval, cancellation, and timeout lifecycle for a Card profile's selected MCP server.
  * Entity: Tool Catalog
- * Relationship: This file reads and tests the MCP server tools exposed through the selected saved Hermes profile without changing Card grants.
+ * Relationship: This file reads and tests the MCP server tools exposed through the selected saved Card profile without changing Card grants.
  */
 
-export type HermesMcpServerView = {
+export type CardMcpServerView = {
   name: string;
   transport: string;
   enabled: boolean;
@@ -16,7 +16,7 @@ export type HermesMcpServerView = {
   toolFilter: string[];
 };
 
-export type HermesProfileView = {
+export type CardProfileView = {
   profile: {
     name: string;
     description: string;
@@ -25,7 +25,7 @@ export type HermesProfileView = {
     skills: Array<{ name: string; enabled: boolean }>;
     toolsets: Array<{ name: string; label?: string; enabled: boolean; tool_count?: number }>;
     toolsetsPinned: boolean;
-    mcpServers: HermesMcpServerView[];
+    mcpServers: CardMcpServerView[];
     learning: {
       count: number;
       summary: string[];
@@ -56,7 +56,7 @@ export type HermesProfileView = {
   };
 };
 
-export type HermesProfileOperation =
+export type CardProfileOperation =
   | { method: 'learning.detail'; params: { id: string } }
   | { method: 'learning.edit'; params: { id: string; content: string } }
   | { method: 'mcp.servers.test'; params: { name: string } }
@@ -67,50 +67,50 @@ export type HermesProfileOperation =
 async function responseJson(response: Response): Promise<Record<string, any>> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body?.ok !== true) {
-    throw new Error(String(body?.error || `hermes_profile_request_failed:${response.status}`));
+    throw new Error(String(body?.error || `card_profile_request_failed:${response.status}`));
   }
   return body;
 }
 
-export async function loadHermesProfile(input: {
+export async function loadCardProfile(input: {
   projectId: string;
   deckId: string;
   cardId: string;
   signal?: AbortSignal;
-}): Promise<HermesProfileView> {
+}): Promise<CardProfileView> {
   const query = new URLSearchParams({ projectId: input.projectId, deckId: input.deckId });
   const response = await fetch(
-    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}?${query.toString()}`,
+    `/api/card-profile/cards/${encodeURIComponent(input.cardId)}?${query.toString()}`,
     { signal: input.signal },
   );
-  return responseJson(response) as Promise<HermesProfileView>;
+  return responseJson(response) as Promise<CardProfileView>;
 }
 
-export async function applyHermesProfileOperation(input: {
+export async function applyCardProfileOperation(input: {
   projectId: string;
   deckId: string;
   cardId: string;
-  change: HermesProfileOperation;
-}): Promise<HermesProfileView & { result: unknown }> {
+  change: CardProfileOperation;
+}): Promise<CardProfileView & { result: unknown }> {
   const response = await fetch(
-    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/operations`,
+    `/api/card-profile/cards/${encodeURIComponent(input.cardId)}/operations`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId: input.projectId, deckId: input.deckId, ...input.change }),
     },
   );
-  return responseJson(response) as Promise<HermesProfileView & { result: unknown }>;
+  return responseJson(response) as Promise<CardProfileView & { result: unknown }>;
 }
 
-export async function loadHermesLearningDetail(input: {
+export async function loadCardLearningDetail(input: {
   projectId: string;
   deckId: string;
   cardId: string;
   nodeId: string;
 }): Promise<{ ok: true; kind: 'memory' | 'skill'; id: string; label: string; content: string }> {
   const response = await fetch(
-    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/operations`,
+    `/api/card-profile/cards/${encodeURIComponent(input.cardId)}/operations`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -126,7 +126,7 @@ export async function loadHermesLearningDetail(input: {
   return body.result;
 }
 
-export async function testHermesMcp(input: {
+export async function testCardMcp(input: {
   projectId: string;
   deckId: string;
   cardId: string;
@@ -141,7 +141,7 @@ export async function testHermesMcp(input: {
   error: string | null;
 }> {
   const response = await fetch(
-    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/operations`,
+    `/api/card-profile/cards/${encodeURIComponent(input.cardId)}/operations`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -154,7 +154,7 @@ export async function testHermesMcp(input: {
     },
   );
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(String(body?.error || `hermes_mcp_test_failed:${response.status}`));
+  if (!response.ok) throw new Error(String(body?.error || `card_mcp_test_failed:${response.status}`));
   return { server: input.serverName, ...body.result };
 }
 
@@ -177,20 +177,20 @@ function waitForOAuthPoll(signal: AbortSignal): Promise<void> {
   });
 }
 
-export async function connectHermesMcpOAuth(input: {
+export async function connectCardMcpOAuth(input: {
   projectId: string;
   deckId: string;
   cardId: string;
   serverName: string;
   signal: AbortSignal;
   authorizationWindow: Window;
-}): Promise<HermesProfileView & { toolCount: number }> {
+}): Promise<CardProfileView & { toolCount: number }> {
   const authority = {
     projectId: input.projectId,
     deckId: input.deckId,
     cardId: input.cardId,
   };
-  const started = await applyHermesProfileOperation({
+  const started = await applyCardProfileOperation({
     ...authority,
     change: { method: 'mcp.servers.oauth.start', params: { name: input.serverName } },
   });
@@ -199,12 +199,12 @@ export async function connectHermesMcpOAuth(input: {
     : {};
   const sessionId = String(startResult.session_id || '').trim();
   const authUrl = String(startResult.auth_url || '').trim();
-  if (!sessionId || !authUrl) throw new Error('hermes_mcp_oauth_start_invalid');
+  if (!sessionId || !authUrl) throw new Error('card_mcp_oauth_start_invalid');
   let approved = false;
   try {
     const parsedAuthUrl = new URL(authUrl);
     if (!['http:', 'https:'].includes(parsedAuthUrl.protocol)) {
-      throw new Error('hermes_mcp_oauth_url_invalid');
+      throw new Error('card_mcp_oauth_url_invalid');
     }
     const redirectValue = parsedAuthUrl.searchParams.get('redirect_uri') || '';
     const redirect = new URL(redirectValue);
@@ -217,14 +217,14 @@ export async function connectHermesMcpOAuth(input: {
       || redirect.password
       || redirect.search
       || redirect.hash
-    ) throw new Error('hermes_mcp_oauth_callback_invalid');
+    ) throw new Error('card_mcp_oauth_callback_invalid');
     input.authorizationWindow.opener = null;
     input.authorizationWindow.location.replace(parsedAuthUrl.toString());
     const deadline = Date.now() + 360_000;
     while (Date.now() < deadline) {
       if (input.signal.aborted) throw new DOMException('MCP OAuth cancelled', 'AbortError');
       await waitForOAuthPoll(input.signal);
-      const polled = await applyHermesProfileOperation({
+      const polled = await applyCardProfileOperation({
         ...authority,
         change: {
           method: 'mcp.servers.oauth.poll',
@@ -244,14 +244,14 @@ export async function connectHermesMcpOAuth(input: {
         };
       }
       if (status === 'error') {
-        throw new Error(String(pollResult.error_message || 'hermes_mcp_oauth_failed'));
+        throw new Error(String(pollResult.error_message || 'card_mcp_oauth_failed'));
       }
-      if (status !== 'pending') throw new Error('hermes_mcp_oauth_status_invalid');
+      if (status !== 'pending') throw new Error('card_mcp_oauth_status_invalid');
     }
-    throw new Error('hermes_mcp_oauth_timed_out');
+    throw new Error('card_mcp_oauth_timed_out');
   } finally {
     if (!approved) {
-      await applyHermesProfileOperation({
+      await applyCardProfileOperation({
         ...authority,
         change: {
           method: 'mcp.servers.oauth.cancel',

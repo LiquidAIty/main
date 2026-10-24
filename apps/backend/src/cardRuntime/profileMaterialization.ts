@@ -1,18 +1,19 @@
 /**
- * Entity: Hermes Profiles
- * Relationship: Projects one saved Card onto Hermes' standard profile contract plus the exact wire-derived Bot roster.
+ * Entity: Card Profiles
+ * Relationship: Projects one saved Card onto the external profile contract plus its exact wire-derived agent roster.
  * Entity: MCP Host
  * Relationship: Configures the one saved Card MCP connection with only that Card's granted operations.
  */
 
 import type { DeckCard, DeckDocument } from '../types';
+import { CARD_RUNTIME_CONTRACT } from '../services/cardRuntimeGateway';
 import { exactStrings, objectRecord } from '../services/projectCardAuthority';
 import type { ToolCatalogDescriptor } from '../services/mcp/toolCatalogMcpClient';
 import { resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
 
-type HermesRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>;
+type ProfileRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>;
 
-export type HermesProfileState = {
+export type CardProfileState = {
   name: string;
   description?: string;
   soul?: string;
@@ -21,14 +22,15 @@ export type HermesProfileState = {
   toolsets?: Array<{ name?: string; enabled?: boolean }>;
   toolsets_pinned?: boolean;
   mcp_servers?: Array<{ name?: string; enabled?: boolean }>;
-  bot_mode_roster?: string[] | null;
+  [CARD_RUNTIME_CONTRACT.profileRosterField]?: string[] | null;
   ui_meta?: Record<string, unknown> | null;
   ui_meta_revisions?: Record<string, number>;
 };
 
-const ESSENTIAL_SKILLS = new Set(['hermes-agent']);
+const ESSENTIAL_SKILLS = new Set<string>([CARD_RUNTIME_CONTRACT.essentialSkill]);
 const CARD_MCP_SERVER = 'liquidaity';
-const BOT_META_KEY = 'hermes-bots';
+const CARD_PROFILE_MARKER_KEY = CARD_RUNTIME_CONTRACT.profileMarkerKey;
+const PROFILE_ROSTER_FIELD = CARD_RUNTIME_CONTRACT.profileRosterField;
 
 function validProfileName(value: string): boolean {
   if (!value || value.length > 64) return false;
@@ -82,10 +84,13 @@ function promptWithoutSection(prompt: string, heading: string): string {
   return [...lines.slice(0, start), ...lines.slice(end)].join('\n').trim();
 }
 
-function botAddress(card: DeckCard): string {
+function cardAddress(card: DeckCard): string {
   const title = String(card.title || '').trim();
   const normalized = title.toLowerCase();
-  return validProfileName(normalized) ? title : card.runtime.profile;
+  if (!validProfileName(normalized)) {
+    throw new Error(`card_agent_address_invalid:${card.id}`);
+  }
+  return title;
 }
 
 function cardDescription(card: DeckCard): string {
@@ -94,25 +99,25 @@ function cardDescription(card: DeckCard): string {
 }
 
 async function profileListRow(
-  request: HermesRequest,
+  request: ProfileRequest,
   profile: string,
 ): Promise<Record<string, any>> {
   const listed = objectRecord(await request('profiles.list', { include_sessions: false }));
   const matches = (Array.isArray(listed.profiles) ? listed.profiles : [])
     .map(objectRecord)
     .filter((row) => String(row.name || '').toLowerCase() === profile.toLowerCase());
-  if (matches.length !== 1) throw new Error(`hermes_profile_identity_ambiguous:${profile}`);
+  if (matches.length !== 1) throw new Error(`card_profile_identity_ambiguous:${profile}`);
   return matches[0];
 }
 
-export function hermesProfileModelSelection(options: Record<string, any>): {
+export function cardModelSelection(options: Record<string, any>): {
   provider: string;
   model: string;
 } {
   const provider = String(options.provider || '').trim().toLowerCase();
   const accessMode = String(options.accessMode || '').trim().toLowerCase();
   const model = String(options.providerModelId || options.modelKey || '').trim();
-  if (!model) throw new Error('hermes_saved_provider_selection_incomplete');
+  if (!model) throw new Error('card_provider_selection_incomplete');
   if (provider === 'openai' && accessMode === 'chatgpt-account') {
     return { provider: 'openai-codex', model };
   }
@@ -121,38 +126,45 @@ export function hermesProfileModelSelection(options: Record<string, any>): {
   if (provider === 'local_openai_compatible' && accessMode === 'openai-api') {
     return { provider, model };
   }
-  throw new Error(`hermes_saved_provider_access_mode_mismatch:${provider}:${accessMode}`);
+  throw new Error(`card_provider_access_mode_mismatch:${provider}:${accessMode}`);
 }
 
-export function savedCardBotRoster(deck: DeckDocument, card: DeckCard): string[] {
-  const cards = new Map(deck.nodes.flatMap((candidate) => (
-    candidate.enabled !== false
-    && candidate.runtime.kind === 'hermes'
-    && validProfileName(candidate.runtime.profile)
-      ? [[candidate.id, candidate] as const]
-      : []
-  )));
-  const enabledWires = deck.edges.filter((edge) => (
-    edge.enabled !== false && edge.edgeType !== 'invalid'
-  ));
+function savedCardAgentTargets(deck: DeckDocument, card: DeckCard): DeckCard[] {
+  const cards = new Map(deck.nodes.map((candidate) => [candidate.id, candidate]));
   const selectedIds = new Set<string>();
-  if (card.runtime.mode === 'main') {
-    for (const edge of enabledWires) {
-      selectedIds.add(String(edge.source || ''));
-      selectedIds.add(String(edge.target || ''));
-    }
-  } else {
-    for (const edge of enabledWires) {
-      if (edge.source === card.id) selectedIds.add(String(edge.target || ''));
-      if (edge.target === card.id) selectedIds.add(String(edge.source || ''));
+  for (const edge of deck.edges) {
+    if (edge.enabled === false || edge.edgeType === 'invalid') continue;
+    const sourceId = String(edge.source || '');
+    const targetId = String(edge.target || '');
+    if (card.runtime.mode !== 'main' && sourceId !== card.id && targetId !== card.id) continue;
+    const source = cards.get(sourceId);
+    const target = cards.get(targetId);
+    if (
+      !source
+      || !target
+      || source.id === target.id
+      || source.enabled === false
+      || target.enabled === false
+      || source.runtime.kind !== CARD_RUNTIME_CONTRACT.kind
+      || target.runtime.kind !== CARD_RUNTIME_CONTRACT.kind
+      || !validProfileName(source.runtime.profile)
+      || !validProfileName(target.runtime.profile)
+    ) throw new Error(`card_agent_roster_wire_invalid:${edge.id}`);
+    if (card.runtime.mode === 'main') {
+      selectedIds.add(sourceId);
+      selectedIds.add(targetId);
+    } else if (sourceId === card.id) {
+      selectedIds.add(targetId);
+    } else if (targetId === card.id) {
+      selectedIds.add(sourceId);
     }
   }
   selectedIds.delete(card.id);
-  return deck.nodes.flatMap((candidate) => (
-    selectedIds.has(candidate.id) && cards.has(candidate.id)
-      ? [candidate.runtime.profile]
-      : []
-  ));
+  return deck.nodes.filter((candidate) => selectedIds.has(candidate.id));
+}
+
+export function savedCardAgentRoster(deck: DeckDocument, card: DeckCard): string[] {
+  return savedCardAgentTargets(deck, card).map((target) => target.runtime.profile);
 }
 
 export function materializedCardPrompt(deck: DeckDocument, card: DeckCard): string {
@@ -167,18 +179,13 @@ export function materializedCardPrompt(deck: DeckDocument, card: DeckCard): stri
   const base = withoutOldRoster;
   const options = objectRecord(card.runtimeOptions);
   if (card.runtime.mode !== 'main' && options.orchestrator !== true) return base;
-  const byProfile = new Map(deck.nodes.map((candidate) => [
-    candidate.runtime.profile.toLowerCase(), candidate,
-  ]));
-  const blocks = savedCardBotRoster(deck, card).map((profile) => {
-    const target = byProfile.get(profile.toLowerCase());
-    if (!target) throw new Error(`hermes_bot_roster_card_missing:${profile}`);
+  const blocks = savedCardAgentTargets(deck, card).map((target) => {
     const skill = promptSection(String(target.prompt || ''), 'ORCHESTRATOR SKILL');
-    if (!skill) throw new Error(`hermes_connected_card_introduction_missing:${profile}`);
-    const address = botAddress(target);
+    if (!skill) throw new Error(`connected_card_introduction_missing:${target.id}`);
+    const address = cardAddress(target);
     return [
-      `[BOT @${address}]`,
-      `Use this Bot only through message_agent with target "@${address}".`,
+      `[AGENT @${address}]`,
+      `This agent lives in the connected saved Card. Address it only through message_agent with target "@${address}".`,
       skill,
     ].join('\n');
   });
@@ -194,7 +201,7 @@ function selectedCardTools(
   const byName = new Map<string, ToolCatalogDescriptor>();
   for (const definition of catalog) {
     if (byName.has(definition.name)) {
-      throw new Error(`hermes_profile_tool_catalog_duplicate:${definition.name}`);
+      throw new Error(`card_profile_tool_catalog_duplicate:${definition.name}`);
     }
     byName.set(definition.name, definition);
   }
@@ -210,13 +217,13 @@ function selectedCardTools(
       || !definition.grantEligible
       || (definition.grantProfiles.length > 0
         && !definition.grantProfiles.includes(card.runtime.profile.toLowerCase()))
-    ) throw new Error(`hermes_profile_tool_unavailable:${card.runtime.profile}:${name}`);
+    ) throw new Error(`card_profile_tool_unavailable:${card.runtime.profile}:${name}`);
     return [definition.name];
   }).sort((left, right) => left.localeCompare(right));
 }
 
 async function configureCardMcp(
-  request: HermesRequest,
+  request: ProfileRequest,
   card: DeckCard,
   tools: readonly string[],
 ): Promise<void> {
@@ -224,7 +231,7 @@ async function configureCardMcp(
   const matches = (Array.isArray(listed.servers) ? listed.servers : [])
     .map(objectRecord)
     .filter((server) => String(server.name || '') === CARD_MCP_SERVER);
-  if (matches.length > 1) throw new Error(`hermes_profile_mcp_ambiguous:${card.runtime.profile}`);
+  if (matches.length > 1) throw new Error(`card_profile_mcp_ambiguous:${card.runtime.profile}`);
   const existing = matches[0];
   const exact = existing && tools.length > 0
     && existing.enabled !== false
@@ -237,7 +244,7 @@ async function configureCardMcp(
       name: CARD_MCP_SERVER,
     }));
     if (removed.ok !== true || removed.removed !== true) {
-      throw new Error(`hermes_profile_mcp_remove_failed:${card.runtime.profile}`);
+      throw new Error(`card_profile_mcp_remove_failed:${card.runtime.profile}`);
     }
   }
   if (!tools.length) return;
@@ -248,30 +255,30 @@ async function configureCardMcp(
       url: resolveInternalMcpUrl(),
       enabled: true,
       strict_redirect_headers: true,
-      headers: { 'X-LiquidAIty-Hermes-Profile': card.runtime.profile },
+      headers: { [CARD_RUNTIME_CONTRACT.profileHeader]: card.runtime.profile },
       tools: { include: [...tools] },
     },
   }));
   if (added.ok !== true || String(added.name || '') !== CARD_MCP_SERVER) {
-    throw new Error(`hermes_profile_mcp_add_failed:${card.runtime.profile}`);
+    throw new Error(`card_profile_mcp_add_failed:${card.runtime.profile}`);
   }
 }
 
 function profileChanges(
   deck: DeckDocument,
   card: DeckCard,
-  current: HermesProfileState,
+  current: CardProfileState,
   roster: readonly string[],
   cardTools: readonly string[],
 ): Record<string, unknown> {
   const options = objectRecord(card.runtimeOptions);
-  const desiredModel = hermesProfileModelSelection(options);
+  const desiredModel = cardModelSelection(options);
   const installedSkills = (current.skills || [])
     .map((item) => String(item.name || '').trim()).filter(Boolean);
   const selectedSkills = new Set(exactStrings(options.skills).map((name) => name.toLowerCase()));
   for (const selected of selectedSkills) {
     if (!installedSkills.some((name) => name.toLowerCase() === selected)) {
-      throw new Error(`hermes_skill_missing:${card.runtime.profile}:${selected}`);
+      throw new Error(`card_profile_skill_missing:${card.runtime.profile}:${selected}`);
     }
   }
   const disabledSkills = installedSkills.filter((name) => (
@@ -281,10 +288,10 @@ function profileChanges(
   const availableToolsets = new Set((current.toolsets || [])
     .map((item) => String(item.name || '').trim()).filter(Boolean));
   const missingToolset = selectedToolsets.find((name) => !availableToolsets.has(name));
-  if (missingToolset) throw new Error(`hermes_toolset_missing:${card.runtime.profile}:${missingToolset}`);
+  if (missingToolset) throw new Error(`card_profile_toolset_missing:${card.runtime.profile}:${missingToolset}`);
   const selectedConnections = exactStrings(options.mcpConnectionIds);
   if (selectedConnections.includes(CARD_MCP_SERVER)) {
-    throw new Error(`hermes_profile_mcp_connection_reserved:${CARD_MCP_SERVER}`);
+    throw new Error(`card_profile_mcp_connection_reserved:${CARD_MCP_SERVER}`);
   }
   const desiredMcp = [...new Set([
     ...selectedConnections,
@@ -297,7 +304,9 @@ function profileChanges(
   const enabledMcp = (current.mcp_servers || []).filter((item) => item.enabled === true)
     .map((item) => String(item.name || '').trim()).filter(Boolean);
   const changes: Record<string, unknown> = { name: card.runtime.profile };
-  if (!sameStrings(current.bot_mode_roster || [], roster)) changes.bot_mode_roster = [...roster];
+  if (JSON.stringify(current[PROFILE_ROSTER_FIELD] || []) !== JSON.stringify(roster)) {
+    changes[PROFILE_ROSTER_FIELD] = [...roster];
+  }
   const soul = materializedCardPrompt(deck, card);
   if (String(current.soul || '') !== soul) changes.soul = soul;
   const description = cardDescription(card);
@@ -315,18 +324,18 @@ function profileChanges(
 }
 
 export async function ensureSavedCardProfile(
-  request: HermesRequest,
+  request: ProfileRequest,
   deck: DeckDocument,
   card: DeckCard,
   ownerUserId: string,
-): Promise<HermesProfileState> {
-  if (!String(ownerUserId || '').trim()) throw new Error('hermes_profile_owner_required');
+): Promise<CardProfileState> {
+  if (!String(ownerUserId || '').trim()) throw new Error('card_profile_owner_required');
   const describe = async () => {
     const profile = objectRecord(await request('profiles.describe', { name: card.runtime.profile }));
     if (String(profile.name || '').toLowerCase() !== card.runtime.profile.toLowerCase()) {
-      throw new Error(`hermes_profile_readback_mismatch:${card.runtime.profile}`);
+      throw new Error(`card_profile_readback_mismatch:${card.runtime.profile}`);
     }
-    return profile as HermesProfileState;
+    return profile as CardProfileState;
   };
   try {
     return await describe();
@@ -341,52 +350,52 @@ export async function ensureSavedCardProfile(
     mirror_credentials: false,
   }));
   if (created.ok !== true || String(created.name || '').toLowerCase() !== card.runtime.profile.toLowerCase()) {
-    throw new Error(`hermes_profile_creation_failed:${card.runtime.profile}`);
+    throw new Error(`card_profile_creation_failed:${card.runtime.profile}`);
   }
   return describe();
 }
 
 export async function materializeSavedCardProfile(
-  request: HermesRequest,
+  request: ProfileRequest,
   deck: DeckDocument,
   card: DeckCard,
   ownerUserId: string,
-  existingProfile: HermesProfileState | undefined,
+  existingProfile: CardProfileState | undefined,
   toolCatalog: readonly ToolCatalogDescriptor[],
   unavailableToolCatalogFamilies: readonly string[],
   roster: readonly string[],
-): Promise<HermesProfileState> {
-  if (card.runtime.kind !== 'hermes' || !validProfileName(card.runtime.profile)) {
-    throw new Error('hermes_profile_card_invalid');
+): Promise<CardProfileState> {
+  if (card.runtime.kind !== CARD_RUNTIME_CONTRACT.kind || !validProfileName(card.runtime.profile)) {
+    throw new Error('card_profile_invalid');
   }
   let current = existingProfile || await ensureSavedCardProfile(request, deck, card, ownerUserId);
   const tools = selectedCardTools(card, toolCatalog, unavailableToolCatalogFamilies);
   await configureCardMcp(request, card, tools);
-  current = await request<HermesProfileState>('profiles.describe', { name: card.runtime.profile });
+  current = await request<CardProfileState>('profiles.describe', { name: card.runtime.profile });
   let profileRow = await profileListRow(request, card.runtime.profile);
   const changes = profileChanges(deck, card, current, roster, tools);
-  const botMeta = objectRecord(objectRecord(profileRow.ui_meta)[BOT_META_KEY]);
-  if (String(botMeta.title || '') !== String(card.title || '').trim()) {
-    const revision = objectRecord(profileRow.ui_meta_revisions)[BOT_META_KEY];
-    changes.ui_meta = { [BOT_META_KEY]: { title: String(card.title || '').trim() } };
+  const cardMeta = objectRecord(objectRecord(profileRow.ui_meta)[CARD_PROFILE_MARKER_KEY]);
+  if (String(cardMeta.title || '') !== String(card.title || '').trim()) {
+    const revision = objectRecord(profileRow.ui_meta_revisions)[CARD_PROFILE_MARKER_KEY];
+    changes.ui_meta = { [CARD_PROFILE_MARKER_KEY]: { title: String(card.title || '').trim() } };
     changes.ui_meta_expected_revisions = {
-      [BOT_META_KEY]: Number.isInteger(revision) && Number(revision) >= 0 ? Number(revision) : 0,
+      [CARD_PROFILE_MARKER_KEY]: Number.isInteger(revision) && Number(revision) >= 0 ? Number(revision) : 0,
     };
   }
   if (Object.keys(changes).length > 1) {
     const configured = objectRecord(await request('profiles.configure', changes));
     if (configured.ok !== true || configured.confirm_required === true) {
-      throw new Error(`hermes_profile_configuration_failed:${card.runtime.profile}`);
+      throw new Error(`card_profile_configuration_failed:${card.runtime.profile}`);
     }
   }
-  current = await request<HermesProfileState>('profiles.describe', { name: card.runtime.profile });
+  current = await request<CardProfileState>('profiles.describe', { name: card.runtime.profile });
   profileRow = await profileListRow(request, card.runtime.profile);
   if (Object.keys(profileChanges(deck, card, current, roster, tools)).length !== 1) {
-    throw new Error(`hermes_profile_readback_mismatch:${card.runtime.profile}`);
+    throw new Error(`card_profile_readback_mismatch:${card.runtime.profile}`);
   }
   if (
-    String(objectRecord(objectRecord(profileRow.ui_meta)[BOT_META_KEY]).title || '')
+    String(objectRecord(objectRecord(profileRow.ui_meta)[CARD_PROFILE_MARKER_KEY]).title || '')
       !== String(card.title || '').trim()
-  ) throw new Error(`hermes_profile_bot_metadata_mismatch:${card.runtime.profile}`);
+  ) throw new Error(`card_profile_metadata_mismatch:${card.runtime.profile}`);
   return current;
 }

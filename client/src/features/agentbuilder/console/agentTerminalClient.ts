@@ -1,6 +1,6 @@
 // Entity: Card Terminals
 // Relationship: This file opens the authenticated same-origin terminal proxy and streams output, input, resize frames, and connection state.
-// Entity: Hermes Card Sessions
+// Entity: Card Sessions
 // Relationship: This file validates the exact Project, deck, Card, profile, session, and application-owned WebSocket identity returned before streaming.
 
 export type AgentTerminalStatus = 'opening' | 'connected' | 'disconnected' | 'failed';

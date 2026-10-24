@@ -1,9 +1,9 @@
 """Typed saved-Card runtime and model configuration contracts."""
 # Entity: Saved Cards
 # Relationship: This file defines the strict saved Card configuration shapes shared by editing, validation, persistence, and execution.
-# Entity: Hermes Profiles
-# Relationship: This file defines stable Hermes runtime mode, profile, provider, model, subagent model, and reasoning selections.
-# Entity: Bot Mode Delegation
+# Entity: Card Profiles
+# Relationship: This file defines stable Card runtime mode, profile, provider, model, subagent model, and reasoning selections.
+# Entity: Agent Messaging
 # Relationship: This file defines the saved orchestrator switch that permits outbound orange Card messaging when topology also authorizes it.
 # Entity: Tool Catalog
 # Relationship: This file defines the exact saved tool identity list used as the Card's grant ceiling.
@@ -23,7 +23,7 @@ RequiredRuntimeString = Annotated[
 ]
 
 
-class HermesRuntime(BaseModel):
+class CardRuntime(BaseModel):
     kind: Literal["hermes"]
     mode: Literal["main", "delegate", "magentic_one"]
     profile: RequiredRuntimeString

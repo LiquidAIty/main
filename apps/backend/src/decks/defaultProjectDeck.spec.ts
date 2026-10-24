@@ -13,12 +13,12 @@
  * Relationship: This file verifies the source-default ThinkGraph Card receives only its intended Engraphis operations.
  * Entity: KnowGraph
  * Relationship: This file verifies the source-default KnowGraph Card uses its intended model and Graphiti operations.
- * Entity: Magnetic TaskGraph
+ * Entity: Magnetic Membership
  * Relationship: This file verifies Magnetic retains its distinct saved identity and blue Team membership.
  * Entity: Team
  * Relationship: This file verifies Team retains its distinct saved identity, model, and bounded research toolset.
- * Entity: Hermes Profiles
- * Relationship: This file verifies every source-default Card has one unique stable Hermes profile and expected runtime mode.
+ * Entity: Card Profiles
+ * Relationship: This file verifies every source-default Card has one unique stable profile and expected runtime mode.
  * Entity: Tool Catalog
  * Relationship: This file verifies the exact source-default capability selections stored on the core Cards.
  */
@@ -177,10 +177,10 @@ describe('backend-owned default Project deck', () => {
       'One Know is one first-class durable Graphiti object',
     );
     expect(byId.get('card_knowgraph')?.prompt).toContain(
-      'A worker must never write Graphiti or Engraphis',
+      'Do not create another team, board, scheduler, worker pool, or delegation path',
     );
     expect(byId.get('card_knowgraph')?.prompt).toContain(
-      'copy the returned final or resolved URL byte-for-byte',
+      'preserve the returned final or resolved URL exactly',
     );
     expect(byId.get('card_knowgraph')?.prompt).toContain(
       'When retrieval does not return a usable final URL and matching passage, do not persist that finding',

@@ -3,8 +3,8 @@
 # Relationship: This file validates one explicit Card definition and persists a new immutable saved identity through the optimistic deck authority.
 # Entity: IDD
 # Relationship: This file requires the selected Card template and runtime mode to match the canonical Input Data Dictionary before creation.
-# Entity: Hermes Profiles
-# Relationship: This file validates and stores the new Card's stable Hermes profile, provider, parent model, subagent model, subagent type, and reasoning selection.
+# Entity: Card Profiles
+# Relationship: This file validates and stores the new Card's stable profile, provider, parent model, subagent model, subagent type, and reasoning selection.
 # Entity: Tool Catalog
 # Relationship: This file validates and stores the new Card's exact tools, skills, toolsets, and MCP connection selections without widening grants.
 # Entity: Card Topology
@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import re
 from typing import Any
 from uuid import uuid4
 
@@ -46,7 +45,7 @@ _CARD_CREATE_RUNTIME_KEYS = {"kind", "mode", "profile"}
 _CARD_CREATE_MODEL_KEYS = {
     "provider", "modelKey", "accessMode", "providerModelId",
 }
-_DEFAULT_HERMES_SUBAGENT_MODEL = {
+_DEFAULT_SUBAGENT_MODEL = {
     "provider": "openai",
     "accessMode": "chatgpt-account",
     "modelKey": "gpt-5.6-luna",
@@ -85,8 +84,13 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
         raise ApplicationToolError("card_create_runtime_profile_unsupported")
     if runtime_kind == "hermes" and not runtime_profile:
         raise ApplicationToolError("card_create_profile_required")
+    valid_profile = bool(runtime_profile) and len(runtime_profile) <= 64 and all(
+        character.isdigit() or "a" <= character <= "z"
+        or (index > 0 and character in {"_", "-"})
+        for index, character in enumerate(runtime_profile)
+    )
     if runtime_kind == "hermes" and (
-        not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", runtime_profile)
+        not valid_profile
         or runtime_profile in {"hermes", "test", "tmp", "root", "sudo"}
     ):
         raise ApplicationToolError("card_create_profile_invalid")
@@ -117,24 +121,24 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
     authority = _validate_card_runtime_authority(
         provider=provider,
         access_mode=access_mode,
-        hermes=runtime_kind == "hermes",
+        supported=runtime_kind == "hermes",
     )
     provider = authority["provider"]
     access_mode = authority["accessMode"]
     raw_subagent_model = args.get("subagentModel")
     if runtime_kind != "hermes" and raw_subagent_model is not None:
-        raise ApplicationToolError("card_create_subagent_model_requires_hermes")
+        raise ApplicationToolError("card_create_subagent_model_requires_card_runtime")
     subagent_model = (
         _subagent_model_selection(raw_subagent_model)
         if raw_subagent_model is not None
-        else dict(_DEFAULT_HERMES_SUBAGENT_MODEL) if runtime_kind == "hermes"
+        else dict(_DEFAULT_SUBAGENT_MODEL) if runtime_kind == "hermes"
         else None
     )
     raw_subagent_type = args.get(
         "subagentType", "none" if runtime_kind == "hermes" else None
     )
     if raw_subagent_type is not None and runtime_kind != "hermes":
-        raise ApplicationToolError("card_create_subagent_type_requires_hermes")
+        raise ApplicationToolError("card_create_subagent_type_requires_card_runtime")
     if raw_subagent_type is not None and raw_subagent_type not in _SUBAGENT_TYPES:
         raise ApplicationToolError("card_create_subagent_type_invalid")
     normalized_selections = _normalized_capability_selections(

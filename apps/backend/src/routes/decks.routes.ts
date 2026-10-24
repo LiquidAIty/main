@@ -19,9 +19,9 @@ import {
   discardFreshMembership,
   listSavedCardsForProject,
 } from '../services/projectStore';
-import { hermesGateway } from '../services/hermesGateway';
+import { cardRuntimeGateway } from '../services/cardRuntimeGateway';
 import { projectCardAuthority } from '../services/projectCardAuthority';
-import { startProjectCardSessions } from '../hermes/botMode';
+import { startProjectCardSessions } from '../cardRuntime/cardSessions';
 import { requireOwnedProject } from './projectAccess';
 
 const router = Router();
@@ -33,7 +33,7 @@ router.get('/:projectId/decks/:deckId', async (req, res) => {
     const result = await getDeckDocument(access.projectId, req.params.deckId);
     const response = res.json({ ok: true, projectId: access.projectId, ...result });
     void Promise.all([
-      hermesGateway(),
+      cardRuntimeGateway(),
       projectCardAuthority(access.projectId, req.params.deckId),
     ]).then(([client, authority]) => startProjectCardSessions(client, authority, {
       projectId: access.projectId,

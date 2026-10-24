@@ -100,7 +100,7 @@ def canvas_card_operation_definitions(
             title="Create a saved Card",
             description=(
                 "Create one saved Card with explicit configuration and expected deck revision. "
-                "Honor its requested Hermes profile. Does not run the Card or create wires."
+                "Honor its requested Card profile. Does not run the Card or create wires."
             ),
             parameters_schema=saved_card_operation_schema("card.create"),
             handler=card_create_operation,

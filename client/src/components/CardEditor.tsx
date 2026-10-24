@@ -4,7 +4,7 @@
 // Relationship: This file owns the human-facing Prompt, Runtime, Memory, Skills, Tools, and Script editing surfaces inside the construction workspace.
 // Entity: IDD
 // Relationship: This file loads the current Card-editor field and choice projection instead of maintaining a second runtime configuration dictionary.
-// Entity: Hermes Profiles
+// Entity: Card Profiles
 // Relationship: This file reads effective profile state and learning details without exposing transport diagnostics or interactive MCP authentication in every Card editor.
 // Entity: Tool Catalog
 // Relationship: This file searches and selects live profile-eligible capabilities while preserving unresolved saved selections and the Card's explicit grant ceiling.
@@ -21,11 +21,11 @@ import type {
 } from '../types/agentgraph';
 import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
 import {
-  applyHermesProfileOperation,
-  loadHermesProfile,
-  loadHermesLearningDetail,
-  type HermesProfileView,
-} from '../features/agentbuilder/hermesProfileClient';
+  applyCardProfileOperation,
+  loadCardProfile,
+  loadCardLearningDetail,
+  type CardProfileView,
+} from '../features/agentbuilder/cardProfileClient';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
@@ -356,9 +356,9 @@ export function CardEditor({
   const cardSaveInFlightRef = useRef<Promise<boolean> | null>(null);
   const [draftRevision, setDraftRevision] = useState(0);
   const cardDraftRevisionRef = useRef(0);
-  const hermesLearningRevisionRef = useRef(0);
-  const hermesLearningDirtyRef = useRef(false);
-  const hermesProfileReadbackRef = useRef<HermesProfileView | null>(null);
+  const cardLearningRevisionRef = useRef(0);
+  const cardLearningDirtyRef = useRef(false);
+  const cardProfileReadbackRef = useRef<CardProfileView | null>(null);
   const runtimeKind = localConfig?.runtime.kind;
   const runtimeMode = localConfig?.runtime.mode;
   const selectedConnectedCard = outboundOrangeConnections.find(
@@ -424,18 +424,18 @@ export function CardEditor({
   const [skillsText, setSkillsText] = useState('');
   const [toolsetsText, setToolsetsText] = useState('');
   const [mcpConnectionIdsText, setMcpConnectionIdsText] = useState('');
-  const [hermesProfileState, setHermesProfileState] = useState<HermesProfileView | null>(null);
-  const [hermesProfileStatus, setHermesProfileStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
-  const [hermesProfileError, setHermesProfileError] = useState<string | null>(null);
-  const [hermesLearningDetail, setHermesLearningDetail] = useState<{
+  const [cardProfileState, setCardProfileState] = useState<CardProfileView | null>(null);
+  const [cardProfileStatus, setCardProfileStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [cardProfileError, setCardProfileError] = useState<string | null>(null);
+  const [cardLearningDetail, setCardLearningDetail] = useState<{
     kind: 'memory' | 'skill';
     id: string;
     label: string;
     content: string;
   } | null>(null);
-  const [hermesLearningDraft, setHermesLearningDraft] = useState('');
-  const [hermesLearningStatus, setHermesLearningStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
-  const [hermesLearningError, setHermesLearningError] = useState<string | null>(null);
+  const [cardLearningDraft, setCardLearningDraft] = useState('');
+  const [cardLearningStatus, setCardLearningStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [cardLearningError, setCardLearningError] = useState<string | null>(null);
   const draftDirtyRef = useRef(false);
   useEffect(() => {
     setCardNameDraft(cardName);
@@ -607,14 +607,14 @@ export function CardEditor({
     );
   }, [isLocalConfigMode, localConfig]);
 
-  const acceptHermesProfileReadback = useCallback((state: HermesProfileView | null) => {
-    hermesProfileReadbackRef.current = state;
-    setHermesProfileState(state);
+  const acceptCardProfileReadback = useCallback((state: CardProfileView | null) => {
+    cardProfileReadbackRef.current = state;
+    setCardProfileState(state);
     if (!state) {
-      setHermesLearningDetail(null);
-      setHermesLearningDraft('');
-      setHermesLearningStatus('idle');
-      setHermesLearningError(null);
+      setCardLearningDetail(null);
+      setCardLearningDraft('');
+      setCardLearningStatus('idle');
+      setCardLearningError(null);
       return;
     }
   }, []);
@@ -627,35 +627,35 @@ export function CardEditor({
       || !deckId
       || !cardId
     ) {
-      acceptHermesProfileReadback(null);
-      setHermesProfileStatus('idle');
-      setHermesProfileError(null);
+      acceptCardProfileReadback(null);
+      setCardProfileStatus('idle');
+      setCardProfileError(null);
       return;
     }
     const controller = new AbortController();
-    acceptHermesProfileReadback(null);
-    setHermesProfileStatus('loading');
-    setHermesProfileError(null);
-    setHermesLearningDetail(null);
-    setHermesLearningDraft('');
-    setHermesLearningStatus('idle');
-    setHermesLearningError(null);
-    void loadHermesProfile({ projectId, deckId, cardId, signal: controller.signal })
+    acceptCardProfileReadback(null);
+    setCardProfileStatus('loading');
+    setCardProfileError(null);
+    setCardLearningDetail(null);
+    setCardLearningDraft('');
+    setCardLearningStatus('idle');
+    setCardLearningError(null);
+    void loadCardProfile({ projectId, deckId, cardId, signal: controller.signal })
       .then((state) => {
         if (controller.signal.aborted) return;
-        acceptHermesProfileReadback(state);
-        setHermesProfileStatus('ready');
+        acceptCardProfileReadback(state);
+        setCardProfileStatus('ready');
       })
       .catch((error) => {
         if (controller.signal.aborted) return;
-        acceptHermesProfileReadback(null);
-        setHermesProfileStatus('failed');
-        setHermesProfileError(error instanceof Error ? error.message : 'Profile unavailable.');
+        acceptCardProfileReadback(null);
+        setCardProfileStatus('failed');
+        setCardProfileError(error instanceof Error ? error.message : 'Profile unavailable.');
       });
     return () => controller.abort();
-  // Hermes profile readback is identity-scoped and deliberately independent from
+  // Card profile readback is identity-scoped and deliberately independent from
   // unsaved Card drafts. Card save never mutates the bound profile.
-  }, [isLocalConfigMode, projectId, deckId, cardId, acceptHermesProfileReadback]);
+  }, [isLocalConfigMode, projectId, deckId, cardId, acceptCardProfileReadback]);
 
 
   const markDraftDirty = () => {
@@ -664,9 +664,9 @@ export function CardEditor({
     setDraftRevision((revision) => revision + 1);
   };
 
-  const markHermesLearningDirty = () => {
-    hermesLearningDirtyRef.current = true;
-    hermesLearningRevisionRef.current += 1;
+  const markCardLearningDirty = () => {
+    cardLearningDirtyRef.current = true;
+    cardLearningRevisionRef.current += 1;
     setDraftRevision((revision) => revision + 1);
   };
 
@@ -805,44 +805,44 @@ export function CardEditor({
     buildCurrentLocalPayload,
   ]);
 
-  const openHermesLearningNode = useCallback(async (nodeId: string) => {
+  const openCardLearningNode = useCallback(async (nodeId: string) => {
     if (!projectId || !deckId || !cardId) return;
-    setHermesLearningStatus('loading');
-    setHermesLearningError(null);
+    setCardLearningStatus('loading');
+    setCardLearningError(null);
     try {
-      const detail = await loadHermesLearningDetail({ projectId, deckId, cardId, nodeId });
-      setHermesLearningDetail(detail);
-      setHermesLearningDraft(learningEditsRef.current.get(nodeId) ?? detail.content);
-      setHermesLearningStatus('ready');
+      const detail = await loadCardLearningDetail({ projectId, deckId, cardId, nodeId });
+      setCardLearningDetail(detail);
+      setCardLearningDraft(learningEditsRef.current.get(nodeId) ?? detail.content);
+      setCardLearningStatus('ready');
     } catch (error) {
-      setHermesLearningStatus('failed');
-      setHermesLearningError(error instanceof Error ? error.message : 'Hermes learning node unavailable.');
+      setCardLearningStatus('failed');
+      setCardLearningError(error instanceof Error ? error.message : 'Card learning node unavailable.');
     }
   }, [projectId, deckId, cardId]);
 
   const saveCurrentDraft = useCallback(async (): Promise<void> => {
-      const learningRevision = hermesLearningRevisionRef.current;
-      const profileState = hermesProfileReadbackRef.current;
+      const learningRevision = cardLearningRevisionRef.current;
+      const profileState = cardProfileReadbackRef.current;
       const learningEdits = [...learningEditsRef.current];
-      if (hermesLearningDirtyRef.current) {
-        if (!profileState || !projectId || !deckId || !cardId) throw new Error('Hermes profile unavailable.');
+      if (cardLearningDirtyRef.current) {
+        if (!profileState || !projectId || !deckId || !cardId) throw new Error('Card profile unavailable.');
       }
       await runSaveConfig();
-      if (hermesLearningDirtyRef.current) {
+      if (cardLearningDirtyRef.current) {
         let latestReadback = profileState;
         for (const [id, content] of learningEdits) {
-          latestReadback = await applyHermesProfileOperation({ projectId, deckId, cardId,
+          latestReadback = await applyCardProfileOperation({ projectId, deckId, cardId,
             change: { method: 'learning.edit', params: { id, content } } });
-          hermesProfileReadbackRef.current = latestReadback;
-          setHermesProfileState(latestReadback);
+          cardProfileReadbackRef.current = latestReadback;
+          setCardProfileState(latestReadback);
           if (learningEditsRef.current.get(id) === content) learningEditsRef.current.delete(id);
         }
-        if (hermesLearningRevisionRef.current === learningRevision) {
-          hermesLearningDirtyRef.current = false;
-          if (latestReadback) acceptHermesProfileReadback(latestReadback);
+        if (cardLearningRevisionRef.current === learningRevision) {
+          cardLearningDirtyRef.current = false;
+          if (latestReadback) acceptCardProfileReadback(latestReadback);
         }
       }
-  }, [runSaveConfig, projectId, deckId, cardId, acceptHermesProfileReadback]);
+  }, [runSaveConfig, projectId, deckId, cardId, acceptCardProfileReadback]);
 
   const saveLatestDraftRef = useRef(saveCurrentDraft);
   useLayoutEffect(() => {
@@ -853,11 +853,11 @@ export function CardEditor({
     // The canvas clears one selection and sets the other in the same click.
     // Both callers must await the same save, including any newer edits.
     if (cardSaveInFlightRef.current) return cardSaveInFlightRef.current;
-    if (!draftDirtyRef.current && !hermesLearningDirtyRef.current) return Promise.resolve(true);
+    if (!draftDirtyRef.current && !cardLearningDirtyRef.current) return Promise.resolve(true);
     const save = Promise.resolve().then(async () => {
       setSaveCardErrorMessage(null);
       try {
-        while (draftDirtyRef.current || hermesLearningDirtyRef.current) {
+        while (draftDirtyRef.current || cardLearningDirtyRef.current) {
           await saveLatestDraftRef.current();
         }
         return true;
@@ -873,7 +873,7 @@ export function CardEditor({
   }, []);
 
   useEffect(() => {
-    if (!draftDirtyRef.current && !hermesLearningDirtyRef.current) return;
+    if (!draftDirtyRef.current && !cardLearningDirtyRef.current) return;
     const timer = window.setTimeout(() => { void saveOnCardLeave(); }, 350);
     return () => window.clearTimeout(timer);
   }, [draftRevision, saveOnCardLeave]);
@@ -1274,28 +1274,28 @@ export function CardEditor({
             placeholder="One skill ID per line"
             rows={5}
           />
-          {runtimeKind !== 'hermes' ? null : hermesProfileStatus === 'failed' ? (
+          {runtimeKind !== 'hermes' ? null : cardProfileStatus === 'failed' ? (
             <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {hermesProfileError || 'Skills unavailable.'}
+              {cardProfileError || 'Skills unavailable.'}
             </div>
-          ) : hermesProfileState ? (
+          ) : cardProfileState ? (
             <>
-              <details data-testid="effective-hermes-skills">
+              <details data-testid="effective-card-skills">
                 <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
                   Loaded
                 </summary>
                 <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
-                  {hermesProfileState.profile.skills.map((skill) => (
+                  {cardProfileState.profile.skills.map((skill) => (
                     <div key={skill.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
                       {skill.name} · {skill.enabled ? 'enabled' : 'disabled'}
                     </div>
                   ))}
                 </div>
               </details>
-              {hermesProfileState.profile.learning.buckets.some((bucket) => bucket.nodes.length > 0) ? (
+              {cardProfileState.profile.learning.buckets.some((bucket) => bucket.nodes.length > 0) ? (
                 <section aria-label="Learning" style={{ display: 'grid', gap: 7 }}>
                   <div style={{ color: '#D5E4E8', fontSize: 11.5, fontWeight: 600 }}>Learning</div>
-                  {hermesProfileState.profile.learning.buckets.map((bucket) => (
+                  {cardProfileState.profile.learning.buckets.map((bucket) => (
                     bucket.nodes.length ? (
                       <div key={`${bucket.index}:${bucket.date}`} style={{ display: 'grid', gap: 5 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#80969F', fontSize: 10.5 }}>
@@ -1309,7 +1309,7 @@ export function CardEditor({
                               type="button"
                               aria-label={`Open ${node.fullLabel || node.label}`}
                               title={node.meta || node.fullLabel || node.label}
-                              onClick={() => void openHermesLearningNode(node.id)}
+                              onClick={() => void openCardLearningNode(node.id)}
                               style={{
                                 minWidth: 0,
                                 padding: '4px 7px',
@@ -1330,20 +1330,20 @@ export function CardEditor({
                   ))}
                 </section>
               ) : null}
-              {hermesLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening…</div> : null}
-              {hermesLearningStatus === 'failed' ? (
-                <div role="alert" style={{ color: '#FFA2A2' }}>{hermesLearningError}</div>
+              {cardLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening…</div> : null}
+              {cardLearningStatus === 'failed' ? (
+                <div role="alert" style={{ color: '#FFA2A2' }}>{cardLearningError}</div>
               ) : null}
-              {hermesLearningDetail ? (
+              {cardLearningDetail ? (
                 <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #42565C', borderRadius: 6 }}>
-                  <strong>{hermesLearningDetail.kind}: {hermesLearningDetail.label}</strong>
+                  <strong>{cardLearningDetail.kind}: {cardLearningDetail.label}</strong>
                   <textarea
                     aria-label="Learning"
-                    value={hermesLearningDraft}
+                    value={cardLearningDraft}
                     onChange={(event) => {
-                      setHermesLearningDraft(event.target.value);
-                      learningEditsRef.current.set(hermesLearningDetail.id, event.target.value);
-                      markHermesLearningDirty();
+                      setCardLearningDraft(event.target.value);
+                      learningEditsRef.current.set(cardLearningDetail.id, event.target.value);
+                      markCardLearningDirty();
                     }}
                     rows={10}
                     style={{ width: '100%', minWidth: 0, padding: 10, background: 'rgba(14,20,22,0.48)', color: '#D5E4E8', border: '1px solid rgba(126,232,226,.2)', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}

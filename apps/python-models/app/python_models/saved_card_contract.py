@@ -2,15 +2,15 @@
 
 # Entity: Saved Cards
 # Relationship: This file defines canonical saved Card identity and serialization and validates each proposed immutable revision before persistence or invocation.
-# Entity: Hermes Profiles
-# Relationship: This file validates the Card's permanent Hermes profile, runtime mode, provider access mode, parent model, subagent model, subagent type, and reasoning selection.
+# Entity: Card Profiles
+# Relationship: This file validates the Card's permanent profile, runtime mode, provider access mode, parent model, subagent model, subagent type, and reasoning selection.
 # Entity: Tool Catalog
 # Relationship: This file separates tools, skills, toolsets, and MCP connection grants and removes retired tool identifiers from canonical Card state.
 # Entity: Card Scripts
 # Relationship: This file normalizes a saved Card Script as an inert versioned extension when disabled or invalid and preserves ordinary tool grants independently.
-# Entity: Bot Mode Delegation
-# Relationship: This file validates the saved orchestrator switch only for eligible non-Magnetic Hermes Cards.
-# Entity: Magnetic TaskGraph
+# Entity: Agent Messaging
+# Relationship: This file validates the saved orchestrator switch only for eligible non-Magnetic agent Cards.
+# Entity: Magnetic Membership
 # Relationship: This file recognizes the saved magentic_one runtime while preventing ordinary AutoTools, AutoModel, and orchestrator settings from changing Magnetic authority.
 # Entity: Jev Decisions
 # Relationship: This file validates the optional AutoTools and AutoModel switches as per-Run selectors that never replace durable saved choices.
@@ -139,7 +139,7 @@ def string_list(value: Any, field: str) -> list[str]:
 
 
 def canonical_card_tools_and_toolsets(options: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Return the one canonical split between MCP tools and Hermes toolsets.
+    """Return the one canonical split between MCP tools and runtime toolsets.
 
     Old saved revisions placed retired ``hermes:tool:*`` markers and removed
     staging operations in ``tools``. Reads discard that residue in memory and
@@ -166,7 +166,7 @@ def card_runtime(card: dict[str, Any]) -> dict[str, str]:
     mode = required_text(runtime.get("mode"), "runtime_mode")
     if kind == "hermes":
         if mode not in {"main", "delegate", "magentic_one"}:
-            raise CardDomainError(f"hermes_runtime_mode_unsupported:{mode}")
+            raise CardDomainError(f"card_runtime_mode_unsupported:{mode}")
         return {
             "kind": kind,
             "mode": mode,
@@ -174,7 +174,7 @@ def card_runtime(card: dict[str, Any]) -> dict[str, str]:
         }
     raise CardDomainError(f"runtime_kind_unsupported:{kind}")
 
-def is_magnetic_taskgraph_runtime(runtime: dict[str, Any]) -> bool:
+def is_magnetic_runtime(runtime: dict[str, Any]) -> bool:
     return runtime.get("kind") == "hermes" and runtime.get("mode") == "magentic_one"
 
 def validate_auto_runtime_options(
@@ -193,10 +193,10 @@ def validate_auto_runtime_options(
             raise CardDomainError(f"card_{error_field}_invalid")
         if value is not None and (
             runtime.get("kind") != "hermes"
-            or is_magnetic_taskgraph_runtime(runtime)
+            or is_magnetic_runtime(runtime)
         ):
             raise CardDomainError(
-                f"card_{error_field}_requires_non_magnetic_hermes"
+                f"card_{error_field}_requires_ordinary_card_runtime"
             )
         values.append(value is True)
     return values[0], values[1]
@@ -229,17 +229,17 @@ def reasoning_effort_selection(value: Any) -> str:
         raise CardDomainError("card_reasoning_effort_invalid")
     return normalized
 
-def validate_saved_hermes_runtime_authority(
+def validate_saved_card_runtime_authority(
     provider: Any,
     access_mode: Any,
     *,
-    hermes: bool,
+    supported: bool,
 ) -> dict[str, Any]:
     normalized_provider, normalized_access_mode = validate_saved_provider_selection(
         provider, access_mode
     )
-    if not hermes:
-        raise CardDomainError("card_runtime_requires_hermes")
+    if not supported:
+        raise CardDomainError("card_runtime_unsupported")
     return {
         "provider": normalized_provider,
         "accessMode": normalized_access_mode,
@@ -252,7 +252,7 @@ def stable_card_record(card: dict[str, Any]) -> dict[str, Any]:
         raise CardDomainError("card_top_level_runtime_configuration_unsupported")
     # Saved misconfigurations must remain readable through the canonical API so
     # an authenticated update can repair them. Invocation validates the strict
-    # Hermes transport/policy and fails closed before starting a Run.
+    # runtime transport/policy and fails closed before starting a Run.
     provider = str(options.get("provider") or "").strip().lower()
     access_mode = str(options.get("accessMode") or "").strip().lower()
     tools, toolsets = canonical_card_tools_and_toolsets(options)
@@ -271,7 +271,7 @@ def stable_card_record(card: dict[str, Any]) -> dict[str, Any]:
     }
     # Preserve legacy or partially restored authority fields verbatim here.
     # The authenticated Card API must be able to read and repair them. The
-    # invocation boundary below validates the exact current Hermes contract.
+    # invocation boundary below validates the exact current runtime contract.
     if "subagentModel" in extensions:
         extensions["subagentModel"] = json_object(
             extensions["subagentModel"], "card_subagent_model"
@@ -322,7 +322,7 @@ def validate_immutable_runtime_profile(
     previous: dict[str, Any],
     incoming: dict[str, Any],
 ) -> None:
-    """Keep one saved Hermes Card permanently bound to its original profile."""
+    """Keep one saved Card permanently bound to its original profile."""
     previous_runtime = json_object(previous.get("runtime"), "runtime")
     if previous_runtime.get("kind") != "hermes":
         return
@@ -333,8 +333,8 @@ def validate_immutable_runtime_profile(
 def subagent_model_selection(value: Any) -> dict[str, str] | None:
     """Validate the saved desired child-model selector without consulting availability.
 
-    Stale Hermes selections remain durable and inspectable. Availability and
-    credential resolution belong to the bound Hermes profile at Run start.
+    Stale selections remain durable and inspectable. Availability and
+    credential resolution belong to the bound Card profile at Run start.
     """
     if value is None:
         return None
@@ -353,7 +353,7 @@ def subagent_model_selection(value: Any) -> dict[str, str] | None:
 def subagent_type_selection(value: Any) -> CardSubagentType | None:
     """Validate an explicitly saved temporary-subagent topology choice.
 
-    Missing remains missing so legacy Hermes Team profiles are not rewritten by
+    Missing remains missing so legacy Team profiles are not rewritten by
     an unrelated Card read or save.
     """
     if value is None:
@@ -368,12 +368,12 @@ def validate_new_card_revision(card: dict[str, Any]) -> None:
 
     options = json_object(card.get("runtimeOptions"), "runtime_options")
     runtime = card_runtime(card)
-    is_hermes = runtime["kind"] == "hermes"
+    is_supported_runtime = runtime["kind"] == "hermes"
     validate_auto_runtime_options(options, runtime)
-    validate_saved_hermes_runtime_authority(
+    validate_saved_card_runtime_authority(
         options.get("provider"),
         options.get("accessMode"),
-        hermes=is_hermes,
+        supported=is_supported_runtime,
     )
     model_key = str(options.get("modelKey") or "").strip()
     provider_model_id = str(
@@ -384,18 +384,18 @@ def validate_new_card_revision(card: dict[str, Any]) -> None:
     reasoning_effort_selection(options.get("reasoningEffort"))
     subagent = options.get("subagentModel")
     if subagent is not None:
-        if not is_hermes:
-            raise CardDomainError("card_subagent_model_requires_hermes")
+        if not is_supported_runtime:
+            raise CardDomainError("card_subagent_model_requires_card_runtime")
         subagent_model_selection(subagent)
     subagent_type = subagent_type_selection(options.get("subagentType"))
-    if subagent_type is not None and not is_hermes:
-        raise CardDomainError("card_subagent_type_requires_hermes")
+    if subagent_type is not None and not is_supported_runtime:
+        raise CardDomainError("card_subagent_type_requires_card_runtime")
     if "orchestrator" in options and not isinstance(options["orchestrator"], bool):
         raise CardDomainError("card_orchestrator_invalid")
-    if options.get("orchestrator") is True and not is_hermes:
-        raise CardDomainError("card_orchestrator_requires_hermes")
-    if options.get("orchestrator") is True and is_magnetic_taskgraph_runtime(runtime):
-        raise CardDomainError("card_orchestrator_requires_non_magnetic_hermes")
+    if options.get("orchestrator") is True and not is_supported_runtime:
+        raise CardDomainError("card_orchestrator_requires_card_runtime")
+    if options.get("orchestrator") is True and is_magnetic_runtime(runtime):
+        raise CardDomainError("card_orchestrator_requires_ordinary_card_runtime")
     configuration = options.get("configuration")
     if configuration is not None:
         if not isinstance(configuration, dict):
@@ -404,13 +404,6 @@ def validate_new_card_revision(card: dict[str, Any]) -> None:
         if data_control is not None:
             if not isinstance(data_control, dict):
                 raise CardDomainError("card_data_control_invalid")
-
-def runtime_owner(card: dict[str, Any]) -> str:
-    """Resolve one transport owner from the one explicit saved runtime union."""
-    runtime = card_runtime(card)
-    if is_magnetic_taskgraph_runtime(runtime):
-        return "mag_one"
-    return "hermes"
 
 def card_is_enabled(card: dict[str, Any]) -> bool:
     return card.get("enabled") is not False

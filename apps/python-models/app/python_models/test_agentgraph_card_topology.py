@@ -6,11 +6,11 @@
 # Entity: Card Topology
 # Relationship: This file verifies orange and blue topology validation, address uniqueness, endpoint rules, direction, and independent coexistence.
 #
-# Entity: Bot Mode Delegation
+# Entity: Agent Messaging
 # Relationship: This file verifies only enabled outbound orange flow from an authorized orchestrator produces a direct saved Card roster.
 #
-# Entity: Magnetic TaskGraph
-# Relationship: This file verifies blue topology projects only callable saved workers with each worker's exact Card revision, Hermes profile, provider, and Team mode.
+# Entity: Magnetic Membership
+# Relationship: This file verifies blue topology projects only callable saved workers with each worker's exact Card revision, profile, provider, and Team mode.
 #
 # Entity: Tool Catalog
 # Relationship: This file verifies Magnetic worker projection carries only compact saved tool identifiers and does not create grants.
@@ -107,7 +107,7 @@ def test_one_card_can_be_an_independent_main_target_and_magnetic_worker():
     assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets(
         "main", indexed, [orange, blue],
     )] == ["card_team"]
-    assert [target["cardId"] for target in agentgraph_topology.connected_hermes_card_targets(
+    assert [target["cardId"] for target in agentgraph_topology.connected_agent_targets(
         "magnetic", indexed, [orange, blue], edge_type="magentic_option", strict=False,
     )] == ["card_team"]
 
@@ -131,7 +131,7 @@ def test_team_worker_projection_uses_stable_identity_and_saved_parent_model():
         card["_cardRevisionId"] = f"revision-{card['id']}"
     cards = {card["id"]: card for card in (magnetic, team)}
 
-    assert agentgraph_topology.connected_hermes_card_targets(
+    assert agentgraph_topology.connected_agent_targets(
         "magnetic",
         cards,
         [{"source": "card_team", "target": "magnetic", "edgeType": "magentic_option"}],
@@ -226,7 +226,7 @@ def test_delegate_orchestrator_can_remain_a_blue_worker_with_an_outbound_orange_
     ]
 
     agentgraph_topology.validate_card_topology(cards, edges)
-    assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(worldview) is True
+    assert agentgraph_topology._is_callable_magnetic_worker_card(worldview) is True
     indexed = {card["id"]: card for card in cards}
     assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets(
         "main", indexed, edges,
@@ -343,11 +343,11 @@ def test_disabled_missing_or_magnetic_flow_target_projection_is_exact() -> None:
         [{"source": "parent", "target": "missing", "edgeType": "flow"}],
     ) == []
 
-def test_enabled_callable_saved_cards_are_magnetic_taskgraph_workers() -> None:
-    assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(_agent(
+def test_enabled_callable_saved_cards_are_magnetic_workers() -> None:
+    assert agentgraph_topology._is_callable_magnetic_worker_card(_agent(
         "delegate", runtime={"kind": "hermes", "mode": "delegate", "profile": "delegate"}
     )) is True
-    assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(_agent(
+    assert agentgraph_topology._is_callable_magnetic_worker_card(_agent(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"}
     )) is False
     orchestrator = _agent(
@@ -355,24 +355,24 @@ def test_enabled_callable_saved_cards_are_magnetic_taskgraph_workers() -> None:
         runtime={"kind": "hermes", "mode": "delegate", "profile": "orchestrator"},
     )
     orchestrator["runtimeOptions"]["orchestrator"] = True
-    assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(orchestrator) is True
-    assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(_agent(
+    assert agentgraph_topology._is_callable_magnetic_worker_card(orchestrator) is True
+    assert agentgraph_topology._is_callable_magnetic_worker_card(_agent(
         "mag-one",
         runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"},
     )) is False
-    assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(_agent(
+    assert agentgraph_topology._is_callable_magnetic_worker_card(_agent(
         "disabled", enabled=False,
         runtime={"kind": "hermes", "mode": "delegate", "profile": "disabled"},
     )) is False
-    assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(_agent(
+    assert agentgraph_topology._is_callable_magnetic_worker_card(_agent(
         "disabled-option", enabled=False,
         runtime={"kind": "hermes", "mode": "delegate", "profile": "disabled-option"},
     )) is False
-    assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(_agent(
+    assert agentgraph_topology._is_callable_magnetic_worker_card(_agent(
         "unsupported", runtime={"kind": "hermes", "mode": "single", "profile": "unsupported"},
     )) is False
 
-def test_connected_magnetic_taskgraph_worker_projects_exact_saved_card_binding() -> None:
+def test_connected_magnetic_worker_projects_exact_saved_card_binding() -> None:
     card = _agent(
         "helper",
         title="Helper",
@@ -392,7 +392,7 @@ def test_connected_magnetic_taskgraph_worker_projects_exact_saved_card_binding()
         "edgeType": "magentic_option",
     }]
 
-    assert agentgraph_topology.connected_hermes_card_targets(
+    assert agentgraph_topology.connected_agent_targets(
         "mag-one", cards, edges, edge_type="magentic_option", strict=True,
     ) == [{
         "cardId": "helper",
@@ -407,8 +407,8 @@ def test_connected_magnetic_taskgraph_worker_projects_exact_saved_card_binding()
     )
     with pytest.raises(
         saved_card_contract.CardDomainError,
-        match="magnetic_taskgraph_worker_runtime_invalid",
+        match="magnetic_worker_runtime_invalid",
     ):
-        agentgraph_topology.connected_hermes_card_targets(
+        agentgraph_topology.connected_agent_targets(
             "mag-one", cards, edges, edge_type="magentic_option", strict=True,
         )

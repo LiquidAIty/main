@@ -15,7 +15,7 @@
 # Entity: Project Knowledge Graph
 # Relationship: This file appends the shared Project Entity map and default relevant/recent grounding for the system Cards that receive automatic graph context.
 #
-# Entity: Magnetic TaskGraph
+# Entity: Magnetic Membership
 # Relationship: This file resolves the one enabled saved Mag One Card identity used by the Magnetic task graph boundary.
 
 from __future__ import annotations
@@ -26,8 +26,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.python_models import saved_cards
-from app.python_models.card_invocation_authority import (
-    authorize_invocation_sender,
+from app.python_models.card_invocation_configuration import (
     saved_invocation_configuration,
 )
 from app.python_models.card_invocation_tools import resolve_effective_card_tools
@@ -63,8 +62,6 @@ from app.python_models.project_graph_relevance import (
 from app.python_models.saved_card_contract import (
     CardDomainError,
     card_is_enabled,
-    card_runtime,
-    is_magnetic_taskgraph_runtime,
     required_content,
     required_text,
 )
@@ -158,17 +155,12 @@ def _prepare_invocation(
         raise CardDomainError("card_not_found")
     if not card_is_enabled(card):
         raise CardDomainError("card_disabled")
-    authorize_invocation_sender(
-        str(payload.get("senderCardId") or "").strip(), card_id, card, cards,
-        loaded["deck"]["edges"],
-    )
     saved = saved_invocation_configuration(card)
     options = saved["options"]
     runtime = saved["runtime"]
     auto_tools = saved["autoTools"]
     auto_model = saved["autoModel"]
     ceiling = saved["ceiling"]
-    owner = saved["runtimeOwner"]
     requested_reasoning_effort = saved["reasoningEffort"]
     call_config = saved["callConfig"]
     runtime_options = call_config["runtimeOptions"]
@@ -195,7 +187,6 @@ def _prepare_invocation(
         "cardRevisionId": card["_cardRevisionId"],
         "cardRevision": card["_cardRevision"],
         "cardRevisionSha256": card["_cardRevisionSha256"],
-        "runtimeOwner": owner,
         "_outputRequirements": str(card.get("outputContract") or ""),
         "_autoTools": auto_tools,
         "_autoModel": auto_model,
@@ -455,29 +446,6 @@ def materialize_invocation(
         "autoModelDecision": auto_model_decision,
         **idf_public(materialized),
         "_materializedIdf": materialized,
-    }
-
-
-def resolve_magnetic_taskgraph_card(
-    project_ref: str,
-    deck_id: str,
-) -> dict[str, str]:
-    """Resolve the one saved Mag One Card without materializing model input."""
-
-    project_ref = required_text(project_ref, "project_id")
-    deck_id = required_text(deck_id, "deck_id")
-    loaded = saved_cards.load_deck(project_ref, deck_id)
-    targets = [
-        card for card in loaded["deck"]["nodes"]
-        if card_is_enabled(card)
-        and is_magnetic_taskgraph_runtime(card_runtime(card))
-    ]
-    if len(targets) != 1:
-        raise CardDomainError("magnetic_taskgraph_card_identity_ambiguous")
-    return {
-        "projectId": loaded["projectId"],
-        "deckId": deck_id,
-        "cardId": targets[0]["id"],
     }
 
 

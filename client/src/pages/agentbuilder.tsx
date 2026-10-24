@@ -6,15 +6,15 @@
  * Entity: Main Chat
  * Relationship: This file mounts Main as the persistent primary conversation surface and connects its saved history, send, stop, voice, direct-target, and Entity-focus controls.
  * Entity: Builder Card
- * Relationship: This file mounts the saved Builder Card's own Hermes terminal as the permanent lower work surface beneath Main.
+ * Relationship: This file mounts the saved Builder Card's own terminal as the permanent lower work surface beneath Main.
  * Entity: Saved Cards
  * Relationship: This file composes exact deck hydration, optimistic persistence, existing-Card attachment, new-Card authoring, and Card configuration editing.
  * Entity: Card Topology
  * Relationship: This file owns the visible saved Card canvas composition, Card and edge selection, edge deletion, activity projection, and camera focus requests.
  * Entity: Card Terminals
  * Relationship: This file mounts the selected non-Main Card terminal in its CLI tab and keeps Builder's terminal separate from other Cards.
- * Entity: Magnetic TaskGraph
- * Relationship: This file presents the inspect-only Tasks tab for Magnetic and the blue-connected Team Card without creating or mutating Hermes tasks.
+ * Entity: Magnetic Membership
+ * Relationship: This file presents the inspect-only Tasks tab for Magnetic and the blue-connected Team Card without creating or mutating tasks.
  * Entity: Project Knowledge Graph
  * Relationship: This file mounts the shared ThinkGraph, KnowGraph, and CodeGraph workspace and routes exact chat Entity focus into that surface.
  * Entity: CodeGraph
@@ -1276,7 +1276,7 @@ export default function AgentBuilder(): React.ReactElement {
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
     // Main owns the chat above; the permanent lower work surface belongs only
-    // to the separately saved Builder Card and its own Hermes session.
+    // to the separately saved Builder Card and its own session.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <MainProjectChat

@@ -14,7 +14,6 @@ from typing import Any
 from psycopg.rows import dict_row
 
 from app.python_models import agentgraph_query, saved_cards
-from app.python_models.card_run_execution import HERMES_TASK_STATUSES
 from app.python_models.card_run_graph_references import graph_references_for_run
 from app.python_models.postgres import connect_postgres
 from app.python_models.saved_card_contract import CardDomainError, required_text
@@ -26,7 +25,6 @@ def run_projection(row: dict[str, Any]) -> dict[str, Any]:
         return value.isoformat() if isinstance(value, datetime) else None
 
     cost = row.get("total_cost_usd")
-    persisted_hermes_status = str(row.get("hermes_phase") or "").strip().lower()
     return {
         "runId": str(row.get("run_id") or ""),
         "correlationId": str(row.get("correlation_id") or ""),
@@ -46,17 +44,9 @@ def run_projection(row: dict[str, Any]) -> dict[str, Any]:
         "accessMode": str(row.get("access_mode") or "") or None,
         "effectiveProvider": str(row.get("effective_provider") or "") or None,
         "state": str(row.get("state") or ""),
-        "hermesStatus": (
-            persisted_hermes_status
-            if persisted_hermes_status in HERMES_TASK_STATUSES
-            else None
-        ),
-        "hermesRootId": str(row.get("provider_thread_ref") or "") or None,
-        "hermesRunId": str(row.get("provider_turn_ref") or "") or None,
-        "hermesSessionId": str(row.get("hermes_session_ref") or "") or None,
-        "tasksCompleted": row.get("hermes_task_completed_count"),
-        "tasksTotal": row.get("hermes_task_total_count"),
-        "activeWorkers": row.get("hermes_active_worker_count"),
+        "providerThreadRef": str(row.get("provider_thread_ref") or "") or None,
+        "providerTurnRef": str(row.get("provider_turn_ref") or "") or None,
+        "runtimeSessionRef": str(row.get("hermes_session_ref") or "") or None,
         "toolCallCount": row.get("tool_call_count"),
         "inputTokens": row.get("provider_input_tokens"),
         "outputTokens": row.get("provider_output_tokens"),

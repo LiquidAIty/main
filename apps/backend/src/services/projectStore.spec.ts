@@ -8,8 +8,8 @@
  * Entity: Card Topology
  * Relationship: This file verifies attaching a saved Card creates only the requested Project-local membership and position without inventing a revision or wire.
 
- * Entity: Hermes Profiles
- * Relationship: This file verifies a stable Hermes profile belongs to exactly one authenticated owner and is locked before Card attachment.
+ * Entity: Card Profiles
+ * Relationship: This file verifies a stable Card profile belongs to exactly one authenticated owner and is locked before Card attachment.
 
  * Entity: Authentication
  * Relationship: This file verifies Project creation, compensation, and reusable Card selection remain scoped to the exact owner identity.
@@ -25,7 +25,7 @@ const db = vi.hoisted(() => ({
 vi.mock('../db/pool', () => ({ pool: db }));
 
 import {
-  assertHermesProfileOwner,
+  assertCardProfileOwner,
   attachSavedCardToProject,
   createProject,
   discardFreshProject,
@@ -150,6 +150,7 @@ describe('projectStore saved Card membership', () => {
       'revision-existing',
       'card-research',
       'owner-one',
+      'hermes',
     ]);
     const canonicalRead = statements.find(({ sql }) => sql.includes('FOR SHARE OF source_card'));
     expect(canonicalRead?.sql).not.toContain('ANY(');
@@ -169,24 +170,24 @@ describe('projectStore saved Card membership', () => {
     expect(params).toEqual(['project-one', 'deck_builder', 'owner-one']);
   });
 
-  it('accepts a stable Hermes profile only when exactly one saved owner matches', async () => {
+  it('accepts a stable Card profile only when exactly one saved owner matches', async () => {
     db.query.mockResolvedValue({ rows: [{ owner_user_id: 'owner-one' }] });
 
-    await expect(assertHermesProfileOwner('Builder', 'owner-one')).resolves.toBeUndefined();
+    await expect(assertCardProfileOwner('Builder', 'owner-one')).resolves.toBeUndefined();
 
     const [sql, params] = db.query.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('SELECT DISTINCT project.owner_user_id');
-    expect(sql).toContain("revision.runtime_kind='hermes'");
-    expect(params).toEqual(['builder']);
+    expect(sql).toContain('revision.runtime_kind=$2');
+    expect(params).toEqual(['builder', 'hermes']);
   });
 
-  it('fails closed when one stable Hermes profile is referenced by multiple owners', async () => {
+  it('fails closed when one stable Card profile is referenced by multiple owners', async () => {
     db.query.mockResolvedValue({
       rows: [{ owner_user_id: 'owner-one' }, { owner_user_id: 'owner-two' }],
     });
 
-    await expect(assertHermesProfileOwner('builder', 'owner-one'))
-      .rejects.toThrow('hermes_profile_owner_conflict');
+    await expect(assertCardProfileOwner('builder', 'owner-one'))
+      .rejects.toThrow('card_profile_owner_conflict');
   });
 
   it('verifies Project ownership before compensating child rows', async () => {

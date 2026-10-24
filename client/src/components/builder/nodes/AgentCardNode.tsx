@@ -7,7 +7,7 @@ import { Handle, Position } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
-import { hasMainBotAuthority } from '../../../features/agentbuilder/deck/deckPrimitives';
+import { hasAgentOrchestratorAuthority } from '../../../features/agentbuilder/deck/deckPrimitives';
 
 type AgentCardNodeData = AgentCardInstance & {
   busX?: number;
@@ -30,7 +30,7 @@ export default function AgentCardNode({
 }) {
   const canReceiveConnection = true;
   const canStartConnection = true;
-  const orchestratorConnector = hasMainBotAuthority(data);
+  const orchestratorConnector = hasAgentOrchestratorAuthority(data);
   const busOnRight = data.busX === undefined || data.position.x < data.busX;
   const bluePosition = busOnRight ? Position.Right : Position.Left;
   const orangePosition = busOnRight ? Position.Left : Position.Right;
