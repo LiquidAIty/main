@@ -1,3 +1,6 @@
+# Entity: Application Startup
+# Relationship: This script starts the canonical local data and application services with process-scoped internal credentials and fails closed on missing required configuration.
+
 $ErrorActionPreference = 'Stop'
 
 function Read-SelectedEnvValue([string]$Path, [string]$Name) {

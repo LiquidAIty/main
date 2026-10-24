@@ -21,7 +21,7 @@ import {
 } from '../services/projectStore';
 import { hermesGateway } from '../services/hermesGateway';
 import { projectCardAuthority } from '../services/projectCardAuthority';
-import { startProjectCardSessions } from './mainSession.routes';
+import { startProjectCardSessions } from '../hermes/botMode';
 import { requireOwnedProject } from './projectAccess';
 
 const router = Router();

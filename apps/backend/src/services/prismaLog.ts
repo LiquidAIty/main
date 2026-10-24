@@ -1,3 +1,8 @@
+/**
+ * Entity: Application Observability
+ * Relationship: This file keeps Prisma warnings and errors visible while making routine query logging an explicit environment-controlled diagnostic choice.
+ */
+
 export type PrismaLogLevel = 'query' | 'info' | 'warn' | 'error';
 
 /**

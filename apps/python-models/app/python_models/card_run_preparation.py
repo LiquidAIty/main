@@ -24,7 +24,6 @@ from psycopg.rows import dict_row
 
 from app.python_models import (
     agentgraph_run_observations,
-    agentgraph_topology,
     card_invocation_preparation,
     card_run_inputs,
     saved_cards,
@@ -36,7 +35,6 @@ from app.python_models.saved_card_contract import (
     accepted_at,
     canonical_json,
     card_runtime,
-    json_object,
     required_content,
     required_text,
     utc_now,
@@ -422,31 +420,6 @@ def _begin_accepted_run(
     correlation_id = required_text(payload.get("correlationId"), "correlation_id")
     card_identity = prepared["cardIdentity"]
     owner = prepared["runtimeOwner"]
-    runtime = prepared["idf"]["stableSavedCardContext"]["runtime"]
-    magnetic_workers: list[dict[str, Any]] = []
-    magnetic_worker_authorities: list[dict[str, str]] = []
-    if owner == "mag_one":
-        loaded = saved_cards.load_deck(prepared["projectId"], prepared["deckId"])
-        cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
-        magnetic_workers = agentgraph_topology.connected_hermes_card_targets(
-            card_identity["cardId"],
-            cards,
-            loaded["deck"]["edges"],
-            edge_type="magentic_option",
-            strict=True,
-        )
-        if not magnetic_workers:
-            raise CardDomainError("magnetic_taskgraph_no_connected_workers")
-        magnetic_workers = agentgraph_topology.materialize_magnetic_worker_capabilities(
-            magnetic_workers,
-            cards,
-        )
-        for worker in magnetic_workers:
-            magnetic_worker_authorities.append({
-                "cardId": str(worker["cardId"]),
-                "cardRevisionId": str(worker["cardRevisionId"]),
-                "profile": str(worker["profile"]).lower(),
-            })
     resolved_run_id, resolved_correlation_id, created = _insert_run(
         prepared,
         run_id=run_id,
@@ -458,34 +431,6 @@ def _begin_accepted_run(
         created=created,
     )
     prepared.update(public)
-    magnetic_taskgraph = None
-    if owner == "mag_one":
-        options = json_object(
-            prepared["idf"]["stableSavedCardContext"].get("runtimeOptions"),
-            "runtime_options",
-        )
-        provider = json_object(
-            prepared["idf"]["stableSavedCardContext"].get("provider"),
-            "provider",
-        )
-        magnetic_taskgraph = {
-            "runId": resolved_run_id,
-            "correlationId": resolved_correlation_id,
-            "projectId": prepared["projectId"],
-            "deckId": prepared["deckId"],
-            "inputFile": input_files,
-            "mission": runtime_input["taskGraphMission"],
-            "orchestrator": {
-                "cardId": card_identity["cardId"],
-                "cardRevisionId": prepared["cardRevisionId"],
-                "hermesProfile": runtime["profile"],
-                "instructions": prepared["idf"]["stableSavedCardContext"]["instructions"],
-                "provider": provider,
-                "runtimeOptions": options,
-            },
-            "workers": magnetic_workers,
-            "workerAuthorities": magnetic_worker_authorities,
-        }
     telemetry_written = False
     if created:
         preparation_ended_at = utc_now()
@@ -507,7 +452,6 @@ def _begin_accepted_run(
         "cardId": str(card_identity["cardId"]),
         "telemetryWritten": telemetry_written,
         "inputFile": input_files,
-        "magneticTaskGraph": magnetic_taskgraph,
         "hermesTransport": {
             "request": runtime_input,
             "inputFile": input_files,

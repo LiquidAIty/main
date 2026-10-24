@@ -1,4 +1,8 @@
 """Canonical Python connection to LiquidAIty's application Postgres."""
+
+# Entity: Application Database
+# Relationship: This file opens Python-rails PostgreSQL connections from the one injected DATABASE_URL authority without a password fallback or secret-bearing error.
+
 from __future__ import annotations
 
 import os

@@ -1,5 +1,5 @@
 # Entity: Trading
-# Relationship: Verifies deterministic paper-only plans, risk gates, order identity, public LumiBot projection, saved subsystem qualification, Card Script access, and intervention refusal through controlled fixtures.
+# Relationship: Verifies deterministic paper-only plans, risk gates, order identity, public LumiBot projection, saved Card qualification, Card Script access, and intervention refusal through controlled fixtures.
 
 from __future__ import annotations
 
@@ -236,7 +236,7 @@ def test_trading_card_qualifies_by_saved_hermes_runtime_and_configuration() -> N
     assert result["configuration"]["trading"]["brokerConnectionRef"] == "alpaca-paper"
 
 
-def test_trading_card_script_compiles_one_python_subsystem_boundary() -> None:
+def test_trading_card_script_compiles_one_python_tool_recipe() -> None:
     source = '''CARD_SCRIPT = {
     "mode": "tool_recipe",
     "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},

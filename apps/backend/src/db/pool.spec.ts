@@ -1,3 +1,8 @@
+/**
+ * Entity: Application Database
+ * Relationship: This file verifies connection acquisition may recover once while a failed submitted statement is never replayed and only the next call receives a fresh pool.
+ */
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const postgres = vi.hoisted(() => ({

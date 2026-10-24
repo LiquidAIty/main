@@ -14,6 +14,7 @@ import { Router, type Request, type Response } from 'express';
 import {
   ensureSavedCardProfile,
   materializeSavedCardProfile,
+  savedCardBotRoster,
   type HermesProfileState,
 } from '../hermes/profileMaterialization';
 import { hermesGateway, type HermesGatewayClient } from '../services/hermesGateway';
@@ -91,17 +92,20 @@ async function resolveAuthorizedCard(
   );
   const existing = await ensureSavedCardProfile(
     request,
+    authority.deck,
     card.card,
     userId,
   );
   const toolCatalog = await readToolCatalog();
   const profile = await materializeSavedCardProfile(
     request,
+    authority.deck,
     card.card,
     userId,
     existing,
     toolCatalog.tools,
     toolCatalog.unavailableFamilies,
+    savedCardBotRoster(authority.deck, card.card),
   );
   return { authority, card, client, profile };
 }

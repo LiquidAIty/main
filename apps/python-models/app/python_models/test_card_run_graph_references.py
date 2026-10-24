@@ -1,3 +1,6 @@
+# Entity: Run Ledger
+# Relationship: This file verifies an exact KnowGraph readback becomes one Project-scoped Run reference and artifact without accepting mismatched graph scope or Run authority.
+
 from __future__ import annotations
 
 from contextlib import nullcontext

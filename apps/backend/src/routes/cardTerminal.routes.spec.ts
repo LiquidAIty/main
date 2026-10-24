@@ -33,7 +33,7 @@ vi.mock('../services/projectCardAuthority', () => ({
 vi.mock('../services/hermesGateway', () => ({
   hermesGateway: mocks.hermesGateway,
 }));
-vi.mock('./mainSession.routes', () => ({
+vi.mock('../hermes/botMode', () => ({
   cardProjectSession: mocks.cardProjectSession,
 }));
 vi.mock('../services/workingDirectories', () => ({
@@ -106,8 +106,6 @@ describe('Card terminal authenticated proxy contract', () => {
     mocks.hermesGateway.mockResolvedValue({});
     mocks.cardProjectSession.mockResolvedValue({
       sessionId: 'session-builder',
-      botModeRoster: [],
-      botModeSessions: {},
     });
     mocks.getUserBySessionId.mockResolvedValue(null);
   });

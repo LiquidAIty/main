@@ -85,6 +85,14 @@ describe('canonical backend migrations', () => {
         filename: '059_enforce_current_hermes_status_and_main_delivery.sql',
         applied: true,
       }),
+      expect.objectContaining({
+        filename: '060_align_main_research_sequence_and_know_identity.sql',
+        applied: true,
+      }),
+      expect.objectContaining({
+        filename: '061_add_connected_card_introductions.sql',
+        applied: true,
+      }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -375,7 +383,7 @@ describe('canonical backend migrations', () => {
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 
-  it('accepts an applied 053 ledger and schedules only the six forward corrections', async () => {
+  it('accepts an applied 053 ledger and schedules only the seven forward corrections', async () => {
     const migrationsDirectory = resolve(__dirname, '../../migrations');
     const fresh = await applyBackendMigrations({
       client: fakeClient() as any,
@@ -398,8 +406,10 @@ describe('canonical backend migrations', () => {
       '057_card_run_selection_and_usage.sql',
       '058_apply_main_policy_and_remove_retired_card_controls.sql',
       '059_enforce_current_hermes_status_and_main_delivery.sql',
+      '060_align_main_research_sequence_and_know_identity.sql',
+      '061_add_connected_card_introductions.sql',
     ]);
-    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 6);
+    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 8);
   });
 
   it('adds Card Run selection and usage fields without another metrics store', async () => {
@@ -450,6 +460,42 @@ describe('canonical backend migrations', () => {
     expect(source).toContain('UPDATE ag_catalog.deck_prompt_templates');
     expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
     expect(source).not.toMatch(/DELETE\s+FROM\s+ag_catalog\.agent_runs/i);
+  });
+
+  it('append-revises retired Main execution and Know attachment instructions', async () => {
+    const source = await readFile(
+      migrationPath('060_align_main_research_sequence_and_know_identity.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain('[RESEARCH SEQUENCE]');
+    expect(source).toContain('call wired @KnowGraph');
+    expect(source).toContain('Invoke @Magnetic only through message_agent');
+    expect(source).toContain('grant_id <> \'run_mag_one\'');
+    expect(source).toContain('same stored entity_uuid');
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).toContain('UPDATE ag_catalog.deck_prompt_templates');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
+    expect(source).not.toContain('DELETE FROM ag_catalog.agent_card_revisions');
+  });
+
+  it('append-revises connected Cards with individual orchestrator introductions', async () => {
+    const source = await readFile(
+      migrationPath('061_add_connected_card_introductions.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain('[ORCHESTRATOR SKILL]');
+    expect(source).toContain('Call @KnowGraph through message_agent');
+    expect(source).toContain('AutoTeam v1');
+    expect(source).toContain("WHEN 'trading'");
+    expect(source).toContain("WHEN 'worldview'");
+    expect(source).toContain("WHEN 'signal-analyst'");
+    expect(source).toContain("WHEN 'quant-analyst'");
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
   });
 
   it('retires the obsolete Card-as-assistant capability through new current revisions', async () => {

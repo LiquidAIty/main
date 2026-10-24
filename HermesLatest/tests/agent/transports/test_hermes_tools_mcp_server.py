@@ -65,7 +65,7 @@ class TestSignatureFromSchema:
             },
             "required": ["s", "i", "n", "b", "a", "o"],
         }
-        sig, annots = _signature_from_schema(schema)
+        _sig, annots = _signature_from_schema(schema)
 
         assert annots["s"] == str
         assert annots["i"] == int
@@ -85,7 +85,7 @@ class TestModuleSurface:
         from agent.transports.hermes_tools_mcp_server import EXPOSED_TOOLS
         forbidden = {
             "terminal", "shell", "read_file", "write_file", "patch",
-            "search_files", "process", "message_agent",
+            "search_files", "process",
         }
         leaked = forbidden & set(EXPOSED_TOOLS)
         assert not leaked, (

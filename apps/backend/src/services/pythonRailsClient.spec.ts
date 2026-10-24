@@ -77,9 +77,9 @@ describe('pythonRailsClient', () => {
     });
     vi.stubGlobal('fetch', fetchMock as any);
 
-    const request = requestPythonRailsJson('/magnetic/taskgraph/status', {
+    const request = requestPythonRailsJson('/domain/runs/latest', {
       method: 'POST',
-      body: JSON.stringify({ hermesRootId: 't_1' }),
+      body: JSON.stringify({ projectId: 'project-one' }),
     });
     await expect(request).rejects.toMatchObject({
       name: 'PythonRailsHttpError',
@@ -89,7 +89,7 @@ describe('pythonRailsClient', () => {
       message: 'provider_failure',
     } satisfies Partial<PythonRailsHttpError>);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://python-rails:8001/magnetic/taskgraph/status',
+      'http://python-rails:8001/domain/runs/latest',
       expect.objectContaining({ method: 'POST' }),
     );
   });

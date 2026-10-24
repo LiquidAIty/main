@@ -1,8 +1,5 @@
 // Entity: Run Ledger
 // Relationship: This file returns authenticated latest Run metrics and status for one exact saved Card without exposing another Project's execution state.
-// Entity: Magnetic TaskGraph
-// Relationship: This file reconciles terminal Hermes root readback into the same outer Magnetic Run before returning bounded task and worker progress.
-
 import { Router, type Request } from 'express';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
@@ -33,23 +30,15 @@ function runtimeMetrics(run: Record<string, any> | undefined, cardId: string) {
   };
 }
 
-function magneticTaskMetrics(value: Record<string, any>): {
-  tasksCompleted: number | null;
-  tasksTotal: number | null;
-  activeWorkers: number | null;
-} {
-  if (!Array.isArray(value.hermesTasks)) {
-    return { tasksCompleted: null, tasksTotal: null, activeWorkers: null };
-  }
-  const rootId = String(value.hermesRootId || '').trim();
-  const tasks = value.hermesTasks.map(objectRecord);
+async function cardRunStatus(
+  latest: Record<string, any>,
+  cardId: string,
+): Promise<Record<string, any>> {
   return {
-    tasksCompleted: tasks.filter((task) => String(task.status || '').trim() === 'done').length,
-    tasksTotal: tasks.length,
-    activeWorkers: tasks.filter((task) => (
-      String(task.taskId || '').trim() !== rootId
-      && String(task.status || '').trim() === 'running'
-    )).length,
+    cardId,
+    runId: String(latest.runId || ''),
+    state: String(latest.state || ''),
+    activeWorkers: finiteNumber(latest.activeWorkers),
   };
 }
 
@@ -59,6 +48,63 @@ export async function authorizeCardProject(req: Request, projectId: string): Pro
   const project = await getOwnedProjectByReference(projectId, userId);
   return Boolean(project && project.ownerUserId === userId);
 }
+
+cardRunReadRoutes.post('/runs/latest', async (req, res) => {
+  const projectId = String(req.body?.projectId || '').trim();
+  const deckId = String(req.body?.deckId || '').trim();
+  const rawCardIds = Array.isArray(req.body?.cardIds) ? req.body.cardIds : [];
+  const cardIds: string[] = rawCardIds.map((value: unknown) => (
+    typeof value === 'string' ? value.trim() : ''
+  ));
+  if (
+    !projectId
+    || !deckId
+    || cardIds.length === 0
+    || cardIds.length > 128
+    || cardIds.some((cardId: string) => !cardId)
+    || new Set(cardIds).size !== cardIds.length
+  ) {
+    return res.status(400).json({ ok: false, error: 'card_run_identity_incomplete' });
+  }
+  if (req.body?.inspectOnly !== true) {
+    return res.status(400).json({ ok: false, error: 'card_run_status_must_be_inspect_only' });
+  }
+  try {
+    if (!(await authorizeCardProject(req, projectId))) {
+      return res.status(403).json({ ok: false, error: 'card_run_project_access_denied' });
+    }
+    const latest = objectRecord(await requestPythonRailsJson('/domain/runs/latest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, deckId, cardIds }),
+    }));
+    const requested = new Set(cardIds);
+    const runsByCard = new Map<string, Record<string, any>>();
+    for (const value of Array.isArray(latest.runs) ? latest.runs : []) {
+      const run = objectRecord(value);
+      const cardId = String(run.cardId || '').trim();
+      if (requested.has(cardId) && !runsByCard.has(cardId)) runsByCard.set(cardId, run);
+    }
+    const observations = await Promise.allSettled(cardIds.map(async (cardId) => {
+      const run = runsByCard.get(cardId);
+      return run ? cardRunStatus(run, cardId) : null;
+    }));
+    return res.json({
+      ok: true,
+      results: observations.flatMap((observation) => (
+        observation.status === 'fulfilled' && observation.value ? [observation.value] : []
+      )),
+      failedCardIds: observations.flatMap((observation, index) => (
+        observation.status === 'rejected' ? [cardIds[index]] : []
+      )),
+    });
+  } catch (error) {
+    return res.status(503).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'card_run_read_failed',
+    });
+  }
+});
 
 cardRunReadRoutes.post('/runs/read', async (req, res) => {
   const action = String(req.body?.action || '').trim();
@@ -89,38 +135,7 @@ cardRunReadRoutes.post('/runs/read', async (req, res) => {
       return res.json({ ok: true, result: runtimeMetrics(latest, cardId) });
     }
     if (!latest) return res.json({ ok: true, result: null });
-    const hermesRootId = String(latest.hermesRootId || '').trim();
-    if (String(latest.runtimeMode || '') === 'magentic_one' && hermesRootId) {
-      const magnetic = objectRecord(await requestPythonRailsJson('/magnetic/taskgraph/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          runId: String(latest.runId || ''),
-          hermesRootId,
-        }),
-      }));
-      const metrics = magneticTaskMetrics(magnetic);
-      return res.json({
-        ok: true,
-        result: {
-          ...magnetic,
-          runId: String(latest.runId || ''),
-          cardId,
-          state: String(magnetic.state || latest.state || ''),
-          hermesExecutionState: String(magnetic.state || ''),
-          activeWorkers: metrics.activeWorkers,
-        },
-      });
-    }
-    return res.json({
-      ok: true,
-      result: {
-        cardId,
-        runId: String(latest.runId || ''),
-        state: String(latest.state || ''),
-        activeWorkers: finiteNumber(latest.activeWorkers),
-      },
-    });
+    return res.json({ ok: true, result: await cardRunStatus(latest, cardId) });
   } catch (error) {
     return res.status(503).json({
       ok: false,

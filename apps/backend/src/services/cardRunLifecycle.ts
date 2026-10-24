@@ -12,24 +12,6 @@ import type { ProjectCardBinding } from './projectCardAuthority';
 
 export type PreparedCardRun = { runId: string; request: Record<string, any> };
 
-export function internalCardTurnEndpoint(env: NodeJS.ProcessEnv = process.env): string {
-  const origin = String(env.LIQUIDAITY_INTERNAL_BACKEND_URL || 'http://127.0.0.1:4000').trim();
-  let parsed: URL;
-  try {
-    parsed = new URL(origin);
-  } catch {
-    throw new Error('internal_card_turn_origin_invalid');
-  }
-  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(parsed.hostname.toLowerCase());
-  if ((parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) || parsed.username || parsed.password) {
-    throw new Error('internal_card_turn_origin_invalid');
-  }
-  parsed.pathname = '/api/card-turn';
-  parsed.search = '';
-  parsed.hash = '';
-  return parsed.toString();
-}
-
 function record(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, any>

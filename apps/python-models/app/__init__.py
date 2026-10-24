@@ -1,3 +1,6 @@
+# Entity: Python Rails
+# Relationship: This package marker keeps the application import boundary distinct from unrelated top-level app modules without runtime path rewriting.
+
 # Python rails application package.
 #
 # This file makes ``app`` a REGULAR package (not an implicit namespace package). It is the durable

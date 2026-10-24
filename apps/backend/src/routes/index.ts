@@ -20,7 +20,6 @@ import jevGraphFocusRoutes from './jevGraphFocus.routes';
 import mcpInternalRoutes from './mcpInternal.routes';
 import mainSessionRoutes from './mainSession.routes';
 import cardTerminalRoutes from './cardTerminal.routes';
-import cardTurnInternalRoutes from './cardTurnInternal.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
 import codeGraphReadRoutes from './codeGraphRead.routes';
 import nrgsimRoutes from './nrgsim.routes';
@@ -34,7 +33,6 @@ router.use('/health', health);
 // The official Python MCP host calls these process-secret endpoints. Mount the
 // bridge before browser auth so it cannot be converted into a local-user session.
 router.use('/worldview', worldviewInternalRoutes);
-router.use('/card-turn', cardTurnInternalRoutes);
 router.use('/cards', authMiddleware, cardOptionsRoutes, cardRunReadRoutes);
 router.use('/main/session', authMiddleware, mainSessionRoutes);
 router.use('/card-terminals', authMiddleware, cardTerminalRoutes);

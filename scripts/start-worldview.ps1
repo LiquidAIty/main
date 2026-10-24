@@ -1,3 +1,6 @@
+# Entity: WorldView
+# Relationship: This script starts the controlled God’s Eye development doorway with the existing provider settings read literally from the application environment file.
+
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -10,10 +13,14 @@ function Get-DotEnvValue {
   )
 
   if (-not (Test-Path -LiteralPath $Path)) { return $null }
-  $escapedName = [Regex]::Escape($Name)
   foreach ($line in Get-Content -LiteralPath $Path) {
-    if ($line -notmatch "^\s*$escapedName\s*=\s*(.*)$") { continue }
-    $value = $Matches[1].Trim()
+    $candidate = $line.Trim()
+    if (-not $candidate -or $candidate.StartsWith('#')) { continue }
+    $separator = $candidate.IndexOf('=')
+    if ($separator -lt 1) { continue }
+    $key = $candidate.Substring(0, $separator).Trim()
+    if (-not $key.Equals($Name, [System.StringComparison]::Ordinal)) { continue }
+    $value = $candidate.Substring($separator + 1).Trim()
     if ($value.Length -ge 2) {
       $first = $value[0]
       $last = $value[$value.Length - 1]

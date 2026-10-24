@@ -114,6 +114,51 @@ def read_run_history(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def read_latest_runs(payload: dict[str, Any]) -> dict[str, Any]:
+    """Read the newest root Run for each requested saved Card in one transaction."""
+
+    project_ref = required_text(payload.get("projectId"), "project_id")
+    deck_id = required_text(payload.get("deckId"), "deck_id")
+    raw_card_ids = payload.get("cardIds")
+    if not isinstance(raw_card_ids, list) or not 1 <= len(raw_card_ids) <= 128:
+        raise CardDomainError("run_card_ids_invalid")
+    card_ids: list[str] = []
+    seen: set[str] = set()
+    for value in raw_card_ids:
+        card_id = str(value).strip() if isinstance(value, str) else ""
+        if not card_id or card_id in seen:
+            raise CardDomainError("run_card_ids_invalid")
+        seen.add(card_id)
+        card_ids.append(card_id)
+
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            project = saved_cards.resolve_project_record(cursor, project_ref)
+            project_id = str(project["id"])
+            cursor.execute(
+                """
+                SELECT DISTINCT ON (revision.card_id)
+                       run.*, revision.card_id, revision.runtime_profile, revision.title,
+                       revision.runtime_extension_config
+                FROM ag_catalog.agent_runs AS run
+                JOIN ag_catalog.agent_card_revisions AS revision
+                  ON revision.revision_id=run.target_card_revision_id
+                WHERE run.project_id=%s AND run.deck_id=%s
+                  AND revision.card_id=ANY(%s)
+                ORDER BY revision.card_id, run.created_at DESC, run.run_id DESC
+                """,
+                (project_id, deck_id, card_ids),
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+    return {
+        "ok": True,
+        "projectId": project_id,
+        "deckId": deck_id,
+        "runs": [run_projection(row) for row in rows],
+    }
+
+
 def read_run(payload: dict[str, Any]) -> dict[str, Any]:
     """Read one durable Run by its public selectors."""
 

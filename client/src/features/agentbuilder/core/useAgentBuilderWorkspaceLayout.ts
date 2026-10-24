@@ -89,22 +89,6 @@ export function resolveHybridWorkspaceGeometry({
   };
 }
 
-export function shouldCloseCanvasInspector({
-  workspaceView,
-  inspectorOpen,
-  companionVisibleWidth,
-  inspectorWidth = CANVAS_INSPECTOR_WIDTH,
-}: {
-  workspaceView: string;
-  inspectorOpen: boolean;
-  companionVisibleWidth: number;
-  inspectorWidth?: number;
-}): boolean {
-  return workspaceView === 'canvas'
-    && inspectorOpen
-    && companionVisibleWidth <= Math.max(0, inspectorWidth) + COMPANION_MIN_WIDTHS.canvas;
-}
-
 type UseAgentBuilderWorkspaceLayoutArgs<T extends string> = {
   workspaceView: T;
 };

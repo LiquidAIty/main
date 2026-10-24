@@ -190,7 +190,6 @@ describe('authenticated WorldView presentation readiness', () => {
       status: 'ready',
       lifecycle: { ownership: 'supervised-upstream', automaticStart: false },
     });
-    expect(body).not.toHaveProperty('subsystemAgents');
     expect(fetcher).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ origin: 'http://127.0.0.1:4174' }),
       expect.objectContaining({ method: 'GET' }),

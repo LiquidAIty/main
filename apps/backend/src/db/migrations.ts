@@ -42,6 +42,8 @@ const REQUIRED_MIGRATIONS = [
   '057_card_run_selection_and_usage.sql',
   '058_apply_main_policy_and_remove_retired_card_controls.sql',
   '059_enforce_current_hermes_status_and_main_delivery.sql',
+  '060_align_main_research_sequence_and_know_identity.sql',
+  '061_add_connected_card_introductions.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;

@@ -1,7 +1,7 @@
 // Entity: Card Terminals
 // Relationship: This file authorizes one non-Main saved Card terminal and proxies bounded browser input, output, resize frames, close states, and WebSocket upgrades.
 // Entity: Hermes Card Sessions
-// Relationship: This file resolves the exact Project/Card/profile session and attaches the terminal to that existing Hermes session and Bot Mode roster.
+// Relationship: This file resolves the exact Project/Card/profile session and attaches the terminal to that existing Hermes session and Bot roster.
 // Entity: Credentials
 // Relationship: This file keeps the reusable Gateway token server-side while issuing only the application-owned same-origin terminal stream path to the browser.
 
@@ -21,7 +21,7 @@ import {
   resolveBuilderProjectCodeDirectory,
   resolveProductChatWorkingDirectory,
 } from '../services/workingDirectories';
-import { cardProjectSession } from './mainSession.routes';
+import { cardProjectSession } from '../hermes/botMode';
 
 const cardTerminalRoutes = Router();
 const terminalProxyServer = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
@@ -150,7 +150,6 @@ async function resolveTerminalBinding(input: {
     channel,
     cwd,
     attach: channel,
-    bot_mode_roster: binding.botModeRoster.join(','),
   });
   return {
     projectId: input.projectId,

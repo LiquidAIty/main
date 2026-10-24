@@ -1,3 +1,8 @@
+/**
+ * Entity: ThinkGraph
+ * Relationship: This file serializes automatic completed-Main capture per Project and lets the exact matching projection read await and consume the capture outcome once.
+ */
+
 const captureTails = new Map<string, Promise<void>>();
 const activeCaptures = new Map<string, Promise<void>>();
 const settledCaptureByProject = new Map<string, {

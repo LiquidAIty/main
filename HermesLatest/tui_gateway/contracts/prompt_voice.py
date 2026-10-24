@@ -7,8 +7,6 @@ and voice / wake-word control (``methods_voice.py``).
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import Field
 
 from .base import JsonValue, Params, Result, WireEnum
@@ -25,28 +23,6 @@ class ClientSurface(WireEnum):
     voice_live = "voice-live"
 
 
-class CardScriptDefinition(Params):
-    """One validated saved Card Python recipe for this exact turn.
-
-    ``enabled`` is deliberately absent: nonblank, valid saved source is the
-    activation condition. Tool names identify the exact saved capabilities
-    already loaded by the receiving Card's profile.
-    """
-
-    version: int = Field(ge=1)
-    source: str = Field(min_length=1, max_length=32_768)
-    source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    compiled_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    mode: Literal["tool_recipe"]
-    input_schema: dict[str, JsonValue]
-    output_schema: dict[str, JsonValue]
-    tool_names: dict[str, str]
-    tool_states: dict[str, int]
-    timeout_seconds: int = Field(ge=1, le=60)
-    max_tool_calls: int = Field(ge=1, le=32)
-    max_output_bytes: int = Field(ge=256, le=50_000)
-
-
 class PromptSubmitParams(SessionParams):
     """``text`` is normally a string; the relay / hosted paths may hand a structured (parts list)
     payload, and the busy path renders it. Truncation (rewind / edit / regenerate) needs explicit
@@ -57,17 +33,9 @@ class PromptSubmitParams(SessionParams):
     display_kind: str | None = None  # only "hidden" is honoured; anything else renders as a user row
     interrupted: bool | None = None  # client-side barge-in: the turn's model message carries the note
     queued: bool | None = None  # client queue drain — the busy path must hold it, never redirect/steer
-    # Opaque caller identity for correlating an accepted or queued input with its later turn events.
-    submission_id: str | None = Field(default=None, min_length=1, max_length=128)
-    card_run_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9:_-]{1,128}$")
-    mcp_tool_selection: dict[str, list[str]] | None = None
-    card_script: CardScriptDefinition | None = None
-    bot_mode_roster: list[str] | None = None
-    bot_mode_sessions: dict[str, str] | None = None
-    bot_mode_card_contexts: dict[str, dict[str, str]] | None = None
-    bot_mode_reply_delivery: Literal["notification", "direct"] | None = None
     surface: str | None = None  # a ClientSurface value; unknown values clear the surface
     voice_context: str | None = None  # recent spoken transcript, model input only (voice-live)
+    voice_turn: bool | None = None  # a spoken voice-conversation turn: runs on auxiliary.voice_chat
     # Desktop-generated large-paste preview (first ~1000 chars); TITLE input only, never the model turn.
     title_preview: str | None = None
     truncate_before_user_ordinal: int | None = None
@@ -75,6 +43,7 @@ class PromptSubmitParams(SessionParams):
     truncate_before_message_id: str | None = None
     confirm_truncate: bool | None = None
     confirm_empty_truncate: bool | None = None
+    confirm_deep_truncate: bool | None = None  # send when the cut archives >1 user turn (enforced next release)
     rebind_survivor_row_ids: list[int] | None = None
     # In-process only: injected by the hosted-room / bot-relay handlers, never accepted from a
     # client (a client dict for ``_turn_author`` answers 4124). Excluded from the rendered wire.
@@ -97,7 +66,6 @@ class PromptSubmitResult(Result):
     entries: drop the cached id). ``turn_isolation`` marks a compute-host dispatch."""
 
     status: PromptSubmitStatus | None = None
-    submission_id: str | None = None
     voice_stopped: bool | None = None
     # The row written for THIS accepted input, captured before the worker can consume it.
     # Absent on queued/steered/redirected inputs and whenever persistence is not yet proven.
@@ -105,6 +73,10 @@ class PromptSubmitResult(Result):
     survivor_user_row_ids: list[int | None] | None = None
     survivor_row_id_map: dict[str, int | None] | None = None
     turn_isolation: bool | None = None
+    # RT-37: the gateway's durable ledger held work for this session, so the prompt was admitted into
+    # the OWNER's FIFO (``status: queued``) and runs there after the current turn; nothing runs here.
+    admission_id: str | None = None
+    forwarded: bool | None = None
 
 
 method("prompt.submit", params=PromptSubmitParams, result=PromptSubmitResult,

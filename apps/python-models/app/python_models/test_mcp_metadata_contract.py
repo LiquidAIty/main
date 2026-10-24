@@ -37,7 +37,6 @@ def test_source_current_hash_covers_every_code_owned_catalog_owner():
     assert any(path.endswith("/mcp_provider_operations.py") for path in normalized)
     assert any(path.endswith("/application_operation_catalog.py") for path in normalized)
     assert any(path.endswith("/agent_canvas_card_operations.py") for path in normalized)
-    assert any(path.endswith("/mag_one_operation.py") for path in normalized)
     assert any(path.endswith("/project_graph_operations.py") for path in normalized)
     assert any(path.endswith("/saved_canvas_tools.py") for path in normalized)
     assert any(path.endswith("/saved_card_operation_schema.py") for path in normalized)

@@ -1,3 +1,6 @@
+# Entity: Application Database
+# Relationship: This file verifies Python rails requires and safely parses the one DATABASE_URL authority while preserving caller-selected autocommit behavior.
+
 from __future__ import annotations
 
 import pytest

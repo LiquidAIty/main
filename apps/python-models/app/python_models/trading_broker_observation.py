@@ -61,21 +61,11 @@ def lumibot_readiness() -> dict[str, Any]:
             "paperOnly": True,
             "orderSubmission": "blocked_pending_separate_approval",
             "diagnostics": type(error).__name__,
-            "adapter": {
-                "contractVersion": "card-subsystem.v1",
-                "publicApiOnly": True,
-                "capabilities": ["state", "events", "commands", "artifacts", "readiness"],
-            },
             "lifecycle": {
                 "status": "dependency_unavailable",
                 "activeStrategies": 0,
                 "scheduler": "not_started",
                 "diagnostics": type(error).__name__,
-            },
-            "subsystemAgents": {
-                "enabled": False,
-                "authority": "hermes",
-                "diagnostics": "Direct subsystem model providers are disabled.",
             },
         }
     return {
@@ -86,21 +76,11 @@ def lumibot_readiness() -> dict[str, Any]:
         "paperOnly": True,
         "orderSubmission": "blocked_pending_separate_approval",
         "diagnostics": None,
-        "adapter": {
-            "contractVersion": "card-subsystem.v1",
-            "publicApiOnly": True,
-            "capabilities": ["state", "events", "commands", "artifacts", "readiness"],
-        },
         "lifecycle": {
             "status": "not_started",
             "activeStrategies": 0,
             "scheduler": "not_started",
             "diagnostics": "No continuous Trader starts before separate execution approval.",
-        },
-        "subsystemAgents": {
-            "enabled": False,
-            "authority": "hermes",
-            "diagnostics": "Use the saved Card's Hermes Team; direct subsystem providers are disabled.",
         },
     }
 

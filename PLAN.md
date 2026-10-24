@@ -15,8 +15,10 @@ LiquidAIty's MVP is a persistent Project workbench where:
 - KnowGraph preserves sourced evidence and provenance in Graphiti/Neo4j;
 - Builder turns Project reasoning and evidence into PromptSpecs, Cards, applications, code, artifacts,
   and executable missions;
-- Magnetic executes one approved mission across an exact saved blue worker roster;
-- Team provides the separate generic Hermes Team/Kanban mechanism;
+- Magnetic executes one approved mission across an exact saved blue worker roster through LiquidAIty's
+  retained modified Hermes Team task contract;
+- Team is the direct saved-Card/profile entrance to that reduced Team task contract; it does not first ask
+  another agent to delegate a Team;
 - specialized domain Cards add bounded capabilities without becoming graph authorities.
 
 One canonical `in.idf` carries the exact saved Card revision, current dynamic input, selected provider
@@ -81,8 +83,8 @@ not create a second Run or a second completed pair.
 KnowGraph has Hermes Web plus its saved Graphiti read/write corridor. A deliberately supplied Think is
 framing, not evidence. Useful sourced findings enter Graphiti through Graphiti's queued `add_know`, which
 creates one first-class `Episodic:Know`, reuses an exact supplied or exact-name Entity when present and creates
-that Entity otherwise, records one exact `ABOUT` attachment, leaves extracted `MENTIONS` independent, updates
-Graphiti communities by default, and may associate the continuing research thread with one Saga. One Know has
+that Entity otherwise, stores its exact UUID in `entity_uuid`, removes Know `ABOUT` and `MENTIONS` attachment
+edges, updates Graphiti communities by default, and may associate the continuing research thread with one Saga. One Know has
 one verified source document, one exact evidence passage, one self-contained observation, one separate bounded
 interpretation and optional direction relative to an explicit proposition. Its typed citation properties and
 plain-text episode content remain inspectable and searchable through Graphiti. Supporting-only,
@@ -97,8 +99,8 @@ The acceptance receipt supplies the deterministic Know UUID and content hash wit
 The source-default KnowGraph Card uses Sol; ThinkGraph remains Luna. Queue acceptance does not prove
 materialization.
 
-KnowGraph reuses Hermes' existing `auto-team-v1` capability for substantial research. Main still consults
-the saved KnowGraph Card across its exact orange authority. Candidate workers inherit the saved Web research
+KnowGraph enters its own retained Team Triage for substantial research. Main still consults
+the saved KnowGraph Card through its exact saved wire authority. Candidate workers inherit the saved Web research
 surface but no profile MCP connection or graph-write capability. The same saved KnowGraph root reviews,
 deduplicates and persists accepted findings during synthesis with its exact saved Card Run context and tool
 ceiling. This does not invoke the separate Team Card, change Team's Magnetic wildcard role, or create another
@@ -106,12 +108,14 @@ scheduler, task store or worker pool.
 
 ### Execution
 
-- Ordinary Hermes delegation, Hermes Team/Kanban, and Magnetic are three different mechanisms.
+- Ordinary Hermes delegation, direct Team execution, and Magnetic are three different entrances. Team and
+  Magnetic rely on the retained modified Hermes Team task contract; neither may silently fall back to the
+  unmodified upstream task behavior.
 - Main and every non-Magnetic saved Hermes Card have one stable profile plus one hidden session per
   Project. The application supplies only exact profile/session/roster context; Hermes owns inference,
   direct Bot delivery, transcript persistence, and each Card terminal. LiquidAIty never requests or accepts a
   busy-session prompt queue: an additional active-Main message uses Hermes steering inside the same Run.
-- Source now prepares one receiving-Card Run and canonical `in.idf` before Main, terminal, and orange
+- Source now prepares one receiving-Card Run and canonical `in.idf` before Main, terminal, and wired
   recipient inference. Direct `@Card` delivery observes the recipient session without a second Main
   synthesis; consultations continue the same open Main Run from Hermes' real completion notification.
 - Each Card's saved Hermes Tools section controls ordinary Hermes toolsets independently from its saved Card
@@ -120,9 +124,11 @@ scheduler, task store or worker pool.
   cannot grant a tool. The retired application per-turn callback tool protocol is absent.
 - Valid enabled Card Scripts execute through Hermes' existing child Python runner and exact profile-loaded
   grants; blank or invalid source is inert. The owner's later general Hooks design remains a separate boundary.
-- Only saved Card `card_team` receives Hermes `task_mode: team`.
-- Magnetic uses saved blue topology as its worker ceiling; its same root remains both orchestrator and
-  final result task.
+- The saved Team Card/profile enters Team directly: one parked root enters Triage, fans out only to depth-one
+  workers under the configured Team policy, and returns to a separate synthesis pass. It does not call
+  `delegate_task(role="team")`, add an extra agent, or depend on a profile `task_mode` overlay.
+- Magnetic uses saved blue topology as the exact worker ceiling for modified Team execution; its same
+  root remains both orchestrator and final result task.
 - Hermes owns task rows, dependencies, attempts, dispatch, retries, workers, and synthesis.
 - LiquidAIty owns one outer product Run and does not copy the Hermes task ledger.
 
@@ -151,8 +157,8 @@ These are source/documentation gaps, not permission to repair them during this d
 ## Loaded core checkpoint — reached 2026-10-14
 
 Current source has one connected path from the restored UI through saved Card authority, one Project
-session per Card, one IDF/Run lifecycle, Hermes profile tools, orange Bot delivery, blue Magnetic
-authority, and each non-Main Card terminal. The old combined-conversation runtime, direct target executor,
+session per Card, one IDF/Run lifecycle, Hermes profile tools, wired Bot delivery, blue modified-Team
+worker authority, and each non-Main Card terminal. The old combined-conversation runtime, direct target executor,
 per-turn application tool callback, transport selector, fake status/limit controls, generic Card-tools host,
 and their stale tests are absent from the live application path. The reserved saved-profile `liquidaity`
 connection instead uses one short-lived, exact active-Run internal principal against the official MCP host.

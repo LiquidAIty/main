@@ -57,11 +57,11 @@ def _serve(handler_cls):
 
 
 def _handler(status: int = 200,
-             content_type: "str | None" = "text/html; charset=utf-8",
+             content_type: str | None = "text/html; charset=utf-8",
              body: bytes = b"<html>x</html>", head_status=None, record=None,
-             post_content_type: "str | None" = None,
+             post_content_type: str | None = None,
              post_body: bytes = b"",
-             post_status: "int | None" = None):
+             post_status: int | None = None):
     """Build a BaseHTTPRequestHandler that replies with the given shape.
 
     ``head_status`` lets HEAD return a different status than GET (to exercise
@@ -106,7 +106,7 @@ def _handler(status: int = 200,
             pb = post_body if post_body else body
             self._write(sc, ct, pb)
 
-        def log_message(self, format, *args):  # noqa: A002
+        def log_message(self, format, *args):
             pass
 
     return _H
@@ -292,7 +292,7 @@ def _redirect_handler(target_base: str):
 
         do_HEAD = do_GET = do_POST = _redir
 
-        def log_message(self, format, *args):  # noqa: A002
+        def log_message(self, format, *args):
             pass
 
     return _H
@@ -314,7 +314,7 @@ def _recording_mcp_handler(seen: dict):
 
         do_HEAD = do_GET = do_POST = _write_ok
 
-        def log_message(self, format, *args):  # noqa: A002
+        def log_message(self, format, *args):
             pass
 
     return _H
@@ -383,60 +383,3 @@ def test_streamable_http_client_strips_credentials_on_redirect(monkeypatch):
 
         asyncio.run(_drive())
     assert "authorization" not in seen and "x-api-key" not in seen
-
-
-def test_saved_card_context_headers_never_follow_a_cross_origin_loopback_redirect(monkeypatch):
-    import tools.mcp_tool as _mcp
-    from tui_gateway import saved_card_turn
-
-    task = _make_task()
-    seen: dict = {}
-    captured: dict = {}
-
-    @asynccontextmanager
-    async def _fake_streams(url, http_client=None, **kwargs):
-        captured["client"] = http_client
-        yield (None, None, None)
-
-    monkeypatch.setattr(_mcp, "streamable_http_client", _fake_streams)
-    monkeypatch.setattr(
-        saved_card_turn,
-        "current_card_turn_headers",
-        lambda: {
-            "X-LiquidAIty-Project-Id": "project-one",
-            "X-LiquidAIty-Deck-Id": "deck_builder",
-            "X-LiquidAIty-Conversation-Id": "conversation-one",
-            "X-LiquidAIty-Hermes-Profile": "trading",
-            "X-LiquidAIty-Run-Id": "run-one",
-        },
-    )
-    monkeypatch.setattr(
-        saved_card_turn,
-        "current_card_turn_authorization",
-        lambda: "Bearer internal-only",
-    )
-
-    with _serve(_recording_mcp_handler(seen)) as target, \
-            _serve(_redirect_handler(target)) as origin:
-        async def _drive():
-            cm = task._streamable_http_transport(
-                f"{origin}/mcp",
-                {"X-LiquidAIty-Hermes-Profile": "trading"},
-                connect_timeout=5.0, ssl_verify=True, client_cert=None,
-                oauth_auth=None, strict_cfg_headers=True,
-                configured_header_names={"x-liquidaity-hermes-profile"},
-            )
-            async with cm:
-                await captured["client"].get(f"{origin}/mcp")
-
-        asyncio.run(_drive())
-
-    for name in (
-        "authorization",
-        "x-liquidaity-project-id",
-        "x-liquidaity-deck-id",
-        "x-liquidaity-conversation-id",
-        "x-liquidaity-hermes-profile",
-        "x-liquidaity-run-id",
-    ):
-        assert name not in seen

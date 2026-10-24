@@ -1,8 +1,8 @@
 /**
  * Entity: Agent Builder
- * Relationship: This file verifies Agent Builder rail visibility follows enabled saved Cards and declared surface attachments.
+ * Relationship: This file verifies Agent Builder rail visibility follows enabled saved Card identities.
  * Entity: Saved Cards
- * Relationship: This file verifies Card identity and attachment state, rather than orange or blue wires, controls optional surface visibility.
+ * Relationship: This file verifies Card identity, rather than orange or blue wires, controls optional surface visibility.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -17,18 +17,7 @@ const worldView: AgentCardInstance = {
   prompt: 'Operate the one Earth experience.',
   templateId: 'template_assist',
   runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldview' },
-  runtimeOptions: {
-    subsystems: [{
-      id: 'gods-eye',
-      label: 'God’s Eye',
-      adapter: {
-        kind: 'python',
-        contractVersion: 'card-subsystem.v1',
-        capabilities: ['state', 'events', 'readiness'],
-      },
-      cardTab: { enabled: true },
-    }],
-  },
+  runtimeOptions: {},
   position: { x: 0, y: 0 },
 };
 
@@ -59,7 +48,7 @@ function visible(
 }
 
 describe('product rail visibility', () => {
-  it('recognizes the one Earth surface from its saved subsystem attachment, not Card id', () => {
+  it('recognizes the one Earth surface from its stable saved profile, not Card id', () => {
     expect(isWorldViewCard(worldView)).toBe(true);
     expect(isWorldViewCard({
       ...worldView,

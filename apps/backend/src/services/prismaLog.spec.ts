@@ -1,3 +1,8 @@
+/**
+ * Entity: Application Observability
+ * Relationship: This file verifies Prisma query logging is opt-in while warning and error evidence can never be disabled by that choice.
+ */
+
 import { describe, expect, it } from 'vitest';
 import { resolvePrismaLog } from './prismaLog';
 

@@ -85,6 +85,9 @@ def test_backend_transport_refuses_redirect_before_forwarding_secret() -> None:
 
     class RedirectHandler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802 - stdlib handler contract
+            content_length = int(self.headers.get("Content-Length", "0") or "0")
+            if content_length:
+                self.rfile.read(content_length)
             self.send_response(307)
             self.send_header(
                 "Location",

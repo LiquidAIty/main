@@ -11,9 +11,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import yaml
+import hermes_yaml as yaml
 
-import tui_gateway.server as server
+from tui_gateway import server
 
 
 @pytest.fixture
@@ -88,10 +88,42 @@ def test_configure_toggle_is_what_the_runtime_resolver_and_describe_see(profile_
     assert _described() == {"keep": True, "drop": False, "legacy": True}
 
 
-def test_configure_soul_roundtrips_exact_mixed_newlines(profile_dir):
-    soul = "first\r\nsecond\nthird\r\n"
+def test_profile_roster_roundtrips_absent_empty_and_exact(profile_dir):
+    root = profile_dir.parent.parent
+    builder = root / "profiles" / "builder"
+    builder.mkdir(parents=True)
+    (builder / "profile.yaml").write_text(
+        "ui_meta:\n  hermes-bots: {}\n",
+        encoding="utf-8",
+    )
+    (profile_dir / "profile.yaml").write_text(
+        "ui_meta:\n  hermes-bots: {}\n",
+        encoding="utf-8",
+    )
 
-    _call("profiles.configure", {"soul": soul})
+    assert _call("profiles.describe", {})["bot_mode_roster"] is None
 
-    assert (profile_dir / "SOUL.md").read_bytes() == soul.encode("utf-8")
-    assert _call("profiles.describe", {})["soul"] == soul
+    exact = _call("profiles.configure", {"bot_mode_roster": ["builder"]})
+    assert exact["ok"] is True
+    assert exact["applied"]["bot_mode_roster"] is True
+    assert _call("profiles.describe", {})["bot_mode_roster"] == ["builder"]
+
+    empty = _call("profiles.configure", {"bot_mode_roster": []})
+    assert empty["ok"] is True
+    assert _call("profiles.describe", {})["bot_mode_roster"] == []
+
+
+def test_profile_roster_rejects_self_and_unknown_profiles(profile_dir):
+    (profile_dir / "profile.yaml").write_text(
+        "ui_meta:\n  hermes-bots: {}\n",
+        encoding="utf-8",
+    )
+
+    self_result = _call("profiles.configure", {"bot_mode_roster": ["bot"]})
+    missing_result = _call("profiles.configure", {"bot_mode_roster": ["missing"]})
+
+    assert self_result["ok"] is False
+    assert self_result["applied"]["bot_mode_roster"] is False
+    assert missing_result["ok"] is False
+    assert missing_result["applied"]["bot_mode_roster"] is False
+    assert _call("profiles.describe", {})["bot_mode_roster"] is None

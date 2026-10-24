@@ -379,17 +379,20 @@ Each current Know is one verified sourced observation with a separate bounded in
 direction relative to an explicit proposition. Supporting, challenging and neutral Knows are all valid;
 balance belongs across research coverage and synthesis rather than fixed record proportions. Relevance failure
 never promotes Recent as Relevant.
-Each non-Magnetic Hermes Card has one explicit saved `Orchestrator` setting. When enabled, its outbound
-orange `flow` edges authorize that Card to address those exact saved Bot/Card targets; an edge grants no
-reverse authority. Main is a source-default direct orchestrator, while another Card may
-deliberately enable the same setting for a bounded series such as Signal -> WorldSignals. Only an enabled
-orchestrator renders an orange connection dot. The same target may also have a blue `magentic_option` edge,
-which independently makes that saved identity available to Magnetic's Hermes SQLite task ledger. Main remains
-the default chat front door and uses the same compact rounded Card geometry wherever a Card preview is rendered;
-presentation never creates a second Card type or orchestration authority. Card visibility does not create an
-orange edge, grant reverse authority, or make a Card a member of Magnetic's independent blue roster. The
-server's new-Project seed currently creates Main → Builder only; additional saved edges remain Project-owned
-persisted configuration.
+Each non-Magnetic Hermes Card has one explicit saved `Orchestrator` setting. When enabled, its actual enabled
+saved Card wires define the exact saved Bot/Card targets it may address through Hermes `message_agent`; Bot
+reachability is not restricted to orange wires. Main is the source-default direct orchestrator and may address
+every enabled saved Hermes Card present in the Project's enabled wire topology. Another Card may deliberately
+enable the same setting and receives only its own connected wired roster. A wire makes the connected Card a Bot
+target; it does not make the target an orchestrator or grant it reverse calling authority unless that Card also
+has its own saved `Orchestrator` setting. Orange `flow` is the ordinary/default Bot relationship. A blue
+`magentic_option` wire provides the same Bot reachability and additionally enrolls that saved identity in the
+exact worker roster for LiquidAIty's retained modified Hermes Team execution. Only an enabled orchestrator
+renders an orange connection dot. Main remains the default chat front door and uses the same compact rounded
+Card geometry wherever a Card preview is rendered; presentation never creates a second Card type or
+orchestration authority. Card visibility without a saved wire creates neither Bot authority nor Team
+membership. The server's new-Project seed currently creates Main → Builder only; additional saved edges remain
+Project-owned persisted configuration.
 Each Hermes Card also owns one saved desired Hermes subagent model. Run start materializes that
 selection into the bound Hermes profile and reads it back before inference; actual child provider/model
 and any runtime-reported deviation or failure belong in the Run receipt. LiquidAIty supplies no provider
@@ -402,8 +405,9 @@ general Card memory-provider field or reconfigures memory at Run start.
 
 The saved `card_knowgraph` Card, visible as `KnowGraph` and bound one-to-one to Hermes profile
 `knowgraph`, is the persistent sourced-research and KnowGraph helper. It is an ordinary Hermes-backed
-Card in `delegate` mode with `subagentType: none`; its profile's structural AutoTeam setting uses Hermes'
-existing `auto-team-v1` root for substantial research without enabling ordinary recursive delegation. It may
+Card in `delegate` mode with `subagentType: none`; substantial research enters its own retained Team Triage and
+root workflow without routing through the separate Team Card or enabling ordinary recursive
+delegation. It may
 read deliberately selected ThinkGraph and CodeGraph context, but Neo4j/Graphiti remains its graph authority
 and writer. The source-default Card uses Sol for the deeper factual/reality-check role; persisted saved Card
 model choice remains authority. AutoTeam candidate workers retain the saved Web research surface but receive
@@ -411,9 +415,9 @@ no profile MCP connection or graph-write tool. The synthesis root alone receives
 context and saved MCP ceiling, reviews worker findings, verifies provenance, deduplicates, and persists.
 One current Know is one first-class `Episodic:Know` object about exactly one Entity, with one source
 document, exact evidence passage, self-contained observation, separate bounded interpretation and optional
-proposition direction. Its citation fields are inspectable properties, its plain-text episode content remains
-available to Graphiti extraction and hybrid retrieval, and an exact `ABOUT` edge is distinct from extracted
-`MENTIONS`. The saved KnowGraph root uses Hermes' `grounded-citations` evidence workflow before invoking
+proposition direction. Its citation fields and exact `entity_uuid` are inspectable properties, its plain-text
+episode content remains available to Graphiti hybrid retrieval, and Know records retain no `ABOUT` or
+`MENTIONS` attachment edge. The saved KnowGraph root uses Hermes' `grounded-citations` evidence workflow before invoking
 Graphiti's queued `add_know`; Python rails preserves the typed citation and Project scope without creating a
 second web retriever or citation ledger.
 Main PDF attachment ingestion writes through the Graphiti service directly; it is not a KnowGraph Card
@@ -474,8 +478,8 @@ preparation and settlement owners exactly once. User additions during active inf
 Run and produce one aggregate completed exchange; LiquidAIty owns no chat prompt queue. No candidate graph,
 approval state, shadow graph, raw conversation Memory, regex-first skeleton, broad cleanup path, generic target
 runner, or second graph writer may substitute for that bounded caller. KnowGraph retains sourced research through its existing
-research agent and queued Graphiti intake. Its dedicated Entity write records one exact structural `ABOUT` edge while
-leaving extracted `MENTIONS` independent. Only Entities render as Project graph nodes; Thinks, Knows,
+research agent and queued Graphiti intake. Its dedicated Entity write stores one exact `entity_uuid` property and removes
+any Know `ABOUT` or `MENTIONS` attachment edge. Only Entities render as Project graph nodes; Thinks, Knows,
 Graphiti episodes, citations, and supporting IDs remain attached properties or provenance. Engraphis
 and Graphiti reads produce bounded candidates, and Jev ranks them against the current request for automatic
 agent grounding. The ordinary Entity inspector instead shows at most two provider-projected attached records;
@@ -552,7 +556,7 @@ Cards remain one product concept. Their explicit Hermes runtime mode/profile bin
 configuration, not a separate Card type or a second runtime payload. A sending user or agent supplies
 only dynamic input and selected references; Python validates or rereads that exact bounded selection, and
 the receiving Card owns materialization. Persistent orchestrator-to-Card work uses Hermes
-`message_agent` only for that orchestrator's exact outbound orange target roster. The application-owned Card
+`message_agent` only for that orchestrator's exact saved wired Bot roster. The application-owned Card
 plugin mechanically maps a unique saved visible one-word Card title to the already-authorized stable Hermes
 profile; it never discovers, authorizes, or delivers another target. There is no generic public tool that runs
 an arbitrary Card as an assistant. Optional review uses the existing Card Invocation and Knowledge

@@ -1,5 +1,5 @@
 """Model switching for a live session: persist, snapshot/restore runtime, /model apply with
-guards, profile-capability + config sync. Bodies are rebound onto server.py's globals at install
+guards, bot-capability + config sync. Bodies are rebound onto server.py's globals at install
 time (method_ctx.bind_module), so they reference server.py globals bare."""
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def _restore_agent_model_runtime(agent, snapshot: dict | None) -> None:
             agent.reasoning_config = snapshot["reasoning_config"]
 
 
-def _profile_runtime_scope_tokens(profile_home, *, hydrate_secrets: bool = True) -> "_TurnScopes":
+def _profile_runtime_scope_tokens(profile_home, *, hydrate_secrets: bool = True) -> _TurnScopes:
     """Bind HERMES_HOME + secret + terminal scope for ``profile_home`` (None = launch profile) and
     return the reset tokens. The launch profile's SECRET scope is always bound — its ``.env`` over
     the launch env (live while single-profile, frozen at activation afterwards; never live
@@ -83,8 +83,10 @@ def _profile_runtime_scope_tokens(profile_home, *, hydrate_secrets: bool = True)
             # launch profile"); single-profile, only its secrets need binding. Once multiplexing is
             # active the override is bound too: an unset override is the "unbound context" signal
             # plugin runtime bindings and per-home slots fail closed on (#118538).
+            # Resolve at call time like the launch state.db handle: a harness that
+            # re-homes the process after import must not read the old home's .env.
             from tui_gateway.launch_profile_policy import launch_secret_scope, launch_terminal_env
-            home = Path(_hermes_home)
+            home = _launch_home()
             secrets = launch_secret_scope(home)
             # No home stamp: this IS the process's own profile, and the stamp exists only to
             # mark a FOREIGN home for serves_routed_profile().
@@ -107,7 +109,7 @@ def _profile_runtime_scope_tokens(profile_home, *, hydrate_secrets: bool = True)
         raise
 
 
-def _release_profile_runtime_scope_tokens(scopes: "_TurnScopes | None") -> None:
+def _release_profile_runtime_scope_tokens(scopes: _TurnScopes | None) -> None:
     """Release terminal → secret → home. Each reset is independent: a failing terminal reset must
     not leave the previous profile's secrets / HERMES_HOME installed for the next body in this
     context (a fail-open scope leak on the teardown path). The first failure is re-raised after
@@ -122,7 +124,7 @@ def _release_profile_runtime_scope_tokens(scopes: "_TurnScopes | None") -> None:
             continue
         try:
             reset(token)
-        except Exception as exc:  # noqa: BLE001 — keep releasing the remaining scopes
+        except Exception as exc:
             first_error = first_error or exc
     if first_error is not None:
         raise first_error
@@ -139,26 +141,26 @@ def _session_profile_runtime_scope(session: dict, *, hydrate_secrets: bool = Tru
         _release_profile_runtime_scope_tokens(scopes)
 
 
-def _session_default_model(session: dict) -> str:
-    """The configured default model of the session's OWN profile. Bare ``_resolve_model()`` reads the
-    LAUNCH profile's config, so a secondary session's reply or first state.db row carried the launch
-    profile's model id."""
+def _session_default_route(session: dict) -> tuple[str, str]:
+    """``(model, provider)`` a not-yet-built session of its OWN profile will run on. Bare
+    ``_resolve_startup_runtime()`` reads the LAUNCH profile's config, so a secondary session's reply or
+    first state.db row carried the launch profile's model id. On the Nous free tier the agent build pins
+    ``nous/welcome`` (``pin_model_for_route``), so the configured default (often the silent default,
+    with no provider) is not what the session runs; report the pinned route instead."""
+    from hermes_cli.anon_auth import GUEST_MODEL, free_tier_route
     with _session_profile_runtime_scope({"profile_home": session.get("profile_home") or None},
                                         hydrate_secrets=False):
-        return _resolve_model()
+        if not _resolve_startup_runtime()[1] and free_tier_route():
+            return GUEST_MODEL, "nous"
+        # Off the free tier, the model id alone: the provider is resolved when the agent is built.
+        return _resolve_model(), ""
 
 
-def _session_default_provider(session: dict) -> str:
-    """The configured provider of the session's own profile.
-
-    Lazy sessions have no built agent yet, but ``SessionLiveInfo`` still
-    promises the provider paired with the profile's default model.
-    """
-    with _session_profile_runtime_scope(
-        {"profile_home": session.get("profile_home") or None},
-        hydrate_secrets=False,
-    ):
-        return _config_model_target()[1]
+def _lazy_info_route(session: dict, override: dict) -> dict:
+    """``session.info``'s model and provider for a not-yet-built session: the client's sticky pick when it
+    sent one (so the client does not clobber it), else the profile's default route."""
+    model, provider = (override.get("model"), override.get("provider")) if override else _session_default_route(session)
+    return {"model": model, **({"provider": provider} if provider else {})}
 
 
 def _restart_completed_failed_agent_build(sid: str, session: dict, failed_ready: threading.Event | None) -> bool:
@@ -227,6 +229,20 @@ def _current_model_runtime(agent, explicit_provider: str) -> tuple:
     return provider, current_model, str(runtime.get("base_url", "") or ""), key
 
 
+def _switch_away_provider(agent, explicit_provider: str, current_provider: str) -> str | None:
+    """The provider of the model the user leaves. Agent-less with ``--provider``, ``current_provider``
+    is the TARGET (what switch_model wants), so the launch route names it instead; None when only a
+    credential resolve could tell, which the metric reads as ``unknown`` and so reports the model as
+    ``custom``."""
+    if agent or not explicit_provider:
+        return current_provider
+    if env_provider := os.environ.get("HERMES_TUI_PROVIDER", "").strip():
+        return env_provider
+    if _env_model_seed():
+        return None
+    return _config_model_target()[1] or None
+
+
 def _merge_preflight_warning(result, agent, session: dict, cfg, custom_provs) -> None:
     """Fold the context-compression preflight warning into ``result`` (best-effort)."""
     try:
@@ -289,10 +305,15 @@ def _commit_agent_switch(sid: str, session: dict, agent, result, current_model: 
         session.pop("one_turn_model_restore", None)
 
 
+LARGE_MODEL_NOTICE_KEY = "model.large_notice"
+
+
 def _apply_model_switch(
     sid: str, session: dict, raw_input: str, *, confirm_expensive_model: bool = False,
     pin_session_override: bool = True, parsed_flags: Any | None = None,
-    persist_override: bool | None = None) -> dict:
+    persist_override: bool | None = None, count_switch: bool = True) -> dict:
+    """``count_switch=False``: an internal swap (config adoption, MoA one-shot and its restore), not a
+    user's /model pick, so it stays out of the shared-metrics switch count."""
     from hermes_cli.model_switch import switch_model
     model_input, explicit_provider, one_turn, persist_global, reasoning_effort = _switch_request(
         raw_input, parsed_flags, persist_override)
@@ -355,6 +376,19 @@ def _apply_model_switch(
         persist_model_selection(result)
     if reasoning_effort:
         _apply_switch_reasoning(sid, session, agent, reasoning_effort, persist_global=persist_global, one_turn=one_turn)
+    if count_switch:
+        from hermes_cli.observability.shared_metrics_events import record_model_switch
+
+        record_model_switch(
+            from_provider=_switch_away_provider(agent, explicit_provider, current_provider),
+            to_provider=result.target_provider, surface=_session_source(session), from_model=current_model,
+            session_id=getattr(agent, "session_id", None))
+    if (notice := getattr(result, "usage_notice", "")) and sid:
+        # Window plans, Large model: a warning, never a confirm. The existing notice event, so desktop
+        # (toast) and TUI (status line) show it for every switch path, live or applied at turn start.
+        _emit("notification.show", sid, {
+            "text": f"⚠ {notice}", "level": "warn", "kind": "ttl", "ttl_ms": 8000,
+            "key": LARGE_MODEL_NOTICE_KEY, "id": LARGE_MODEL_NOTICE_KEY})
     return {
         "value": result.new_model, "warning": result.warning_message or "",
         "confirm_required": False,
@@ -384,67 +418,42 @@ def _apply_switch_reasoning(sid: str, session, agent, effort: str, *, persist_gl
         _emit_session_info(sid, session)  # the switch's own emit predates the effort change
 
 
-def _sync_profile_capabilities(sid: str, session: dict) -> None:
-    """Refresh a profile-following session.
-
-    Bot Chats and explicit ``follow_profile_config`` sessions keep one stored conversation while
-    profile-owned prompt, skills, toolsets, MCP and transport policy remain editable. Fingerprint
-    that surface at turn admission and replace only the live agent when it changes; the session
-    history and Hermes session identity remain intact.
-    """
+def _sync_bot_capabilities(sid: str, session: dict) -> None:
+    """Rebuild a Bot Chat session's agent when its capability surface changed. Bot Chats are
+    eternal sessions with toolsets/MCP baked in at construction, so a capability edit would
+    otherwise wait for /new: fingerprint at turn start and on change swap in a fresh agent for
+    the SAME session (history is DB-backed)."""
     agent = session.get("agent")
     if agent is None:
         return
-    follows_profile = session.get("follow_profile_config") is True
-    is_bot_chat = False
     try:
         title = str(getattr(agent, "_session_title_hint", "") or "").strip()
         if not title:
             db, key = getattr(agent, "_session_db", None), session.get("session_key") or ""
             title = str((db.get_session_title(key) if (db and key) else None) or "").strip()
-        is_bot_chat = title == "Bot Chat"
-        if not is_bot_chat and not follows_profile:
+        if title != "Bot Chat":
             return
-        seen = session.get("profile_capabilities_seen")
         from tools.bot_mode_probe import capability_fingerprint
-        roster = session.get("bot_mode_roster")
-        roster_override = list(roster) if isinstance(roster, list) else None
-        current = capability_fingerprint(
-            session.get("profile_home") or None,
-            roster_override=roster_override,
-        )
+        current = capability_fingerprint(session.get("profile_home") or None)
         if current == "unavailable":
-            if follows_profile and not is_bot_chat:
-                raise RuntimeError("profile_capability_fingerprint_unavailable")
             return
-        if seen is None and not (follows_profile and not is_bot_chat):
-            session["profile_capabilities_seen"] = current
-            return
-        if seen == current:
+        seen = session.get("bot_caps_seen")
+        session["bot_caps_seen"] = current
+        if seen is None or seen == current:
             return
     except Exception:
-        if follows_profile and not is_bot_chat:
-            raise
         return
     try:
-        from tools.bot_mode_probe import invalidate_bot_mode_protocol_cache
-        invalidate_bot_mode_protocol_cache(session.get("profile_home") or None)
-        from agent.prompt_builder import clear_skills_system_prompt_cache
-        clear_skills_system_prompt_cache(clear_snapshot=True)
         tokens = _set_session_context(sid, cwd=_session_cwd(session))
         try:
             new_agent = _rebuild_session_agent(sid, session, session_id=session["session_key"],
                                                platform_override=_session_source(session))
         finally:
             _clear_session_context(tokens)
-        if is_bot_chat:
-            new_agent._session_title_hint = "Bot Chat"
-            _emit("notice", sid, {"message": "Capabilities updated — this bot's tools and prompt were refreshed."})
-        session["profile_capabilities_seen"] = current
+        new_agent._session_title_hint = "Bot Chat"
+        _emit("notice", sid, {"message": "Capabilities updated — this bot's tools and prompt were refreshed."})
     except Exception as e:
-        logger.warning("Profile capability sync failed for %s: %s", sid, e)
-        if follows_profile and not is_bot_chat:
-            raise RuntimeError("profile_capability_refresh_failed") from e
+        logger.warning("Bot capability sync failed for %s: %s", sid, e)
 
 
 def _sync_agent_model_with_config(sid: str, session: dict) -> None:
@@ -472,7 +481,6 @@ def _sync_agent_model_with_config(sid: str, session: dict) -> None:
         # the normal config-sync path switch now and prevents the old composer pick resurfacing on rebuild.
         superseded_pin = session.pop("model_override"), composer_profile
         session["composer_override_profile"] = None
-        session.pop("resume_runtime_overrides", None)
     # Record first so a broken config gets one attempt per edit, not per turn.
     session["config_model_seen"] = target
     model, provider = target
@@ -488,7 +496,7 @@ def _sync_agent_model_with_config(sid: str, session: dict) -> None:
         # how `hermes --tui -m` once leaked into config.yaml).
         _apply_model_switch(
             sid, session, raw, confirm_expensive_model=True, pin_session_override=False,
-            persist_override=False)
+            persist_override=False, count_switch=False)
     except Exception as e:
         logger.warning("Configured model %s could not be adopted for session %s: %s", model, sid, e)
         from gateway.warning_notifications import render_notification
@@ -497,15 +505,19 @@ def _sync_agent_model_with_config(sid: str, session: dict) -> None:
             platform="tui", user_config=getattr(session.get("agent"), "_notification_config", None))
 
 
-def _pending_switch_selection_warning(model: str, provider: str) -> str | None:
+def _pending_switch_selection_warning(model: str, provider: str, agent: Any = None) -> str | None:
     """Selection-guard message for a model queued mid-turn, or ``None``. Runs BEFORE the pick is
     stashed (the client can still turn the response into a confirm prompt); only pre-resolution
-    inputs exist so it can only under-fire — ``_apply_model_switch`` is the backstop."""
+    inputs exist for the model guards, so they can only under-fire — ``_apply_model_switch`` is the
+    backstop. The live ``agent`` supplies the context-cache guard's session size here, since at turn
+    start that guard can no longer ask and would drop the pick."""
     if not model:
         return None
     try:
-        from hermes_cli.model_selection_guards import combined_selection_warning
-        warning = combined_selection_warning(model, provider=provider or None)
+        from hermes_cli.model_selection_guards import (
+            combined_selection_warning, selection_context_for_agent)
+        warning = combined_selection_warning(
+            model, provider=provider or None, selection_context=selection_context_for_agent(agent))
     except Exception:
         return None
     return warning.message if warning is not None else None

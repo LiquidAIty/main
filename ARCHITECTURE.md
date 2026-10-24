@@ -38,8 +38,10 @@ The core roles are:
   executable missions. Hermes owns its terminal and environment.
 - **ThinkGraph:** saved Engraphis reasoning Card.
 - **KnowGraph:** saved sourced-research Card with Hermes Web and Graphiti read/queued-write tools.
-- **Magnetic:** approved saved-Card TaskGraph over an exact blue roster.
-- **Team:** separate Hermes Team/Kanban behavior owned by saved `card_team`/profile
+- **Magnetic:** approved saved-Card TaskGraph over an exact blue roster through the retained modified Hermes
+  Team task contract.
+- **Team:** direct saved-Card/profile entrance to the retained reduced Team task behavior, owned by saved
+  `card_team`/profile
   `team`; it is not ordinary delegation and is not KnowGraph behavior.
 
 Every behavioral statement in canonical documentation is classified as **CURRENT**, **APPROVED
@@ -67,7 +69,7 @@ and inverse deletion/rename mechanics.
 | Official MCP host | `apps/python-models/app/{mcp_host,mcp_auth,mcp_catalog_runtime,mcp_catalog_projection,mcp_provider_operations,mcp_observability,mcp_request_dispatch,mcp_transport}.py` | One SDK transport/dispatch host with literal owners for authentication, process-wide frozen catalog lifecycle, stateless SDK/provider projection, provider publication/calls, request dispatch, transport, and diagnostics; external clients and Hermes profile MCP connections consume the same canonical definitions |
 | CodeGraph | Official Codebase Memory MCP through the application host | Repository structure and source relationships; CBM is the sole graph writer |
 | ThinkGraph | Engraphis through `engraphis.py` and the responsibility-specific `engraphis_operations.py`, `thinkgraph_projection.py`, `thinkgraph_completed_pair_extraction.py`, `thinkgraph_completed_pair_preparation.py`, `thinkgraph_completed_pair_settlement.py`, `thinkgraph_relationship_vocabulary.py`, `thinkgraph_relationship_classification.py`, and `thinkgraph_relationship_settlement.py` modules in `apps/python-models/app/python_models/` | Project reasoning, canonical entities, the exact saved-Card structured extraction contract, completed-pair identity/dedup/non-writing preparation, append-only Engraphis episodic Think settlement, project relationship vocabulary/promotion, Jev source-pair classification/provenance, accepted-decision graph settlement, structured-extractor incidence, and the sole persistent ThinkGraph store |
-| KnowGraph | Controlled `GraphitiLatest/` fork plus `services/knowgraph` and the Python provider adapter | Sourced Entity Knows, citations, exact structural `ABOUT` attachment, Graphiti Relationships, Communities, Sagas, provenance, queued ingestion, exact reads, and exact episode removal |
+| KnowGraph | Controlled `GraphitiLatest/` fork plus `services/knowgraph` and the Python provider adapter | Sourced Entity Knows, citations, exact stored `entity_uuid`, no Know attachment edges, Graphiti Relationships, Communities, Sagas, provenance, queued ingestion, exact reads, and exact episode removal |
 | AgentGraph | AGE/PostgreSQL through `agentgraph_topology.py` and `agentgraph_run_observations.py` | Saved Card relationships/authorization and truthful Run/reference/artifact observations remain separate writers over one AGE authority |
 
 ## Authority chain
@@ -183,9 +185,10 @@ second Bot/terminal execution path.
 The restored Main doorway is `apps/backend/src/routes/mainSession.routes.ts`, mounted with browser
 authentication at `/api/main/session`. It persists user messages before Python Run preparation and
 transports Hermes events and completions. Unaddressed chat uses the saved Main profile and its
-exact Project-scoped Hermes session. The adapter materializes only Main's reachable orange closure, or Main
-plus the resolved recipient and that recipient's reachable orange closure for an explicit direct turn. Each
-orchestrator receives only its exact outbound orange roster and target-session map. An explicit `@Card` still enters Main first and must use Hermes
+exact Project-scoped Hermes session. The adapter materializes Main's exact enabled wired Bot roster, or Main
+plus the resolved recipient and that recipient's own connected wired roster for an explicit direct turn. Wire
+type does not exclude a connected saved Hermes Card from Bot reachability. Each orchestrator receives only its
+exact saved wired roster and target-session map. An explicit `@Card` still enters Main first and must use Hermes
 `message_agent`; the application observes the exact recipient session and suppresses only the redundant
 later Main synthesis notification. An unaddressed model-directed consultation keeps Hermes' completion
 notification and continues the same still-open Main Run. Main does not execute or impersonate the target.
@@ -193,7 +196,7 @@ notification and continues the same still-open Main Run. Main does not execute o
 Every ordinary receiving Card turn without an already-open application Run calls the process-authenticated
 Card-turn endpoint before inference. Python accepts one Run, materializes and rereads that receiving Card's
 one `in.idf`, and returns the mechanical Hermes message/model/tool/Script projection. Hermes starts and
-settles that same Run around the actual turn. Orange child Runs carry only the parent Run ID into AGE
+settles that same Run around the actual turn. Wired child Runs carry only the parent Run ID into AGE
 lineage; transcript text and IDF bytes remain with their existing owners. A Project target with no live
 exact session fails without falling through to another CLI session. Profile MCP calls add the exact current
 Project/profile/Run headers at call time; saved grants remain the ceiling. A valid Card Script uses only
@@ -219,18 +222,19 @@ These are separate execution contracts:
 
 | Mechanism | Current owner | Current meaning |
 | --- | --- | --- |
-| Team | Saved `card_team`/profile `team` plus Hermes `kanban.task_mode: team` | One durable Team root, Hermes decomposition into temporary same-profile workers, review, and synthesis in Hermes SQLite Kanban |
-| KnowGraph research | Saved `card_knowgraph`/profile `knowgraph`, its exact orange caller, and Hermes `kanban.task_mode: team` | One saved-Card Run bound to an AutoTeam root; read-only Web candidate workers feed one root-owned verified Graphiti synthesis |
-| Magnetic | Saved `card_magentic`, exact blue topology, and `magnetic_taskgraph_*` Python owners | One approved mission and exact saved worker ceiling; the same Magnetic root orchestrates dependency rounds and supplies the final result |
+| Team | Saved `card_team`/profile `team` entering Team directly | One parked durable root enters Team Triage, fans out to depth-one workers under the configured Team policy, retries there, then runs a separate synthesis pass on the same root and rejoins the originating session; there is no `delegate_task(role="team")` hop |
+| KnowGraph research | Saved `card_knowgraph`/profile `knowgraph`, its exact wired caller, and its own Team Triage entry | One saved-Card Run whose read-only Web candidate workers feed one root-owned evidence gate and verified Graphiti synthesis; it does not route through the Team Card or a profile `task_mode` overlay |
+| Magnetic | Saved `card_magentic`, exact blue topology, and the modified Hermes Team task owner | One approved mission and exact saved worker ceiling; the same Magnetic root orchestrates dependency rounds and supplies the final result |
 
-The internal Team workflow marker remains `auto-team-v1`; it names the one existing generic Hermes
-decomposition/review/synthesis implementation. Both the Team Card and KnowGraph can use that capability
-through their own saved profiles without routing KnowGraph through the Team Card. Candidate workers cannot
+The retained Team workflow marker names LiquidAIty's reduced Team contract over Hermes task/dependency owners;
+it is entered directly by the receiving saved Card/profile, not by asking another agent to delegate a Team.
+KnowGraph uses its own research/Triage entry rather than calling the Team Card.
+Candidate workers cannot
 open a nested Team, leaf, or recursive delegation tree. KnowGraph decomposition and candidate steps omit
 profile MCP connections; only its synthesis root receives the exact target Card Run context and saved grant
-ceiling. Magnetic may assign the saved Team Card as one blue worker. When Team is the only exact blue worker,
-current source deliberately stages that Team root directly; the KnowGraph research binding does not alter
-Magnetic's topology or collapse these saved-Card authorities.
+ceiling. Every enabled wire supplies Bot reachability, while blue wires additionally define the exact Team
+worker roster. Magnetic may assign the saved Team Card as one blue worker. The KnowGraph research
+binding does not alter Magnetic's topology or collapse these saved-Card authorities.
 
 ## MCP and Codebase Memory
 
@@ -343,7 +347,7 @@ one verified source URL/redirect + document identity/date + exact evidence passa
 + one self-contained observation
 + one separately labeled bounded interpretation
 + optional supports/challenges/context direction for one explicit proposition
-= one Know attached to exactly one Entity
+= one Know carrying exactly one Entity UUID
 ```
 
 The saved KnowGraph root applies its always-on evidence gate to actual `web_search` / `web_extract` results:
@@ -375,10 +379,10 @@ probability, gravity mass, retrieval, or stored graph meaning.
 
 KnowGraph may use selected Thinks only as research framing. Sourced Knows remain Graphiti evidence.
 Its dedicated `add_know` intake path reuses the exact supplied UUID/name Entity, reuses an exact-name Entity
-when no UUID is supplied, or creates the missing Entity. It then writes one structural `ABOUT` edge, leaves
-extraction-owned `MENTIONS` independent, updates Graphiti communities by default, and accepts Graphiti Saga
+when no UUID is supplied, or creates the missing Entity. It stores that identity in `entity_uuid`, removes any
+Know `ABOUT` or `MENTIONS` attachment edge, updates Graphiti communities by default, and accepts Graphiti Saga
 continuity. `get_know` reads the exact UUID returned at intake, `search_knows` reuses Graphiti episode BM25 plus cross-encoder reranking, while
-`get_entity_knows` follows only the exact `ABOUT` attachment. The public generic `add_memory` behavior remains
+`get_entity_knows` selects only the exact stored `entity_uuid`. The public generic `add_memory` behavior remains
 unchanged. Quick-Web evidence handoff and a requested-time sorting interaction remain unimplemented and must
 not be described as current.
 
@@ -462,8 +466,9 @@ The source-wired WorldView launcher is `scripts/start-worldview.ps1` (package sc
 the WorldSignals service is started by package script `dev:worldsignals`. These source paths do not
 establish loaded-service or product acceptance.
 
-For Hermes, the retained local extensions are recorded in
-`HermesLatest/LIQUIDAITY_PATCHES.md`. Direct-agent delivery remains Hermes-owned. LiquidAIty's TypeScript
+For Hermes, the accepted local extension boundary is exactly the profile-scoped wired Bot roster plus the
+reduced Team task contract. The final rebased file-and-symbol manifest belongs in the single
+vendored divergence register after focused source proof. Direct-agent delivery remains Hermes-owned. LiquidAIty's TypeScript
 adapter creates/resumes exact Project-scoped saved-Card sessions and observes Gateway events, but it does
 not execute a target Card, deliver Card-to-Card text, or own a queue. Magnetic changes only assignment authority inside one
 explicitly bounded creator tree and leaves ordinary tasks unrestricted. Upstream ACP is not a
@@ -471,8 +476,7 @@ LiquidAIty execution boundary. No other Hermes customization is accepted by this
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
 | --- | --- | --- | --- |
-| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Retained Hermes extensions are governed only by that register and current source. Hermes keeps profile creation, execution, sessions, Bot delivery, learning, its upstream internal scheduling, task ledger, PTY, MCP transport, and child Python execution. LiquidAIty submits only an idle Main prompt or an invisible active-turn steer and never requests, exposes, or accepts an upstream busy-prompt queue state. Local hunks add Project roster/session/target-Card inputs, receiving-Card Run context, exact process/task/Run correlation, exact completed-task result delivery into the existing owner session while retaining compact status presentation, profile-MCP request headers and signed loopback authorization, content-aware profile-configuration cache invalidation, preservation of enabled profile MCP servers beneath an empty ordinary-Hermes-tool pin, Card Script presentation, saved-Card-bound AutoTeam synthesis with read-only candidate workers, and the existing Team/Magnetic authority constraints without another runtime. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, per-turn application tool callback, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
-| Same Hermes baseline | `HermesLatest/hermes_cli/taskgraph_adapter.py::{validate_profiles,stage_root,activate_root,read_root,main}`; focused adapter tests | Provide one generic, JSON-serializable public process boundary over Hermes's existing profile and Kanban APIs so another co-located runtime can stage, activate, and read the same task root without importing Hermes internals or mutating process-global Python module state. Hermes retains its database, dispatcher, attempts, workers, dependencies, authority events, and synthesis. | External alternative check: shipped CLI/Gateway do not expose exact allowed-assignee, authority-event, blocked-stage/activate, or whole-root readback contracts; Python-rails and Hermes package pins conflict. Proof requires adapter unit tests plus application Magnetic tests and one loaded same-root mission. Fork cost is one additive module; rollback removes it and disables the dependent Magnetic adapter without migrating task data. |
+| `NousResearch/hermes-agent` `0.22.5`, tag `v0.22.5`, source commit `bf0203a794a07aac3ff764972ab9087baa4e4f4e` | Profile-scoped Bot-roster resolution plus the bounded Team-task files and tests named in the final divergence register | Preserve upstream profile creation, sessions, `message_agent` delivery, queueing, receipts, learning, task ledger, dispatch, retries, workers, PTY, MCP transport, and child execution. Local code may only project exact saved wire authority into a profile Bot roster and provide the direct reduced Team workflow semantics: parked root, Triage, depth-one policy-pinned workers, retry, separate same-root synthesis, and originating-session rejoin. Blue topology supplies that Team worker roster; all enabled wires still supply Bot reachability. | No broad overlay is accepted. Focused vendor tests, generated-contract parity, application build, loaded Team/Bot execution, and final visual acceptance are separate proof levels. Rollback removes both bounded extensions and their tests together; it must not retain an application scheduler, task store, delivery adapter, or fallback. |
 
 The existing Hermes app-server adapter also preserves provider vision input:
 `HermesLatest/tui_gateway/prompt_turn.py::_route_turn_images` respects the saved
@@ -510,7 +514,7 @@ The vendored Graphiti fork has this bounded additive divergence:
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |
-| `getzep/graphiti` core `0.30.2` / MCP `1.1.0` at `eaa4128681bc53487138a4bbc22d58336ebe70d2` | `GraphitiLatest/graphiti_core/{knows.py,graphiti.py,graph_queries.py}`; episode-search label filtering in `search/{search_filters.py,search_utils.py}` and Neo4j/FalkorDB/Neptune search operations; `mcp_server/src/{graphiti_mcp_server.py,models/response_types.py,services/queue_service.py}`; MCP/core Know tests and MCP README; MCP-v2 `pyproject.toml` and transport port retained from the repository's prior accepted Graphiti compatibility work | **PURPOSE:** add one first-class, cited `Episodic:Know` that uses ordinary `add_episode` extraction, hybrid episode retrieval, temporal fields, Communities and Saga edges, then adds exactly one caller-owned `ABOUT` Entity attachment while leaving extracted `MENTIONS` independent. Exact UUID/name Entities are reused; an absent Entity is created without fuzzy target substitution. `get_know` reads the exact intake UUID; `search_knows` uses Graphiti BM25 plus cross-encoder reranking; `get_entity_knows` follows exact `ABOUT`. Citation and reasoning are typed node properties and episode content is plain text, never a JSON Know envelope. **EXTERNAL ALTERNATIVE CHECK:** upstream `add_episode` supplies extraction/retrieval/Saga behavior but has no first-class Know type or exact one-Entity attachment, and an application adapter cannot add those provider-owned graph semantics. Existing generic tools and records are unchanged. The product uses Neo4j; the additive Know path explicitly refuses deprecated Kuzu rather than pretending parity. | Focused core tests cover exact Entity reuse/create, plain-text ingestion, one-Entity enforcement, Saga forwarding and filtered hybrid search; MCP tests cover v2 catalog shape, the shared per-group queue and argument parity; Python adapter/UI tests cover verified typed citations, exact reads and display. Loaded Neo4j/agent persistence remains a separate proof tier. Fork cost is one additive model/edge contract, four additive MCP tools, episode-label filtering, and the retained MCP-v2 compatibility port. Rollback removes those additions and returns to upstream episodes without first-class Know retrieval; existing upstream Entity, episode, fact, Community and Saga behavior requires no migration. |
+| `getzep/graphiti` core `0.30.2` / MCP `1.1.0` at `eaa4128681bc53487138a4bbc22d58336ebe70d2` | `GraphitiLatest/graphiti_core/{knows.py,graphiti.py,graph_queries.py}`; episode-search label filtering in `search/{search_filters.py,search_utils.py}` and Neo4j/FalkorDB/Neptune search operations; `mcp_server/src/{graphiti_mcp_server.py,models/response_types.py,services/queue_service.py}`; MCP/core Know tests and MCP README; MCP-v2 `pyproject.toml` and transport port retained from the repository's prior accepted Graphiti compatibility work | **PURPOSE:** add one first-class, cited `Episodic:Know` that uses ordinary `add_episode` ingestion, hybrid episode retrieval, temporal fields, Communities and Saga edges, then stores exactly one caller-owned Entity UUID as data and removes the Know's `ABOUT` or extraction-created `MENTIONS` attachment edges. Exact UUID/name Entities are reused; an absent Entity is created without fuzzy target substitution. `get_know` reads the exact intake UUID; `search_knows` uses Graphiti BM25 plus cross-encoder reranking; `get_entity_knows` selects exact `entity_uuid`. Citation and reasoning are typed node properties and episode content is plain text, never a JSON Know envelope. **EXTERNAL ALTERNATIVE CHECK:** upstream `add_episode` supplies ingestion/retrieval/Saga behavior but has no first-class Know type, exact one-Entity property contract, or Know-specific edge cleanup; an application adapter cannot add those provider-owned graph semantics. Existing generic tools and non-Know records are unchanged. The product uses Neo4j; the additive Know path explicitly refuses deprecated Kuzu rather than pretending parity. | Focused core tests cover exact Entity reuse/create, plain-text ingestion, one-Entity enforcement, attachment-edge removal, Saga forwarding and filtered hybrid search; MCP tests cover v2 catalog shape, the shared per-group queue and argument parity; Python adapter/UI tests cover verified typed citations, property-based exact reads and display. Loaded Neo4j/agent persistence remains a separate proof tier. Fork cost is one additive model/property contract, four additive MCP tools, episode-label filtering, Know edge cleanup, and the retained MCP-v2 compatibility port. Rollback removes those additions and returns to upstream episodes without first-class Know retrieval; existing upstream Entity, episode, fact, Community and Saga behavior requires no migration. |
 
 The installed Engraphis runtime and the separately retained browser-renderer fork have these bounded local divergences:
 

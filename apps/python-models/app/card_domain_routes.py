@@ -1,4 +1,4 @@
-"""Card, IDD, tool, Script, deck, Run, and Magnetic routes."""
+"""Card, IDD, tool, Script, deck, and Run routes."""
 # Entity: Saved Cards
 # Relationship: This file exposes the Python-owned Project deck read and revision-checked save operations through internal HTTP routes.
 #
@@ -13,9 +13,6 @@
 #
 # Entity: Run Ledger
 # Relationship: This file exposes begin, start, finish, exact read, and bounded history operations for the durable outer Run ledger.
-#
-# Entity: Magnetic TaskGraph
-# Relationship: This file reads or reconciles one bound Hermes task root into its existing outer Magnetic Run when status is requested.
 
 from fastapi import APIRouter, HTTPException
 from typing import Any
@@ -23,12 +20,10 @@ from app.python_models.saved_card_contract import CardDomainError
 from app.python_models.saved_cards import load_deck, save_deck
 from app.python_models.card_run_execution import start_run
 from app.python_models.card_run_preparation import begin_run
-from app.python_models.card_run_readback import read_run, read_run_history
+from app.python_models.card_run_readback import read_latest_runs, read_run, read_run_history
 from app.python_models.card_run_settlement import finish_run
 from app.python_models.card_script import CardScriptValidationError, generate_card_script_header, saved_script
 from app.python_models.idd import IddValidationError, materialize_card_editor, materialize_runtime_options
-from app.python_models.magnetic_taskgraph_authority import MagneticTaskGraphError
-from app.python_models.magnetic_taskgraph_readback import read_magnetic_taskgraph
 from app.python_models.tool_catalog import ToolCatalogError, materialize_live_tool_catalog
 
 router = APIRouter()
@@ -192,59 +187,12 @@ def domain_run_history(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@router.post("/magnetic/taskgraph/status")
-def magnetic_taskgraph_status(payload: dict[str, Any]):
+@router.post("/domain/runs/latest")
+def domain_runs_latest(payload: dict[str, Any]):
     try:
-        run_id = str(payload.get("runId") or "").strip()
-        if run_id:
-            from app.mag_one_operation import reconcile_magnetic_taskgraph_run
-
-            return reconcile_magnetic_taskgraph_run(
-                run_id,
-                str(payload.get("hermesRootId") or "").strip(),
-            )
-        return read_magnetic_taskgraph(payload)
-    except MagneticTaskGraphError as err:
+        return read_latest_runs(payload)
+    except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@router.post("/magnetic/taskgraph/start")
-def magnetic_taskgraph_start(payload: dict[str, Any]):
-    try:
-        from app.mag_one_operation import start_magnetic_taskgraph
-
-        data_anchors = payload.get("dataAnchors")
-        notification = payload.get("notification")
-        if not isinstance(data_anchors, list) or not isinstance(notification, dict):
-            raise MagneticTaskGraphError("magnetic_taskgraph_start_contract_invalid")
-        result = start_magnetic_taskgraph(
-            run_id=str(payload.get("runId") or "").strip(),
-            input=str(payload.get("input") or "").strip(),
-            data_anchors=data_anchors,
-            project_id=str(payload.get("projectId") or "").strip(),
-            deck_id=str(payload.get("deckId") or "").strip(),
-            conversation_id=str(payload.get("conversationId") or "").strip(),
-            caller_card_id=str(payload.get("callerCardId") or "").strip(),
-            originating_run_id=str(payload.get("originatingRunId") or "").strip(),
-            notification=notification,
-        )
-        if result.get("ok") is not True:
-            raise MagneticTaskGraphError(
-                str(result.get("error") or "magnetic_taskgraph_start_failed")
-            )
-        return result
-    except (CardDomainError, MagneticTaskGraphError) as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@router.post("/magnetic/taskgraph/cancel")
-def magnetic_taskgraph_cancel(payload: dict[str, Any]):
-    try:
-        from app.mag_one_operation import cancel_magnetic_taskgraph_run
-
-        return cancel_magnetic_taskgraph_run(
-            str(payload.get("runId") or "").strip(),
-            str(payload.get("hermesRootId") or "").strip(),
-        )
-    except (CardDomainError, MagneticTaskGraphError) as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
+ 

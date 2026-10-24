@@ -23,7 +23,6 @@ import hermes_cli.web_server_lifecycle as _web_server_lifecycle
 
 SLOW_SECONDS = 1  # represents the Defender worst-case (scaled down for CI speed)
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -63,6 +62,21 @@ def test_lifespan_warmup_is_synchronous(monkeypatch):
         )
 
 
+def test_lifespan_enters_and_exits_as_an_async_context_manager(monkeypatch):
+    """FastAPI gets ``app_lifespan`` as an async context manager, never a bare async generator
+    (Starlette's deprecated path)."""
+    entered: list[bool] = []
+    monkeypatch.setattr(web_server_mod, "_warm_gateway_module", lambda: None)
+    monkeypatch.setattr(web_server_mod, "_eager_reconcile_own_session_db", lambda: None)
+
+    async def _run() -> None:
+        async with web_server_mod.app_lifespan(web_server_mod.app):
+            entered.append(True)
+
+    asyncio.run(_run())
+    assert entered == [True]
+
+
 def test_hosted_room_recovery_cannot_block_or_abort_backend_startup(monkeypatch):
     from fastapi.testclient import TestClient
     from tui_gateway import methods_groups
@@ -88,7 +102,6 @@ def test_hosted_room_recovery_cannot_block_or_abort_backend_startup(monkeypatch)
         assert started.wait(timeout=1.0)
         assert time.perf_counter() - before < 1.0
         release.set()
-
 
 def test_lifespan_shutdown_joins_statedb_reconcile_worker(monkeypatch):
     """The eager state.db reconcile runs off the startup path but never outlives
@@ -117,39 +130,6 @@ def test_lifespan_shutdown_joins_statedb_reconcile_worker(monkeypatch):
     assert finished.is_set(), "lifespan shutdown returned before the reconcile worker finished"
     assert not any(t.name == "statedb-eager-reconcile" for t in threading.enumerate())
 
-
-def test_headless_dispatcher_runs_the_existing_watcher_and_stops(monkeypatch):
-    """Headless serve owns the upstream dispatcher watcher in-process."""
-    from gateway.kanban_watchers import GatewayKanbanWatchersMixin
-
-    started = threading.Event()
-    stopped = threading.Event()
-
-    async def fake_watcher(self):
-        started.set()
-        while self._running:
-            await asyncio.sleep(0.01)
-        stopped.set()
-
-    monkeypatch.setattr(
-        GatewayKanbanWatchersMixin,
-        "_kanban_dispatcher_watcher",
-        fake_watcher,
-    )
-    stop = threading.Event()
-    thread = threading.Thread(
-        target=web_server_mod._start_headless_kanban_dispatcher,
-        args=(stop, "epoch-test"),
-        daemon=True,
-    )
-    thread.start()
-    assert started.wait(timeout=2.0)
-    stop.set()
-    thread.join(timeout=2.0)
-    assert not thread.is_alive()
-    assert stopped.is_set()
-
-
 # ---------------------------------------------------------------------------
 # Test 2 — get_status run_in_executor keeps event loop free for other requests
 # ---------------------------------------------------------------------------
@@ -164,7 +144,6 @@ def test_get_status_does_not_block_event_loop():
     import httpx
 
     results: dict[str, float] = {}
-    errors: list[str] = []
 
     async def _run():
         transport = httpx.ASGITransport(app=web_server_mod.app)
@@ -212,7 +191,6 @@ def test_get_status_does_not_block_event_loop():
     assert results.get("status_code") == 200, (
         f"/api/status returned {results.get('status_code')} instead of 200"
     )
-
 
 # ---------------------------------------------------------------------------
 # Test 3 — no orphan accumulation: concurrent probes all receive 200

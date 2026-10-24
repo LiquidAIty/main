@@ -1,15 +1,14 @@
 /**
  * Entity: Agent Builder
- * Relationship: This file derives Agent Builder rail visibility from enabled saved Cards and attached surfaces while keeping UI availability separate from execution authority.
+ * Relationship: This file derives Agent Builder rail visibility from enabled saved Card identities while keeping UI availability separate from execution authority.
  * Entity: Saved Cards
- * Relationship: This file reads exact enabled Card identities and declared subsystem attachments to decide which optional product surfaces are visible.
+ * Relationship: This file reads exact enabled Card identities to decide which optional product surfaces are visible.
  */
 
 import type {
   AgentCardInstance,
   DeckDocument,
 } from '../../../types/agentgraph';
-import { readCardSubsystemAttachments } from '../deck/cardSubsystems';
 
 function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean {
   return card?.id === 'card_trading_workbench';
@@ -24,8 +23,7 @@ export function isWorldSignalsAgentCard(
 export function isWorldViewCard(
   card: AgentCardInstance | null | undefined,
 ): boolean {
-  return readCardSubsystemAttachments(card?.runtimeOptions)
-    .some((attachment) => attachment.id === 'gods-eye');
+  return card?.runtime.kind === 'hermes' && card.runtime.profile === 'worldview';
 }
 
 type ProgressiveRailVisibility = {

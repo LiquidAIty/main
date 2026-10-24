@@ -1,3 +1,8 @@
+/**
+ * Entity: ThinkGraph
+ * Relationship: This file verifies completed-Main captures serialize per Project and exact projection reads await either the active or retained matching outcome once.
+ */
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {

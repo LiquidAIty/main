@@ -182,10 +182,10 @@ export function buildDeckEdgeIdentityKey(
   ]);
 }
 
-/** Classify a user-drawn connection from Card identities, not the side or
- * decorative handle used: a Magnetic endpoint is blue worker membership;
- * an orchestrator Card's outbound connection to another Card is orange flow.
- * Orange authority is outbound and never implies reverse control. */
+/** Classify a user-drawn connection from Card identities and the Magnetic
+ * node's one semantic direct-Card handle. Other Magnetic handles are blue
+ * worker membership; an orchestrator's outbound direct connection is orange
+ * flow. Orange authority is outbound and never implies reverse control. */
 function resolveCanvasConnectionEdgeType(
   document: DeckDocument,
   connection: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>,
@@ -202,6 +202,12 @@ function resolveCanvasConnectionEdgeType(
   const sourceIsBus = sourceNode.runtime.kind === 'hermes' && sourceNode.runtime.mode === 'magentic_one';
   const targetIsBus = targetNode.runtime.kind === 'hermes' && targetNode.runtime.mode === 'magentic_one';
   if (sourceIsBus && targetIsBus) return null;
+
+  if (targetIsBus && connection.targetHandle === MAGNETIC_DIRECT_HANDLE) {
+    return hasMainBotAuthority(sourceNode) && targetNode.enabled !== false
+      ? 'flow'
+      : null;
+  }
 
   if (sourceIsBus || targetIsBus) {
     return 'magentic_option';

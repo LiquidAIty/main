@@ -137,27 +137,10 @@ class _KanbanDispatcher:
     def _board_slugs(self) -> list:
         return _board_slugs(self.kb)
 
-    def active_root_ids(self, dispatch_epoch: str) -> set[str]:
-        """Activated Team roots carrying this exact live host epoch."""
-
-        from hermes_cli.kanban_team import active_team_root_ids
-
-        active: set[str] = set()
-        for slug in self._board_slugs():
-            conn = None
-            try:
-                conn = _kbc().connect(board=slug)
-                active.update(active_team_root_ids(conn, dispatch_epoch))
-            except Exception:
-                continue
-            finally:
-                if conn is not None:
-                    with contextlib.suppress(Exception):
-                        conn.close()
-        return active
-
     def board_db_fingerprint(self, slug: str) -> tuple[str, int | None, int | None]:
-        path = self.kb.kanban_db_path(slug)
+        from hermes_cli import kanban_db as _kb
+        with _kb.pin_first_board_resolution():
+            path = self.kb.kanban_db_path(slug)
         try:
             resolved = str(path.expanduser().resolve())
         except Exception:
@@ -190,11 +173,7 @@ class _KanbanDispatcher:
         self.disabled_corrupt_boards.pop(slug, None)
         return True
 
-    def tick_once_for_board(
-        self,
-        slug: str,
-        eligible_root_ids: Optional[set[str]] = None,
-    ) -> Optional[object]:
+    def tick_once_for_board(self, slug: str) -> Optional[object]:
         """Run one dispatch_once for a specific board.
 
         The per-board DB is opened explicitly so boards never share a
@@ -208,18 +187,13 @@ class _KanbanDispatcher:
         try:
             # No explicit init_db(): connect() runs the migration once per
             # process (see the matching note in the notifier collector).
-            conn = _kbc().connect(board=slug)
-            eligible_task_ids = None
-            if eligible_root_ids is not None:
-                from hermes_cli.kanban_team import active_team_task_ids
-
-                eligible_task_ids = active_team_task_ids(conn, eligible_root_ids)
-            return _kbd().dispatch_once(
-                conn,
-                board=slug,
-                eligible_task_ids=eligible_task_ids,
-                **kwargs,
-            )
+            # Pin-first: the tick is machine flow — on a box whose env pins
+            # HERMES_KANBAN_DB every enumerated slug must resolve to the pinned
+            # file, or the dispatcher reads per-slug DBs nobody writes.
+            from hermes_cli import kanban_db as _kb
+            with _kb.pin_first_board_resolution():
+                conn = _kbc().connect(board=slug)
+                return _kbd().dispatch_once(conn, board=slug, **kwargs)
         except Exception as exc:
             if self.is_corrupt_board_db_error(exc):
                 self.disabled_corrupt_boards[slug] = (fingerprint, time.monotonic())
@@ -239,20 +213,11 @@ class _KanbanDispatcher:
                 with contextlib.suppress(Exception):
                     conn.close()
 
-    def tick_once(
-        self,
-        eligible_root_ids: Optional[set[str]] = None,
-    ) -> list[tuple[str, Optional[object]]]:
+    def tick_once(self) -> list[tuple[str, Optional[object]]]:
         """Run one dispatch_once per board. Returns (slug, result) pairs."""
-        return [
-            (slug, self.tick_once_for_board(slug, eligible_root_ids))
-            for slug in self._board_slugs()
-        ]
+        return [(slug, self.tick_once_for_board(slug)) for slug in self._board_slugs()]
 
-    def ready_nonempty(
-        self,
-        eligible_root_ids: Optional[set[str]] = None,
-    ) -> bool:
+    def ready_nonempty(self) -> bool:
         """Is there a ready+assigned+unclaimed task on ANY board the dispatcher would spawn for?
 
         Control-plane lanes (e.g. ``orion-cc``) are pulled by terminals via
@@ -263,36 +228,23 @@ class _KanbanDispatcher:
         """
         kbd = _kbd()
         _review_probe = kbd.review_dispatch_enabled()
-        for slug in self._board_slugs():
-            conn = None
-            try:
-                conn = _kbc().connect(board=slug)
-                eligible_task_ids = None
-                if eligible_root_ids is not None:
-                    from hermes_cli.kanban_team import active_team_task_ids
-
-                    eligible_task_ids = active_team_task_ids(conn, eligible_root_ids)
-                if kbd.has_spawnable_ready(
-                    conn, eligible_task_ids=eligible_task_ids,
-                ) or (
-                    _review_probe and kbd.has_spawnable_review(
-                        conn, eligible_task_ids=eligible_task_ids,
-                    )
-                ):
-                    return True
-            except Exception:
-                continue
-            finally:
-                if conn is not None:
-                    with contextlib.suppress(Exception):
-                        conn.close()
+        from hermes_cli import kanban_db as _kb
+        with _kb.pin_first_board_resolution():
+            for slug in self._board_slugs():
+                conn = None
+                try:
+                    conn = _kbc().connect(board=slug)
+                    if kbd.has_spawnable_ready(conn) or (_review_probe and kbd.has_spawnable_review(conn)):
+                        return True
+                except Exception:
+                    continue
+                finally:
+                    if conn is not None:
+                        with contextlib.suppress(Exception):
+                            conn.close()
         return False
 
-    def auto_decompose_tick(
-        self,
-        auto_decompose_per_tick: int,
-        eligible_root_ids: Optional[set[str]] = None,
-    ) -> int:
+    def auto_decompose_tick(self, auto_decompose_per_tick: int) -> int:
         """Auto-decompose up to N triage tasks across all boards into ready workgraphs.
 
         Runs before dispatch fans out; the per-tick cap keeps a bulk triage
@@ -305,7 +257,8 @@ class _KanbanDispatcher:
             return 0
         attempted = 0
         successes = 0
-        with _default_profile_secret_scope():
+        from hermes_cli import kanban_db as _kb
+        with _default_profile_secret_scope(), _kb.pin_first_board_resolution():
             for slug in self._board_slugs():
                 if attempted >= auto_decompose_per_tick:
                     break
@@ -320,8 +273,6 @@ class _KanbanDispatcher:
                         logger.debug("kanban auto-decompose: list_triage_ids failed on board %s (%s)", slug, exc)
                         triage_ids = []
                     for tid in triage_ids:
-                        if eligible_root_ids is not None and tid not in eligible_root_ids:
-                            continue
                         if attempted >= auto_decompose_per_tick:
                             break
                         attempted += 1
@@ -333,60 +284,15 @@ class _KanbanDispatcher:
                         os.environ["HERMES_KANBAN_BOARD"] = prev_env
         return successes
 
-    def _record_team_decomposition_failure(
-        self, slug: str, tid: str, reason: str,
-    ) -> dict[str, Any]:
-        """Apply the bounded breaker only when the task is a Team Triage row."""
-        from hermes_cli.kanban_team import record_decomposition_failure
-
-        try:
-            conn = _kbc().connect(board=slug)
-        except Exception as exc:
-            logger.debug(
-                "kanban auto-decompose [%s]: could not record Team failure for %s: %s",
-                slug, tid, exc,
-            )
-            return {"handled": False, "blocked": False}
-        try:
-            try:
-                return record_decomposition_failure(
-                    conn,
-                    tid,
-                    reason,
-                    failure_limit=self.settings.failure_limit,
-                )
-            except Exception as exc:
-                logger.debug(
-                    "kanban auto-decompose [%s]: could not record Team failure for %s: %s",
-                    slug, tid, exc,
-                )
-                return {"handled": False, "blocked": False}
-        finally:
-            with contextlib.suppress(Exception):
-                conn.close()
-
-    def _decompose_one(self, _decomp: Any, slug: str, tid: str) -> int:
+    @staticmethod
+    def _decompose_one(_decomp: Any, slug: str, tid: str) -> int:
         """Decompose one triage task; returns 1 on success, 0 otherwise."""
         try:
             outcome = _decomp.decompose_task(tid, author="auto-decomposer")
-        except Exception as exc:
+        except Exception:
             logger.exception("kanban auto-decompose: decompose_task crashed on %s", tid)
-            result = self._record_team_decomposition_failure(
-                slug, tid, f"decomposition crashed: {type(exc).__name__}",
-            )
-            if result.get("blocked"):
-                logger.warning(
-                    "kanban auto-decompose [%s]: Team %s blocked after %s failures: %s",
-                    slug, tid, result.get("failures"), result.get("error"),
-                )
             return 0
         if not outcome.ok:
-            result = self._record_team_decomposition_failure(slug, tid, outcome.reason)
-            if result.get("blocked"):
-                logger.warning(
-                    "kanban auto-decompose [%s]: Team %s blocked after %s failures: %s",
-                    slug, tid, result.get("failures"), result.get("error"),
-                )
             # Common no-op reasons (no aux client) must not spam logs every tick.
             logger.debug("kanban auto-decompose [%s]: %s skipped: %s", slug, tid, outcome.reason)
             return 0
@@ -406,15 +312,14 @@ def _default_profile_secret_scope():
     LLM reads ``auxiliary.*`` from ``get_hermes_home()``, so its credentials come
     from that same home. No-op for single-profile gateways.
     """
-    from agent.secret_scope import (
-        build_profile_secret_scope, is_multiplex_active, reset_secret_scope, set_secret_scope)
+    from agent.secret_scope import is_multiplex_active, reset_secret_scope, set_secret_scope
     from hermes_constants import get_hermes_home
+    from tui_gateway.launch_profile_policy import owner_secret_scope
 
     if not is_multiplex_active():
         yield
         return
-    token = set_secret_scope(
-        build_profile_secret_scope(Path(get_hermes_home())), profile_home=str(get_hermes_home()))
+    token = set_secret_scope(owner_secret_scope(Path(get_hermes_home())), profile_home=str(get_hermes_home()))
     try:
         yield
     finally:

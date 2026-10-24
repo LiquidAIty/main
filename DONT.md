@@ -76,8 +76,8 @@ Python preparation and settlement owners. Additional user input while Main is ac
 Run and becomes part of its one completed exchange. Do not add an application or Hermes prompt queue, restore
 the rejected generic TypeScript child-Card executor, or substitute a regex-first graph skeleton, candidate or
 approval state, shadow graph, direct model edge writer, second extractor, or database-side semantic shortcut.
-KnowGraph retains actual sourced research through its existing owner. Its dedicated queued Entity write
-records one exact structural `ABOUT` attachment; `MENTIONS` remains extraction output, not attachment authority.
+KnowGraph retains actual sourced research through its existing owner. Its dedicated queued Entity write stores
+one exact `entity_uuid` property and removes any Know `ABOUT` or `MENTIONS` attachment edge.
 One current Know is one first-class `Episodic:Know`: one verified source document and exact passage, one
 self-contained observation, one separately labeled bounded interpretation, and optional direction relative to
 an explicit proposition. Its typed citation properties and plain-text episode content must remain durable and
@@ -121,6 +121,56 @@ does not authorize a renderer replacement, and a rendering problem does not auth
 | A restore changed appearance but was called accepted | Identify the user-accepted baseline first; mechanics and Git equality do not substitute for Jeremiah's visual acceptance. |
 | Decomposition, routing or knowledge meaning moved into deterministic code | Keep semantic work with models; code validates structure, scope and actual execution. No keyword planner or semantic sanitizer. |
 | Work resumed from a stale plan or compaction summary as if complete | Reconcile current status and diff; mark each started item completed, removed, deferred or unproven before opening more work. |
+
+## Incident record — 2026-10-23 Hermes Bot and TaskGraph boundary overreach
+
+An attempted Bot Mode, Team and Magnetic repair repeatedly expanded beyond the owner's requested
+boundary. Work was described or implemented as application-owned Card execution, direct-target routes,
+session maps, polling, copied task behavior, large Card-editor prompt surfaces and broad source deletion
+instead of preserving Hermes as the execution owner. The resulting product symptoms included delayed
+Main admission, `session_stream_transport_failed`, roster/profile mismatches, missing subagent selection,
+responses that claimed a Card was working without a corresponding `message_agent` call, and Canvas activity
+that did not reliably represent actual running Hermes work. Broad deletion and restoration also placed
+unrelated UI, Card, runtime and owner work at risk while the requested repair concerned only the bounded
+Bot/TaskGraph integration.
+
+The owner's correction establishes the following permanent controls for this boundary:
+
+1. Treat the three accepted Hermes differences as three independent seams: the profile-scoped local Bot
+   roster, the reduced Automatic Team specialization over Hermes' existing task ledger, and the nullable
+   root-scoped assignee ceiling used by Magnetic.
+2. Do not call all three “Bot Mode changes.” Only the profile-scoped roster changes Bot target authority.
+3. Preserve Hermes ownership of `message_agent`, Bot Chats, sessions, delivery, queueing, task rows,
+   dependencies, dispatch, workers, retries, completion and wakeups. LiquidAIty projects saved authority and
+   observes events; it does not duplicate those owners.
+4. Reuse upstream Triage, decomposition, root wakeup, worker execution, goal judging and notification before
+   adding any Team code. Automatic Team may add only the missing direct entrance, exact root-local worker
+   policy, mandatory fanout, depth-one restriction and bounded failure behavior.
+5. Saved enabled Card wires determine Bot reachability in LiquidAIty. The application computes the exact
+   profile list; the Hermes resolver enforces it. Prompt prose is never the authorization boundary.
+6. Saved blue topology determines one Magnetic root's worker ceiling. A global dispatcher allowlist, prompt
+   reminder or post-hoc application cancellation is not an equivalent mission-scoped authority.
+7. Each reachable Card contributes only its saved `[ORCHESTRATOR SKILL]` introduction to an orchestrator's
+   effective prompt. Never copy a connected Card's full prompt, create a combined editable roster block, or
+   add a Card-link shortcut disguised as an introduction.
+8. All saved Cards still start and bind when a Project opens. Main remains headless, every non-Main Card
+   retains its existing CLI presentation, Magnetic remains a Bot without a CLI, and no repair may redesign
+   the accepted UI.
+9. Agent counts and Card activity must come from actual Hermes events and correlated Run observations. A
+   planned roster, pending intent, prompt mention or synthetic status never counts as a running agent.
+10. If repair attempts produce serial contract errors at adjacent layers, stop adding adapters and re-audit
+    the ownership seam. Repeated error-by-error patching is evidence that the implementation boundary is
+    wrong, not permission to create another runtime.
+11. Never restore a historical Hermes overlay wholesale. Recover only the exact source-proven behavior that
+    remains accepted against the current pinned upstream version, with focused tests for ordinary unchanged
+    behavior as well as the local difference.
+12. A Bot/TaskGraph repair must remain a small semantic delta. Unexpected multi-thousand-line changes,
+    broad route or UI edits, or large unrelated deletion counts require an immediate stop and owner review.
+13. Do not delete or reset saved Cards, Runs, profiles, sessions, databases, graph data, layout or unrelated
+    source to make this boundary easier to test. Test state is not permission to destroy product state.
+14. Report source, deterministic tests, build, loaded application, real Main/Card execution, persistence,
+    real activity rendering and owner visual acceptance separately. A lower proof tier never fills a higher
+    one, and a model statement that work started is not execution evidence.
 
 ## Evidence and completion
 

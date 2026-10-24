@@ -1,5 +1,5 @@
 // Entity: Saved Cards
-// Relationship: This file renders one saved Card's compact identity, subtitle, subsystem state, and truthful active-Run count.
+// Relationship: This file renders one saved Card's compact identity, subtitle, selection state, and truthful active-Run count.
 // Entity: Card Topology
 // Relationship: This file renders separate blue Magnetic handles and an orange connection handle only when the saved Card has orchestration authority.
 

@@ -105,6 +105,50 @@ def test_emits_for_named_profile_with_own_handle(tmp_path):
     assert "`@coder`" not in roster_block
 
 
+def test_explicit_profile_roster_is_exact_authority(tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    main = _make_bot_profile(home, "main", managed=True)
+    _make_bot_profile(home, "builder", managed=True)
+    _make_bot_profile(home, "trading", managed=True)
+    (main / "config.yaml").write_text(
+        "bot_mode:\n  roster: [builder]\n",
+        encoding="utf-8",
+    )
+
+    assert bot_mode_probe.configured_bot_roster(main) == ["builder"]
+    assert [name for name, _profile_home in bot_mode_probe.resolve_bot_roster(main)] == ["builder"]
+    section = bot_mode_probe.get_bot_mode_protocol_section(main)
+    assert "`@builder`" in section
+    assert "`@trading`" not in section
+    assert "`@hermes`" not in section
+
+
+def test_explicit_empty_roster_denies_every_local_target_without_disabling_bot_chat(tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    main = _make_bot_profile(home, "main", managed=True)
+    _make_bot_profile(home, "builder", managed=True)
+    (main / "config.yaml").write_text("bot_mode:\n  roster: []\n", encoding="utf-8")
+
+    assert bot_mode_probe.configured_bot_roster(main) == []
+    assert bot_mode_probe.resolve_bot_roster(main) == []
+    assert bot_mode_probe.is_bot_mode_managed(main) is True
+    assert "- (no teammates yet)" in bot_mode_probe.get_bot_mode_protocol_section(main)
+
+
+def test_absent_profile_roster_preserves_stock_install_discovery(tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    main = _make_bot_profile(home, "main", managed=True)
+    _make_bot_profile(home, "builder", managed=True)
+
+    assert bot_mode_probe.configured_bot_roster(main) is None
+    assert [name for name, _profile_home in bot_mode_probe.resolve_bot_roster(main)] == [
+        "default", "builder",
+    ]
+
+
 def test_roster_lines_carry_roles(tmp_path):
     """Bots must know WHO to message: the roster carries title/description."""
     import textwrap as _tw
@@ -186,63 +230,94 @@ def test_fingerprint_changes_on_each_capability_axis(tmp_path):
     after_skill = bot_mode_probe.capability_fingerprint(home)
     assert after_skill != base
 
-    # toolset pin changed
+    # toolset pin changed (the key `hermes tools enable/disable` writes, #124211)
     (home / "config.yaml").write_text(
-        "platform_toolsets:\n  cli: [web]\n",
-        encoding="utf-8",
+        "platform_toolsets:\n  desktop: [hermes-desktop, computer_use]\n", encoding="utf-8"
     )
     after_tools = bot_mode_probe.capability_fingerprint(home)
     assert after_tools != after_skill
 
-    # MCP server added
-    mcp_config = (
-        "platform_toolsets:\n  cli: [web]\n"
-        "mcp_servers:\n  github:\n    preset: github\n"
-    )
+    # global suppression changed
     (home / "config.yaml").write_text(
-        mcp_config,
+        "platform_toolsets:\n  desktop: [hermes-desktop, computer_use]\n"
+        "agent:\n  disabled_toolsets: [computer_use]\n",
+        encoding="utf-8",
+    )
+    after_disabled = bot_mode_probe.capability_fingerprint(home)
+    assert after_disabled != after_tools
+
+    # MCP server added
+    (home / "config.yaml").write_text(
+        "platform_toolsets:\n  desktop: [hermes-desktop, computer_use]\n"
+        "agent:\n  disabled_toolsets: [computer_use]\n"
+        "mcp_servers:\n  github:\n    preset: github\n",
         encoding="utf-8",
     )
     after_mcp = bot_mode_probe.capability_fingerprint(home)
-    assert after_mcp != after_tools
-
-    # Saved OpenAI runtime changed without another capability axis moving.
-    (home / "config.yaml").write_text(
-        mcp_config + "model:\n  openai_runtime: codex_app_server\n",
-        encoding="utf-8",
-    )
-    after_runtime = bot_mode_probe.capability_fingerprint(home)
-    assert after_runtime != after_mcp
-
-    # Saved delegation policy changed without another capability axis moving.
-    (home / "config.yaml").write_text(
-        mcp_config
-        + "model:\n  openai_runtime: codex_app_server\n"
-        + "delegation:\n  provider: openai-codex\n  model: gpt-test\n",
-        encoding="utf-8",
-    )
-    after_delegation = bot_mode_probe.capability_fingerprint(home)
-    assert after_delegation != after_runtime
-
-    # Saved Team task mode changed without another capability axis moving.
-    (home / "config.yaml").write_text(
-        mcp_config
-        + "model:\n  openai_runtime: codex_app_server\n"
-        + "delegation:\n  provider: openai-codex\n  model: gpt-test\n"
-        + "kanban:\n  task_mode: team\n",
-        encoding="utf-8",
-    )
-    after_task_mode = bot_mode_probe.capability_fingerprint(home)
-    assert after_task_mode != after_delegation
+    assert after_mcp != after_disabled
 
     # SOUL edited
     (home / "SOUL.md").write_text("# New identity\n", encoding="utf-8")
     after_soul = bot_mode_probe.capability_fingerprint(home)
-    assert after_soul != after_task_mode
+    assert after_soul != after_mcp
 
     # teammate added to the roster
     _make_bot_profile(home, "coder", managed=True)
     assert bot_mode_probe.capability_fingerprint(home) != after_soul
+
+
+def test_fingerprint_changes_when_model_vision_override_flips(tmp_path):
+    """A Bot Chat prompt must rebuild when model.supports_vision flips."""
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    _make_bot_profile(home, "researcher", managed=True)
+    config = home / "config.yaml"
+
+    config.write_text("model:\n  supports_vision: true\n", encoding="utf-8")
+    vision_enabled = bot_mode_probe.capability_fingerprint(home)
+    stamped = "system stuff\n\n" + bot_mode_probe.epoch_line(home)
+    assert vision_enabled == bot_mode_probe.capability_fingerprint(home)
+    assert not bot_mode_probe.stored_prompt_capability_stale(stamped, home)
+
+    config.write_text("model:\n  supports_vision: false\n", encoding="utf-8")
+    vision_disabled = bot_mode_probe.capability_fingerprint(home)
+    assert vision_disabled != vision_enabled
+    assert bot_mode_probe.stored_prompt_capability_stale(stamped, home)
+
+    restamped = "system stuff\n\n" + bot_mode_probe.epoch_line(home)
+    assert not bot_mode_probe.stored_prompt_capability_stale(restamped, home)
+    config.write_text("model:\n  supports_vision: true\n", encoding="utf-8")
+    assert bot_mode_probe.capability_fingerprint(home) != vision_disabled
+
+
+def test_vision_override_spellings_share_one_fingerprint(tmp_path):
+    """YAML boolean tokens that image routing treats as the same override share an epoch."""
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    _make_bot_profile(home, "researcher", managed=True)
+    config = home / "config.yaml"
+
+    config.write_text("model:\n  supports_vision: true\n", encoding="utf-8")
+    enabled = bot_mode_probe.capability_fingerprint(home)
+    config.write_text("model:\n  supports_vision: yes\n", encoding="utf-8")
+    assert bot_mode_probe.capability_fingerprint(home) == enabled
+    config.write_text("model:\n  supports_vision: false\n", encoding="utf-8")
+    assert bot_mode_probe.capability_fingerprint(home) != enabled
+
+
+def test_fingerprint_changes_when_model_context_length_override_changes(tmp_path):
+    """context_length truncates context files in the rebuilt prompt, so it is part of the epoch."""
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    _make_bot_profile(home, "researcher", managed=True)
+    config = home / "config.yaml"
+
+    config.write_text("model:\n  context_length: 32768\n", encoding="utf-8")
+    narrow = bot_mode_probe.capability_fingerprint(home)
+    config.write_text("model:\n  context_length: 131072\n", encoding="utf-8")
+    assert bot_mode_probe.capability_fingerprint(home) != narrow
+    config.write_text("model:\n  context_length: 32768\n", encoding="utf-8")
+    assert bot_mode_probe.capability_fingerprint(home) == narrow
 
 
 def test_stored_prompt_staleness(tmp_path):
@@ -262,22 +337,9 @@ def test_stored_prompt_staleness(tmp_path):
     restamped = "system stuff\n\n" + bot_mode_probe.epoch_line(home)
     assert not bot_mode_probe.stored_prompt_capability_stale(restamped, home)
 
-    # Unstamped non-profile-following prompts are never stale.
+    # prompts without a stamp (every non-Bot-Chat session) are never stale
     assert not bot_mode_probe.stored_prompt_capability_stale("ordinary prompt", home)
     assert not bot_mode_probe.stored_prompt_capability_stale("", home)
-
-    roster = ["researcher"]
-    roster_stamped = "system stuff\n\n" + bot_mode_probe.epoch_line(home, roster)
-    assert not bot_mode_probe.stored_prompt_capability_stale(
-        roster_stamped,
-        home,
-        roster_override=roster,
-    )
-    assert bot_mode_probe.stored_prompt_capability_stale(
-        roster_stamped,
-        home,
-        roster_override=[],
-    )
 
 
 def test_legacy_bot_chat_upgrade(tmp_path):

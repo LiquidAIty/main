@@ -1,3 +1,6 @@
+# Entity: Application Startup
+# Relationship: This script sequences frontend, Python rails, WorldSignals, WorldView, and MCP readiness through the existing service commands without creating another supervisor.
+
 param(
   [switch]$WaitForMcpReadiness,
   [switch]$StartPythonRailsAfterWorldSignals,

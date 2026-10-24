@@ -5,12 +5,7 @@ codex early-return used to send only cwd + raw user text, so SOUL.md / memory / 
 composed and then silently dropped.
 """
 
-import hashlib
-import json
-import threading
 from types import SimpleNamespace
-
-import pytest
 
 from agent import codex_runtime
 from agent.transports import codex_app_server_session as sess_mod
@@ -80,93 +75,67 @@ def test_runtime_retires_thread_when_prompt_composition_changes(monkeypatch):
     assert client.closed == 1  # the stale thread's client was closed, not leaked
 
 
-@pytest.mark.parametrize("roster,expected", [(None, False), ([], False), (["knowgraph"], True)])
-def test_codex_projects_message_agent_only_for_an_authorized_roster(
-    monkeypatch, roster, expected,
-):
-    from tools import bot_mode_dm
+def test_each_turn_sends_the_agent_s_current_wire_model(monkeypatch):
+    """CLI/TUI ``/model`` mutates the live agent; every turn/start carries the model selected now (the
+    ``-900k`` alias as its base slug), not the one the thread was started with."""
+    turns = []
 
-    agent = _agent(_bot_mode_roster=roster)
-    monkeypatch.setattr(
-        bot_mode_dm,
-        "message_agent_authorized",
-        lambda value: bool(value._bot_mode_roster),
-    )
+    class _Session:
+        def __init__(self, **_kw):
+            pass
 
-    projected, canonical_names = codex_runtime._dynamic_tools_configuration(agent)
-    message_tools = [item for item in projected if item["name"] == "message_agent"]
+        def ensure_started(self):
+            return "t1"
 
-    assert bool(message_tools) is expected
-    assert ("message_agent" in canonical_names) is expected
-    if expected:
-        function = bot_mode_dm.message_agent_tool_schema()["function"]
-        assert message_tools == [{
-            "type": "function",
-            "name": "message_agent",
-            "canonicalName": "message_agent",
-            "description": function["description"],
-            "inputSchema": function["parameters"],
-        }]
+        def run_turn(self, **kw):
+            turns.append(kw["model"])
+            raise RuntimeError("stop after turn/start")
 
+        def close(self):
+            pass
 
-def test_codex_message_agent_uses_the_exact_hermes_inline_owner(monkeypatch):
-    from agent import inline_tool_executors
-    from tools import bot_mode_dm
-
-    calls = []
-    agent = _agent(_bot_mode_roster=["knowgraph"])
-    monkeypatch.setattr(bot_mode_dm, "message_agent_authorized", lambda _agent: True)
-    monkeypatch.setitem(
-        inline_tool_executors.INLINE_TOOL_EXECUTORS,
-        "message_agent",
-        lambda actual_agent, arguments, context: calls.append(
-            (actual_agent, arguments, context.effective_task_id, context.tool_call_id),
-        ) or json.dumps({"status": "queued", "delivery_id": "delivery-one"}),
-    )
-    projected, canonical_names = codex_runtime._dynamic_tools_configuration(agent)
-    executor = codex_runtime._dynamic_tool_executor(
-        agent, canonical_names, "task-one",
-    )
-
-    result = executor(
-        "message_agent",
-        {"target": "knowgraph", "message": "Research Rocket Lab."},
-        "call-one",
-        threading.Event(),
-    )
-
-    assert any(item["name"] == "message_agent" for item in projected)
-    assert calls == [(
-        agent,
-        {"target": "knowgraph", "message": "Research Rocket Lab."},
-        "task-one",
-        "call-one",
-    )]
-    assert result["success"] is True
-    assert json.loads(result["contentItems"][0]["text"])["delivery_id"] == "delivery-one"
+    monkeypatch.setattr(sess_mod, "CodexAppServerSession", _Session)
+    agent = _agent(model="gpt-5.6-sol-900k", _interrupt_requested=False, _interrupt_message=None)
+    for model in ("gpt-5.6-sol-900k", "gpt-5.5"):
+        agent.model = model
+        codex_runtime.run_codex_app_server_turn(agent, user_message="hi", original_user_message="hi",
+                                                messages=[], effective_task_id="t")
+    assert turns == ["gpt-5.6-sol", "gpt-5.5"]
 
 
-def test_codex_projects_the_current_saved_card_script():
-    source = "source"
-    agent = _agent(
-        _bot_mode_roster=[],
-        _card_script={
-            "version": 1,
-            "source": source,
-            "source_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
-            "compiled_hash": "a" * 64,
-            "mode": "tool_recipe",
-            "input_schema": {"type": "object", "properties": {}},
-            "output_schema": {"type": "object", "properties": {}},
-            "tool_names": {},
-            "tool_states": {},
-            "timeout_seconds": 15,
-            "max_tool_calls": 2,
-            "max_output_bytes": 20_000,
-        },
-    )
+def test_runtime_retires_thread_when_an_in_place_switch_changes_the_codex_provider(monkeypatch):
+    """turn/start can change the model but not the provider: switching between codex's own provider and a
+    named custom provider (``[model_providers.<id>]``) starts a thread carrying the new modelProvider."""
+    import hermes_cli.runtime_provider as rp
+    monkeypatch.setattr(rp, "load_config", lambda: {"providers": {"my-gateway": {"api": "https://gw.example/v1"}}})
+    client = _FakeClient()
+    monkeypatch.setattr(sess_mod, "CodexAppServerClient", lambda **kw: client)
+    agent = _agent(provider="openai-codex", requested_provider="openai-codex", model="gpt-5.5")
+    for provider, requested in (("openai-codex", "openai-codex"), ("openai-codex", "openai-codex"),
+                                ("custom", "custom:my-gateway")):
+        agent.provider, agent.requested_provider = provider, requested
+        codex_runtime._ensure_codex_session(agent)
+        agent._codex_session.ensure_started()
+    starts = [p.get("modelProvider") for (m, p) in client.requests if m == "thread/start"]
+    assert starts == [None, "my-gateway"]
+    assert client.closed == 1
 
-    projected, canonical_names = codex_runtime._dynamic_tools_configuration(agent)
 
-    assert [item["name"] for item in projected] == ["card_python"]
-    assert canonical_names == {"card_python": "hermes.card_python"}
+def test_runtime_gives_no_approval_callback_when_nobody_can_answer(monkeypatch):
+    """`hermes chat -q` registers the CLI panel callback but nobody answers it: the codex session gets no
+    callback, so exec/apply_patch requests fail closed at once instead of waiting the approval timeout."""
+    from tools.terminal_tool import set_approval_callback
+
+    monkeypatch.setattr(sess_mod, "CodexAppServerClient", lambda **kw: _FakeClient())
+    panel = lambda *args, **kwargs: "once"
+    set_approval_callback(panel)
+    try:
+        interactive = _agent()
+        codex_runtime._ensure_codex_session(interactive)
+        monkeypatch.setenv("HERMES_SINGLE_QUERY_SESSION", "1")
+        single_query = _agent()
+        codex_runtime._ensure_codex_session(single_query)
+    finally:
+        set_approval_callback(None)
+    assert interactive._codex_session._approval_callback is panel
+    assert single_query._codex_session._approval_callback is None

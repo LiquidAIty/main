@@ -47,55 +47,63 @@ export default function useCardActiveAgentCounts({
       if (!disposed) timer = window.setTimeout(() => { void refresh(); }, delayMs);
     };
     const refresh = async (): Promise<void> => {
-      const observations = await Promise.allSettled(cardIds.map(
-        async (cardId): Promise<CardRunActivity | null> => {
-          const response = await fetch('/api/cards/runs/read', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            signal: controller.signal,
-            body: JSON.stringify({
-              action: 'status',
-              inspectOnly: true,
-              projectId,
-              deckId: deck.id,
-              cardId,
-            }),
-          });
-          const payload = await response.json().catch(() => null) as {
-            ok?: boolean;
-            result?: CardRunActivity | null;
-          } | null;
-          if (!response.ok || payload?.ok !== true) {
-            throw new Error(`card_activity_http_${response.status}`);
-          }
-          const status = payload.result ?? null;
-          if (status && (
-            status.cardId !== cardId
-            || typeof status.state !== 'string'
-            || (
-              status.activeWorkers !== null
-              && (
-                !Number.isSafeInteger(status.activeWorkers)
-                || status.activeWorkers < 0
-              )
-            )
-          )) {
-            throw new Error('card_activity_response_invalid');
-          }
-          return status;
-        },
-      ));
+      let statuses: CardRunActivity[] = [];
+      let failureCount = 0;
+      try {
+        const response = await fetch('/api/cards/runs/latest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          signal: controller.signal,
+          body: JSON.stringify({
+            inspectOnly: true,
+            projectId,
+            deckId: deck.id,
+            cardIds,
+          }),
+        });
+        const payload = await response.json().catch(() => null) as {
+          ok?: boolean;
+          results?: CardRunActivity[];
+          failedCardIds?: string[];
+        } | null;
+        if (
+          !response.ok
+          || payload?.ok !== true
+          || !Array.isArray(payload.results)
+          || !Array.isArray(payload.failedCardIds)
+        ) {
+          throw new Error(`card_activity_http_${response.status}`);
+        }
+        statuses = payload.results;
+        failureCount = payload.failedCardIds.length;
+      } catch {
+        if (disposed || controller.signal.aborted) return;
+        failureCount = cardIds.length;
+      }
       if (disposed || controller.signal.aborted) return;
       const nextCounts: Record<string, number> = {};
-      let failureCount = 0;
-      for (const observation of observations) {
-        if (observation.status === 'rejected') {
+      const requested = new Set(cardIds);
+      const observed = new Set<string>();
+      for (const status of statuses) {
+        if (
+          !status
+          || !requested.has(status.cardId)
+          || observed.has(status.cardId)
+          || typeof status.state !== 'string'
+          || (
+            status.activeWorkers !== null
+            && (
+              !Number.isSafeInteger(status.activeWorkers)
+              || status.activeWorkers < 0
+            )
+          )
+        ) {
           failureCount += 1;
           continue;
         }
-        const status = observation.value;
-        if (!status || !ACTIVE_RUN_STATES.has(String(status.state || ''))) continue;
+        observed.add(status.cardId);
+        if (!ACTIVE_RUN_STATES.has(String(status.state || ''))) continue;
         const childWorkers = typeof status.activeWorkers === 'number'
           && Number.isSafeInteger(status.activeWorkers)
           && status.activeWorkers > 0

@@ -3,7 +3,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-import yaml
+import hermes_yaml as yaml
 
 
 @pytest.mark.parametrize("explicit_profile", [None, "default"])
@@ -60,7 +60,7 @@ def test_rebuild_preparation_failure_keeps_reachable_owner(tmp_path, monkeypatch
     old = SimpleNamespace(_session_db=db if has_agent_db else None,
                           _owns_session_db=has_agent_db, _session_title_hint="Bot Chat")
     session = {"agent": old, "profile_home": str(profile), "session_key": "profile-key",
-               "profile_capabilities_seen": "before", "source": "desktop", "cwd": str(tmp_path),
+               "bot_caps_seen": "before", "source": "desktop", "cwd": str(tmp_path),
                "history": [], "history_lock": threading.Lock(), "history_version": 0}
     built = []
     def make_agent(*_args, session_db=None, **_kwargs):
@@ -71,16 +71,13 @@ def test_rebuild_preparation_failure_keeps_reachable_owner(tmp_path, monkeypatch
         raise RuntimeError("preparation failed")
     monkeypatch.setattr(server, "_make_agent", make_agent)
     monkeypatch.setattr(server, "_config_model_target", fail_config)
-    monkeypatch.setattr(
-        "tools.bot_mode_probe.capability_fingerprint",
-        lambda _home, roster_override=None: "after",
-    )
+    monkeypatch.setattr("tools.bot_mode_probe.capability_fingerprint", lambda _: "after")
     try:
         if path == "reset":
             with pytest.raises(RuntimeError, match="preparation failed"):
                 server._reset_session_agent("profile-tools", session)
         else:
-            server._sync_profile_capabilities("profile-tools", session)
+            server._sync_bot_capabilities("profile-tools", session)
         assert session["agent"] is old
         assert old._owns_session_db is has_agent_db
         assert not built, "prepare config before allocating a replacement"
@@ -93,239 +90,51 @@ def test_rebuild_preparation_failure_keeps_reachable_owner(tmp_path, monkeypatch
                 agent._session_db.close()
 
 
-def test_follow_profile_config_refreshes_agent_without_replacing_session_history(
-    tmp_path, monkeypatch,
-):
+def test_rebuild_keeps_session_runtime_picks_but_new_clears_them(monkeypatch):
+    """Regression for #127449: a rebuild is not a conversation boundary, /new is.
+    /model, /reasoning and /fast are all session pins the rebuild must carry."""
     from tui_gateway import server
 
-    old = SimpleNamespace(_session_db=None, _owns_session_db=False,
-                          _session_title_hint="Card Chat:stable")
-    history = [{"role": "user", "content": "before"}]
-    session = {
-        "agent": old,
-        "profile_home": str(tmp_path / "profiles" / "main"),
-        "session_key": "stored-main",
-        "follow_profile_config": True,
-        "bot_mode_roster": ["knowgraph"],
-        "profile_capabilities_seen": "before",
-        "source": "desktop",
-        "cwd": str(tmp_path),
-        "history": history,
-        "history_lock": threading.Lock(),
-        "history_version": 4,
-    }
-    observed = []
-    replacement = SimpleNamespace(_session_db=None, _owns_session_db=False)
-
-    def fingerprint(home, roster_override=None):
-        observed.append((home, roster_override))
-        return "after"
-
-    def rebuild(sid, current, **kwargs):
-        assert sid == "live-main"
-        assert current is session
-        assert kwargs["session_id"] == "stored-main"
-        current["agent"] = replacement
-        return replacement
-
-    monkeypatch.setattr("tools.bot_mode_probe.capability_fingerprint", fingerprint)
-    monkeypatch.setattr(server, "_set_session_context", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(server, "_clear_session_context", lambda _tokens: None)
-    monkeypatch.setattr(server, "_rebuild_session_agent", rebuild)
-    monkeypatch.setattr(server, "_emit", lambda *_args, **_kwargs: None)
-
-    server._sync_profile_capabilities("live-main", session)
-
-    assert observed == [(session["profile_home"], ["knowgraph"])]
-    assert session["agent"] is replacement
-    assert session["history"] is history
-    assert session["history_version"] == 4
-    assert session["session_key"] == "stored-main"
-
-
-def test_non_following_non_bot_session_does_not_refresh_capabilities(monkeypatch):
-    from tui_gateway import server
-
-    agent = SimpleNamespace(_session_title_hint="Ordinary Chat")
-    session = {"agent": agent, "session_key": "stored-ordinary"}
-    monkeypatch.setattr(
-        "tools.bot_mode_probe.capability_fingerprint",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not fingerprint")),
-    )
-
-    server._sync_profile_capabilities("live-ordinary", session)
-
-    assert session == {"agent": agent, "session_key": "stored-ordinary"}
-
-
-def test_follow_profile_config_refresh_failure_blocks_the_turn_and_retries(monkeypatch):
-    from tui_gateway import server
-
-    old = SimpleNamespace(_session_db=None, _owns_session_db=False,
-                          _session_title_hint="Card Chat:stable")
-    session = {
-        "agent": old,
-        "profile_home": "profile-main",
-        "session_key": "stored-main",
-        "follow_profile_config": True,
-        "profile_capabilities_seen": "before",
-        "source": "desktop",
-        "cwd": ".",
-    }
-    monkeypatch.setattr(
-        "tools.bot_mode_probe.capability_fingerprint",
-        lambda _home, roster_override=None: "after",
-    )
-    monkeypatch.setattr(
-        "tools.bot_mode_probe.invalidate_bot_mode_protocol_cache",
-        lambda _home: None,
-    )
-    monkeypatch.setattr(server, "_set_session_context", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(server, "_clear_session_context", lambda _tokens: None)
-    monkeypatch.setattr(
-        server,
-        "_rebuild_session_agent",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("rebuild failed")),
-    )
-
-    with pytest.raises(RuntimeError, match="profile_capability_refresh_failed"):
-        server._sync_profile_capabilities("live-main", session)
-
-    assert session["agent"] is old
-    assert session["profile_capabilities_seen"] == "before"
-
-
-def test_expected_profile_fingerprint_mismatch_blocks_before_rebuild(monkeypatch):
-    from tui_gateway import server
-
-    old = SimpleNamespace(_session_db=None, _owns_session_db=False,
-                          _session_title_hint="Card Chat:stable")
-    session = {
-        "agent": old,
-        "profile_home": "profile-main",
-        "session_key": "stored-main",
-        "follow_profile_config": True,
-        "bot_mode_roster": ["knowgraph"],
-        "profile_capabilities_seen": "aaaaaaaaaaaa",
-    }
-    monkeypatch.setattr(
-        "tools.bot_mode_probe.capability_fingerprint",
-        lambda _home, roster_override=None: "bbbbbbbbbbbb",
-    )
-    monkeypatch.setattr(
-        server,
-        "_rebuild_session_agent",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("mismatch must fail before rebuild")
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="profile_capability_fingerprint_mismatch"):
-        server._sync_profile_capabilities(
-            "live-main",
-            session,
-            "cccccccccccc",
-        )
-
-    assert session["agent"] is old
-    assert session["profile_capabilities_seen"] == "aaaaaaaaaaaa"
-
-
-def test_live_capability_rebuild_uses_current_overrides_not_stale_resume_snapshot(
-    monkeypatch, tmp_path,
-):
-    from tui_gateway import server
-
-    session_db = object()
-    old = SimpleNamespace(
-        _session_db=session_db,
-        _owns_session_db=False,
-        _session_title_hint="Card Chat:stable",
-    )
-    session = {
-        "agent": old,
-        "profile_home": None,
-        "session_key": "stored-main",
-        "source": "desktop",
-        "cwd": str(tmp_path),
-        "follow_profile_config": True,
-        "model_override": {"model": "current-model", "provider": "current-provider"},
-        "resume_runtime_overrides": {
-            "model_override": {"model": "stale-model", "provider": "stale-provider"},
-            "provider_override": "stale-provider",
-        },
-        "create_reasoning_override": {},
-        "create_service_tier_override": "",
-    }
-    captured = {}
-    replacement = SimpleNamespace(_session_db=session_db, _owns_session_db=False)
-
+    pick = {"model": "pick-b", "provider": "openrouter"}
+    reasoning = {"enabled": True, "effort": "high"}
+    carried = ("model_override", "reasoning_config_override", "service_tier_override")
+    seen = []
     def make_agent(*_args, **kwargs):
-        captured.update(kwargs)
-        return replacement
-
-    monkeypatch.setattr(server, "_bind_build_profile_scopes", lambda _home: None)
-    monkeypatch.setattr(server, "_config_model_target", lambda: ("profile-model", "profile-provider"))
-    monkeypatch.setattr(
-        server,
-        "_session_profile_capability_fingerprint",
-        lambda _session: "0123456789ab",
-    )
+        seen.append({k: kwargs.get(k) for k in carried})
+        return SimpleNamespace(_session_db=None, _owns_session_db=False)
     monkeypatch.setattr(server, "_make_agent", make_agent)
-
-    server._rebuild_session_agent(
-        "live-main",
-        session,
-        session_id="stored-main",
-    )
-
-    assert captured["model_override"] == {
-        "model": "current-model", "provider": "current-provider",
-    }
-    assert "provider_override" not in captured
-    assert captured["reasoning_config_override"] == {}
-    assert captured["service_tier_override"] == ""
-    assert captured["cwd_override"] == str(tmp_path)
+    monkeypatch.setattr(server, "_config_model_target", lambda: "default-a")
+    session = {"agent": None, "session_key": "k", "model_override": dict(pick),
+               "create_reasoning_override": reasoning, "create_service_tier_override": "priority"}
+    server._rebuild_session_agent("sid", session, session_id="k")
+    assert seen == [dict(model_override=pick, reasoning_config_override=reasoning,
+                         service_tier_override="priority")]
+    server._rebuild_session_agent("sid", session, model_override={"model": "explicit"})
+    assert seen[-1]["model_override"] == {"model": "explicit"}
+    for pin in ("model_override", "create_reasoning_override", "create_service_tier_override"):
+        session.pop(pin)
+    server._rebuild_session_agent("sid", session)
+    assert seen[-1] == dict.fromkeys(carried)
 
 
-def test_profile_change_during_agent_build_keeps_the_previous_agent(monkeypatch, tmp_path):
+def test_rebuild_finishing_after_close_closes_the_replacement_and_its_handle(tmp_path, monkeypatch):
+    """session.close claiming the record while _make_agent runs already tore down the agent it saw:
+    the replacement must be closed (and its dedicated handle released), never installed (#49852)."""
     from tui_gateway import server
 
-    old = SimpleNamespace(
-        _session_db=object(),
-        _owns_session_db=False,
-        _session_title_hint="Card Chat:stable",
-    )
-    closed = []
-    replacement = SimpleNamespace(
-        _session_db=old._session_db,
-        _owns_session_db=False,
-        close=lambda: closed.append(True),
-    )
-    session = {
-        "agent": old,
-        "profile_home": None,
-        "session_key": "stored-main",
-        "source": "desktop",
-        "cwd": str(tmp_path),
-        "follow_profile_config": True,
-    }
-    fingerprints = iter(["aaaaaaaaaaaa", "bbbbbbbbbbbb"])
-    monkeypatch.setattr(server, "_bind_build_profile_scopes", lambda _home: None)
-    monkeypatch.setattr(server, "_config_model_target", lambda: ("model", "provider"))
-    monkeypatch.setattr(
-        server,
-        "_session_profile_capability_fingerprint",
-        lambda _session: next(fingerprints),
-    )
-    monkeypatch.setattr(server, "_make_agent", lambda *_args, **_kwargs: replacement)
+    closed: list[str] = []
+    handle = SimpleNamespace(close=lambda: closed.append("db"))
+    monkeypatch.setattr(server, "_open_profile_session_db", lambda _home: handle)
+    monkeypatch.setattr(server, "_config_model_target", lambda: "default-a")
+    session = {"agent": None, "session_key": "k", "profile_home": str(tmp_path / "worker")}
 
-    with pytest.raises(RuntimeError, match="profile_changed_during_agent_build"):
-        server._rebuild_session_agent(
-            "live-main",
-            session,
-            session_id="stored-main",
-        )
+    def make_agent(*_args, session_db=None, **_kwargs):
+        session["_closing"] = True  # _pop_session_by_id lands mid-build
+        return SimpleNamespace(_session_db=session_db, _owns_session_db=False,
+                               close=lambda: closed.append("agent"))
 
-    assert session["agent"] is old
-    assert closed == [True]
+    monkeypatch.setattr(server, "_make_agent", make_agent)
+    with pytest.raises(RuntimeError, match="closed"):
+        server._rebuild_session_agent("sid", session, session_id="k")
+    assert session["agent"] is None
+    assert closed == ["agent", "db"]

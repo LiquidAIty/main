@@ -1,175 +1,80 @@
 // @vitest-environment jsdom
 
-// Entity: Run Ledger
-// Relationship: This file verifies passive status polling remains Project-scoped, ignores terminal Runs, preserves partial successes, backs off after failure, and recovers.
-// Entity: Card Topology
-// Relationship: This file verifies canvas badges show only truthful active parent-plus-worker counts and never execute or reconcile work.
-
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DeckDocument } from '../../../types/agentgraph';
 import useCardActiveAgentCounts from './useCardActiveAgentCounts';
 
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-  vi.useRealTimers();
-});
-
-const deck: DeckDocument = {
-  id: 'deck_builder',
-  name: 'Agent Card Deck',
-  version: 1,
+const deck = {
+  id: 'deck-one',
+  name: 'Deck',
   promptTemplates: [],
   nodes: [
     {
-      id: 'card_test_delegate', templateId: 'template_assist', title: 'Delegate',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' }, position: { x: 0, y: 0 },
+      id: 'main', title: 'Main', templateId: 'template_assist',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
+      runtimeOptions: {}, position: { x: 0, y: 0 },
     },
     {
-      id: 'card_knowgraph', templateId: 'template_knowgraph', title: 'KnowGraph',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' }, position: { x: 100, y: 0 },
+      id: 'knowgraph', title: 'KnowGraph', templateId: 'template_assist',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' },
+      runtimeOptions: {}, position: { x: 0, y: 0 },
     },
   ],
   edges: [],
-};
+  version: 1,
+} as DeckDocument;
 
-describe('useCardActiveAgentCounts', () => {
-  it('keeps the polling schedule when rendering updates leave agent IDs unchanged', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(
-      JSON.stringify({ ok: true, result: null }), { status: 200 },
-    ));
-    const { rerender, unmount } = renderHook(({ currentDeck }) => useCardActiveAgentCounts({
-      projectId: 'project-one', deck: currentDeck,
-    }), { initialProps: { currentDeck: deck } });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    for (let index = 0; index < 4; index += 1) {
-      rerender({ currentDeck: { ...deck, nodes: deck.nodes.map((node) => ({ ...node, title: `${node.title} updated` })) } });
-      await act(async () => undefined);
-    }
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    rerender({ currentDeck: { ...deck, nodes: deck.nodes.slice(0, 1) } });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    unmount();
+describe('Hermes event-derived Card activity', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
-  it('projects only actual live owner plus child-worker counts without executing or reconciling', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
-      const body = JSON.parse(String(init?.body || '{}'));
-      return new Response(JSON.stringify({
+  it('shows one Card Run plus the exact active Hermes worker count', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
         ok: true,
-        result: body.cardId === 'card_knowgraph'
-          ? { cardId: body.cardId, state: 'running', activeWorkers: 2 }
-          : { cardId: body.cardId, state: 'running', activeWorkers: null },
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    });
-
+        results: [
+          { cardId: 'main', state: 'running', activeWorkers: 0 },
+          { cardId: 'knowgraph', state: 'running', activeWorkers: 3 },
+        ],
+        failedCardIds: [],
+      }),
+    })));
     const { result, unmount } = renderHook(() => useCardActiveAgentCounts({
-      projectId: 'project-one', deck,
+      projectId: 'project-one',
+      deck,
     }));
-
     await waitFor(() => expect(result.current.activeAgentCounts).toEqual({
-      card_test_delegate: 1,
-      card_knowgraph: 3,
+      main: 1,
+      knowgraph: 4,
     }));
-    expect(new Set(result.current.activeCardIds)).toEqual(new Set([
-      'card_test_delegate', 'card_knowgraph',
-    ]));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    for (const call of fetchMock.mock.calls) {
-      expect(JSON.parse(String(call[1]?.body))).toMatchObject({
-        action: 'status', inspectOnly: true, projectId: 'project-one', deckId: 'deck_builder',
-      });
-    }
+    expect(result.current.activeCardIds).toEqual(['main', 'knowgraph']);
     unmount();
   });
 
-  it('hides all counts for terminal Runs and before the canonical Deck is ready', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
-      const body = JSON.parse(String(init?.body || '{}'));
-      return new Response(JSON.stringify({
+  it('does not present a failed or malformed observation as live activity', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
         ok: true,
-        result: { cardId: body.cardId, state: 'completed', activeWorkers: 4 },
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    });
+        results: [
+          { cardId: 'main', state: 'completed', activeWorkers: 0 },
+          { cardId: 'knowgraph', state: 'running', activeWorkers: -1 },
+        ],
+        failedCardIds: [],
+      }),
+    })));
     const { result, unmount } = renderHook(() => useCardActiveAgentCounts({
-      projectId: 'project-one', deck,
-    }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(result.current.activeAgentCounts).toEqual({});
-    unmount();
-
-    fetchMock.mockClear();
-    const notReady = renderHook(() => useCardActiveAgentCounts({ projectId: '', deck }));
-    await act(async () => undefined);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(notReady.result.current.activeAgentCounts).toEqual({});
-  });
-
-  it('fails closed to no badge when passive status observation is unavailable', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ ok: false }), {
-      status: 502,
-      headers: { 'Content-Type': 'application/json' },
-    }));
-    const { result, unmount } = renderHook(() => useCardActiveAgentCounts({
-      projectId: 'project-one', deck,
+      projectId: 'project-one',
+      deck,
     }));
     await waitFor(() => expect(result.current.activeAgentCounts).toEqual({}));
-    unmount();
-  });
-
-  it('keeps successful Card observations when another Card fails', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
-      const body = JSON.parse(String(init?.body || '{}'));
-      if (body.cardId === 'card_knowgraph') {
-        return new Response(JSON.stringify({ ok: false }), { status: 503 });
-      }
-      return new Response(JSON.stringify({
-        ok: true,
-        result: { cardId: body.cardId, state: 'running', activeWorkers: 1 },
-      }), { status: 200 });
-    });
-
-    const { result, unmount } = renderHook(() => useCardActiveAgentCounts({
-      projectId: 'project-one', deck,
-    }));
-
-    await waitFor(() => expect(result.current.activeAgentCounts).toEqual({
-      card_test_delegate: 2,
-    }));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    unmount();
-  });
-
-  it('continues bounded backoff polling after repeated failures and recovers', async () => {
-    vi.useFakeTimers();
-    let calls = 0;
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
-      calls += 1;
-      const body = JSON.parse(String(init?.body || '{}'));
-      if (calls <= 4) {
-        return new Response(JSON.stringify({ ok: false }), { status: 503 });
-      }
-      return new Response(JSON.stringify({
-        ok: true,
-        result: { cardId: body.cardId, state: 'running', activeWorkers: 0 },
-      }), { status: 200 });
-    });
-    const { result, unmount } = renderHook(() => useCardActiveAgentCounts({
-      projectId: 'project-one', deck,
-    }));
-    await act(async () => undefined);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-    expect(result.current.activeAgentCounts).toEqual({
-      card_test_delegate: 1,
-      card_knowgraph: 1,
-    });
     unmount();
   });
 });

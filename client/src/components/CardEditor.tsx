@@ -206,7 +206,6 @@ type PromptFields = {
   ioSchema: string;
   memoryPolicy: string;
   outputExpectations: string;
-  connectedAgents: string;
   orchestratorSkill: string;
 };
 
@@ -215,7 +214,6 @@ const PROMPT_HEADINGS: Record<string, keyof PromptFields> = {
   IO_SCHEMA: 'ioSchema', INPUT_SCHEMA: 'ioSchema', MEMORY_POLICY: 'memoryPolicy',
   OUTPUT_EXPECTATIONS: 'outputExpectations', OUTPUT_CONTRACT: 'outputExpectations',
   OUTPUT_REQUIREMENTS: 'outputExpectations',
-  ALL_CONNECTED_AGENTS: 'connectedAgents', ALL_AGENTS_CONNECTED: 'connectedAgents',
   ORCHESTRATOR_SKILL: 'orchestratorSkill',
 };
 
@@ -230,9 +228,21 @@ const CANONICAL_PROMPT_HEADING: Record<keyof PromptFields, string> = {
   ioSchema: 'IO_SCHEMA',
   memoryPolicy: 'MEMORY_POLICY',
   outputExpectations: 'OUTPUT_EXPECTATIONS',
-  connectedAgents: 'ALL CONNECTED AGENTS',
   orchestratorSkill: 'ORCHESTRATOR SKILL',
 };
+
+function stripRetiredConnectedAgentSections(template: string): string {
+  const retired = new Set(['ALL_CONNECTED_AGENTS', 'ALL_AGENTS_CONNECTED']);
+  const headings = promptHeadings(template);
+  let result = template;
+  for (let index = headings.length - 1; index >= 0; index -= 1) {
+    const heading = headings[index];
+    if (!retired.has(promptHeadingKey(heading.label))) continue;
+    const end = headings[index + 1]?.index ?? template.length;
+    result = result.slice(0, heading.index) + result.slice(end);
+  }
+  return result.trim();
+}
 
 function promptHeadings(template: string) {
   const headings: Array<{ label: string; index: number; end: number }> = [];
@@ -288,15 +298,17 @@ function promptFieldRanges(template: string) {
 }
 
 function parsePromptTemplate(template: string): PromptFields & Record<string, string> {
+  template = stripRetiredConnectedAgentSections(template);
   const fields: PromptFields & Record<string, string> = {
     role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '', outputExpectations: '',
-    connectedAgents: '', orchestratorSkill: '',
+    orchestratorSkill: '',
   };
   for (const range of promptFieldRanges(template)) fields[range.key] = template.slice(range.start, range.end);
   return fields;
 }
 
 function serializePromptFields(fields: PromptFields & Record<string, string>, original: string, edited: Record<string, boolean>): string {
+  original = stripRetiredConnectedAgentSections(original);
   const ranges = promptFieldRanges(original);
   const previous = parsePromptTemplate(original);
   let result = original;
@@ -337,11 +349,8 @@ export function CardEditor({
   const outboundOrangeConnections = orangeConnections.filter(
     (connection) => connection.direction === 'outgoing',
   );
-  const generatedConnectedAgents = useMemo(() => outboundOrangeConnections.map((connection) => {
-    const skill = parsePromptTemplate(String(connection.prompt || '')).orchestratorSkill.trim();
-    return `[BOT: @${connection.title}]\n${skill || 'This connected Card has no saved ORCHESTRATOR SKILL. Do not call it until the Card is configured.'}`;
-  }).join('\n\n'), [outboundOrangeConnections]);
   const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
+  const [selectedConnectedCardId, setSelectedConnectedCardId] = useState<string | null>(null);
   const [runtimeMetrics, setRuntimeMetrics] = useState<RuntimeMetrics | null>(null);
   const [runtimeMetricsLoading, setRuntimeMetricsLoading] = useState(false);
   const cardSaveInFlightRef = useRef<Promise<boolean> | null>(null);
@@ -352,7 +361,17 @@ export function CardEditor({
   const hermesProfileReadbackRef = useRef<HermesProfileView | null>(null);
   const runtimeKind = localConfig?.runtime.kind;
   const runtimeMode = localConfig?.runtime.mode;
+  const selectedConnectedCard = outboundOrangeConnections.find(
+    (connection) => connection.cardId === selectedConnectedCardId,
+  ) || null;
+  const selectedConnectedIntroduction = selectedConnectedCard
+    ? parsePromptTemplate(String(selectedConnectedCard.prompt || '')).orchestratorSkill.trim()
+    : '';
   const [cardNameDraft, setCardNameDraft] = useState(cardName);
+
+  useEffect(() => {
+    setSelectedConnectedCardId(null);
+  }, [cardId]);
   const [provider, setProvider] = useState<NonNullable<CardEditorConfig['provider']>>('');
   const [accessMode, setAccessMode] = useState<
     'chatgpt-account' | 'openai-api' | 'openrouter-api' | ''
@@ -398,7 +417,6 @@ export function CardEditor({
     ioSchema: '',
     memoryPolicy: '',
     outputExpectations: '',
-    connectedAgents: '',
     orchestratorSkill: '',
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState<Record<string, boolean>>({});
@@ -973,24 +991,6 @@ export function CardEditor({
         && (runtimeMode === 'main' || orchestratorEnabled);
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <label style={{ display: 'grid', gap: 7, color: '#E0DED5', fontSize: 12 }}>
-            <span style={{ fontWeight: 700 }}>Orchestrator skill</span>
-            <span style={{ color: '#80969F', fontSize: 10.5 }}>
-              Describe this Card's specialty, tools, invocation conditions, required input,
-              and expected result for a connected orchestrator.
-            </span>
-            <textarea
-              aria-label="Orchestrator skill"
-              value={promptParts.orchestratorSkill}
-              onChange={(event) => {
-                setPromptParts((current) => ({ ...current, orchestratorSkill: event.target.value }));
-                setPromptPartsTouched((current) => ({ ...current, orchestratorSkill: true }));
-                markDraftDirty();
-              }}
-              rows={7}
-            />
-          </label>
-
           {runtimeKind === 'hermes' && runtimeMode !== 'magentic_one' ? (
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#E0DED5', fontSize: 12 }}>
               <input
@@ -1009,43 +1009,51 @@ export function CardEditor({
           ) : null}
 
           {orchestratorOn && outboundOrangeConnections.length > 0 ? (
-            <label style={{ display: 'grid', gap: 7, color: '#E0DED5', fontSize: 12 }}>
+            <div style={{ display: 'grid', gap: 7, color: '#E0DED5', fontSize: 12 }}>
               <span style={{ fontWeight: 700 }}>All connected agents</span>
               <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {outboundOrangeConnections.map((connection) => (
-                  <span
+                  <button
+                    type="button"
                     key={`${connection.direction}:${connection.cardId}`}
+                    onClick={() => setSelectedConnectedCardId(connection.cardId)}
                     style={{
                       padding: '3px 7px',
                       borderRadius: 999,
-                      border: '1px solid rgba(242,166,74,.28)',
-                      background: 'rgba(242,166,74,.08)',
+                      border: connection.cardId === selectedConnectedCardId
+                        ? '1px solid rgba(111,224,214,.62)'
+                        : '1px solid rgba(242,166,74,.28)',
+                      background: connection.cardId === selectedConnectedCardId
+                        ? 'rgba(111,224,214,.14)'
+                        : 'rgba(242,166,74,.08)',
                       color: '#F0D2A9',
                       fontSize: 10,
+                      cursor: 'pointer',
                     }}
                   >
                     {connection.title}
-                  </span>
+                  </button>
                 ))}
               </span>
-              <textarea
-                aria-label="All connected agents"
-                value={generatedConnectedAgents}
-                readOnly
-                rows={Math.max(5, Math.min(10, outboundOrangeConnections.length + 3))}
-                style={{
-                  width: '100%',
-                  padding: 10,
-                  background: 'rgba(20,24,28,0.52)',
-                  color: '#FFF',
-                  border: '1px solid rgba(242,166,74,.26)',
-                  borderRadius: 8,
-                  fontFamily: 'monospace',
-                  fontSize: 13,
-                  resize: 'vertical',
-                }}
-              />
-            </label>
+              {selectedConnectedCard ? (
+                <section
+                  aria-label={`${selectedConnectedCard.title} introduction`}
+                  style={{
+                    display: 'grid',
+                    gap: 8,
+                    padding: 12,
+                    borderRadius: 10,
+                    border: '1px solid rgba(111,224,214,.28)',
+                    background: 'rgba(20,24,28,.52)',
+                  }}
+                >
+                  <strong style={{ color: '#6FE0D6' }}>@{selectedConnectedCard.title}</strong>
+                  <div style={{ color: '#D6DFE2', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                    {selectedConnectedIntroduction || 'This Card does not yet have a saved orchestrator introduction.'}
+                  </div>
+                </section>
+              ) : null}
+            </div>
           ) : null}
 
           {onChangeCardName ? (
@@ -1210,8 +1218,8 @@ export function CardEditor({
             />
           </div>
 
-          {promptFieldRanges(promptText).filter((block) => (
-            !['role', 'goal', 'constraints', 'ioSchema', 'outputExpectations', 'connectedAgents'].includes(block.key)
+          {promptFieldRanges(stripRetiredConnectedAgentSections(promptText)).filter((block) => (
+            !['role', 'goal', 'constraints', 'ioSchema', 'outputExpectations'].includes(block.key)
             && (block.start !== block.end || promptPartsTouched[block.key])
           )).map((block) => (
             <label key={block.key} style={{ display: 'grid', gap: 6, color: '#E0DED5', fontSize: 12 }}>

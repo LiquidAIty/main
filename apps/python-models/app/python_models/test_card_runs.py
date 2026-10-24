@@ -201,6 +201,56 @@ def test_run_history_reads_only_the_outer_run_ledger_without_age_filtering(monke
     assert "ORDER BY run.created_at DESC" in query
     assert params == ("project-one", "deck-one", "card-one", 2)
 
+
+def test_latest_runs_reads_all_requested_cards_in_one_transaction(monkeypatch):
+    from unittest.mock import MagicMock
+
+    connection = MagicMock()
+    cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [
+        {
+            "run_id": "run-main",
+            "project_id": "project-one",
+            "deck_id": "deck-one",
+            "card_id": "card-main",
+            "state": "running",
+        },
+        {
+            "run_id": "run-worker",
+            "project_id": "project-one",
+            "deck_id": "deck-one",
+            "card_id": "card-worker",
+            "state": "completed",
+        },
+    ]
+    monkeypatch.setattr(card_run_readback, "connect_postgres", lambda **_kwargs: connection)
+    monkeypatch.setattr(saved_cards, "resolve_project_record", lambda *_args: {"id": "project-one"})
+
+    result = card_run_readback.read_latest_runs({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardIds": ["card-main", "card-worker"],
+    })
+
+    assert [(run["cardId"], run["runId"]) for run in result["runs"]] == [
+        ("card-main", "run-main"),
+        ("card-worker", "run-worker"),
+    ]
+    query, params = cursor.execute.call_args_list[-1].args
+    assert "DISTINCT ON (revision.card_id)" in query
+    assert "revision.card_id=ANY(%s)" in query
+    assert params == ("project-one", "deck-one", ["card-main", "card-worker"])
+
+
+@pytest.mark.parametrize("card_ids", [[], ["card-main", "card-main"], [""], [1]])
+def test_latest_runs_rejects_invalid_card_sets(card_ids):
+    with pytest.raises(saved_card_contract.CardDomainError, match="run_card_ids_invalid"):
+        card_run_readback.read_latest_runs({
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "cardIds": card_ids,
+        })
+
 @pytest.mark.parametrize("limit", [0, 21, True, "8"])
 def test_run_history_rejects_unbounded_limits(monkeypatch, limit):
     with pytest.raises(saved_card_contract.CardDomainError, match="run_history_limit_invalid"):
@@ -341,9 +391,7 @@ def test_hermes_begin_run_returns_the_same_card_identity_at_both_transport_level
     assert result["hermesTransport"]["cardIdentity"]["cardId"] == "card-one"
     assert result["hermesTransport"]["request"]["runtime"]["profile"] == "main"
 
-def test_mag_one_participant_validation_fails_before_runtime_binding(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_mag_one_run_has_no_application_owned_execution_envelope(monkeypatch):
     prepared = _prepared_grounded_runtime({
         "kind": "hermes", "mode": "magentic_one", "profile": "card-one",
     })
@@ -353,66 +401,9 @@ def test_mag_one_participant_validation_fails_before_runtime_binding(
         lambda _payload: _accepted_run_snapshot(),
     )
     monkeypatch.setattr(
-        card_run_preparation,
-        "_fail_accepted_run_preparation",
-        lambda *_args, **_kwargs: {"ok": True},
-    )
-    monkeypatch.setattr(
         card_invocation_preparation, "prepare_run_invocation",
         lambda _payload, **_kwargs: prepared,
     )
-    monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: {
-        "projectId": "project-one",
-        "deck": {
-            "nodes": [{
-                "id": "card-one",
-                "runtime": {
-                    "kind": "hermes", "mode": "magentic_one", "profile": "card-one",
-                },
-            }],
-            "edges": [],
-        },
-    })
-    monkeypatch.setattr(card_run_preparation, "_insert_run",
-        lambda *_args, **_kwargs: pytest.fail("participant validation created a Run"),
-    )
-
-    with pytest.raises(
-        saved_card_contract.CardDomainError,
-        match="magnetic_taskgraph_no_connected_workers",
-    ):
-        card_run_preparation.begin_run({
-            "runId": "run-one", "correlationId": "correlation-one",
-            "assignment": "test task",
-        })
-
-def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monkeypatch):
-    prepared = _prepared_grounded_runtime({
-        "kind": "hermes", "mode": "magentic_one", "profile": "card-one",
-    })
-    prepared["idf"]["stableSavedCardContext"]["outputRequirements"] = "Separate output contract"
-    monkeypatch.setattr(
-        card_run_preparation,
-        "accept_run_request",
-        lambda _payload: _accepted_run_snapshot(),
-    )
-    workers = [_agent(f"worker-{i}", subtitle=f"Saved capability {i}",
-                      runtime={"kind": "hermes", "mode": "delegate", "profile": f"profile-{i}"})
-               for i in range(6)]
-    for i, worker in enumerate(workers):
-        worker["_cardRevisionId"] = f"worker-revision-{i}"
-        worker["_cardRevision"] = 1
-        worker["_cardRevisionSha256"] = f"{i:064x}"
-    monkeypatch.setattr(
-        card_invocation_preparation, "prepare_run_invocation",
-        lambda _payload, **_kwargs: prepared,
-    )
-    monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: {"deck": {
-        "nodes": workers,
-        "edges": [{"source": "card-one" if i % 2 else worker["id"],
-                   "target": worker["id"] if i % 2 else "card-one",
-                   "edgeType": "magentic_option"} for i, worker in enumerate(workers)],
-    }})
     monkeypatch.setattr(card_run_preparation, "_insert_run", lambda *a, **kw: ("run-one", "correlation-one", True))
     monkeypatch.setattr(card_run_inputs, "retain_required_run_idf", _fake_retain_idf)
     monkeypatch.setattr(agentgraph_run_observations, "observe_run_preparation_complete", lambda *a, **kw: True)
@@ -420,32 +411,10 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
         "runId": "run-one", "correlationId": "correlation-one",
         "assignment": "test task",
     })
-    assert result["magneticTaskGraph"]["workers"] == [
-        {
-            "cardId": worker["id"],
-            "title": worker["title"],
-            "profile": worker["runtime"]["profile"],
-            "description": worker["subtitle"],
-            "cardRevisionId": worker["_cardRevisionId"],
-            "capabilities": {
-                "savedToolIds": [],
-            },
-        }
-        for worker in workers
-    ]
-    assert result["magneticTaskGraph"]["mission"] == "test task"
-    assert result["magneticTaskGraph"]["orchestrator"] == {
-        "cardId": "card-one",
-        "cardRevisionId": "revision-one",
-        "hermesProfile": "card-one",
-        "instructions": "test instructions",
-        "provider": {
-            "provider": "openai",
-            "modelKey": "gpt-5.6-luna",
-            "providerModelId": "gpt-5.6-luna",
-            "accessMode": "chatgpt-account",
-        },
-        "runtimeOptions": {},
+    assert "magneticTaskGraph" not in result
+    assert result["hermesTransport"] is None
+    assert result["inputFile"] == {
+        "idfPath": "in.idf", "idfSha256": "idf", "idfBytes": 1,
     }
 
 

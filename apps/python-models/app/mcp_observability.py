@@ -32,7 +32,6 @@ CATALOG_SOURCE_PATHS = (
     os.path.join(_APP_ROOT, "mcp_provider_operations.py"),
     os.path.join(_APP_ROOT, "application_operation_catalog.py"),
     os.path.join(_APP_ROOT, "agent_canvas_card_operations.py"),
-    os.path.join(_APP_ROOT, "mag_one_operation.py"),
     os.path.join(_APP_ROOT, "main_worldview_operations.py"),
     os.path.join(_APP_ROOT, "project_graph_operations.py"),
     os.path.join(_APP_ROOT, "saved_canvas_tools.py"),

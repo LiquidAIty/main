@@ -89,7 +89,7 @@ These distinctions are load-bearing:
   distinct newest **Recent** record per authority.
 - Main, Builder, ThinkGraph, and KnowGraph receive the current Entity/Relationship map plus the default
   Relevant/Recent grounding before inference. Engraphis recall supplies Think candidates; Graphiti
-  Entity search plus exact `ABOUT` reads supplies Know candidates; Jev ranks the bounded provider
+  Entity search plus exact `entity_uuid` reads supplies Know candidates; Jev ranks the bounded provider
   candidates. TypeScript does not search or rank prose.
 - Thinks faithfully steelman the user's current idea. One valid Know is one first-class Graphiti object with
   one sourced observation, one bounded interpretation, one inspectable citation, and one exact Entity
@@ -105,8 +105,8 @@ These distinctions are load-bearing:
 - The visible **Think** and **Know** color-key labels select isolated provider views; an empty-canvas click
   returns the one combined view. View settings remain in the graph inspector.
 - KnowGraph owns sourced research and Graphiti persistence; Thinks are framing, never evidence.
-- KnowGraph writes through queued `graphiti.add_know`, which stores a typed `Episodic:Know`, records one exact
-  structural `ABOUT` attachment, leaves extracted `MENTIONS` independent, updates Graphiti communities by
+- KnowGraph writes through queued `graphiti.add_know`, which stores a typed `Episodic:Know`, stores one exact
+  `entity_uuid`, removes Know `ABOUT` and `MENTIONS` attachment edges, updates Graphiti communities by
   default, and may join a continuing research-thread Saga. Python rails verifies the citation before passing
   it as typed fields; Graphiti keeps plain-text episode content for extraction and hybrid retrieval. Processing
   acceptance supplies an exact Know UUID/content hash but is not materialization proof; `graphiti.get_know`

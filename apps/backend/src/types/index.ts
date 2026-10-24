@@ -10,7 +10,7 @@
  * Entity: Hermes Profiles
  * Relationship: This file defines each saved Card's single Hermes runtime mode, profile, provider, model, subagent, skill, toolset, and MCP selections.
  * Entity: Card Scripts
- * Relationship: This file defines the versioned saved Card Script source, compiled contract, hashes, tool states, and validation record.
+ * Relationship: This file transports the versioned saved Card Script source and Python-owned execution state without making backend transport fields an editor surface.
  */
 
 export type PromptTemplate = {

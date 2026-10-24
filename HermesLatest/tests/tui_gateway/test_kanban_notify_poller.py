@@ -39,10 +39,10 @@ def _create_subscribed_task(*, chat_id: str = SESSION_KEY, platform: str = "tui"
         conn.close()
 
 
-def _complete(tid: str, summary: str = "all done", *, result: str | None = None) -> None:
+def _complete(tid: str, summary: str = "all done") -> None:
     conn = kbc.connect()
     try:
-        kb.complete_task(conn, tid, result=result, summary=summary)
+        kb.complete_task(conn, tid, summary=summary)
     finally:
         conn.close()
 
@@ -249,18 +249,6 @@ class TestFormatKanbanEventText:
         text = _format_kanban_event_text(self.SUB, self.TASK, ev, "")
         assert "timed out" in text
 
-    def test_completed_status_stays_compact_while_model_text_keeps_full_result(self):
-        result = "first line\n" + ("full research evidence " * 80)
-        task = SimpleNamespace(title="research", assignee="knowgraph", result=result)
-        ev = SimpleNamespace(kind="completed", payload={"summary": result[:400]})
-
-        text = _format_kanban_event_text(self.SUB, task, ev, "main")
-
-        assert len(str(text)) < 400
-        assert result not in str(text)
-        assert text.task_result == result.strip()
-        assert text.model_text.endswith(result.strip())
-
 
 class TestNotificationPollerLoopKanbanWiring:
     """Drive a real TUI subscription through ``_notification_poller_loop``.
@@ -272,7 +260,7 @@ class TestNotificationPollerLoopKanbanWiring:
 
     def _start_poller(self, session: dict, monkeypatch):
         import threading
-        import tui_gateway.server as server
+        from tui_gateway import server
 
         emits: list = []
         submits: list = []
@@ -280,11 +268,12 @@ class TestNotificationPollerLoopKanbanWiring:
         monkeypatch.setattr(
             server, "_emit", lambda event, sid, payload=None: emits.append((event, payload))
         )
-        monkeypatch.setattr(
-            server,
-            "_run_prompt_submit",
-            lambda rid, sid, sess, text, **kwargs: submits.append((text, kwargs)),
-        )
+        def accept(rid, sid, sess, text):
+            # Model execution is replaced, including its concrete admission receipt.
+            server._emit("message.start", sid)
+            submits.append(text)
+            return True
+        monkeypatch.setattr(server, "_run_prompt_submit", accept)
         stop = threading.Event()
         thread = threading.Thread(
             target=server._notification_poller_loop,
@@ -316,8 +305,7 @@ class TestNotificationPollerLoopKanbanWiring:
 
     def test_idle_session_gets_status_update_and_agent_turn(self, monkeypatch):
         tid = _create_subscribed_task()
-        full_result = "poller e2e done\n" + ("verified evidence " * 80)
-        _complete(tid, summary="poller e2e done", result=full_result)
+        _complete(tid, summary="poller e2e done")
         session = self._poller_session(running=False)
 
         stop, thread, emits, submits = self._start_poller(session, monkeypatch)
@@ -329,36 +317,10 @@ class TestNotificationPollerLoopKanbanWiring:
 
         status_texts = [p["text"] for e, p in emits if e == "status.update" and p]
         assert any(tid in t for t in status_texts), status_texts
-        assert all(full_result not in text for text in status_texts)
         assert any(e == "message.start" for e, _ in emits)
-        assert any(tid in text for text, _kwargs in submits), submits
-        assert full_result.strip() in submits[0][0]
-        assert submits[0][1]["display_metadata"]["task_ids"] == [tid]
-        assert submits[0][1]["display_metadata"]["task_results"] == {
-            tid: full_result.strip()
-        }
+        assert any(tid in text for text in submits), submits
         assert session["running"] is True  # poller claimed the turn
         assert not session.get("_kanban_pending")
-
-    def test_summary_only_completion_delivers_the_full_exact_result(self, monkeypatch):
-        tid = _create_subscribed_task()
-        full_summary = "summary-only result\n" + ("verified primary-source evidence " * 80)
-        _complete(tid, summary=full_summary)
-        session = self._poller_session(running=False)
-
-        stop, thread, emits, submits = self._start_poller(session, monkeypatch)
-        try:
-            assert self._wait_for(lambda: submits), "agent turn was never dispatched"
-        finally:
-            stop.set()
-            thread.join(timeout=5)
-
-        status_texts = [p["text"] for e, p in emits if e == "status.update" and p]
-        assert all(full_summary not in text for text in status_texts)
-        assert full_summary.strip() in submits[0][0]
-        assert submits[0][1]["display_metadata"]["task_results"] == {
-            tid: full_summary.strip(),
-        }
 
     def test_busy_session_buffers_then_flushes_when_idle(self, monkeypatch):
         tid = _create_subscribed_task()
@@ -383,7 +345,6 @@ class TestNotificationPollerLoopKanbanWiring:
             stop.set()
             thread.join(timeout=5)
 
-        assert any(tid in text for text, _kwargs in submits), submits
-        assert submits[0][1]["display_metadata"]["task_ids"] == [tid]
+        assert any(tid in text for text in submits), submits
         assert session["_kanban_pending"] == []
         assert session["running"] is True

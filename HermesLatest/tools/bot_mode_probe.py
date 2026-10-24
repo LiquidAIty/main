@@ -1,9 +1,10 @@
 """Bot Mode roster probe — canonical Bot Chat system prompt section.
 
-When any profile carries ``ui_meta['hermes-bots']`` in profile.yaml (Bot-Mode-managed),
-a bot's canonical "Bot Chat" session — ONLY that session (agent/system_prompt.py enforces
-the ``BOT_CHAT_TITLE`` gate) — gets a "Messaging other agents" section. Silent (``""``)
-when no profile is managed or on any error. Older desktop builds appended a frozen copy of
+When Bot Mode is active, a bot's canonical "Bot Chat" session — ONLY that session
+(agent/system_prompt.py enforces the ``BOT_CHAT_TITLE`` gate) — gets a "Messaging other
+agents" section. An explicit profile-scoped roster requires that profile's
+``ui_meta['hermes-bots']`` marker and is exact authority; an absent roster preserves stock
+install-wide discovery. Silent (``""``) when Bot Mode is inactive or on any error. Older desktop builds appended a frozen copy of
 the section to SOUL.md; ``strip_legacy_protocol`` drops it at load time so the live roster
 here is the only copy any session sees. Cached per (process, home) so compression rebuilds
 produce identical bytes. Toggle: ``agent.bot_mode_protocol``. Also hosts path/roster
@@ -19,7 +20,7 @@ from pathlib import Path
 
 _PROTOCOL_HEADING = "## Messaging other agents"
 # The legacy section through the next H2 heading (or EOF), plus the blank lines before it.
-_LEGACY_PROTOCOL_RE = re.compile(r"\n*" + re.escape(_PROTOCOL_HEADING) + r"[ \t]*\n.*?(?=\n## |\Z)", re.S)
+_LEGACY_PROTOCOL_RE = re.compile(r"\n*" + re.escape(_PROTOCOL_HEADING) + r"[ \t]*\n.*?(?=\n## |\Z)", re.DOTALL)
 
 
 def strip_legacy_protocol(text: str) -> str:
@@ -90,87 +91,104 @@ def _roster(root: Path) -> list[tuple[str, Path]]:
     return [("default", root), *named]
 
 
+def resolve_live_profile_home(root: Path, name: str) -> Path | None:
+    """Resolve one canonical profile name to a live home without granting Bot authority."""
+    from hermes_cli.profiles import normalize_profile_name, validate_profile_name
+    from hermes_constants import named_profile_is_live
+
+    try:
+        canonical = normalize_profile_name(name)
+        validate_profile_name(canonical)
+    except (TypeError, ValueError):
+        return None
+    if canonical == "default":
+        return root if root.is_dir() else None
+    candidate = root / "profiles" / canonical
+    return candidate if named_profile_is_live(candidate) else None
+
+
+def _configured_bot_profile_names(home: Path) -> tuple[bool, list]:
+    """Return presence plus raw values for this profile's exact local Bot roster.
+
+    Malformed explicit configuration is present but empty so it fails closed. Only true
+    absence selects stock install-wide discovery.
+    """
+    from hermes_cli.config_effective import load_user_config_effective
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    token = set_hermes_home_override(str(home))
+    try:
+        config = load_user_config_effective() or {}
+    finally:
+        reset_hermes_home_override(token)
+    bot_mode = config.get("bot_mode") if isinstance(config, dict) else None
+    if not isinstance(bot_mode, dict) or "roster" not in bot_mode:
+        return False, []
+    roster = bot_mode.get("roster")
+    return True, roster if isinstance(roster, list) else []
+
+
+def configured_bot_roster(home: str | os.PathLike | None = None) -> list[str] | None:
+    """Configured roster for profile readback; ``None`` means truly absent."""
+    configured, values = _swallow(
+        lambda: _configured_bot_profile_names(_resolve_home(home)), (True, []),
+    )
+    if not configured:
+        return None
+    return [value for value in values if isinstance(value, str)]
+
+
+def resolve_bot_roster(home: str | os.PathLike | None = None) -> list[tuple[str, Path]]:
+    """Resolve this profile's ordered local Bot targets.
+
+    An absent setting preserves stock discovery. An explicit list, including ``[]``, is
+    exact authority. Invalid, duplicate, self, unknown, or tombstoned entries are ignored
+    without broadening either mode.
+    """
+    from hermes_cli.profiles import normalize_profile_name, validate_profile_name
+
+    resolved = _resolve_home(home)
+    root = _hermes_root(resolved)
+    me = _profile_name(resolved)
+    configured, configured_names = _swallow(
+        lambda: _configured_bot_profile_names(resolved), (True, []),
+    )
+    raw_names = configured_names if configured else [name for name, _home in _roster(root)]
+    result: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for raw_name in raw_names:
+        if not isinstance(raw_name, str):
+            continue
+        try:
+            name = normalize_profile_name(raw_name)
+            validate_profile_name(name)
+        except (TypeError, ValueError):
+            continue
+        if name == me or name in seen:
+            continue
+        profile_home = resolve_live_profile_home(root, name)
+        if profile_home is None:
+            continue
+        seen.add(name)
+        result.append((name, profile_home))
+    return result
+
+
 def _read_yaml_dict(path: Path, needle: str | None = None) -> dict | None:
     """YAML mapping at ``path``, or None when missing / not a mapping / unreadable. ``needle``:
     cheap substring precheck that skips the YAML parse on the dominant (unmanaged) path."""
     def _load():
         if not path.is_file():
             return None
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = path.read_text(encoding="utf-8-sig", errors="replace")
         if needle is not None and needle not in raw:
             return None
-        import yaml
+        import hermes_yaml as yaml
 
         data = yaml.safe_load(raw)
         return data if isinstance(data, dict) else None
 
     return _swallow(_load, None)
-
-
-def configured_bot_roster(home: str | os.PathLike | None = None) -> list[str] | None:
-    """Exact profile-local Bot roster, or ``None`` when the profile did not set one.
-
-    An explicit empty list is meaningful: that profile is not an orchestrator. Invalid or
-    stale entries fail closed instead of broadening back to the install-wide roster.
-    """
-    resolved = _resolve_home(home)
-    cfg = _read_yaml_dict(resolved / "config.yaml", "bot_mode") or {}
-    bot_mode = cfg.get("bot_mode")
-    if not isinstance(bot_mode, dict) or "roster" not in bot_mode:
-        return None
-    raw = bot_mode.get("roster")
-    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
-        return []
-    available = dict(_roster(_hermes_root(resolved)))
-    current = _profile_name(resolved)
-    result: list[str] = []
-    seen: set[str] = set()
-    for item in raw:
-        requested = item.strip()
-        requested = "default" if requested.lower() == "hermes" else requested
-        canonical = next((name for name in available if name.lower() == requested.lower()), "")
-        if not canonical or canonical == current or canonical in seen:
-            continue
-        seen.add(canonical)
-        result.append(canonical)
-    return result
-
-
-def resolve_bot_roster(
-    home: str | os.PathLike | None = None,
-    roster_override: list[str] | None = None,
-) -> list[tuple[str, Path]]:
-    """Profiles this source may message.
-
-    A configured roster is authoritative and ordered. Profiles without that setting retain
-    upstream Bot Mode's install-wide roster.
-    """
-    resolved = _resolve_home(home)
-    all_profiles = dict(_roster(_hermes_root(resolved)))
-    configured = roster_override if roster_override is not None else configured_bot_roster(resolved)
-    if configured is None:
-        return [
-            (name, directory)
-            for name, directory in all_profiles.items()
-            if not _is_project_scoped_bot(directory)
-        ]
-    return [(name, all_profiles[name]) for name in configured if name in all_profiles]
-
-
-def bot_mode_session_authorized(
-    home: str | os.PathLike | None,
-    session_title: str,
-    roster_override: list[str] | None = None,
-) -> bool:
-    """Whether this session may expose ``message_agent``.
-
-    Explicit source-profile authority applies to every session of that profile. Profiles
-    without it retain upstream's canonical-Bot-Chat-only behavior.
-    """
-    configured = roster_override if roster_override is not None else configured_bot_roster(home)
-    if configured is not None:
-        return bool(configured)
-    return session_title == BOT_CHAT_TITLE and is_bot_mode_managed(home)
 
 
 def _bots_meta(data: dict | None) -> dict | None:
@@ -184,23 +202,18 @@ def _is_bot_managed(profile_dir: Path) -> bool:
     return _bots_meta(_read_yaml_dict(profile_dir / "profile.yaml", "hermes-bots")) is not None
 
 
-def _is_project_scoped_bot(profile_dir: Path) -> bool:
-    bots = _bots_meta(_read_yaml_dict(profile_dir / "profile.yaml", "hermes-bots"))
-    return isinstance(bots, dict) and bots.get("project_scoped") is True
-
-
 def _any_managed(root: Path) -> bool:
-    return any(
-        _is_bot_managed(directory) and not _is_project_scoped_bot(directory)
-        for _name, directory in _roster(root)
-    )
+    return any(_is_bot_managed(d) for _n, d in _roster(root))
 
 
 def is_bot_mode_managed(home: str | os.PathLike | None = None) -> bool:
-    """True when ANY profile on this install is Bot-Mode-managed. Never raises. The
-    ``message_agent`` injection gate — deliberately independent of the protocol section's
-    emptiness: a SOUL.md carrying the legacy protocol gets an empty section but still gets the tool."""
-    return _swallow(lambda: _any_managed(_hermes_root(_resolve_home(home))), False)
+    """Bot activation for the current profile's roster mode. Never raises."""
+    def _managed() -> bool:
+        resolved = _resolve_home(home)
+        configured, _names = _configured_bot_profile_names(resolved)
+        return _is_bot_managed(resolved) if configured else _any_managed(_hermes_root(resolved))
+
+    return _swallow(_managed, False)
 
 
 def _role_line(*parts: str) -> str:
@@ -339,32 +352,19 @@ def _peer_paragraph(root: Path) -> str:
     )
 
 
-def _build_section(home: Path, roster_override: list[str] | None = None) -> str:
+def _build_section(home: Path) -> str:
     root = _hermes_root(home)
     me = _profile_name(home)
-    configured = roster_override if roster_override is not None else configured_bot_roster(home)
-    if configured is None and not _any_managed(root):
+    if not is_bot_mode_managed(home):
         return ""
 
-    roster_lines = [
-        _bullet(f"@{_handle(name)}", _profile_role(profile_dir))
-        for name, profile_dir in resolve_bot_roster(home, roster_override)
-        if name != me
-    ]
-    if configured is not None and not roster_lines:
-        return ""
+    roster_lines = [_bullet(f"@{_handle(name)}", _profile_role(d)) for name, d in resolve_bot_roster(home)]
     roster_block = "\n".join(roster_lines) or "- (no teammates yet)"
 
-    scope_line = (
-        "This session runs Bot Mode: the supplied roster is the exact set of agent teammates "
-        "available in this session."
-        if configured is not None
-        else "This install runs Bot Mode: each Hermes profile is an agent teammate with "
-        'one canonical "Bot Chat" conversation.'
-    )
     return (
         f"{_PROTOCOL_HEADING}\n"
-        f"{scope_line} You have the `message_agent` "
+        "This install runs Bot Mode: each Hermes profile is an agent teammate with "
+        'one canonical "Bot Chat" conversation, and you have the `message_agent` '
         "tool to DM any of them. It is FIRE-AND-FORGET: it delivers your message "
         "with your attribution prefixed automatically and returns an acknowledgement "
         "immediately — it never returns the reply. Send it, finish your turn, and "
@@ -380,56 +380,75 @@ def _build_section(home: Path, roster_override: list[str] | None = None) -> str:
         "ONE clearly relevant teammate; don't fan out to several unless the user "
         "explicitly asked.\n"
         f'When YOU receive a "Message from 🤖 <name> (@<handle>):" message, a '
-        "teammate agent is talking to you (not the user): answer the current turn "
-        "directly and concisely, because its existing delivery carries this completion "
-        "back to the sender. Do not call message_agent merely to return that answer; "
-        "use message_agent only for a distinct new outbound handoff. If it is a pure FYI "
-        "with nothing to add, staying silent is fine — never ping-pong acknowledgements.\n"
+        "teammate agent is talking to you (not the user): address them, reply "
+        "concisely via message_agent to their handle, and if it is a pure FYI "
+        "with nothing to add, staying silent is fine — never ping-pong "
+        "acknowledgements.\n"
         f"You are `@{_handle(me)}`. Your teammates (live roster; roles from their "
         "profiles):\n"
         f"{roster_block}"
-        + ("" if configured is not None else _remote_paragraph(root))
-        + ("" if configured is not None else _peer_paragraph(root))
+        + _remote_paragraph(home)
+        + _peer_paragraph(root)
     )
 
 
-def get_bot_mode_protocol_section(
-    home: str | os.PathLike | None = None,
-    *,
-    force_refresh: bool = False,
-    roster_override: list[str] | None = None,
-) -> str:
+def get_bot_mode_protocol_section(home: str | os.PathLike | None = None, *, force_refresh: bool = False) -> str:
     """Cached probe entry point — one filesystem pass per (process, home). ``home`` should be
     the AGENT'S OWN resolved home (session-db derived), not ambient HERMES_HOME — build threads
     can lose the ContextVar override and the env var would then name the wrong profile."""
     resolved = str(_resolve_home(home))
-    cache_key = f"{resolved}\0{','.join(roster_override) if roster_override is not None else '<profile>'}"
     with _lock:
-        if force_refresh or cache_key not in _cached:
-            _cached[cache_key] = _swallow(
-                lambda: _build_section(Path(resolved), roster_override), "",
-            )
-        return _cached[cache_key]
+        if force_refresh or resolved not in _cached:
+            _cached[resolved] = _swallow(lambda: _build_section(Path(resolved)), "")
+        return _cached[resolved]
 
 
 # ── capability epoch ─────────────────────────────────────────────────────────
-# Long-lived profile-following sessions would strand capability changes (skills, toolsets,
-# MCP, SOUL, roster, peers) if they built the prompt once. The fingerprint hashes exactly
-# that surface; Bot Chat embeds it in the prompt and the TUI gateway also compares it at
-# turn admission — once per change, never per-turn drift.
+# Bot Chat sessions are effectively eternal, so "build the prompt once" would strand
+# capability changes (skills, toolsets, MCP, SOUL, roster, peers, model capability
+# overrides that change the prompt) forever. The fingerprint hashes exactly that
+# surface; the built prompt embeds it and agent/conversation_loop.py rebuilds only
+# when the stored epoch differs from disk — once per change, never per-turn drift.
 
 _EPOCH_PREFIX = "Capability epoch: "
 _EPOCH_RE_TEXT = r"Capability epoch: ([0-9a-f]{12})"
 
 
-def capability_fingerprint(
-    home: str | os.PathLike | None = None,
-    roster_override: list[str] | None = None,
-) -> str:
+def _model_prompt_capability_surface(model_cfg: object) -> dict:
+    """``model.*`` overrides whose flip changes a rebuilt prompt, coerced like their consumers.
+
+    ``supports_vision`` uses image routing's strict bool so YAML ``yes`` and ``true`` share
+    one epoch. ``context_length`` is the cap ``build_system_prompt_parts`` uses to truncate
+    context files. Routing keys (provider, default, base_url) are identity lines, not this
+    surface — and no model id is special-cased.
+    """
+    from agent.image_routing import _coerce_capability_bool
+
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+    raw_ctx = model_cfg.get("context_length")
+    ctx = None
+    # bool is an int subclass; ``context_length: true`` is not a window.
+    if isinstance(raw_ctx, bool):
+        ctx = None
+    elif isinstance(raw_ctx, int):
+        ctx = raw_ctx if raw_ctx > 0 else None
+    elif isinstance(raw_ctx, str) and raw_ctx.strip().isdigit():
+        parsed = int(raw_ctx.strip())
+        ctx = parsed if parsed > 0 else None
+    return {
+        "supports_vision": _coerce_capability_bool(model_cfg.get("supports_vision")),
+        "context_length": ctx,
+    }
+
+
+def capability_fingerprint(home: str | os.PathLike | None = None) -> str:
     """12-hex digest of the capability surface for ``home``'s profile: disabled skills +
-    enabled toolsets + MCP config, SOUL.md bytes, installed skill names, the Bot-Mode roster
-    (+ roles), peers and the relay roster. Deliberately NOT cached — the point is detecting
-    on-disk drift against a stored prompt's epoch. Never raises ("unavailable" on failure)."""
+    enabled toolsets + MCP config, model capability overrides that change the prompt
+    (``supports_vision``, ``context_length``), SOUL.md bytes, installed skill names, the
+    Bot-Mode roster (+ roles), peers and the relay roster. Deliberately NOT cached — the
+    point is detecting on-disk drift against a stored prompt's epoch. Never raises
+    ("unavailable" on failure)."""
     import hashlib
     import json
 
@@ -439,6 +458,7 @@ def capability_fingerprint(
     try:
         # Canonical loader (managed overlay + env expansion + normalization),
         # scoped to the bot's home via the override the loaders already honor.
+        from agent.skill_utils import parse_config_string_list
         from hermes_cli.config import load_config_readonly
         from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
@@ -448,29 +468,16 @@ def capability_fingerprint(
         finally:
             reset_hermes_home_override(token)
         skills_cfg = cfg.get("skills") if isinstance(cfg.get("skills"), dict) else {}
-        platform_toolsets = (
-            cfg.get("platform_toolsets")
-            if isinstance(cfg.get("platform_toolsets"), dict)
-            else {}
-        )
-        agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
-        delegation_cfg = cfg.get("delegation") if isinstance(cfg.get("delegation"), dict) else {}
-        kanban_cfg = cfg.get("kanban") if isinstance(cfg.get("kanban"), dict) else {}
         model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
+        surface["model_capabilities"] = _model_prompt_capability_surface(model_cfg)
         surface["disabled_skills"] = sorted(str(s).lower() for s in (skills_cfg.get("disabled") or []))
-        cli_toolsets = platform_toolsets.get("cli")
-        surface["toolset_pin_present"] = "cli" in platform_toolsets
-        surface["enabled_toolsets"] = (
-            sorted(str(t) for t in cli_toolsets)
-            if isinstance(cli_toolsets, list)
-            else cli_toolsets
-        )
-        surface["disabled_toolsets"] = json.dumps(
-            agent_cfg.get("disabled_toolsets"), sort_keys=True, default=str,
-        )
-        surface["delegation"] = json.dumps(delegation_cfg, sort_keys=True, default=str)
-        surface["task_mode"] = str(kanban_cfg.get("task_mode") or "")
-        surface["openai_runtime"] = str(model_cfg.get("openai_runtime") or "")
+        # The live selection is platform_toolsets.<platform> minus agent.disabled_toolsets;
+        # tools.enabled_toolsets is written by no surface, so watching it left Bot Chats
+        # blind to `hermes tools enable/disable` (#124211). Raw slices: an edit that leaves
+        # the effective selection unchanged costs one spurious rebuild at most.
+        agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+        surface["platform_toolsets"] = json.dumps(cfg.get("platform_toolsets") or {}, sort_keys=True, default=str)
+        surface["disabled_toolsets"] = sorted(parse_config_string_list(agent_cfg.get("disabled_toolsets")))
         mcp = cfg.get("mcp_servers")
         surface["mcp"] = json.dumps(mcp, sort_keys=True, default=str) if isinstance(mcp, dict) else ""
     except Exception:
@@ -499,69 +506,44 @@ def capability_fingerprint(
     surface["soul"] = _swallow(_soul, "")
     surface["skills"] = _swallow(_skills, [])
     try:
-        configured = roster_override if roster_override is not None else configured_bot_roster(resolved)
-        roster = resolve_bot_roster(resolved, roster_override)
-        surface["roster_explicit"] = configured is not None
-        surface["roster"] = [name for name, _profile_dir in roster]
+        roster = resolve_bot_roster(resolved)
+        surface["roster"] = [n for n, _d in roster]
         # Roles are part of the messaging surface: renaming a bot or editing a
         # description must refresh the roster block teammates pick recipients from.
-        surface["roster_roles"] = sorted(f"{n}:{_profile_role(d)}" for n, d in roster)
+        surface["roster_roles"] = [f"{n}:{_profile_role(d)}" for n, d in roster]
     except Exception:
         surface["roster"] = []
     # Protocol-text version salt: bumping it refreshes every eternal Bot Chat
     # prompt ONCE so existing bots adopt a new protocol section.
-    surface["protocol_version"] = 2
-    # The install-wide Bot Chat can reach peer/relay targets. An explicit
-    # session roster is authoritative and contains only its declared local profiles,
-    # so unrelated remote connection churn must not invalidate that Card turn.
-    if roster_override is None:
-        surface["peers"] = _peers(root)
-        surface["remote_roster"] = sorted(
-            f"{r['connection_id']}:{r['profile']}:{r['title']}" for r in _remote_roster(root)
-        )
-    else:
-        surface["peers"] = []
-        surface["remote_roster"] = []
+    surface["protocol_version"] = 3
+    # Peer gateways and the Desktop relay roster are part of the messaging
+    # surface too: registering a peer or (dis)connecting a machine must show up.
+    surface["peers"] = _peers(root)
+    surface["remote_roster"] = sorted(
+        f"{r['connection_id']}:{r['profile']}:{r['title']}" for r in _remote_roster(resolved)
+    )
     return _swallow(
         lambda: hashlib.sha256(json.dumps(surface, sort_keys=True).encode("utf-8")).hexdigest()[:12],
         "unavailable",
     )
 
 
-def epoch_line(
-    home: str | os.PathLike | None = None,
-    roster_override: list[str] | None = None,
-) -> str:
+def epoch_line(home: str | os.PathLike | None = None) -> str:
     """The epoch stamp appended to a Bot Chat prompt."""
-    return f"{_EPOCH_PREFIX}{capability_fingerprint(home, roster_override)}"
+    return f"{_EPOCH_PREFIX}{capability_fingerprint(home)}"
 
 
-def stored_prompt_capability_stale(
-    stored_prompt: str,
-    home: str | os.PathLike | None = None,
-    roster_override: list[str] | None = None,
-) -> bool:
-    """True when a stamped profile prompt no longer matches its capability surface.
-
-    Unstamped prompts are handled by the explicit one-time upgrade checks. Probe
-    failures remain non-stale so a broken read cannot become a rebuild-every-turn
-    cache burner.
-    """
+def stored_prompt_capability_stale(stored_prompt: str, home: str | os.PathLike | None = None) -> bool:
+    """True when ``stored_prompt`` is a Bot Chat prompt whose embedded epoch no
+    longer matches disk. Unstamped prompts are never stale. Fails closed to
+    "not stale" — a broken probe must not become a rebuild-every-turn cache burner."""
     import re
 
     m = re.search(_EPOCH_RE_TEXT, stored_prompt or "")
     if not m:
         return False
-    current = _swallow(
-        lambda: capability_fingerprint(home, roster_override), "unavailable",
-    )
+    current = _swallow(lambda: capability_fingerprint(home), "unavailable")
     return current != "unavailable" and m.group(1) != current
-
-
-def stored_profile_prompt_needs_upgrade(stored_prompt: str) -> bool:
-    """Whether a profile-following session predates the capability epoch stamp."""
-
-    return _EPOCH_PREFIX not in (stored_prompt or "")
 
 
 def stored_bot_chat_prompt_needs_upgrade(stored_prompt: str, home: str | os.PathLike | None = None) -> bool:
@@ -577,11 +559,3 @@ def stored_bot_chat_prompt_needs_upgrade(stored_prompt: str, home: str | os.Path
 def _reset_cache_for_tests() -> None:
     with _lock:
         _cached.clear()
-
-
-def invalidate_bot_mode_protocol_cache(home: str | os.PathLike | None = None) -> None:
-    """Forget one profile's rendered roster after an explicit profile configuration write."""
-    prefix = f"{_resolve_home(home)}\0"
-    with _lock:
-        for key in [item for item in _cached if item.startswith(prefix)]:
-            _cached.pop(key, None)

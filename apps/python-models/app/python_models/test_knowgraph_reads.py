@@ -331,7 +331,7 @@ def test_knowgraph_neighborhood_preserves_one_hop_direction_with_entity_nodes_on
     assert driver.closed is True
 
 
-def test_knowgraph_projection_attaches_only_two_exact_about_knows_to_owner(
+def test_knowgraph_projection_attaches_only_two_property_owned_knows_to_entity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     driver = _FakeNeo4jDriver([
@@ -355,9 +355,14 @@ def test_knowgraph_projection_attaches_only_two_exact_about_knows_to_owner(
     assert all("body" not in item and "content" not in item and "properties" not in item
                for item in evidence)
     assert "evidence" not in nodes["entity-b"]["properties"]
-    assert all("ABOUT" in query for query, _params in driver.calls if "episode:Episodic" in query
-               and "entity:Entity" in query)
-    assert all("MENTIONS" not in query for query, _params in driver.calls)
+    know_queries = [
+        query for query, _params in driver.calls
+        if "episode:Episodic:Know" in query
+    ]
+    assert len(know_queries) == 1
+    assert "episode.entity_uuid" in know_queries[0]
+    assert "ABOUT" not in know_queries[0]
+    assert "MENTIONS" not in know_queries[0]
 
 
 def test_knowgraph_projection_refuses_non_entity_provider_rows(

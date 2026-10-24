@@ -5,6 +5,8 @@ onto server.py, so they must not collide with its globals.
 """
 
 import contextlib
+import logging
+import sqlite3
 
 from .method_ctx import HandlerRegistry, bind_module
 
@@ -36,32 +38,13 @@ def _lazy(module, name):
     return getattr(__import__(module, fromlist=[name]), name)
 
 
-def _pin_profile_model(profile_dir, provider, model) -> None:
-    _lazy("hermes_cli.web_routers.profiles", "_write_profile_model")(profile_dir, provider, model)
+def _pin_profile_model(profile_dir, provider, model, base_url="") -> None:
+    _lazy("hermes_cli.web_routers.profiles", "_write_profile_model")(
+        profile_dir, provider, model, base_url=base_url)
 
 
 def _model_provider_params(params) -> tuple:
     return str(params.get("model") or "").strip(), str(params.get("provider") or "").strip()
-
-
-def _profile_delegation_settings(cfg) -> dict:
-    from agent.skill_utils import parse_config_string_list
-
-    delegation = cfg.get("delegation") if isinstance(cfg.get("delegation"), dict) else {}
-    agent = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
-    raw_disabled = agent.get("disabled_toolsets")
-    disabled = (
-        parse_config_string_list(raw_disabled)
-        if isinstance(raw_disabled, str)
-        else list(raw_disabled) if isinstance(raw_disabled, list) else []
-    )
-    return {
-        "provider": str(delegation.get("provider") or ""),
-        "model": str(delegation.get("model") or ""),
-        "max_spawn_depth": 2 if delegation.get("max_spawn_depth") == 2 else 1,
-        "orchestrator_enabled": delegation.get("orchestrator_enabled") is True,
-        "enabled": "delegation" not in disabled,
-    }
 
 
 def _try(fn, default):
@@ -76,25 +59,15 @@ def _best_effort(fn) -> bool:
     return _try(lambda: (fn(), True)[1], False)
 
 
-def _read_profile_soul(path) -> str:
-    """Read SOUL.md without platform newline translation."""
-    return path.read_bytes().decode("utf-8", errors="replace") if path.is_file() else ""
-
-
-def _write_profile_soul(path, soul: str) -> None:
-    """Atomically preserve the exact UTF-8 Card prompt bytes in SOUL.md."""
-    from utils import atomic_write_bytes
-    atomic_write_bytes(path, soul.encode("utf-8"))
-
-
-@contextlib.contextmanager
 def _hermes_home_scope(path):
-    """Scope config/auth resolution to ``path`` for the block."""
-    token = set_hermes_home_override(str(path))
-    try:
-        yield
-    finally:
-        reset_hermes_home_override(token)
+    """Bind ``path``'s full runtime scope (home + secrets + terminal) for the block — the same
+    composition ``@_profile_scoped`` binds. Home alone is half-bound: under multi-profile hosting
+    every credential read raised ``UnscopedSecretError``, which a best-effort ``_try`` turned into
+    a plausible wrong answer (the toolset snapshot's ``XAI_API_KEY`` probe → "every toolset off",
+    #120726). The launch home maps to None so it keeps its frozen launch env (systemd / ``op run``
+    keys). No external-source hydration: these bodies read and write config, never call a provider."""
+    launch = Path(path).resolve() == Path(_hermes_home).resolve()
+    return _session_profile_runtime_scope({"profile_home": None if launch else str(path)}, hydrate_secrets=False)
 
 
 def _resolve_profile(rid, params):
@@ -115,7 +88,7 @@ def _resolve_profile(rid, params):
 def _read_profile_yaml(profile_dir) -> dict:
     """profile.yaml as a mapping; ``{}`` when missing, unreadable, unparseable, or not a mapping."""
     def load():
-        import yaml
+        import hermes_yaml as yaml
         meta_path = profile_dir / "profile.yaml"
         return (yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}) if meta_path.is_file() else {}
     loaded = _try(load, {})
@@ -175,6 +148,17 @@ def _resurrect_recoverable_canonical(db, profile_path, session_id):
         return False
 
 
+def _live_count_field(db, session_id) -> dict:
+    """``{"live_message_count": n}`` sized like a stored-transcript read, else ``{}`` (older stores).
+
+    The denormalized ``message_count`` also counts folded rows (orphaned compaction marks, full
+    rewinds, model-only rows), which once made the roster wait for history no reader serves."""
+    try:
+        return {"live_message_count": db.display_message_count(str(session_id))}
+    except sqlite3.Error:
+        return {}
+
+
 def _canonical_session_row(db, profile_path):
     """Summary of the profile's canonical "Bot Chat" row (identity is the NAME), or None.
     Lineages via ``get_compression_tip`` (NOT the resume walker's unmarked-child fallback);
@@ -207,7 +191,7 @@ def _canonical_session_row(db, profile_path):
             "title": tip_row.get("title") or "", "preview": _latest_message_preview(db, tip),
             "started_at": tip_row.get("started_at") or started,
             "last_active": tip_row.get("last_activity_at") or tip_row.get("started_at") or started,
-            "message_count": tip_row.get("message_count") or 0}
+            "message_count": tip_row.get("message_count") or 0, **_live_count_field(db, tip)}
     except Exception:
         return None
 
@@ -236,7 +220,8 @@ def _latest_profile_session_rows(db):
                 human = {"id": s["id"], "title": title,
                          "preview": _latest_message_preview(db, s["id"]) or s.get("preview") or "",
                          "started_at": s.get("started_at") or 0, "last_active": last_active,
-                         "message_count": s.get("message_count") or 0}
+                         "message_count": s.get("message_count") or 0,
+                         **_live_count_field(db, s["id"])}
             if human is not None and worker is not None:
                 break
         return human, worker
@@ -306,109 +291,16 @@ def _(rid, params: dict) -> dict:
         row = {"name": p.name, "path": str(p.path), "is_default": bool(p.is_default), "model": p.model,
                "provider": p.provider, "description": p.description or "",
                "display_name": p.display_name or "", "skill_count": p.skill_count or 0,
-               "previous_names": list(p.previous_names or []), "role": p.role}
+               "previous_names": list(p.previous_names or [])}
         if include_sessions:
             _profile_session_fields(row, p.path)
         _profile_ui_meta_fields(row, Path(str(p.path)))
         out.append(row)
     # bot_mode_protocol: this backend injects the Bot Mode teammate-messaging protocol into every
-    # session, so clients must not append it to SOUL.md.
-    return _ok(rid, {"profiles": out, "bot_mode_protocol": True})
-
-
-def _mirror_secret(path, launch_home, name: str, wanted) -> bool:
-    """Copy the launch ``name`` file into the profile (0600) when it exists and ``wanted(src, dst)``."""
-    src, dst = launch_home / name, path / name
-    if not (src.is_file() and wanted(src, dst)):
-        return False
-    import shutil
-    shutil.copy2(src, dst)
-    with contextlib.suppress(OSError):
-        os.chmod(str(dst), 0o600)
-    return True
-
-
-def _env_has_content(env_path) -> bool:
-    lines = env_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    return any(s and not s.startswith("#") for s in map(str.strip, lines))
-
-
-def _mirror_voice_sections(path) -> bool:
-    """Copy stt/tts/voice sections from the launch profile (a fresh profile has only ``model``,
-    so voice fell back to defaults); True if written."""
-    try:
-        from hermes_cli.config import load_config_readonly, read_user_config_raw, save_config
-        src_cfg = load_config_readonly() or {}
-        sections = {k: src_cfg[k] for k in ("stt", "tts", "voice") if src_cfg.get(k)}
-        if not sections:
-            return False
-        with _hermes_home_scope(path):
-            # RAW file: load_config() merges DEFAULT_CONFIG (every section would look present).
-            dst_cfg = read_user_config_raw() or {}
-            missing = {k: v for k, v in sections.items() if k not in dst_cfg}
-            if missing:
-                save_config({**dst_cfg, **missing})
-        return bool(missing)
-    except Exception:
-        return False
-
-
-def _inherit_launch_model(path) -> bool:
-    """Inherit launch model.provider/default when the new profile has none. Gate on the MODEL
-    SECTION, not config.yaml existing: voice mirroring creates the file first."""
-    # Gate on the MODEL SECTION being absent, not on config.yaml existing — earlier mirroring steps (voice
-    # sections, #85755) legitimately create the file first, and a file-existence gate silently skipped
-    # inheritance for every non-clone bot ("No inference provider configured" on first message, tester
-    # report). Clones bring their own model section and stay untouched.
-    from hermes_cli.config import load_config_readonly, read_user_config_raw
-    with _hermes_home_scope(path):
-        dst_model = (read_user_config_raw() or {}).get("model") or {}
-    if dst_model.get("provider") and dst_model.get("default"):
-        return False
-    launch_cfg = load_config_readonly() or {}
-    model_cfg = launch_cfg.get("model") or {}
-    if not (model_cfg.get("provider") and model_cfg.get("default")):
-        return False
-    # A custom `providers:` gateway travels with the model it backs (same seed as the CLI path). It is
-    # written BEFORE the pin: the pin validates the pick inside the new profile, and an empty profile
-    # rejects a provider it has not been told about ("Unknown provider").
-    custom = _lazy("hermes_cli.profiles", "launch_model_seed")(launch_cfg).get("providers")
-    if custom:
-        from hermes_cli.config import load_config, save_config
-        with _hermes_home_scope(path):
-            cfg = load_config()
-            cfg["providers"] = {**(cfg.get("providers") if isinstance(cfg.get("providers"), dict) else {}), **custom}
-            save_config(cfg)
-    _pin_profile_model(path, str(model_cfg["provider"]), str(model_cfg["default"]))
-    return True
-
-
-def _mirror_launch_credentials(path, params: dict) -> dict:
-    """Copy launch .env / auth.json / voice sections into a new profile (best-effort per item).
-    ``share_auth`` reports ``auth: "shared"`` and skips the auth copy; ``mirror_credentials``
-    false skips everything. ``model_inherited`` is filled in by the caller."""
-    share_auth = is_truthy_value(params.get("share_auth", False))
-    mirrored = {"env": False, "auth": "shared" if share_auth else False, "model_inherited": False,
-                "voice": False}
-    if not is_truthy_value(params.get("mirror_credentials", True)):
-        return mirrored
-    launch_home = get_hermes_home()
-    # .env: only over the seeded comment-only stub (never a clone's secrets).
-    mirrored["env"] = _try(lambda: _mirror_secret(path, launch_home, ".env", lambda src, dst: (
-        _env_has_content(src) and not _try(lambda: _env_has_content(dst), False))), False)
-    if mirrored["env"] and not is_truthy_value(params.get("clone_channels", False)):
-        # Provider/tool keys are what "mirror credentials" means; the launch profile's bot tokens
-        # and allowlists would make the new bot collide with it over one Telegram/Discord bot.
-        _best_effort(lambda: _lazy("hermes_cli.profile_channels", "strip_channel_env_file")(path / ".env"))
-    if not share_auth:  # a copy forks token state: the first refresh in either store strands the other
-        mirrored["auth"] = _try(lambda: _mirror_secret(path, launch_home, "auth.json",
-                                                       lambda src, dst: not dst.exists()), False)
-        if mirrored["auth"]:
-            # Drop single-use OAuth grants (first refresh strands every sibling); they read from the
-            # root grant via the pool fallback. API keys stay.
-            _best_effort(lambda: _lazy("hermes_cli.auth", "strip_cloned_single_use_oauth_grants")(path))
-    mirrored["voice"] = _mirror_voice_sections(path)
-    return mirrored
+    # session, so clients must not append it to SOUL.md. install_id (same value as /api/status)
+    # lets a multi-connection client prove WHICH machine answered a routed list.
+    from hermes_cli.install_identity import get_install_id
+    return _ok(rid, {"profiles": out, "bot_mode_protocol": True, "install_id": _try(lambda: get_install_id() or "", "")})
 
 
 @method("profiles.create")
@@ -442,7 +334,7 @@ def _(rid, params: dict) -> dict:
         _best_effort(lambda: profiles_mod.check_alias_collision(name) or profiles_mod.create_wrapper_script(name))
     soul = params.get("soul")
     soul_written = isinstance(soul, str) and bool(soul.strip()) and _best_effort(
-        lambda: _write_profile_soul(path / "SOUL.md", soul))
+        lambda: (path / "SOUL.md").write_text(soul, encoding="utf-8"))
     mirrored = _mirror_launch_credentials(path, params)
     model, provider = _model_provider_params(params)
     model_set = False
@@ -452,30 +344,6 @@ def _(rid, params: dict) -> dict:
         mirrored["model_inherited"] = _try(lambda: _inherit_launch_model(path), False)
     return _ok(rid, {"ok": True, "name": name, "path": str(path), "soul_written": soul_written,
                      "model_set": model_set, "mirrored": mirrored})
-
-
-def _describe_toolsets(cfg):
-    """``(toolsets, pinned_set)`` as the `hermes tools` checklist presents them (the raw registry
-    leaks platform composites and reports everything enabled without a pin)."""
-    from hermes_cli.tools_config import (
-        _coerce_platform_toolsets_value, _get_effective_configurable_toolsets, _get_platform_tools,
-        _toolset_allowed_for_platform)
-    from toolsets import resolve_toolset
-    pinned = _coerce_platform_toolsets_value((cfg.get("platform_toolsets") or {}).get("cli"), "cli")
-    pinned_set = _clean_names(pinned) if isinstance(pinned, list) else None
-    platform_enabled = _try(lambda: set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False)), set())
-    default_off = _try(lambda: _lazy("hermes_cli.tools_config", "_DEFAULT_OFF_TOOLSETS"), set())
-    toolsets_out = []
-    for ts_name, ts_label, ts_desc in _get_effective_configurable_toolsets():
-        enabled = ts_name in (pinned_set if pinned_set is not None else platform_enabled)
-        # Default-off integrations (+ opt-in yuanbao) are noise unless already enabled.
-        if not _toolset_allowed_for_platform(ts_name, "cli") or (
-                (ts_name in default_off or ts_name == "yuanbao") and not enabled):
-            continue
-        toolsets_out.append({"name": ts_name, "label": ts_label, "description": ts_desc or "",
-                             "tool_count": _try(lambda: len(set(resolve_toolset(ts_name))), 0),
-                             "enabled": enabled})
-    return toolsets_out, pinned_set
 
 
 @_profile_handler("profiles.describe", 5063)
@@ -489,6 +357,7 @@ def _(rid, params: dict) -> dict:
         from agent.skill_utils import iter_skill_index_files
         from hermes_cli.config import load_config
         from hermes_cli.skills_config import get_disabled_skills
+        from tools.bot_mode_probe import configured_bot_roster
         cfg = load_config() or {}
         disabled = {s.lower() for s in get_disabled_skills(cfg)}
         skills_root = profile_dir / "skills"
@@ -497,342 +366,31 @@ def _(rid, params: dict) -> dict:
             for md in (iter_skill_index_files(skills_root, "SKILL.md") if skills_root.is_dir() else ())]
         toolsets_out, pinned_set = _describe_toolsets(cfg)
         soul_path = profile_dir / "SOUL.md"
-        soul = _try(lambda: _read_profile_soul(soul_path), "")
+        soul = _try(lambda: soul_path.read_text(encoding="utf-8", errors="replace") if soul_path.is_file() else "", "")
         mcp_cfg = cfg.get("mcp_servers")
         mcp_out = _try(lambda: [
             {"name": str(srv_name), "enabled": _mcp_entry_enabled(entry),
-             "transport": str(entry.get("transport") or "http") if entry.get("url") else "stdio",
-             "tool_filter": _mcp_tool_filter(entry),
-             "context_headers": _mcp_context_headers(entry)}
+             "transport": str(entry.get("transport") or "http") if entry.get("url") else "stdio"}
             for srv_name in sorted(mcp_cfg.keys()) for entry in (mcp_cfg[srv_name],)
             if isinstance(entry, dict)
         ], []) if isinstance(mcp_cfg, dict) else []
         model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
         meta = _try(lambda: _lazy("hermes_cli.profiles", "read_profile_meta")(profile_dir), {})
-        ui_meta_fields = {}
-        _profile_ui_meta_fields(ui_meta_fields, profile_dir)
         return _ok(rid, {
             "name": name, "description": str(meta.get("description") or ""), "soul": soul,
             "model": {"provider": str(model_cfg.get("provider") or ""),
-                      "default": str(model_cfg.get("default") or ""),
-                      "openai_runtime": (
-                          str(model_cfg.get("openai_runtime"))
-                          if model_cfg.get("openai_runtime") in {"auto", "codex_app_server"}
-                          else None
-                      )},
+                      "default": str(model_cfg.get("default") or "")},
             "skills": installed, "toolsets": toolsets_out,
             "toolsets_pinned": pinned_set is not None, "mcp_servers": mcp_out,
-            "delegation": _profile_delegation_settings(cfg),
-            "task_mode": (
-                "team"
-                if isinstance(cfg.get("kanban"), dict)
-                and cfg["kanban"].get("task_mode") == "team"
-                else None
-            ),
-            "bot_mode_roster": _lazy(
-                "tools.bot_mode_probe", "configured_bot_roster"
-            )(profile_dir),
-            "ui_meta_revisions": ui_meta_fields.get("ui_meta_revisions", {}),
-            "ui_meta": ui_meta_fields.get("ui_meta"),
-        })
-
-
-def _configure_ui_meta(profile_dir, params, applied) -> None:
-    """Merge ``params["ui_meta"]`` key-wise into profile.yaml (None deletes). 64KB cap (rides
-    every roster paint). ``ui_meta_expected_revisions``: per-key CAS, any mismatch rejects the
-    whole write; revisions survive deletion so a stale client cannot recreate a removed key."""
-    applied["ui_meta"] = False
-    try:
-        incoming = params["ui_meta"]
-        if len(json.dumps(incoming)) > 65536:
-            return
-        expected = params.get("ui_meta_expected_revisions")
-        if expected is not None and not isinstance(expected, dict):
-            raise ValueError("ui_meta_expected_revisions must be an object")
-        with _profile_ui_meta_lock:
-            existing = _read_profile_yaml(profile_dir)
-            raw_revisions = existing.get("_ui_meta_revisions")
-            revisions = _clean_revisions(raw_revisions if isinstance(raw_revisions, dict) else {})
-            conflicts = {}
-            for key in incoming if isinstance(expected, dict) else ():
-                wanted, actual = expected.get(key), revisions.get(key, 0)
-                if not isinstance(wanted, int) or isinstance(wanted, bool) or wanted < 0 or wanted != actual:
-                    conflicts[key] = {"expected": wanted, "actual": actual}
-            if conflicts:
-                applied["ui_meta_conflicts"] = conflicts
-                applied["ui_meta_revisions"] = {key: revisions.get(key, 0) for key in incoming}
-                return
-            current = existing.get("ui_meta")
-            current = current if isinstance(current, dict) else {}
-            for key, value in incoming.items():
-                if value is None:
-                    current.pop(key, None)
-                else:
-                    current[key] = value
-                revisions[key] = revisions.get(key, 0) + 1
-            if current:
-                existing["ui_meta"] = current
-            else:
-                existing.pop("ui_meta", None)
-            existing["_ui_meta_revisions"] = revisions
-            from utils import atomic_yaml_write
-            atomic_yaml_write(profile_dir / "profile.yaml", existing, sort_keys=False)
-            applied["ui_meta"] = True
-            applied["ui_meta_revisions"] = {key: revisions[key] for key in incoming}
-    except Exception:
-        applied["ui_meta"] = False
-
-
-def _configure_model(profile_dir, params, applied):
-    """Apply a ``model`` + ``provider`` pin, or return a confirm message and write NOTHING (client
-    resends with ``confirm_expensive_model``). A failing guard = no warning (as _apply_model_switch)."""
-    model, provider = _model_provider_params(params)
-    if not (model and provider):
-        return None
-    confirm_message = None
-    # #95293 remainder: this is the Bots editor's model-switch path, and it used to write guarded
-    # (data-policy / expensive) models silently — the ONE surface that bypassed the selection guard every
-    # other switch path enforces. Same handshake contract as ``config.set model``: without
-    # ``confirm_expensive_model`` a guarded pick answers ``confirm_required`` + ``confirm_message`` and
-    # writes NOTHING; the client resends with ``confirm_expensive_model: true`` once the user confirms. A
-    # misbehaving guard must never break the save (treated as "no warning"), matching
-    # ``_apply_model_switch``.
-    if not is_truthy_value(params.get("confirm_expensive_model", False)):
-        warn = _lazy("hermes_cli.model_selection_guards", "combined_selection_warning")
-        confirm_message = _try(lambda: getattr(warn(model, provider=provider or None), "message", None), None)
-    if confirm_message is None:
-        applied["model"] = _best_effort(lambda: _pin_profile_model(profile_dir, provider, model))
-        if applied["model"] and "openai_runtime" in params:
-            def save_runtime():
-                with _hermes_home_scope(profile_dir):
-                    from hermes_cli.config import read_user_config_raw, save_config
-                    cfg = read_user_config_raw() or {}
-                    model_cfg = cfg.get("model")
-                    model_cfg = dict(model_cfg) if isinstance(model_cfg, dict) else {}
-                    model_cfg["openai_runtime"] = params.get("openai_runtime") or "auto"
-                    cfg["model"] = model_cfg
-                    save_config(cfg)
-            applied["model"] = _best_effort(save_runtime)
-    return confirm_message
-
-
-def _configure_card_execution(profile_dir, params, applied) -> None:
-    if not any(key in params for key in (
-        "delegation", "task_mode", "bot_mode_roster",
-    )):
-        return
-    with _hermes_home_scope(profile_dir):
-        from agent.skill_utils import parse_config_string_list
-        from hermes_cli.config import read_user_config_raw, save_config
-
-        cfg = read_user_config_raw() or {}
-        changed = False
-        if isinstance(params.get("delegation"), dict):
-            requested = params["delegation"]
-            delegation = cfg.get("delegation")
-            delegation = dict(delegation) if isinstance(delegation, dict) else {}
-            for key in ("provider", "model", "max_spawn_depth", "orchestrator_enabled"):
-                if delegation.get(key) != requested.get(key):
-                    delegation[key] = requested.get(key)
-                    changed = True
-            cfg["delegation"] = delegation
-            agent = cfg.get("agent")
-            agent = dict(agent) if isinstance(agent, dict) else {}
-            raw_disabled = agent.get("disabled_toolsets")
-            if raw_disabled is None:
-                disabled = []
-            elif isinstance(raw_disabled, str):
-                disabled = parse_config_string_list(raw_disabled)
-            elif isinstance(raw_disabled, list) and all(isinstance(item, str) for item in raw_disabled):
-                disabled = list(raw_disabled)
-            else:
-                raise ValueError("agent.disabled_toolsets must be a string list")
-            expected_disabled = (
-                [name for name in disabled if name != "delegation"]
-                if requested.get("enabled") is True
-                else disabled if "delegation" in disabled else [*disabled, "delegation"]
-            )
-            if disabled != expected_disabled:
-                agent["disabled_toolsets"] = expected_disabled
-                cfg["agent"] = agent
-                changed = True
-            applied["delegation"] = True
-        if "task_mode" in params:
-            task_mode = params.get("task_mode")
-            if task_mode not in {None, "team"}:
-                raise ValueError("task_mode must be team or null")
-            kanban = cfg.get("kanban")
-            kanban = dict(kanban) if isinstance(kanban, dict) else {}
-            if task_mode == "team" and kanban.get("task_mode") != "team":
-                kanban["task_mode"] = "team"
-                cfg["kanban"] = kanban
-                changed = True
-            elif task_mode is None and "task_mode" in kanban:
-                kanban.pop("task_mode")
-                cfg["kanban"] = kanban
-                changed = True
-            applied["task_mode"] = True
-        if "bot_mode_roster" in params:
-            requested_roster = params.get("bot_mode_roster")
-            if not isinstance(requested_roster, list):
-                raise ValueError("bot_mode_roster must be a profile-name list")
-            roster = _canonical_bot_roster(profile_dir, requested_roster)
-            bot_mode = cfg.get("bot_mode")
-            bot_mode = dict(bot_mode) if isinstance(bot_mode, dict) else {}
-            if bot_mode.get("roster") != roster:
-                bot_mode["roster"] = roster
-                cfg["bot_mode"] = bot_mode
-                changed = True
-            applied["bot_mode_roster"] = True
-        if changed:
-            save_config(cfg)
-
-
-def _clean_names(values) -> set:
-    return {str(v).strip() for v in values if str(v).strip()}
-
-
-def _save_toolset_pin(cfg, enabled, save_config) -> None:
-    """Pin ``platform_toolsets.cli``: the key ``_load_enabled_toolsets`` reads and ``hermes tools`` writes.
-    An empty selection is an explicit pin to no toolsets; only a missing key requests the platform default."""
-    from hermes_cli.tools_config import _save_platform_tools
-
-    wanted = _clean_names(enabled)
-    if wanted:
-        _save_platform_tools(cfg, "cli", wanted)
-    else:
-        platform_toolsets = cfg.get("platform_toolsets")
-        if not isinstance(platform_toolsets, dict):
-            platform_toolsets = {}
-            cfg["platform_toolsets"] = platform_toolsets
-        platform_toolsets["cli"] = []
-    save_config(cfg)
-
-
-def _mcp_entry_enabled(entry: dict) -> bool:
-    """The runtime's ``enabled`` reader; a legacy ``disabled: true`` (what older editors wrote,
-    migrated by config v46) still reads as off."""
-    from hermes_cli.tools_config import _parse_enabled_flag
-    from tools.mcp_tool_common import mcp_server_enabled
-    return mcp_server_enabled(entry) and not _parse_enabled_flag(entry.get("disabled", False), default=False)
-
-
-def _mcp_tool_filter(entry: dict) -> list[str] | None:
-    from hermes_cli.mcp_config import _tool_filters
-
-    include, _exclude = _tool_filters(entry)
-    return [str(name) for name in include] if include is not None else None
-
-
-def _mcp_context_headers(entry: dict) -> dict[str, str] | None:
-    headers = entry.get("headers") if isinstance(entry.get("headers"), dict) else {}
-    lowered = {str(key).lower(): str(value) for key, value in headers.items()}
-    project_id = lowered.get("x-liquidaity-project-id", "").strip()
-    profile = lowered.get("x-liquidaity-hermes-profile", "").strip()
-    return {"project_id": project_id, "profile": profile} if project_id and profile else None
-
-
-def _save_mcp_toggles(cfg, enabled, tool_filters, context_headers, launch_mcp, save_config) -> None:
-    """Write the ``enabled`` flag every runtime resolver reads (``enabled_mcp_server_names``,
-    coding_context, oneshot); the legacy ``disabled`` key is dropped so old configs migrate."""
-    wanted = _clean_names(enabled)
-    mcp_cfg = cfg.get("mcp_servers") if isinstance(cfg.get("mcp_servers"), dict) else {}
-    for srv in wanted:
-        if not isinstance(mcp_cfg.get(srv), dict) and isinstance(launch_mcp.get(srv), dict):
-            mcp_cfg[srv] = dict(launch_mcp[srv])
-    for srv, entry in mcp_cfg.items():
-        if isinstance(entry, dict):
-            entry["enabled"] = srv in wanted
-            entry.pop("disabled", None)
-            if srv in tool_filters:
-                tools = entry.get("tools") if isinstance(entry.get("tools"), dict) else {}
-                tools["include"] = sorted(_clean_names(tool_filters[srv]))
-                tools.pop("exclude", None)
-                entry["tools"] = tools
-            if srv in context_headers:
-                context = context_headers[srv]
-                headers = entry.get("headers") if isinstance(entry.get("headers"), dict) else {}
-                headers["X-LiquidAIty-Project-Id"] = context["project_id"].strip()
-                headers["X-LiquidAIty-Hermes-Profile"] = context["profile"].strip()
-                entry["headers"] = headers
-    if mcp_cfg:
-        cfg["mcp_servers"] = mcp_cfg
-    save_config(cfg)
-
-
-def _canonical_bot_roster(profile_dir, values) -> list[str]:
-    """Validate one session's ordered local Bot roster without broadening it."""
-    from tools.bot_mode_probe import _hermes_root, _profile_name, _roster
-
-    available = dict(_roster(_hermes_root(profile_dir)))
-    current = _profile_name(profile_dir)
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("bot_mode_roster entries must be profile names")
-        requested = value.strip()
-        requested = "default" if requested.lower() == "hermes" else requested
-        canonical = next((name for name in available if name.lower() == requested.lower()), "")
-        if not canonical:
-            raise ValueError(f"bot_mode_roster profile '{requested}' is not live")
-        if canonical == current:
-            raise ValueError("bot_mode_roster cannot contain the current profile")
-        if canonical in seen:
-            continue
-        seen.add(canonical)
-        result.append(canonical)
-    return result
-
-
-def _configure_cfg_sections(profile_dir, params, applied) -> None:
-    """Apply ``disabled_skills`` / ``enabled_toolsets`` / ``enabled_mcp_servers`` (replace
-    semantics; empty toolsets pins no toolsets). An undefined MCP server is copied from the LAUNCH
-    catalog (unknown names skipped); credentials stay in .env/auth."""
-    want_mcp = isinstance(params.get("enabled_mcp_servers"), list)
-    tool_filters = params.get("mcp_tool_filters")
-    tool_filters = tool_filters if isinstance(tool_filters, dict) else {}
-    if any(not isinstance(names, list) for names in tool_filters.values()):
-        raise ValueError("mcp_tool_filters must map server names to tool-name lists")
-    context_headers = params.get("mcp_context_headers")
-    context_headers = context_headers if isinstance(context_headers, dict) else {}
-    if any(
-        not isinstance(value, dict)
-        or not str(value.get("project_id") or "").strip()
-        or not str(value.get("profile") or "").strip()
-        for value in context_headers.values()
-    ):
-        raise ValueError("mcp_context_headers must map server names to Project/profile values")
-    launch_mcp = {}
-    if want_mcp:  # launch catalog read BEFORE the home override flips config resolution
-        load_launch = _lazy("hermes_cli.config", "load_config_readonly")
-        launch_mcp = _try(lambda: (load_launch() or {}).get("mcp_servers"), {})
-        launch_mcp = launch_mcp if isinstance(launch_mcp, dict) else {}
-    with _hermes_home_scope(profile_dir):
-        from hermes_cli.config import load_config, save_config
-        cfg = load_config() or {}
-        if isinstance(params.get("disabled_skills"), list):
-            try:
-                from hermes_cli.skills_config import save_disabled_skills
-                save_disabled_skills(cfg, _clean_names(params["disabled_skills"]))
-                applied["skills"] = True
-                cfg = load_config() or {}
-            except Exception:
-                applied["skills"] = False
-        if isinstance(params.get("enabled_toolsets"), list):
-            applied["toolsets"] = _best_effort(lambda: _save_toolset_pin(cfg, params["enabled_toolsets"], save_config))
-        if want_mcp:
-            applied["mcp_servers"] = _best_effort(lambda: _save_mcp_toggles(
-                load_config() or {}, params["enabled_mcp_servers"], tool_filters, context_headers,
-                launch_mcp, save_config))
+            "bot_mode_roster": configured_bot_roster(profile_dir)})
 
 
 @_profile_handler("profiles.configure", 5064)
 def _(rid, params: dict) -> dict:
     """Editor Save: ``name`` plus any of ``ui_meta`` (+ ``ui_meta_expected_revisions``), ``soul``,
     ``description``, ``model`` + ``provider`` (+ ``confirm_expensive_model``), ``disabled_skills``,
-    ``enabled_toolsets``, ``enabled_mcp_servers`` + exact MCP tool/context fields; sections are
-    independent, ``applied`` reports each."""
+    ``enabled_toolsets``, ``enabled_mcp_servers``, ``bot_mode_roster``; sections are independent,
+    ``applied`` reports each."""
     _name, profile_dir, err = _resolve_profile(rid, params)
     if err is not None:
         return err
@@ -840,33 +398,20 @@ def _(rid, params: dict) -> dict:
     if isinstance(params.get("ui_meta"), dict):
         _configure_ui_meta(profile_dir, params, applied)
     if isinstance(params.get("soul"), str):
-        applied["soul"] = _best_effort(
-            lambda: _write_profile_soul(profile_dir / "SOUL.md", params["soul"])
-        )
+        applied["soul"] = _best_effort(lambda: (profile_dir / "SOUL.md").write_text(params["soul"], encoding="utf-8"))
     if isinstance(params.get("description"), str):
         write_meta = _lazy("hermes_cli.profiles", "write_profile_meta")
         applied["description"] = _best_effort(lambda: write_meta(
             profile_dir, description=params["description"].strip(), description_auto=False))
     confirm_message = _configure_model(profile_dir, params, applied)
-    if (
-        any(isinstance(params.get(k), list) for k in (
-            "disabled_skills", "enabled_toolsets", "enabled_mcp_servers",
-        ))
-        or isinstance(params.get("mcp_tool_filters"), dict)
-        or isinstance(params.get("mcp_context_headers"), dict)
-    ):
+    if any(isinstance(params.get(k), list) for k in (
+        "disabled_skills", "enabled_toolsets", "enabled_mcp_servers", "bot_mode_roster",
+    )):
         _configure_cfg_sections(profile_dir, params, applied)
-    _configure_card_execution(profile_dir, params, applied)
     # confirm_* is the shape config.set returns, so clients reuse one confirm handler.
     return _ok(rid, {"ok": all(applied.values()) if applied else True, "applied": applied,
                      **({"confirm_required": True, "confirm_message": confirm_message}
                         if confirm_message is not None else {})})
-
-
-def _unlink_asset_files(assets_dir, asset) -> int:
-    """Delete every ``<asset>.<ext>`` in ``assets_dir``; returns how many existed."""
-    present = [t for t in (assets_dir / f"{asset}.{ext}" for ext in _ASSET_EXTS) if t.is_file()]
-    return len([t.unlink() for t in present])
 
 
 @_profile_handler("profiles.set_asset", 5065)
@@ -924,10 +469,334 @@ def _(rid, params: dict) -> dict:
     return _ok(rid, {"found": False})
 
 
-@_profile_handler("profiles.remember_onboarding", 5067)
-def _(rid, params: dict) -> dict:
-    from tui_gateway.onboarding_personalization import remember_onboarding
-    return _ok(rid, remember_onboarding(params.get("answers")))
+def _mirror_secret(path, launch_home, name: str, wanted) -> bool:
+    """Copy the launch ``name`` file into the profile (0600) when it exists and ``wanted(src, dst)``."""
+    src, dst = launch_home / name, path / name
+    if not (src.is_file() and wanted(src, dst)):
+        return False
+    import shutil
+    shutil.copy2(src, dst)
+    with contextlib.suppress(OSError):
+        os.chmod(str(dst), 0o600)
+    return True
+
+
+def _env_has_content(env_path) -> bool:
+    lines = env_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return any(s and not s.startswith("#") for s in map(str.strip, lines))
+
+
+def _mirror_voice_sections(path) -> bool:
+    """Copy stt/tts/voice sections from the launch profile (a fresh profile has only ``model``,
+    so voice fell back to defaults); True if written."""
+    try:
+        from hermes_cli.config import read_user_config_raw, save_config
+        # Launch file RAW too: the loaded config has ${VAR} refs expanded, and the new profile
+        # must get the ref (resolved against its own .env), never the launch profile's secret.
+        src_cfg = read_user_config_raw()
+        sections = {k: src_cfg[k] for k in ("stt", "tts", "voice") if src_cfg.get(k)}
+        if not sections:
+            return False
+        with _hermes_home_scope(path):
+            # RAW file: load_config() merges DEFAULT_CONFIG (every section would look present).
+            dst_cfg = read_user_config_raw() or {}
+            missing = {k: v for k, v in sections.items() if k not in dst_cfg}
+            if missing:
+                save_config({**dst_cfg, **missing})
+        return bool(missing)
+    except Exception:
+        return False
+
+
+def _inherit_launch_model(path) -> bool:
+    """Inherit launch model.provider/default when the new profile has none. Gate on the MODEL
+    SECTION, not config.yaml existing: voice mirroring creates the file first."""
+    # Gate on the MODEL SECTION being absent, not on config.yaml existing — earlier mirroring steps (voice
+    # sections, #85755) legitimately create the file first, and a file-existence gate silently skipped
+    # inheritance for every non-clone bot ("No inference provider configured" on first message, tester
+    # report). Clones bring their own model section and stay untouched.
+    from hermes_cli.config import load_config_readonly, read_user_config_raw
+    with _hermes_home_scope(path):
+        dst_model = (read_user_config_raw() or {}).get("model") or {}
+    if dst_model.get("provider") and dst_model.get("default"):
+        return False
+    launch_cfg = load_config_readonly() or {}
+    model_cfg = launch_cfg.get("model") or {}
+    if not (model_cfg.get("provider") and model_cfg.get("default")):
+        return False
+    # A custom endpoint travels with the model it backs (same seed as the CLI path). It is
+    # written BEFORE the pin: the pin validates the pick inside the new profile, and an empty profile
+    # rejects a provider it has not been told about ("Unknown provider").
+    # Seeded from the RAW launch file so a ${VAR} api_key travels as the ref, not its value.
+    seed = _lazy("hermes_cli.profile_model_seed", "launch_model_seed")(read_user_config_raw())
+    if seed.get("providers") or seed.get("custom_providers"):
+        from hermes_cli.config import save_config
+        merge = _lazy("hermes_cli.profile_model_seed", "merge_endpoint_seed")
+        with _hermes_home_scope(path):
+            save_config(merge(read_user_config_raw(), seed))
+    # Bare ``custom``/``local`` carries its endpoint into validation (the new profile's config names
+    # none); other providers ignore it. Validation needs the expanded URL, the profile keeps the
+    # launch file's spelling so a ${VAR} URL stays a ref.
+    _pin_profile_model(path, str(model_cfg["provider"]), str(model_cfg["default"]),
+                       str(model_cfg.get("base_url") or ""))
+    raw_url = ((read_user_config_raw() or {}).get("model") or {}).get("base_url")
+    if isinstance(raw_url, str) and "${" in raw_url:
+        from hermes_cli.config import save_config
+        with _hermes_home_scope(path):
+            cfg = read_user_config_raw() or {}
+            if isinstance(cfg.get("model"), dict) and cfg["model"].get("base_url") == model_cfg.get("base_url"):
+                cfg["model"]["base_url"] = raw_url
+                save_config(cfg)
+    return True
+
+
+def _mirror_launch_credentials(path, params: dict) -> dict:
+    """Copy launch .env / auth.json / voice sections into a new profile (best-effort per item).
+    ``share_auth`` reports ``auth: "shared"`` and skips the auth copy; ``mirror_credentials``
+    false skips everything. ``model_inherited`` is filled in by the caller."""
+    share_auth = is_truthy_value(params.get("share_auth", False))
+    mirrored = {"env": False, "auth": "shared" if share_auth else False, "model_inherited": False,
+                "voice": False}
+    if not is_truthy_value(params.get("mirror_credentials", True)):
+        return mirrored
+    launch_home = get_hermes_home()
+    # .env: only over the seeded comment-only stub (never a clone's secrets).
+    mirrored["env"] = _try(lambda: _mirror_secret(path, launch_home, ".env", lambda src, dst: (
+        _env_has_content(src) and not _try(lambda: _env_has_content(dst), False))), False)
+    if mirrored["env"] and not is_truthy_value(params.get("clone_channels", False)):
+        # Provider/tool keys are what "mirror credentials" means; the launch profile's bot tokens
+        # and allowlists would make the new bot collide with it over one Telegram/Discord bot.
+        _best_effort(lambda: _lazy("hermes_cli.profile_channels", "strip_channel_env_file")(path / ".env"))
+    if not share_auth:  # a copy forks token state: the first refresh in either store strands the other
+        mirrored["auth"] = _try(lambda: _mirror_secret(path, launch_home, "auth.json",
+                                                       lambda src, dst: not dst.exists()), False)
+        if mirrored["auth"]:
+            # Drop single-use OAuth grants (first refresh strands every sibling); they read from the
+            # root grant via the pool fallback. API keys stay.
+            _best_effort(lambda: _lazy("hermes_cli.auth", "strip_cloned_single_use_oauth_grants")(path))
+    mirrored["voice"] = _mirror_voice_sections(path)
+    return mirrored
+
+
+def _describe_toolsets(cfg):
+    """``(toolsets, pinned_set)`` as the `hermes tools` checklist presents them (the raw registry
+    leaks platform composites and reports everything enabled without a pin)."""
+    from hermes_cli.tools_config import (
+        _coerce_platform_toolsets_value, _get_effective_configurable_toolsets, _get_platform_tools,
+        _toolset_allowed_for_platform)
+    from toolsets import resolve_toolset
+    pinned = _coerce_platform_toolsets_value((cfg.get("platform_toolsets") or {}).get("cli"), "cli")
+    pinned_set = _clean_names(pinned) if isinstance(pinned, list) else None
+    platform_enabled = _try(lambda: set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False)), set())
+    default_off = _try(lambda: _lazy("hermes_cli.tools_config", "_DEFAULT_OFF_TOOLSETS"), set())
+    toolsets_out = []
+    for ts_name, ts_label, ts_desc in _get_effective_configurable_toolsets():
+        enabled = ts_name in (pinned_set if pinned_set is not None else platform_enabled)
+        # Default-off integrations (+ opt-in yuanbao) are noise unless already enabled.
+        if not _toolset_allowed_for_platform(ts_name, "cli") or (
+                (ts_name in default_off or ts_name == "yuanbao") and not enabled):
+            continue
+        toolsets_out.append({"name": ts_name, "label": ts_label, "description": ts_desc or "",
+                             "tool_count": _try(lambda: len(set(resolve_toolset(ts_name))), 0),
+                             "enabled": enabled})
+    return toolsets_out, pinned_set
+
+
+def _bots_title(ui_meta: dict):
+    bots = ui_meta.get("hermes-bots")
+    return bots.get("title") if isinstance(bots, dict) else None
+
+
+def _configure_ui_meta(profile_dir, params, applied) -> None:
+    """Merge ``params["ui_meta"]`` key-wise into profile.yaml (None deletes). 64KB cap (rides
+    every roster paint). ``ui_meta_expected_revisions``: per-key CAS, any mismatch rejects the
+    whole write; revisions survive deletion so a stale client cannot recreate a removed key."""
+    applied["ui_meta"] = False
+    try:
+        incoming = params["ui_meta"]
+        if len(json.dumps(incoming)) > 65536:
+            return
+        expected = params.get("ui_meta_expected_revisions")
+        if expected is not None and not isinstance(expected, dict):
+            raise ValueError("ui_meta_expected_revisions must be an object")
+        with _profile_ui_meta_lock:
+            existing = _read_profile_yaml(profile_dir)
+            raw_revisions = existing.get("_ui_meta_revisions")
+            revisions = _clean_revisions(raw_revisions if isinstance(raw_revisions, dict) else {})
+            conflicts = {}
+            for key in incoming if isinstance(expected, dict) else ():
+                wanted, actual = expected.get(key), revisions.get(key, 0)
+                if not isinstance(wanted, int) or isinstance(wanted, bool) or wanted < 0 or wanted != actual:
+                    conflicts[key] = {"expected": wanted, "actual": actual}
+            if conflicts:
+                applied["ui_meta_conflicts"] = conflicts
+                applied["ui_meta_revisions"] = {key: revisions.get(key, 0) for key in incoming}
+                return
+            current = existing.get("ui_meta")
+            current = current if isinstance(current, dict) else {}
+            old_title = _bots_title(current)
+            for key, value in incoming.items():
+                if value is None:
+                    current.pop(key, None)
+                else:
+                    current[key] = value
+                revisions[key] = revisions.get(key, 0) + 1
+            if current:
+                existing["ui_meta"] = current
+            else:
+                existing.pop("ui_meta", None)
+            existing["_ui_meta_revisions"] = revisions
+            from utils import atomic_yaml_write
+            atomic_yaml_write(profile_dir / "profile.yaml", existing, sort_keys=False)
+            applied["ui_meta"] = True
+            applied["ui_meta_revisions"] = {key: revisions[key] for key in incoming}
+            if _bots_title(current) != old_title:
+                # A client writing another machine's bot title lands here; the Desktop's
+                # `[bot-meta win=…]` desktop.log line at the same time names the window.
+                logging.getLogger(__name__).info(
+                    "ui_meta hermes-bots title for profile %s: %r -> %r (revision %s)",
+                    params.get("name") or profile_dir.name, old_title, _bots_title(current),
+                    revisions.get("hermes-bots"))
+    except Exception:
+        applied["ui_meta"] = False
+
+
+def _configure_model(profile_dir, params, applied):
+    """Apply a ``model`` + ``provider`` pin, or return a confirm message and write NOTHING (client
+    resends with ``confirm_expensive_model``). A failing guard = no warning (as _apply_model_switch)."""
+    model, provider = _model_provider_params(params)
+    if not (model and provider):
+        return None
+    confirm_message = None
+    # #95293 remainder: this is the Bots editor's model-switch path, and it used to write guarded
+    # (data-policy / expensive) models silently — the ONE surface that bypassed the selection guard every
+    # other switch path enforces. Same handshake contract as ``config.set model``: without
+    # ``confirm_expensive_model`` a guarded pick answers ``confirm_required`` + ``confirm_message`` and
+    # writes NOTHING; the client resends with ``confirm_expensive_model: true`` once the user confirms. A
+    # misbehaving guard must never break the save (treated as "no warning"), matching
+    # ``_apply_model_switch``.
+    if not is_truthy_value(params.get("confirm_expensive_model", False)):
+        warn = _lazy("hermes_cli.model_selection_guards", "combined_selection_warning")
+        confirm_message = _try(lambda: getattr(warn(model, provider=provider or None), "message", None), None)
+    if confirm_message is None:
+        applied["model"] = _best_effort(lambda: _pin_profile_model(profile_dir, provider, model))
+    return confirm_message
+
+
+def _clean_names(values) -> set:
+    return {str(v).strip() for v in values if str(v).strip()}
+
+
+def _save_toolset_pin(cfg, enabled, save_config) -> None:
+    """Pin ``platform_toolsets.cli``: the key ``_load_enabled_toolsets`` reads and ``hermes tools`` writes.
+    An empty selection clears the pin so the platform default applies again."""
+    from hermes_cli.tools_config import _save_platform_tools
+
+    wanted = _clean_names(enabled)
+    if wanted:
+        _save_platform_tools(cfg, "cli", wanted)
+    elif isinstance(cfg.get("platform_toolsets"), dict):
+        cfg["platform_toolsets"].pop("cli", None)
+    save_config(cfg)
+
+
+def _mcp_entry_enabled(entry: dict) -> bool:
+    """The runtime's ``enabled`` reader; a legacy ``disabled: true`` (what older editors wrote,
+    migrated by config v46) still reads as off."""
+    from hermes_cli.tools_config import _parse_enabled_flag
+    from tools.mcp_tool_common import mcp_server_enabled
+    return mcp_server_enabled(entry) and not _parse_enabled_flag(entry.get("disabled", False), default=False)
+
+
+def _save_mcp_toggles(cfg, enabled, launch_mcp, save_config) -> None:
+    """Write the ``enabled`` flag every runtime resolver reads (``enabled_mcp_server_names``,
+    coding_context, oneshot); the legacy ``disabled`` key is dropped so old configs migrate."""
+    wanted = _clean_names(enabled)
+    mcp_cfg = cfg.get("mcp_servers") if isinstance(cfg.get("mcp_servers"), dict) else {}
+    for srv in wanted:
+        if not isinstance(mcp_cfg.get(srv), dict) and isinstance(launch_mcp.get(srv), dict):
+            mcp_cfg[srv] = dict(launch_mcp[srv])
+    for srv, entry in mcp_cfg.items():
+        if isinstance(entry, dict):
+            entry["enabled"] = srv in wanted
+            entry.pop("disabled", None)
+    if mcp_cfg:
+        cfg["mcp_servers"] = mcp_cfg
+    save_config(cfg)
+
+
+def _canonical_bot_roster(profile_dir, values) -> list[str]:
+    """Validate and canonicalize an explicit local Bot roster without broadening it."""
+    from hermes_cli.profiles import normalize_profile_name, validate_profile_name
+    from tools.bot_mode_probe import _hermes_root, _profile_name, resolve_live_profile_home
+
+    root = _hermes_root(profile_dir)
+    current = _profile_name(profile_dir)
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError("bot_mode_roster entries must be profile names")
+        name = normalize_profile_name(value)
+        validate_profile_name(name)
+        if name == current:
+            raise ValueError("bot_mode_roster cannot contain the current profile")
+        if name in seen:
+            continue
+        if resolve_live_profile_home(root, name) is None:
+            raise ValueError(f"bot_mode_roster profile '{name}' is not live")
+        seen.add(name)
+        result.append(name)
+    return result
+
+
+def _save_bot_roster(profile_dir, cfg, values, save_config) -> None:
+    bot_mode_cfg = cfg.get("bot_mode") if isinstance(cfg.get("bot_mode"), dict) else {}
+    bot_mode_cfg["roster"] = _canonical_bot_roster(profile_dir, values)
+    cfg["bot_mode"] = bot_mode_cfg
+    save_config(cfg)
+
+
+def _configure_cfg_sections(profile_dir, params, applied) -> None:
+    """Apply ``disabled_skills`` / ``enabled_toolsets`` / ``enabled_mcp_servers`` / Bot roster (replace
+    semantics; empty toolsets clears the pin). An undefined MCP server is copied from the LAUNCH
+    catalog (unknown names skipped); credentials stay in .env/auth."""
+    want_mcp = isinstance(params.get("enabled_mcp_servers"), list)
+    want_bot_roster = isinstance(params.get("bot_mode_roster"), list)
+    launch_mcp = {}
+    if want_mcp:  # launch catalog read BEFORE the home override flips config resolution
+        # RAW: a copied entry keeps its ${VAR} refs instead of the launch profile's expanded secrets.
+        load_launch = _lazy("hermes_cli.config", "read_user_config_raw")
+        launch_mcp = _try(lambda: (load_launch() or {}).get("mcp_servers"), {})
+        launch_mcp = launch_mcp if isinstance(launch_mcp, dict) else {}
+    with _hermes_home_scope(profile_dir):
+        from hermes_cli.config import load_config, save_config
+        cfg = load_config() or {}
+        if isinstance(params.get("disabled_skills"), list):
+            try:
+                from hermes_cli.skills_config import save_disabled_skills
+                save_disabled_skills(cfg, _clean_names(params["disabled_skills"]))
+                applied["skills"] = True
+                cfg = load_config() or {}
+            except Exception:
+                applied["skills"] = False
+        if isinstance(params.get("enabled_toolsets"), list):
+            applied["toolsets"] = _best_effort(lambda: _save_toolset_pin(cfg, params["enabled_toolsets"], save_config))
+        if want_mcp:
+            applied["mcp_servers"] = _best_effort(lambda: _save_mcp_toggles(
+                load_config() or {}, params["enabled_mcp_servers"], launch_mcp, save_config))
+        if want_bot_roster:
+            try:
+                _save_bot_roster(profile_dir, load_config() or {}, params["bot_mode_roster"], save_config)
+                applied["bot_mode_roster"] = True
+            except Exception:
+                applied["bot_mode_roster"] = False
+
+
+def _unlink_asset_files(assets_dir, asset) -> int:
+    """Delete every ``<asset>.<ext>`` in ``assets_dir``; returns how many existed."""
+    present = [t for t in (assets_dir / f"{asset}.{ext}" for ext in _ASSET_EXTS) if t.is_file()]
+    return len([t.unlink() for t in present])
 
 
 def register(server) -> None:

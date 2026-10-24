@@ -229,11 +229,6 @@ export function worldviewReadinessHandler(fetcher: typeof fetch) {
       if (!response.ok) throw new Error(`worldview_globe_http_${response.status}`);
       return res.json({
         status: 'ready',
-        adapter: {
-          kind: 'python',
-          contractVersion: 'card-subsystem.v1',
-          presentationOrigin: globeUrl.origin,
-        },
         lifecycle: {
           ownership: 'supervised-upstream',
           automaticStart: false,
@@ -243,11 +238,6 @@ export function worldviewReadinessHandler(fetcher: typeof fetch) {
     } catch (error) {
       return res.status(503).json({
         status: 'offline',
-        adapter: {
-          kind: 'python',
-          contractVersion: 'card-subsystem.v1',
-          presentationOrigin: globeUrl.origin,
-        },
         lifecycle: { ownership: 'supervised-upstream', automaticStart: false },
         diagnostics: error instanceof Error ? error.message : 'worldview_globe_unavailable',
       });

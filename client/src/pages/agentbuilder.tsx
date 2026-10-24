@@ -53,9 +53,7 @@ import WorldViewSurface from '../features/worldview/WorldViewSurface';
 import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
 import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
-import useAgentBuilderWorkspaceLayout, {
-  shouldCloseCanvasInspector,
-} from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
+import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
@@ -342,7 +340,6 @@ export default function AgentBuilder(): React.ReactElement {
     projectId: canonicalDeckReady ? canvasProjectId : '',
     deck,
   });
-
   const currentDeckRef = useRef(deck);
   useEffect(() => {
     currentDeckRef.current = deck;
@@ -388,15 +385,6 @@ export default function AgentBuilder(): React.ReactElement {
     }
     return () => { current = false; };
   }, [canvasProjectId]);
-  useEffect(() => {
-    if (!shouldCloseCanvasInspector({
-      workspaceView,
-      inspectorOpen: inspectorDrawerOpen,
-      companionVisibleWidth,
-    })) return;
-    setInspectorDrawerOpen(false);
-  }, [companionVisibleWidth, inspectorDrawerOpen, setInspectorDrawerOpen, workspaceView]);
-
   const [transientCardInputs, setTransientCardInputs] = useState<Record<string, string>>({});
   const mainCardId = useMemo(
     () => deck.nodes.find((card) => (

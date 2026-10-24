@@ -56,17 +56,30 @@ describe('canvas connection validation', () => {
     }, [])).toBe(false);
   });
 
-  it('classifies a Magnetic endpoint as blue regardless of the card-side handle', () => {
+  it('keeps the dedicated Main-to-Magnetic handle orange and every worker handle blue', () => {
     const deck = createCanvasTestDocument();
-    const connection = {
-      source: 'card_trading_workbench',
+    const direct = {
+      source: 'card_main_chat',
       target: 'card_magentic',
       sourceHandle: 'card-control',
       targetHandle: 'card-control',
     };
-    expect(isPlainConnectionAllowedForDocument(deck, connection, [])).toBe(true);
-    expect(isPlainConnectionAllowedForDocument(deck, connection, [{
-      ...connection,
+    expect(isPlainConnectionAllowedForDocument(deck, direct, [])).toBe(true);
+    expect(isPlainConnectionAllowedForDocument(deck, direct, [{
+      ...direct,
+      id: 'existing-direct-control',
+      data: { edgeType: 'flow' },
+    }])).toBe(false);
+
+    const worker = {
+      source: 'card_trading_workbench',
+      target: 'card_magentic',
+      sourceHandle: null,
+      targetHandle: 'bus-in-2',
+    };
+    expect(isPlainConnectionAllowedForDocument(deck, worker, [])).toBe(true);
+    expect(isPlainConnectionAllowedForDocument(deck, worker, [{
+      ...worker,
       id: 'existing-worker-membership',
       data: { edgeType: 'magentic_option' },
     }])).toBe(false);
@@ -75,7 +88,7 @@ describe('canvas connection validation', () => {
       target: 'card_magentic',
       sourceHandle: 'card-control',
       targetHandle: 'card-control',
-    }, [])).toBe(true);
+    }, [])).toBe(false);
     expect(isPlainConnectionAllowedForDocument(deck, {
       source: 'card_magentic',
       target: 'card_main_chat',

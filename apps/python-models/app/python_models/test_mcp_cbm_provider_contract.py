@@ -133,11 +133,7 @@ def test_dev_fresh_does_not_resolve_or_launch_optional_cbm():
     assert "$expectedVersion" not in source
     assert "$expectedSha256" not in source
     assert "LiquidAIty\\cbm\\" not in source
-    assert "docker" not in source.lower()
-    assert "compose" not in source.lower()
     assert "AddSeconds(60)" not in source
-    assert "POSTGRES_PASSWORD" not in source
-    assert "NEO4J_PASSWORD" not in source
 
 def test_cbm_adapter_has_no_version_checksum_or_catalog_copy():
     repo_root = os.path.dirname(

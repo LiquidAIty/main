@@ -197,11 +197,6 @@ export type TradingEngineReadiness = {
   paperOnly?: boolean;
   orderSubmission?: string;
   diagnostics?: string | null;
-  adapter?: {
-    contractVersion: string;
-    publicApiOnly: boolean;
-    capabilities: string[];
-  };
   lifecycle?: {
     status: string;
     activeStrategies: number;

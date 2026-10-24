@@ -1,3 +1,8 @@
+/**
+ * Entity: Application Database
+ * Relationship: This file owns the process-wide PostgreSQL pool, refreshes it after transient transport failure, and never replays an ambiguously submitted statement.
+ */
+
 import '../config/env';
 import { Pool } from 'pg';
 

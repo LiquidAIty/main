@@ -44,40 +44,6 @@ def _make_agent(session_db=None, prebuilt_prompt: str = "BUILT_PROMPT"):
     return agent
 
 
-def test_profile_following_card_rebuilds_unstamped_prompt_without_becoming_bot_chat():
-    db = MagicMock()
-    db.get_session.return_value = {
-        "system_prompt": "OLD CARD PROMPT",
-        "tool_names": json.dumps(["old_tool"]),
-    }
-    stamped_prompt = "NEW CARD PROMPT\n\nCapability epoch: abcdef123456"
-    agent = _make_agent(session_db=db, prebuilt_prompt=stamped_prompt)
-    agent._follow_profile_config = True
-    agent._session_title_hint = "Card Chat:stable"
-    agent._bot_mode_roster = []
-    agent.tools = [{"type": "function", "function": {"name": "new_tool", "parameters": {}}}]
-
-    with (
-        patch("agent.prompt_builder.clear_skills_system_prompt_cache") as clear_skills,
-        patch("tools.mcp_tool_agent.persist_agent_tool_names") as persist_tools,
-    ):
-        _restore_or_build_system_prompt(
-            agent,
-            None,
-            [{"role": "user", "content": "continue"}],
-        )
-
-    assert agent._cached_system_prompt == stamped_prompt
-    assert agent._session_title_hint == "Card Chat:stable"
-    agent._build_system_prompt.assert_called_once_with(None)
-    clear_skills.assert_called_once_with(clear_snapshot=True)
-    persist_tools.assert_called_once_with(agent)
-    db.update_system_prompt.assert_called_once_with(
-        agent.session_id,
-        stamped_prompt,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Surface switch (#104414)
 # ---------------------------------------------------------------------------
@@ -640,6 +606,38 @@ class TestPerResponseSessionWritePath:
             assert second._cached_system_prompt == "GROUP_PROMPT"
             second._build_system_prompt.assert_not_called()
             assert "is null" not in caplog.text
+
+
+def test_null_stored_prompt_does_not_take_the_stale_probe_path(tmp_path):
+    """A NULL system_prompt row already rebuilds. The capability probe must not gate it."""
+    from hermes_state import SessionDB
+    from agent.conversation_loop import _bot_chat_prompt_stale
+
+    agent = SimpleNamespace(
+        _bot_mode_protocol=True,
+        _session_title_hint="Bot Chat",
+        _session_db=None,
+        session_id="test-session-id",
+    )
+    with patch(
+        "tools.bot_mode_probe.stored_prompt_capability_stale", return_value=False
+    ) as probe:
+        assert _bot_chat_prompt_stale(agent, None) is False
+        probe.assert_not_called()
+
+    with SessionDB(db_path=tmp_path / "state.db") as db:
+        db.create_session("test-session-id", source="tui")
+        row = db.get_session("test-session-id")
+        assert row is not None and row["system_prompt"] is None
+        restoring = _make_agent(session_db=db, prebuilt_prompt="BUILT")
+        with patch(
+            "tools.bot_mode_probe.stored_prompt_capability_stale", return_value=False
+        ) as probe:
+            _restore_or_build_system_prompt(
+                restoring, None, [{"role": "user", "content": "hi"}]
+            )
+        probe.assert_not_called()
+        restoring._build_system_prompt.assert_called_once()
 
 
 if __name__ == "__main__":
