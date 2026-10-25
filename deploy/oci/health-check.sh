@@ -31,7 +31,6 @@ check_url() {
 }
 
 check_service liquidaity-infrastructure.service
-check_service liquidaity-card-runtime.service
 check_service liquidaity-python-rails.service
 check_service liquidaity-knowgraph.service
 check_service liquidaity-backend.service
@@ -41,10 +40,6 @@ check_url backend http://127.0.0.1:4000/api/health
 check_url python-rails http://127.0.0.1:8003/health
 check_url knowgraph http://127.0.0.1:8001/health
 check_url mcp-ready http://127.0.0.1:8765/health/ready
-
-# The external Card runtime exposes its gateway listener, not a separate health route.
-timeout 5 bash -c '</dev/tcp/127.0.0.1/9119' \
-  || fail "card_runtime_gateway_listener_unavailable"
 
 docker exec postgres pg_isready \
   -U "${POSTGRES_USER:?missing_required_config:POSTGRES_USER}" \

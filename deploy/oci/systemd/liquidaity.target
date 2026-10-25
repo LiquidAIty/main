@@ -1,7 +1,7 @@
 [Unit]
 Description=LiquidAIty root application
 Requires=liquidaity-infrastructure.service
-Wants=liquidaity-card-runtime.service liquidaity-python-rails.service liquidaity-knowgraph.service liquidaity-backend.service liquidaity-mcp.service
+Wants=liquidaity-python-rails.service liquidaity-knowgraph.service liquidaity-backend.service liquidaity-mcp.service
 After=network-online.target liquidaity-infrastructure.service
 
 [Install]

@@ -9,7 +9,7 @@ import type { DeckCard, DeckDocument } from '../types';
 import { CARD_RUNTIME_CONTRACT } from '../services/cardRuntimeGateway';
 import { exactStrings, objectRecord } from '../services/projectCardAuthority';
 import type { ToolCatalogDescriptor } from '../services/mcp/toolCatalogMcpClient';
-import { resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
+import { createInternalMcpBearer, resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
 
 type ProfileRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>;
 
@@ -30,6 +30,7 @@ export type CardProfileState = {
 const CARD_MCP_SERVER = 'liquidaity';
 const CARD_PROFILE_MARKER_KEY = CARD_RUNTIME_CONTRACT.profileMarkerKey;
 const PROFILE_ROSTER_FIELD = CARD_RUNTIME_CONTRACT.profileRosterField;
+const HERMES_REQUIRED_SKILLS = new Set(['hermes-agent']);
 
 function validProfileName(value: string): boolean {
   if (!value || value.length > 64) return false;
@@ -234,8 +235,20 @@ async function configureCardMcp(
   const exact = existing && tools.length > 0
     && existing.enabled !== false
     && String(existing.url || '') === resolveInternalMcpUrl()
+    && existing.auth === 'header'
     && sameStrings(exactStrings(objectRecord(existing.tools).include), tools);
-  if (exact) return;
+  const bearer = createInternalMcpBearer({ kind: 'card-runtime' });
+  if (exact) {
+    const updated = objectRecord(await request('mcp.servers.set_api_key', {
+      profile: card.runtime.profile,
+      name: CARD_MCP_SERVER,
+      value: bearer,
+    }));
+    if (updated.ok !== true || String(updated.name || '') !== CARD_MCP_SERVER) {
+      throw new Error(`card_profile_mcp_auth_failed:${card.runtime.profile}`);
+    }
+    return;
+  }
   if (existing) {
     const removed = objectRecord(await request('mcp.servers.remove', {
       profile: card.runtime.profile,
@@ -249,11 +262,15 @@ async function configureCardMcp(
   const added = objectRecord(await request('mcp.servers.add', {
     profile: card.runtime.profile,
     name: CARD_MCP_SERVER,
+    bearer_token: bearer,
     config: {
       url: resolveInternalMcpUrl(),
       enabled: true,
       strict_redirect_headers: true,
-      headers: { [CARD_RUNTIME_CONTRACT.profileHeader]: card.runtime.profile },
+      identity_header: {
+        name: CARD_RUNTIME_CONTRACT.profileHeader,
+        value_from: 'profile',
+      },
       tools: { include: [...tools] },
     },
   }));
@@ -279,7 +296,9 @@ function profileChanges(
       throw new Error(`card_profile_skill_missing:${card.runtime.profile}:${selected}`);
     }
   }
-  const disabledSkills = installedSkills.filter((name) => !selectedSkills.has(name.toLowerCase()));
+  const disabledSkills = installedSkills.filter((name) => (
+    !selectedSkills.has(name.toLowerCase()) && !HERMES_REQUIRED_SKILLS.has(name.toLowerCase())
+  ));
   const selectedToolsets = exactStrings(options.toolsets);
   const availableToolsets = new Set((current.toolsets || [])
     .map((item) => String(item.name || '').trim()).filter(Boolean));

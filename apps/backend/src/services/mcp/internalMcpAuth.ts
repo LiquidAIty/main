@@ -14,7 +14,7 @@ const INTERNAL_MCP_AUDIENCE = 'liquidaity-internal-mcp';
 const DEFAULT_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp';
 const TOKEN_LIFETIME_SECONDS = 12 * 60 * 60;
 
-export type InternalMcpPrincipal = { kind: 'catalog-reader' };
+export type InternalMcpPrincipal = { kind: 'catalog-reader' | 'card-runtime' };
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {
   const secret = String(env.LIQUIDAITY_INTERNAL_MCP_SECRET || '').trim();
@@ -42,14 +42,14 @@ export function createInternalMcpBearer(
   nowSeconds = Math.floor(Date.now() / 1000),
 ): string {
   const secret = requiredSecret(env);
-  if (principal.kind !== 'catalog-reader') {
+  if (!['catalog-reader', 'card-runtime'].includes(principal.kind)) {
     throw new Error('internal_mcp_principal_kind_invalid');
   }
   const header = base64UrlJson({ alg: 'HS256', typ: 'JWT' });
   const payload = base64UrlJson({
     iss: INTERNAL_MCP_ISSUER,
     aud: INTERNAL_MCP_AUDIENCE,
-    sub: 'catalog-reader',
+    sub: principal.kind,
     iat: nowSeconds,
     exp: nowSeconds + TOKEN_LIFETIME_SECONDS,
     scope: 'liquidaity.main',

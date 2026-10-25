@@ -57,58 +57,85 @@ let connecting: {
   promise: Promise<CardRuntimeClient>;
 } | null = null;
 let connectionGeneration = 0;
-const APPLICATION_GATEWAY_HEARTBEAT_DEADLINE_MS = 5 * 60_000;
+let connectedOrigin = '';
+let closeTicketBridges: (() => void) | null = null;
 
-export function resolveCardRuntimeGatewayUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const configured = String(env.HERMES_GATEWAY_URL || '').trim();
+function terminalSessionToken(env: NodeJS.ProcessEnv = process.env): string {
   const token = String(env.HERMES_DASHBOARD_SESSION_TOKEN || '').trim();
-  let url: URL;
-  try {
-    url = new URL(configured);
-  } catch {
-    throw new Error('card_runtime_gateway_url_invalid');
-  }
-  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(url.hostname.toLowerCase());
-  if (!['ws:', 'wss:'].includes(url.protocol)
-    || (url.protocol === 'ws:' && !loopback)
-    || url.username
-    || url.password
-    || url.hash
-    || url.searchParams.has('token')) {
-    throw new Error('card_runtime_gateway_url_invalid');
-  }
   if (
     token.length !== 64
     || [...token.toLowerCase()].some((character) => !'0123456789abcdef'.includes(character))
-  ) throw new Error('card_runtime_gateway_credential_missing');
-  url.searchParams.set('token', token);
-  return url.toString();
+  ) throw new Error('card_terminal_gateway_credential_missing');
+  return token;
 }
 
-async function newGatewayClient(): Promise<CardRuntimeClient> {
-  const source = path.join(
-    resolveRepoRoot(),
-    'HermesLatest',
-    'apps',
-    'shared',
-    'src',
-    'json-rpc-gateway.ts',
+async function newGatewayConnection(): Promise<{
+  client: CardRuntimeClient;
+  origin: string;
+  url: string;
+}> {
+  const repoRoot = resolveRepoRoot();
+  const hermesRoot = path.join(repoRoot, 'HermesLatest');
+  const python = path.join(
+    hermesRoot,
+    '.venv',
+    process.platform === 'win32' ? 'Scripts' : 'bin',
+    process.platform === 'win32' ? 'python.exe' : 'python',
   );
-  if (!existsSync(source)) throw new Error('card_runtime_gateway_client_missing');
-  const loaded = await tsImport(
-    pathToFileURL(source).href,
-    pathToFileURL(__filename).href,
-  ) as {
-    JsonRpcGatewayClient?: new (options?: Record<string, unknown>) => CardRuntimeClient;
+  const profileRoot = path.join(hermesRoot, '.hermes');
+  const clientSource = path.join(hermesRoot, 'apps', 'desktop', 'src', 'api', 'client.ts');
+  const localGatewaySource = path.join(hermesRoot, 'apps', 'desktop', 'electron', 'local-gateway.ts');
+  const ticketSource = path.join(
+    hermesRoot,
+    'apps',
+    'desktop',
+    'electron',
+    'local-gateway-python.ts',
+  );
+  if (
+    !existsSync(python)
+    || !existsSync(path.join(profileRoot, 'config.yaml'))
+    || !existsSync(clientSource)
+    || !existsSync(localGatewaySource)
+    || !existsSync(ticketSource)
+  ) throw new Error('card_runtime_gateway_client_missing');
+  const [clientModule, localGateway, ticketModule] = await Promise.all([
+    tsImport(pathToFileURL(clientSource).href, pathToFileURL(__filename).href),
+    tsImport(pathToFileURL(localGatewaySource).href, pathToFileURL(__filename).href),
+    tsImport(pathToFileURL(ticketSource).href, pathToFileURL(__filename).href),
+  ]) as Array<Record<string, any>>;
+  if (
+    typeof clientModule.HermesGateway !== 'function'
+    || typeof localGateway.ensureLocalGateway !== 'function'
+    || typeof localGateway.runGatewayEnsure !== 'function'
+    || typeof localGateway.createLocalGatewayDials !== 'function'
+    || typeof ticketModule.createGatewayTicketResolver !== 'function'
+  ) throw new Error('card_runtime_gateway_client_invalid');
+  const runtime = {
+    command: python,
+    args: ['-m', 'hermes_cli.main', '-p', 'default', 'gateway', 'ensure', '--json'],
+    kind: 'python',
+    shell: false,
+    env: { PYTHONPATH: hermesRoot },
   };
-  if (typeof loaded.JsonRpcGatewayClient !== 'function') {
-    throw new Error('card_runtime_gateway_client_invalid');
+  const descriptor = await localGateway.ensureLocalGateway(() => (
+    localGateway.runGatewayEnsure(runtime, hermesRoot, profileRoot)
+  ));
+  const endpoint = descriptor.gatewayEndpoint;
+  if (!endpoint || typeof endpoint.api_origin !== 'string') {
+    throw new Error('card_runtime_gateway_owner_unavailable');
   }
-  return new loaded.JsonRpcGatewayClient({
-    requestIdPrefix: 'app',
-    requestTimeoutMs: 30 * 60_000,
-    heartbeatDeadlineMs: APPLICATION_GATEWAY_HEARTBEAT_DEADLINE_MS,
-  });
+  const ticketResolver = ticketModule.createGatewayTicketResolver(
+    async () => runtime,
+    () => hermesRoot,
+  );
+  const ticket = await ticketResolver(endpoint, 'interactive');
+  const url = localGateway.createLocalGatewayDials().prepare(endpoint.api_origin, ticket, 0);
+  closeTicketBridges = typeof ticketModule.closeGatewayTicketBridges === 'function'
+    ? ticketModule.closeGatewayTicketBridges
+    : null;
+  const client = new clientModule.HermesGateway() as CardRuntimeClient;
+  return { client, origin: endpoint.api_origin, url };
 }
 
 export async function cardRuntimeGateway(): Promise<CardRuntimeClient> {
@@ -124,8 +151,8 @@ export async function cardRuntimeGateway(): Promise<CardRuntimeClient> {
     let cancelReady: () => void = () => undefined;
     let client: CardRuntimeClient | null = null;
     try {
-      const url = resolveCardRuntimeGatewayUrl();
-      client = await newGatewayClient();
+      const connection = await newGatewayConnection();
+      client = connection.client;
       attempt.client = client;
       if (generation !== connectionGeneration) {
         throw new Error('card_runtime_gateway_closed_during_connect');
@@ -169,13 +196,14 @@ export async function cardRuntimeGateway(): Promise<CardRuntimeClient> {
         () => null,
         (error: unknown) => error,
       );
-      await client.connect(url);
+      await client.connect(connection.url);
       const readinessError = await readyOutcome;
       if (readinessError) throw readinessError;
       if (generation !== connectionGeneration) {
         throw new Error('card_runtime_gateway_closed_during_connect');
       }
       connectedClient = client;
+      connectedOrigin = connection.origin;
       return client;
     } catch (error) {
       cancelReady();
@@ -194,13 +222,19 @@ export function closeCardRuntimeGateway(): void {
   connecting?.client?.close();
   connectedClient?.close();
   connectedClient = null;
+  connectedOrigin = '';
+  closeTicketBridges?.();
+  closeTicketBridges = null;
   if (connecting?.generation !== connectionGeneration) connecting = null;
 }
 
 export function openCardTerminalSocket(query: URLSearchParams): WebSocket {
-  const url = new URL(resolveCardRuntimeGatewayUrl());
+  if (!connectedOrigin) throw new Error('card_terminal_gateway_unavailable');
+  const url = new URL(connectedOrigin);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.pathname = '/api/pty';
   for (const [name, value] of query) url.searchParams.set(name, value);
+  url.searchParams.set('token', terminalSessionToken());
   url.hash = '';
   return new WebSocket(url, { maxPayload: 256 * 1024 });
 }

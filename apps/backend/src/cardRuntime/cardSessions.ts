@@ -27,6 +27,7 @@ import {
 } from './profileMaterialization';
 
 const REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+const CARD_SESSION_RESUME_TIMEOUT_MS = 60_000;
 const profileTails = new Map<string, Promise<void>>();
 
 export type CardSessionScope = {
@@ -86,14 +87,9 @@ function cardWorkingDirectory(
 function sessionBinding(value: unknown, storedFallback = ''): CardSessionBinding {
   const result = objectRecord(value);
   const liveHandle = String(result.session_id || '').trim();
-  const sessionId = String(result.stored_session_id || result.session_key || storedFallback).trim();
+  const sessionId = String(storedFallback || result.stored_session_id || result.session_key).trim();
   if (!liveHandle || !sessionId) throw new Error('card_session_binding_invalid');
   return { liveHandle, sessionId, info: objectRecord(result.info) };
-}
-
-function runtimeErrorCode(error: unknown): number | null {
-  const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : null;
-  return typeof code === 'number' && Number.isInteger(code) ? code : null;
 }
 
 function profileRequest(client: CardRuntimeClient) {
@@ -139,30 +135,50 @@ async function bindProfileSession(
   scope: CardSessionScope,
   profile: CardProfileState,
 ): Promise<CardSessionBinding> {
-  const source = card.card.runtime.mode === 'main' ? 'api_server' : 'desktop';
+  const listed = objectRecord(await client.request('session.list', {
+    profile: card.profile,
+    title: CARD_RUNTIME_CONTRACT.messageSessionTitle,
+    limit: 200,
+    include_hidden: true,
+  }));
+  const matches = (Array.isArray(listed.sessions) ? listed.sessions : [])
+    .map(objectRecord)
+    .filter((row) => (
+      String(row.root_title || '').trim() === CARD_RUNTIME_CONTRACT.messageSessionTitle
+      || (!row.root_title
+        && String(row.title || '').trim() === CARD_RUNTIME_CONTRACT.messageSessionTitle)
+    ));
+  if (matches.length > 1) throw new Error(`card_session_identity_ambiguous:${card.profile}`);
+  const canonical = matches[0];
+  const registryId = String(canonical?.id || '').trim();
+  const resumeId = String(canonical?.resolved_id || registryId).trim();
+  if (canonical && (!registryId || !resumeId)) {
+    throw new Error(`card_session_identity_invalid:${card.profile}`);
+  }
   let live: CardSessionBinding;
-  try {
+  if (registryId) {
     live = sessionBinding(await client.request('session.resume', {
-      session_id: CARD_RUNTIME_CONTRACT.messageSessionTitle,
+      session_id: resumeId,
       profile: card.profile,
-      source,
+      cols: 96,
+      defer_history: true,
       omit_messages: true,
-      eager_build: true,
-      close_on_disconnect: false,
-    }));
-  } catch (error) {
-    if (runtimeErrorCode(error) !== 4007) throw error;
+    }, CARD_SESSION_RESUME_TIMEOUT_MS), registryId);
+  } else {
     live = sessionBinding(await client.request('session.create', {
       profile: card.profile,
       title: CARD_RUNTIME_CONTRACT.messageSessionTitle,
       cwd: cardWorkingDirectory(authority, card, scope),
-      source,
+      cwd_explicit: true,
       hidden: true,
-      close_on_disconnect: false,
       follow_profile_config: true,
-      idempotency_key: `card-session:${card.profile}`,
       ...(reasoningEffort(card) ? { reasoning_effort: reasoningEffort(card) } : {}),
     }));
+    await client.request('session.title', {
+      session_id: live.liveHandle,
+      profile: card.profile,
+      title: CARD_RUNTIME_CONTRACT.messageSessionTitle,
+    });
   }
   if (card.card.runtime.mode === 'main') {
     const busy = objectRecord(await client.request('config.set', {

@@ -71,7 +71,6 @@ try {
   $gatewayGenerator.Dispose()
 }
 $env:HERMES_DASHBOARD_SESSION_TOKEN = ([System.BitConverter]::ToString($gatewayBytes)).Replace('-', '').ToLowerInvariant()
-$env:HERMES_GATEWAY_URL = 'ws://127.0.0.1:9119/api/ws'
 # Supervised startup must never pause the backend build for an editor-extension
 # installation prompt. The extension is optional and unrelated to runtime
 # readiness; keep all Nx prompts disabled inside this service process tree.

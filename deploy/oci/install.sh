@@ -94,8 +94,6 @@ esac
 [[ "${MCP_TRANSPORT:-}" == streamable-http && "${MCP_HTTP_PORT:-}" == 8765 ]] \
   || fail "mcp_loopback_transport_mismatch"
 [[ "${MCP_OAUTH_ENFORCED:-}" == true ]] || fail "mcp_oauth_must_be_enforced"
-[[ "${HERMES_GATEWAY_URL:-}" == ws://127.0.0.1:9119/api/ws ]] \
-  || fail "card_runtime_gateway_url_mismatch"
 [[ "${HERMES_HOME:-}" == /opt/liquidaity/HermesLatest/.hermes ]] \
   || fail "card_runtime_home_mismatch"
 [[ ${#HERMES_DASHBOARD_SESSION_TOKEN} -eq 64 ]] \

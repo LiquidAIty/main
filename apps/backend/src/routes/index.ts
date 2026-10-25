@@ -22,6 +22,7 @@ import cardTerminalRoutes from './cardTerminal.routes';
 import cardProfileRoutes from './cardProfile.routes';
 import codeGraphReadRoutes from './codeGraphRead.routes';
 import nrgsimRoutes from './nrgsim.routes';
+import mainSessionRoutes from './mainSession.routes';
 
 const router = Router();
 
@@ -47,5 +48,6 @@ router.use('/projects', authMiddleware, decksRoutes);
 router.use('/trading', authMiddleware, tradingRoutes);
 router.use('/worldview', authMiddleware, worldviewRoutes);
 router.use('/nrgsim', authMiddleware, nrgsimRoutes);
+router.use('/main/session', authMiddleware, mainSessionRoutes);
 
 export default router;

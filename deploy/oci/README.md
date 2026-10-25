@@ -28,7 +28,6 @@ choose the region, shape, volume size, public IP, DNS name, SSH CIDR, firewall p
 | Python rails | `apps/python-models/.venv/bin/python -X utf8 -m uvicorn app.main:app --app-dir apps/python-models --host 127.0.0.1 --port 8003` | `127.0.0.1:8003` |
 | KnowGraph | `services/knowgraph/.venv/bin/python -X utf8 -m uvicorn app:app --app-dir services/knowgraph --host 127.0.0.1 --port 8001` | `127.0.0.1:8001` |
 | MCP | `apps/python-models/.venv/bin/python -X utf8 apps/python-models/app/mcp_host.py` | `127.0.0.1:8765` |
-| Card runtime | `HermesLatest/.venv/bin/python -X utf8 -m hermes_cli.main -p default serve --host 127.0.0.1 --port 9119 --skip-build` | `127.0.0.1:9119` |
 | PostgreSQL/AGE | root Compose service `postgres` | `127.0.0.1:5433` |
 | Neo4j | root Compose service `neo4j` | `127.0.0.1:7474`, `127.0.0.1:7687` |
 
@@ -58,7 +57,7 @@ bootstrap, MCP-internal, and 64-hex Card runtime secrets on the host. Supply the
 audience, client ID, scope, CORS origin, and optional provider credentials. Never commit the production file.
 
 Open only inbound TCP 22 from the owner-selected SSH CIDR and TCP 80/443 from the intended public audience.
-Do not expose 4000, 8001, 8003, 8765, 9119, 5433, 7474, or 7687 in the OCI NSG, security list, or host firewall.
+Do not expose 4000, 8001, 8003, 8765, 5433, 7474, or 7687 in the OCI NSG, security list, or host firewall.
 
 ## Fresh-database limitation
 
