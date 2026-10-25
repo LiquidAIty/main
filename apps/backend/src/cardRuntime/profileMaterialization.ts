@@ -27,7 +27,6 @@ export type CardProfileState = {
   ui_meta_revisions?: Record<string, number>;
 };
 
-const ESSENTIAL_SKILLS = new Set<string>([CARD_RUNTIME_CONTRACT.essentialSkill]);
 const CARD_MCP_SERVER = 'liquidaity';
 const CARD_PROFILE_MARKER_KEY = CARD_RUNTIME_CONTRACT.profileMarkerKey;
 const PROFILE_ROSTER_FIELD = CARD_RUNTIME_CONTRACT.profileRosterField;
@@ -185,7 +184,6 @@ export function materializedCardPrompt(deck: DeckDocument, card: DeckCard): stri
     const address = cardAddress(target);
     return [
       `[AGENT @${address}]`,
-      `This agent lives in the connected saved Card. Address it only through message_agent with target "@${address}".`,
       skill,
     ].join('\n');
   });
@@ -281,9 +279,7 @@ function profileChanges(
       throw new Error(`card_profile_skill_missing:${card.runtime.profile}:${selected}`);
     }
   }
-  const disabledSkills = installedSkills.filter((name) => (
-    !selectedSkills.has(name.toLowerCase()) && !ESSENTIAL_SKILLS.has(name.toLowerCase())
-  ));
+  const disabledSkills = installedSkills.filter((name) => !selectedSkills.has(name.toLowerCase()));
   const selectedToolsets = exactStrings(options.toolsets);
   const availableToolsets = new Set((current.toolsets || [])
     .map((item) => String(item.name || '').trim()).filter(Boolean));

@@ -59,8 +59,6 @@ ID, semantic merger, or additional writer.
 
 ## Execution boundaries
 
-- **Agent messaging** uses `message_agent` against the exact wire-derived agent roster; the external runtime
-  owns delivery, recipient execution, receipts, and completion.
 - **Team** remains a saved general-purpose agent. Automatic worker behavior is deferred until live proof.
 - **Magnetic** remains a saved coordination agent with blue membership. Its task execution path is deferred
   until ordinary messaging is proven end to end.

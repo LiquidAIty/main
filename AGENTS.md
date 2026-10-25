@@ -360,18 +360,6 @@ regex, substring, keyword, or lookup-table logic.
 
 ### Main
 
-The saved Main card executes through the repo-owned Hermes persistent chat adapter. Main is the fast
-LiquidAIty front door, not the name of a third-party UI. Its saved runtime mode is `main`; Team/Kanban
-belongs only to the saved Team Card/profile. Main's current source-default Card uses
-`subagentType: none`, has no Hermes Web toolset, and is not a coding worker. Ordinary leaf/recursive
-Hermes delegation remains a separate saved option when explicitly configured on an eligible Card. The
-adapter preserves saved prompt/profile/model/tool authority and real streaming/session/failure behavior.
-Main is optimized for work it can answer in seconds. It sends sustained construction to Builder,
-historical Project reasoning to ThinkGraph, and sourced research to KnowGraph. Every answer distinguishes
-current Project reasoning from known evidence. Straightforward requests may receive a normal direct answer;
-when a material part is questionable, Main compares the two most plausible options, recommends one, and
-uses that recommendation as the reversible default unless the user redirects. This is saved-prompt model
-discipline, never a deterministic TypeScript timer, classifier, parser, or router.
 Before inference, Python rails automatically appends the complete Entity/Relationship map and the default
 current-request grounding to Main, Builder, ThinkGraph, and KnowGraph: one Jev-ranked most Relevant plus one
 distinct most Recent record per authority. Think retrieval favors the strongest faithful optimistic steelman.

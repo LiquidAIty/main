@@ -3,16 +3,12 @@
  * Relationship: This file owns the Project-scoped Main conversation view, history, streamed partial replies, error state, and one final submission per voice capture.
  * Entity: Projects
  * Relationship: This file resets conversation, authority, voice, and active-stream state whenever the active Project changes.
- * Entity: Agent Messaging
- * Relationship: This file admits an explicit @Card only when it exactly matches the current server-supplied roster and preserves the observed recipient as the reply speaker.
  * Entity: Card Invocation
  * Relationship: This file assembles one Main Run request from exact user text, bounded images, and selected references and retains partial text on failure or cancellation.
  * Entity: Run Ledger
  * Relationship: This file tracks the real active Run identity for stop requests and refuses to interrupt without an observed Run ID.
  * Entity: Data Anchors
  * Relationship: This file converts selected reference order into bounded Run priorities without changing provider identity or resolved data.
- * Entity: Card Sessions
- * Relationship: This file loads Project conversation history and consumes chat, stop, and voice events from Main's saved Card session.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -47,7 +43,6 @@ type UseAgentBuilderMainChatArgs = {
   deckId: string;
   deckRevision?: string | null;
   dataAnchors?: LoadedCardGraphReference['reference'][];
-  prepareRunImages?: (addressedCardId: string | null) => Promise<MainRunImage[]>;
   onMainRunCompleted?: (
     runId: string,
     waitForThinkCapture?: boolean,
@@ -96,50 +91,6 @@ function participantFromEvent(value: unknown): MainConversationParticipant | nul
   };
 }
 
-function cardParticipant(agent: AddressableAgent): MainConversationParticipant {
-  return {
-    kind: 'card',
-    label: agent.title,
-    cardId: agent.cardId,
-    profile: agent.profile,
-    address: agent.address,
-  };
-}
-
-function leadingCardAddress(text: string): string | null {
-  const trimmed = text.trimStart();
-  if (!trimmed.startsWith('@')) return null;
-  let address = '';
-  for (const character of trimmed.slice(1, 65)) {
-    const lower = character.toLowerCase();
-    const allowed = (lower >= 'a' && lower <= 'z')
-      || (character >= '0' && character <= '9')
-      || character === '_'
-      || character === '-';
-    if (!allowed) break;
-    address += character;
-  }
-  if (!address || !((address[0].toLowerCase() >= 'a' && address[0].toLowerCase() <= 'z')
-    || (address[0] >= '0' && address[0] <= '9'))) return null;
-  const following = trimmed[address.length + 1];
-  if (following && ![' ', '\t', '\r', '\n'].includes(following)) return null;
-  return address.toLowerCase();
-}
-
-export function requestedParticipant(
-  text: string,
-  mainCardId: string,
-  agents: AddressableAgent[],
-): MainConversationParticipant {
-  const address = leadingCardAddress(text);
-  if (!address) {
-    return { kind: 'card', label: 'Main', ...(mainCardId ? { cardId: mainCardId } : {}) };
-  }
-  const target = agents.find((agent) => agent.address.toLowerCase() === address);
-  if (!target) throw new Error(`main_address_not_authorized:${address}`);
-  return cardParticipant(target);
-}
-
 function requestUserMessageIndex(messages: MainProjectChatMessage[], requestKey: string): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index].role === 'user' && messages[index].requestKey === requestKey) return index;
@@ -150,9 +101,7 @@ function requestUserMessageIndex(messages: MainProjectChatMessage[], requestKey:
 export default function useAgentBuilderMainChat({
   canvasProjectId,
   deckId,
-  deckRevision,
   dataAnchors = [],
-  prepareRunImages,
   onMainRunCompleted,
 }: UseAgentBuilderMainChatArgs) {
   const projectKey = canvasProjectId;
@@ -250,35 +199,12 @@ export default function useAgentBuilderMainChat({
     };
   }, [canvasProjectId, deckId, projectKey]);
 
-  useEffect(() => {
-    if (!canvasProjectId || !deckRevision) return;
-    const controller = new AbortController();
-    void loadSessionHistory({
-      projectId: canvasProjectId,
-      deckId,
-      signal: controller.signal,
-    }).then((history) => {
-      if (controller.signal.aborted) return;
-      setAuthority({
-        key: projectKey,
-        mainCardId: history.mainCardId,
-        agents: history.addressableAgents,
-      });
-    }).catch(() => {
-      if (!controller.signal.aborted) {
-        setTechnical({ key: projectKey, error: 'conversation_authority_refresh_failed' });
-      }
-    });
-    return () => controller.abort();
-  }, [canvasProjectId, deckId, deckRevision, projectKey]);
-
   const requestMainText = useCallback(async (
     text: string,
     runInput: MainChatRunInput = {},
   ): Promise<string> => {
     if (!text.trim()) throw new Error('main_prompt_empty');
     if (!canvasProjectId) throw new Error('main_project_required');
-    let requestTarget = requestedParticipant(text, mainCardId, addressableAgents);
     let responseParticipant: MainConversationParticipant = {
       kind: 'card',
       label: 'Main',
@@ -292,7 +218,6 @@ export default function useAgentBuilderMainChat({
         role: 'user',
         text,
         speaker: USER_PARTICIPANT,
-        target: requestTarget,
         status: 'pending',
         requestKey,
       };
@@ -316,8 +241,6 @@ export default function useAgentBuilderMainChat({
     const controller = new AbortController();
     activeStreamsRef.current.set(controller, { key: projectKey, runId: null, requestKey });
 
-    const addressedCardId = requestTarget.cardId && requestTarget.cardId !== mainCardId
-      ? requestTarget.cardId : null;
     const images = [...(runInput.images || [])];
     let runId: string | null = null;
     let streamedText = '';
@@ -381,10 +304,6 @@ export default function useAgentBuilderMainChat({
     };
 
     try {
-      if (prepareRunImages && images.length < MAX_MAIN_CHAT_IMAGES) {
-        const prepared = await prepareRunImages(addressedCardId);
-        images.push(...prepared.slice(0, MAX_MAIN_CHAT_IMAGES - images.length));
-      }
       const { finalText } = await streamSession({
         projectId: canvasProjectId,
         deckId,
@@ -401,17 +320,6 @@ export default function useAgentBuilderMainChat({
             || (event.deckId && event.deckId !== deckId)
             || (event.runId && runId && event.runId !== runId)
           ) throw new Error('main_run_identity_mismatch');
-          const verifiedTarget = participantFromEvent(event.requestedParticipant);
-          if (verifiedTarget) {
-            requestTarget = verifiedTarget;
-            setTranscript((current) => {
-              if (current.key !== projectKey) return current;
-              const copy = [...current.messages];
-              const userIndex = requestUserMessageIndex(copy, requestKey);
-              if (userIndex >= 0) copy[userIndex] = { ...copy[userIndex], target: verifiedTarget };
-              return { key: projectKey, messages: copy };
-            });
-          }
           const observed = participantFromEvent(event.participant);
           if (observed && (event.kind === 'text' || event.kind === 'done')) {
             responseParticipant = observed;
@@ -461,11 +369,7 @@ export default function useAgentBuilderMainChat({
         && String(finalText || streamedText).trim()
       ) {
         void Promise.resolve()
-          .then(() => (
-            !addressedCardId && responseParticipant.cardId === mainCardId
-              ? onMainRunCompleted?.(completedRunId)
-              : onMainRunCompleted?.(completedRunId, false)
-          ))
+          .then(() => onMainRunCompleted?.(completedRunId))
           .catch(() => undefined);
       }
       return finalText;
@@ -520,22 +424,12 @@ export default function useAgentBuilderMainChat({
     deckId,
     mainCardId,
     onMainRunCompleted,
-    prepareRunImages,
     projectKey,
   ]);
 
   const handleSend = useCallback((text: string, runInput?: MainChatRunInput) => {
     if (!text.trim() || !canvasProjectId) {
       setTechnical({ key: projectKey, error: 'main_project_required' });
-      return false;
-    }
-    try {
-      requestedParticipant(text, mainCardId, addressableAgents);
-    } catch (error) {
-      setTechnical({
-        key: projectKey,
-        error: error instanceof Error ? error.message : 'main_address_not_authorized',
-      });
       return false;
     }
     void requestMainText(text, runInput).catch(() => undefined);

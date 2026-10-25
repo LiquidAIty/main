@@ -4,7 +4,6 @@
  * Entity: Projects
  * Relationship: This file binds workspace selection, navigation, canonical deck load, and save scope to the active Project.
  * Entity: Main Chat
- * Relationship: This file mounts Main as the persistent primary conversation surface and connects its saved history, send, stop, voice, direct-target, and Entity-focus controls.
  * Entity: Builder Card
  * Relationship: This file mounts the saved Builder Card's own terminal as the permanent lower work surface beneath Main.
  * Entity: Saved Cards
@@ -517,13 +516,6 @@ export default function AgentBuilder(): React.ReactElement {
     knowledgeGraphs.projections.knowgraph,
     knowledgeGraphs.projections.thinkgraph.canonicalEntityDirectory,
   ]);
-  const prepareRunImages = useCallback(async (addressedCardId: string | null) => {
-    if (!addressedCardId || addressedCardId !== worldViewCard?.id || workspaceView !== 'worldview') {
-      return [];
-    }
-    if (!worldViewBridge) throw new Error('worldview_turn_context_unavailable');
-    return worldViewBridge.prepareRunImages();
-  }, [workspaceView, worldViewBridge, worldViewCard?.id]);
   // Entity: Building Modeling
   // Relationship: Refreshes the mounted modeler from an observed Main/recipient completion, preserving the existing graph refresh owner.
   const [modelingCompletedRunId, setModelingCompletedRunId] = useState('');
@@ -548,7 +540,6 @@ export default function AgentBuilder(): React.ReactElement {
     canvasProjectId,
     deckId: BUILDER_DECK_ID,
     deckRevision,
-    prepareRunImages,
     onMainRunCompleted: refreshAfterProjectRun,
   });
   useEffect(() => {

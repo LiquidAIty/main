@@ -103,7 +103,6 @@ candidate-worker, scheduler, task-store, or worker-pool behavior is current or p
 
 ### Execution
 
-- Ordinary agent-to-agent work enters only through `message_agent` and the exact saved wire-derived roster.
 - Every recognised enabled wire contributes messaging reachability. Blue has additional deferred Magnetic
   membership meaning; it does not start work.
 - The connected runtime owns inference, delivery, recipient execution, transcripts, queues, retries, and

@@ -47,7 +47,6 @@ export const CARD_RUNTIME_CONTRACT = Object.freeze({
   messageSessionTitle: 'Bot Chat',
   profileMarkerKey: 'hermes-bots',
   profileRosterField: 'bot_mode_roster',
-  essentialSkill: 'hermes-agent',
   profileHeader: 'X-LiquidAIty-Hermes-Profile',
 });
 

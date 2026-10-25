@@ -1,10 +1,5 @@
 /**
  * Entity: Main Chat
- * Relationship: This file validates Main history and SSE identities, admits exactly one final turn result, closes at the explicit end frame, and carries voice events without inventing assistant output.
- * Entity: Card Sessions
- * Relationship: This file transports Main chat, history, stop, and voice requests to the one Project-scoped Card session route.
- * Entity: Agent Messaging
- * Relationship: This file validates the current server-supplied addressable Card roster and preserves requested and responding participant identities in streamed events.
  * Entity: Card Invocation
  * Relationship: This file submits exact user text, bounded images, and selected Data Anchors with unique message identities and rejects incomplete or conflicting completion frames.
  * Entity: Run Ledger
@@ -155,7 +150,6 @@ export async function streamSession(args: {
         deckId: args.deckId,
         message: args.message,
         clientMessageId: clientMessageId(),
-        clientReplyMessageId: clientMessageId(),
         dataAnchors: args.dataAnchors || [],
         ...(args.images?.length ? { images: args.images } : {}),
       }),
@@ -186,9 +180,7 @@ export async function streamSession(args: {
   let finalText = '';
   let streamFailure: SessionStreamError | null = null;
   let sawDone = false;
-  let sawEnd = false;
   const receive = (kind: string, data: Record<string, unknown>) => {
-    if (sawEnd) return;
     if (kind === 'done') {
       const completedText = String(data.fullText ?? finalText);
       if (sawDone && completedText !== finalText) {
@@ -203,7 +195,6 @@ export async function streamSession(args: {
       sawDone = true;
       finalText = completedText;
     }
-    if (kind === 'end') sawEnd = true;
     if (kind === 'error') {
       streamFailure = new SessionStreamError({
         code: typeof data.code === 'string' && data.code ? data.code : 'session_stream_failed',
@@ -231,21 +222,10 @@ export async function streamSession(args: {
     if (result.done) break;
     buffer += decoder.decode(result.value, { stream: true });
     buffer = parseSseFrames(buffer, receive);
-    if (sawEnd) {
-      await reader.cancel().catch(() => undefined);
-      break;
-    }
   }
   buffer += decoder.decode();
   parseSseFrames(buffer, receive);
   if (streamFailure) throw streamFailure;
-  if (!sawEnd) {
-    throw new SessionStreamError({
-      code: 'session_stream_incomplete',
-      message: 'The Main stream ended before its end event.',
-      route: `${BASE}/chat`,
-    });
-  }
   if (!sawDone) {
     throw new SessionStreamError({
       code: 'session_stream_completion_missing',

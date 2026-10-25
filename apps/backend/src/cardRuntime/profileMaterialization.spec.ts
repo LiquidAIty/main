@@ -148,7 +148,6 @@ describe('saved Card profile projection', () => {
       description: 'old',
       soul: 'old',
       model: { provider: 'openai-codex', default: 'old-model' },
-      skills: [{ name: CARD_RUNTIME_CONTRACT.essentialSkill, enabled: true }],
       toolsets: [],
       toolsets_pinned: true,
       mcp_servers: [],
@@ -213,9 +212,6 @@ describe('saved Card profile projection', () => {
       [CARD_RUNTIME_CONTRACT.profileRosterField]: roster,
     });
     expect(String(configured[0].soul || '')).toContain('[AGENT @KnowGraph]');
-    expect(String(configured[0].soul || '')).toContain(
-      'This agent lives in the connected saved Card. Address it only through message_agent with target "@KnowGraph".',
-    );
     expect(String(configured[0].soul || '')).not.toContain('Use @Main for its saved specialty.');
     expect(configured[0].ui_meta).toEqual({
       [CARD_RUNTIME_CONTRACT.profileMarkerKey]: { title: 'Main' },

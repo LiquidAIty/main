@@ -193,9 +193,7 @@ claim that multi-user credential-isolation requirement from the profile/session 
 
 ## Agent messaging, Team, and Magnetic
 
-Current execution is limited to ordinary agent messaging through `message_agent`. Team and Magnetic remain
-saved agents. Every recognised enabled wire contributes to messaging reachability; blue additionally records
-deferred Magnetic membership. Automatic Team behavior, task decomposition, worker dispatch, task progress,
+Automatic Team behavior, task decomposition, worker dispatch, task progress,
 and Magnetic synthesis are not current and must not be documented or displayed as running. No TaskGraph work
 resumes until live Main messaging proves one real recipient execution and reply, rejection, busy handling,
 failure/Stop behavior, and truthful activity counts.
