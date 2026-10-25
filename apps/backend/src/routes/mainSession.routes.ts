@@ -151,6 +151,14 @@ function addressableAgents(authority: ProjectCardAuthority) {
   }] : []);
 }
 
+function historyPayload(ctx: Context, messages: ConversationMessage[]): Record<string, unknown> {
+  return {
+    mainCardId: ctx.authority.main.card.id,
+    addressableAgents: addressableAgents(ctx.authority),
+    messages: messages.flatMap(visibleMessage),
+  };
+}
+
 function send(res: Response, kind: string, payload: Record<string, unknown>): void {
   if (!res.destroyed && !res.writableEnded) res.write(`event: ${kind}\ndata: ${JSON.stringify(payload)}\n\n`);
 }
@@ -169,11 +177,7 @@ router.get('/history', async (req, res) => {
     if (!ctx) return undefined;
     const history = await transcript(ctx);
     const stored = await projectTranscript(ctx, history);
-    return res.json({
-      mainCardId: ctx.authority.main.card.id,
-      addressableAgents: addressableAgents(ctx.authority),
-      messages: stored.flatMap(visibleMessage),
-    });
+    return res.json(historyPayload(ctx, stored));
   } catch (error) {
     return res.status(503).json({ error: failure(error) });
   }
@@ -246,10 +250,9 @@ router.post('/chat', async (req, res) => {
       text,
     }));
     const userRowId = Number(receipt.user_row_id);
-    const receiptId = typeof receipt.admission_id === 'string' ? receipt.admission_id.trim() : '';
     const userProviderId = Number.isSafeInteger(userRowId) && userRowId > 0
       ? providerId(ctx, userRowId)
-      : receiptId ? `hermes:${ctx.session.sessionId}:receipt:${receiptId}:user` : messageId;
+      : messageId;
     await appendConversationTurn({
       projectId: ctx.projectId,
       conversationId: ctx.projectId,

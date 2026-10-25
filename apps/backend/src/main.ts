@@ -1,7 +1,5 @@
 // Entity: Application Startup
 // Relationship: This file boots the loopback backend, applies request boundaries, waits for required migrations, mounts the API, and closes supervised connections during shutdown.
-// Entity: Card Terminals
-// Relationship: This file installs and closes the authenticated Card-terminal WebSocket proxy on the existing backend listener without creating another terminal runtime.
 
 import "./config/env";
 import express from "express";

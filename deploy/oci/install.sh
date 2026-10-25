@@ -73,7 +73,7 @@ set +a
 required_values=(
   LIQUIDAITY_DOMAIN LIQUIDAITY_PUBLIC_BASE_URL CORS_ALLOWED_ORIGINS AUTH_BOOTSTRAP_TOKEN DATABASE_URL
   POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD NEO4J_USER NEO4J_PASSWORD NEO4J_URI
-  LIQUIDAITY_INTERNAL_MCP_SECRET HERMES_DASHBOARD_SESSION_TOKEN
+  LIQUIDAITY_INTERNAL_MCP_SECRET
   MCP_PUBLIC_RESOURCE_URL MCP_AUTH0_ISSUER_URL MCP_AUTH0_AUDIENCE
   MCP_AUTH0_CLIENT_ID MCP_AUTH0_REQUIRED_SCOPE
 )
@@ -96,11 +96,6 @@ esac
 [[ "${MCP_OAUTH_ENFORCED:-}" == true ]] || fail "mcp_oauth_must_be_enforced"
 [[ "${HERMES_HOME:-}" == /opt/liquidaity/HermesLatest/.hermes ]] \
   || fail "card_runtime_home_mismatch"
-[[ ${#HERMES_DASHBOARD_SESSION_TOKEN} -eq 64 ]] \
-  || fail "invalid_card_runtime_session_token"
-case "$HERMES_DASHBOARD_SESSION_TOKEN" in
-  *[!a-f0-9]*) fail "invalid_card_runtime_session_token" ;;
-esac
 [[ ${#LIQUIDAITY_INTERNAL_MCP_SECRET} -ge 32 ]] || fail "internal_mcp_secret_too_short"
 
 if ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then

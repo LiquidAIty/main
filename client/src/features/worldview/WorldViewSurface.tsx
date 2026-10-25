@@ -16,7 +16,6 @@ import GodsEyeSurface, {
 } from '../../components/worldsignal/GodsEyeSurface';
 import { GraphNavigationControls } from '../../components/graph/GraphCanvasChrome';
 import {
-  isCapability,
   loadProjectWorldview,
   setProjectWorldviewCapability,
   type ProjectWorldviewState,
@@ -97,7 +96,6 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
   const [layerApplyErrors, setLayerApplyErrors] = useState<Record<string, string>>({});
   const [layerPersistenceErrors, setLayerPersistenceErrors] = useState<Record<string, string>>({});
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('data');
-  const [remoteActionCount, setRemoteActionCount] = useState(0);
   const [pendingLayers, setPendingLayers] = useState<Record<string, {
     requestId: string;
     enabled: boolean;
@@ -293,7 +291,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
   };
 
   useEffect(() => {
-    if (!projectId || remoteActionCount > 0 || !sourceReady || !projectWorldview
+    if (!projectId || !sourceReady || !projectWorldview
       || projectWorldview.projectId !== projectId || !layerState) return;
     const sourcesById = new Map(layerState.sources.map((source) => [source.id, source]));
     const requests: Record<string, {
@@ -332,95 +330,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
         return next;
       });
     }
-  }, [layerApplyErrors, layerState, pendingLayers, projectId, projectWorldview,
-    remoteActionCount, sourceReady]);
-
-  useEffect(() => {
-    if (!projectId || !cardId || !sourceVersion) return undefined;
-    let active = true;
-    const controllers = new Set<AbortController>();
-    const events = new EventSource(
-      `/api/worldview/projects/${encodeURIComponent(projectId)}/actions/stream?cardId=${encodeURIComponent(cardId)}`,
-    );
-    events.addEventListener('action', (event) => {
-      if (!active) return;
-      let command: Record<string, unknown>;
-      try {
-        command = JSON.parse((event as MessageEvent).data) as Record<string, unknown>;
-      } catch { return; }
-      const requestId = typeof command.requestId === 'string' ? command.requestId : '';
-      const name = typeof command.name === 'string' ? command.name : '';
-      const args = command.arguments && typeof command.arguments === 'object'
-        && !Array.isArray(command.arguments)
-        ? command.arguments as Record<string, unknown> : {};
-      if (!requestId || !name) return;
-      const controller = new AbortController();
-      controllers.add(controller);
-      setRemoteActionCount((count) => count + 1);
-      void (async () => {
-        let result: Record<string, unknown>;
-        try {
-          const value = await bridgeRef.current?.executeAction(name, args, {
-            disabledLayerIds: Array.isArray(command.disabledLayerIds)
-              ? command.disabledLayerIds.filter((item): item is string => typeof item === 'string')
-              : [],
-            signal: controller.signal,
-          });
-          result = value && typeof value === 'object' && !Array.isArray(value)
-            && typeof (value as Record<string, unknown>).ok === 'boolean'
-            ? value as Record<string, unknown>
-            : { ok: false, error: 'worldview_action_result_invalid' };
-        } catch (error) {
-          result = { ok: false, error: error instanceof Error ? error.message : 'worldview_action_failed' };
-        }
-        if (!active || controller.signal.aborted) return;
-        try {
-          const response = await fetch(
-            `/api/worldview/projects/${encodeURIComponent(projectId)}/actions/result`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ cardId, requestId, result }),
-              signal: controller.signal,
-            },
-          );
-          const body = await response.json() as Record<string, unknown>;
-          if (active && response.ok && body.ok === true && isCapability(body.capability)) {
-            acceptCapability(projectId, body.capability);
-          } else if (active && name === 'set_layer_visibility'
-            && typeof result.layerId === 'string' && typeof result.enabled === 'boolean'
-            && result.ok === true) {
-            await restoreConfirmedLayer(projectId, result.layerId, !result.enabled);
-            setLayerPersistenceErrors((current) => ({
-              ...current,
-              [result.layerId as string]: 'Could not save the layer choice. Project setting restored.',
-            }));
-          }
-        } catch {
-          if (active && name === 'set_layer_visibility'
-            && typeof result.layerId === 'string' && typeof result.enabled === 'boolean'
-            && result.ok === true) {
-            await restoreConfirmedLayer(projectId, result.layerId, !result.enabled);
-            setLayerPersistenceErrors((current) => ({
-              ...current,
-              [result.layerId as string]: 'Could not save the layer choice. Project setting restored.',
-            }));
-          }
-        }
-      })().finally(() => {
-        controllers.delete(controller);
-        if (active) setRemoteActionCount((count) => Math.max(0, count - 1));
-      });
-    });
-    events.onerror = () => {
-      for (const controller of controllers) controller.abort('worldview_action_stream_lost');
-    };
-    return () => {
-      active = false;
-      events.close();
-      for (const controller of controllers) controller.abort('worldview_mount_unavailable');
-    };
-  }, [cardId, projectId, sourceVersion]);
+  }, [layerApplyErrors, layerState, pendingLayers, projectId, projectWorldview, sourceReady]);
 
   const handleNativeVisibility = (change: { layerId: string; enabled: boolean }) => {
     if (!projectId || !sourceVersion) return;

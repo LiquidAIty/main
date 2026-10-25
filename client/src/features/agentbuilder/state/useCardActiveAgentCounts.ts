@@ -1,7 +1,9 @@
 // Entity: Run Ledger
-// Relationship: This file polls inspect-only status for each saved Card with bounded backoff and counts only actual active Runs.
+// Relationship: This file refreshes inspect-only status for each saved Card on the Hermes Bot roster cadence and counts only actual active Runs.
 // Entity: Card Topology
 // Relationship: This file projects truthful active Card identities used by the topology canvas without inferring worker activity.
+// Entity: Main Chat
+// Relationship: The same roster refresh carries Main's canonical-session activity watermark for exact transcript rehydration.
 
 import { useEffect, useMemo, useState } from 'react';
 
@@ -12,10 +14,14 @@ type CardRunActivity = {
   state: string;
 };
 
+export type MainCanonicalSessionActivity = {
+  id: string;
+  resolvedId: string;
+  lastActive: number;
+};
+
 const ACTIVE_RUN_STATES = new Set(['pending', 'running']);
-const ACTIVE_REFRESH_MS = 2_000;
-const QUIET_REFRESH_MS = 10_000;
-const MAX_ERROR_REFRESH_MS = 60_000;
+const ROSTER_REFRESH_MS = 5_000;
 
 export default function useCardActiveAgentCounts({
   projectId,
@@ -26,28 +32,29 @@ export default function useCardActiveAgentCounts({
 }): {
   activeAgentCounts: Record<string, number>;
   activeCardIds: string[];
+  mainCanonicalSession: MainCanonicalSessionActivity | null;
 } {
   const cardIdsKey = JSON.stringify(deck.nodes.map((card) => card.id));
   const cardIds = useMemo(() => JSON.parse(cardIdsKey) as string[], [cardIdsKey]);
   const [activeAgentCounts, setActiveAgentCounts] = useState<Record<string, number>>({});
+  const [mainCanonicalSession, setMainCanonicalSession] = useState<MainCanonicalSessionActivity | null>(null);
 
   useEffect(() => {
     if (!projectId || cardIds.length === 0) {
       setActiveAgentCounts({});
+      setMainCanonicalSession(null);
       return undefined;
     }
 
     const controller = new AbortController();
     let disposed = false;
     let timer: number | null = null;
-    let consecutiveErrorRefreshes = 0;
 
     const schedule = (delayMs: number): void => {
       if (!disposed) timer = window.setTimeout(() => { void refresh(); }, delayMs);
     };
     const refresh = async (): Promise<void> => {
       let statuses: CardRunActivity[] = [];
-      let failureCount = 0;
       try {
         const response = await fetch('/api/cards/runs/latest', {
           method: 'POST',
@@ -65,6 +72,7 @@ export default function useCardActiveAgentCounts({
           ok?: boolean;
           results?: CardRunActivity[];
           failedCardIds?: string[];
+          mainCanonicalSession?: MainCanonicalSessionActivity | null;
         } | null;
         if (
           !response.ok
@@ -75,10 +83,10 @@ export default function useCardActiveAgentCounts({
           throw new Error(`card_activity_http_${response.status}`);
         }
         statuses = payload.results;
-        failureCount = payload.failedCardIds.length;
+        setMainCanonicalSession(payload.mainCanonicalSession || null);
       } catch {
         if (disposed || controller.signal.aborted) return;
-        failureCount = cardIds.length;
+        setMainCanonicalSession(null);
       }
       if (disposed || controller.signal.aborted) return;
       const nextCounts: Record<string, number> = {};
@@ -91,7 +99,6 @@ export default function useCardActiveAgentCounts({
           || observed.has(status.cardId)
           || typeof status.state !== 'string'
         ) {
-          failureCount += 1;
           continue;
         }
         observed.add(status.cardId);
@@ -104,20 +111,7 @@ export default function useCardActiveAgentCounts({
           ? current
           : nextCounts
       ));
-      consecutiveErrorRefreshes = failureCount > 0
-        ? consecutiveErrorRefreshes + 1
-        : 0;
-      const errorDelay = Math.min(
-        QUIET_REFRESH_MS * (2 ** Math.max(consecutiveErrorRefreshes - 1, 0)),
-        MAX_ERROR_REFRESH_MS,
-      );
-      schedule(
-        failureCount > 0
-          ? errorDelay
-          : Object.keys(nextCounts).length > 0
-            ? ACTIVE_REFRESH_MS
-            : QUIET_REFRESH_MS,
-      );
+      schedule(ROSTER_REFRESH_MS);
     };
 
     void refresh();
@@ -131,5 +125,6 @@ export default function useCardActiveAgentCounts({
   return {
     activeAgentCounts,
     activeCardIds: Object.keys(activeAgentCounts),
+    mainCanonicalSession,
   };
 }

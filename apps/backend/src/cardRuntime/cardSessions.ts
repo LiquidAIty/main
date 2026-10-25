@@ -1,41 +1,30 @@
 /**
  * Entity: Card Sessions
- * Relationship: Binds each enabled saved Card to its one persistent external runtime session.
+ * Relationship: Binds one saved Card profile to its exact canonical Bot Chat through the shared Gateway connection.
  * Entity: Saved Cards
- * Relationship: Materializes saved profile authority before opening or resuming its session.
+ * Relationship: Applies the existing saved profile materialization before resolving that Card's conversation.
  */
 
-import { BUILDER_CARD_ID } from '../decks/deckDomainClient';
 import {
   CARD_RUNTIME_CONTRACT,
   type CardRuntimeClient,
 } from '../services/cardRuntimeGateway';
-import { assertCardProfileOwner } from '../services/projectStore';
-import type { ProjectCardAuthority, ProjectCardBinding } from '../services/projectCardAuthority';
-import { objectRecord } from '../services/projectCardAuthority';
 import { readToolCatalog } from '../services/mcp/toolCatalogMcpClient';
+import { assertCardProfileOwner } from '../services/projectStore';
 import {
-  resolveBuilderProjectCodeDirectory,
-  resolveProductChatWorkingDirectory,
-} from '../services/workingDirectories';
+  objectRecord,
+  type ProjectCardAuthority,
+  type ProjectCardBinding,
+} from '../services/projectCardAuthority';
 import {
-  ensureSavedCardProfile,
   cardModelSelection,
+  ensureSavedCardProfile,
   materializeSavedCardProfile,
   savedCardAgentRoster,
   type CardProfileState,
 } from './profileMaterialization';
 
-const REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
-const CARD_SESSION_RESUME_TIMEOUT_MS = 60_000;
-const profileTails = new Map<string, Promise<void>>();
-
-export type CardSessionScope = {
-  cwd?: string;
-  projectId?: string;
-  projectSessionId?: string;
-  userId?: string;
-};
+export type CardSessionScope = { userId?: string };
 
 export type CardSessionBinding = {
   sessionId: string;
@@ -43,147 +32,113 @@ export type CardSessionBinding = {
   info: Record<string, any>;
 };
 
-async function withProfileLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
-  const previous = profileTails.get(key) || Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => { release = resolve; });
-  const tail = previous.catch(() => undefined).then(() => current);
-  profileTails.set(key, tail);
-  await previous.catch(() => undefined);
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (profileTails.get(key) === tail) profileTails.delete(key);
-  }
-}
+const resolutions = new Map<string, Promise<CardSessionBinding>>();
 
-function reasoningEffort(card: ProjectCardBinding): string {
-  const value = String(card.card.runtimeOptions?.reasoningEffort || '').trim().toLowerCase();
-  if (value && !REASONING_EFFORTS.has(value)) {
-    throw new Error(`card_reasoning_effort_invalid:${card.profile}`);
-  }
-  return value;
-}
-
-function cardWorkingDirectory(
-  authority: ProjectCardAuthority,
-  card: ProjectCardBinding,
-  scope: CardSessionScope,
-): string {
-  if (scope.cwd) return scope.cwd;
-  if (card.card.id === BUILDER_CARD_ID && scope.projectId) {
-    return resolveBuilderProjectCodeDirectory(
-      String(scope.projectSessionId || scope.projectId),
-      authority.deck.projectCodeFolder,
-    );
-  }
-  if (card.card.runtime.mode === 'main') return resolveProductChatWorkingDirectory();
-  const identity = [scope.userId, scope.projectSessionId || scope.projectId, card.card.id]
-    .map((value) => String(value || '').trim()).filter(Boolean).join(':');
-  return resolveProductChatWorkingDirectory(identity || undefined);
-}
-
-function sessionBinding(value: unknown, storedFallback = ''): CardSessionBinding {
-  const result = objectRecord(value);
-  const liveHandle = String(result.session_id || '').trim();
-  const sessionId = String(storedFallback || result.stored_session_id || result.session_key).trim();
-  if (!liveHandle || !sessionId) throw new Error('card_session_binding_invalid');
-  return { liveHandle, sessionId, info: objectRecord(result.info) };
-}
-
-function profileRequest(client: CardRuntimeClient) {
+function requestWith(client: CardRuntimeClient) {
   return <T>(method: string, params: Record<string, unknown> = {}) => (
     client.request<T>(method, params)
   );
 }
 
-async function ensureProfile(
-  client: CardRuntimeClient,
-  authority: ProjectCardAuthority,
-  card: ProjectCardBinding,
-  ownerUserId: string,
-): Promise<CardProfileState> {
-  await assertCardProfileOwner(card.profile, ownerUserId);
-  return ensureSavedCardProfile(profileRequest(client), authority.deck, card.card, ownerUserId);
+function binding(value: unknown, stableId = ''): CardSessionBinding {
+  const result = objectRecord(value);
+  const liveHandle = String(result.session_id || '').trim();
+  const sessionId = String(stableId || result.stored_session_id || result.session_key || '').trim();
+  if (!sessionId || !liveHandle) throw new Error('card_session_binding_invalid');
+  return { sessionId, liveHandle, info: objectRecord(result.info) };
 }
 
-async function materializeProfile(
-  client: CardRuntimeClient,
-  authority: ProjectCardAuthority,
-  card: ProjectCardBinding,
-  ownerUserId: string,
-  current: CardProfileState,
-  catalog: Awaited<ReturnType<typeof readToolCatalog>>,
-): Promise<CardProfileState> {
-  return materializeSavedCardProfile(
-    profileRequest(client),
-    authority.deck,
-    card.card,
-    ownerUserId,
-    current,
-    catalog.tools,
-    catalog.unavailableFamilies,
-    savedCardAgentRoster(authority.deck, card.card),
-  );
+function exactRows(value: unknown): Record<string, any>[] {
+  const result = objectRecord(value);
+  return (Array.isArray(result.sessions) ? result.sessions : [])
+    .map(objectRecord)
+    .filter((row) => {
+      const rootTitle = String(row.root_title || '').trim();
+      const title = String(row.title || '').trim();
+      return rootTitle === CARD_RUNTIME_CONTRACT.messageSessionTitle
+        || (!rootTitle && title === CARD_RUNTIME_CONTRACT.messageSessionTitle);
+    });
 }
 
-async function bindProfileSession(
+async function profileRow(client: CardRuntimeClient, profile: string): Promise<Record<string, any>> {
+  const result = objectRecord(await client.request('profiles.list', {}));
+  const rows = (Array.isArray(result.profiles) ? result.profiles : [])
+    .map(objectRecord)
+    .filter((row) => String(row.name || '').toLowerCase() === profile.toLowerCase());
+  if (rows.length !== 1) throw new Error(`card_profile_identity_ambiguous:${profile}`);
+  return rows[0];
+}
+
+async function findBotChat(
   client: CardRuntimeClient,
-  authority: ProjectCardAuthority,
-  card: ProjectCardBinding,
-  scope: CardSessionScope,
-  profile: CardProfileState,
-): Promise<CardSessionBinding> {
-  const listed = objectRecord(await client.request('session.list', {
-    profile: card.profile,
+  profile: string,
+): Promise<Record<string, any> | null> {
+  const profileState = await profileRow(client, profile);
+  const rows = exactRows(await client.request('session.list', {
+    profile,
     title: CARD_RUNTIME_CONTRACT.messageSessionTitle,
     limit: 200,
     include_hidden: true,
   }));
-  const matches = (Array.isArray(listed.sessions) ? listed.sessions : [])
-    .map(objectRecord)
-    .filter((row) => (
-      String(row.root_title || '').trim() === CARD_RUNTIME_CONTRACT.messageSessionTitle
-      || (!row.root_title
-        && String(row.title || '').trim() === CARD_RUNTIME_CONTRACT.messageSessionTitle)
-    ));
-  if (matches.length > 1) throw new Error(`card_session_identity_ambiguous:${card.profile}`);
-  const canonical = matches[0];
-  const registryId = String(canonical?.id || '').trim();
-  const resumeId = String(canonical?.resolved_id || registryId).trim();
-  if (canonical && (!registryId || !resumeId)) {
-    throw new Error(`card_session_identity_invalid:${card.profile}`);
+  if (rows.length > 1) throw new Error(`card_session_identity_ambiguous:${profile}`);
+  if (!rows.length && String(objectRecord(profileState.canonical_session).id || '').trim()) {
+    throw new Error(`card_session_registry_unconfirmed:${profile}`);
   }
-  let live: CardSessionBinding;
-  if (registryId) {
-    live = sessionBinding(await client.request('session.resume', {
-      session_id: resumeId,
-      profile: card.profile,
-      cols: 96,
-      defer_history: true,
-      omit_messages: true,
-    }, CARD_SESSION_RESUME_TIMEOUT_MS), registryId);
-  } else {
-    live = sessionBinding(await client.request('session.create', {
-      profile: card.profile,
-      title: CARD_RUNTIME_CONTRACT.messageSessionTitle,
-      cwd: cardWorkingDirectory(authority, card, scope),
-      cwd_explicit: true,
-      hidden: true,
-      follow_profile_config: true,
-      ...(reasoningEffort(card) ? { reasoning_effort: reasoningEffort(card) } : {}),
-    }));
+  return rows[0] || null;
+}
+
+async function resumeBotChat(
+  client: CardRuntimeClient,
+  profile: string,
+  row: Record<string, any>,
+): Promise<CardSessionBinding> {
+  const sessionId = String(row.id || '').trim();
+  const liveHandle = String(row.resolved_id || sessionId).trim();
+  if (!sessionId || !liveHandle) throw new Error(`card_session_identity_invalid:${profile}`);
+  return binding(await client.request('session.resume', {
+    session_id: liveHandle,
+    profile,
+    defer_history: true,
+    omit_messages: true,
+  }), sessionId);
+}
+
+async function createBotChat(
+  client: CardRuntimeClient,
+  card: ProjectCardBinding,
+): Promise<CardSessionBinding> {
+  const created = binding(await client.request('session.create', {
+    profile: card.profile,
+    title: CARD_RUNTIME_CONTRACT.messageSessionTitle,
+    hidden: true,
+    follow_profile_config: true,
+    source: 'gui',
+  }));
+  try {
     await client.request('session.title', {
-      session_id: live.liveHandle,
+      session_id: created.liveHandle,
       profile: card.profile,
       title: CARD_RUNTIME_CONTRACT.messageSessionTitle,
     });
+    return created;
+  } catch (error) {
+    if (!/already in use/i.test(error instanceof Error ? error.message : String(error))) throw error;
+    const winner = await findBotChat(client, card.profile);
+    if (!winner) throw error;
+    return resumeBotChat(client, card.profile, winner);
   }
+}
+
+async function finishBinding(
+  client: CardRuntimeClient,
+  card: ProjectCardBinding,
+  profile: CardProfileState,
+  session: CardSessionBinding,
+): Promise<CardSessionBinding> {
   if (card.card.runtime.mode === 'main') {
     const busy = objectRecord(await client.request('config.set', {
       profile: card.profile,
-      session_id: live.liveHandle,
+      session_id: session.liveHandle,
       key: 'busy',
       value: 'steer',
     }));
@@ -192,67 +147,69 @@ async function bindProfileSession(
     }
   }
   const desired = cardModelSelection(objectRecord(card.card.runtimeOptions));
-  const provider = String(live.info.provider || profile.model?.provider || '').trim();
-  const model = String(live.info.model || profile.model?.default || '').trim();
+  const provider = String(session.info.provider || profile.model?.provider || '').trim();
+  const model = String(session.info.model || profile.model?.default || '').trim();
   if (provider !== desired.provider || model !== desired.model) {
     throw new Error(`card_session_readback_mismatch:${card.profile}`);
   }
-  return { ...live, info: { ...live.info, provider, model } };
+  return { ...session, info: { ...session.info, provider, model } };
 }
 
-export async function resolveCardSession(
+async function resolve(
+  client: CardRuntimeClient,
+  authority: ProjectCardAuthority,
+  card: ProjectCardBinding,
+  scope: CardSessionScope,
+  ownerUserId: string,
+): Promise<CardSessionBinding> {
+  await assertCardProfileOwner(card.profile, ownerUserId);
+  const request = requestWith(client);
+  const existingProfile = await ensureSavedCardProfile(
+    request,
+    authority.deck,
+    card.card,
+    ownerUserId,
+  );
+  const catalog = await readToolCatalog();
+  const profile = await materializeSavedCardProfile(
+    request,
+    authority.deck,
+    card.card,
+    ownerUserId,
+    existingProfile,
+    catalog.tools,
+    catalog.unavailableFamilies,
+    savedCardAgentRoster(authority.deck, card.card),
+  );
+  const existing = await findBotChat(client, card.profile);
+  const session = existing
+    ? resumeBotChat(client, card.profile, existing)
+    : createBotChat(client, card);
+  return finishBinding(client, card, profile, await session);
+}
+
+export function resolveCardSession(
   client: CardRuntimeClient,
   authority: ProjectCardAuthority,
   card: ProjectCardBinding,
   scope: CardSessionScope,
 ): Promise<CardSessionBinding> {
   const ownerUserId = String(scope.userId || '').trim();
-  if (!ownerUserId) throw new Error('card_profile_owner_required');
-  return withProfileLock(`${ownerUserId}:${card.profile.toLowerCase()}`, async () => {
-    const catalog = await readToolCatalog();
-    const existing = await ensureProfile(client, authority, card, ownerUserId);
-    const profile = await materializeProfile(
-      client, authority, card, ownerUserId, existing, catalog,
-    );
-    return bindProfileSession(client, authority, card, scope, profile);
+  if (!ownerUserId) return Promise.reject(new Error('card_profile_owner_required'));
+  const key = `${ownerUserId}:${card.profile.toLowerCase()}`;
+  const active = resolutions.get(key);
+  if (active) return active;
+  const current = resolve(client, authority, card, scope, ownerUserId).finally(() => {
+    if (resolutions.get(key) === current) resolutions.delete(key);
   });
+  resolutions.set(key, current);
+  return current;
 }
 
-export async function resolveMainSession(
+export function resolveMainSession(
   client: CardRuntimeClient,
   authority: ProjectCardAuthority,
   scope: CardSessionScope,
 ): Promise<CardSessionBinding> {
   return resolveCardSession(client, authority, authority.main, scope);
-}
-
-export async function startProjectCardSessions(
-  client: CardRuntimeClient,
-  authority: ProjectCardAuthority,
-  scope: CardSessionScope,
-): Promise<void> {
-  const ownerUserId = String(scope.userId || '').trim();
-  if (!ownerUserId) throw new Error('card_profile_owner_required');
-  const cards = authority.cards.filter((card) => (
-    card.card.runtime.kind === CARD_RUNTIME_CONTRACT.kind
-  ));
-  const catalog = await readToolCatalog();
-  const ensured = await Promise.all(cards.map((card) => withProfileLock(
-    `${ownerUserId}:${card.profile.toLowerCase()}`,
-    () => ensureProfile(client, authority, card, ownerUserId),
-  )));
-  const results = await Promise.allSettled(cards.map((card, index) => withProfileLock(
-    `${ownerUserId}:${card.profile.toLowerCase()}`,
-    async () => {
-      const profile = await materializeProfile(
-        client, authority, card, ownerUserId, ensured[index], catalog,
-      );
-      return bindProfileSession(client, authority, card, scope, profile);
-    },
-  )));
-  results.forEach((result, index) => {
-    if (result.status === 'rejected') {
-      console.error(`Card session startup failed:${cards[index].profile}`, result.reason);
-    }
-  });
 }

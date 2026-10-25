@@ -69,20 +69,6 @@ const layerState = {
   sources: [source],
 };
 let fetchMock: ReturnType<typeof vi.fn>;
-const actionStreams: TestActionStream[] = [];
-
-class TestActionStream {
-  listeners = new Map<string, (event: MessageEvent) => void>();
-  closed = false;
-  constructor(readonly url: string) { actionStreams.push(this); }
-  addEventListener(name: string, listener: (event: MessageEvent) => void) {
-    this.listeners.set(name, listener);
-  }
-  emit(name: string, data: unknown) {
-    this.listeners.get(name)?.({ data: JSON.stringify(data) } as MessageEvent);
-  }
-  close() { this.closed = true; }
-}
 
 function projectResponse(projectId: string, capabilities: unknown[] = []) {
   return new Response(JSON.stringify({
@@ -118,8 +104,6 @@ beforeEach(() => {
   document.body.appendChild(inspectorHost);
   inspectorHost.dataset.open = 'false';
   inspectorHost.removeAttribute('style');
-  actionStreams.length = 0;
-  vi.stubGlobal('EventSource', TestActionStream);
   directHost.props = null;
   directHost.attachInspectorControls.mockReset().mockImplementation(() => ({
     detach: directHost.detachInspectorControls,
@@ -544,8 +528,6 @@ describe('WorldView direct source presentation', () => {
     rerender(<WorldViewSurface projectId="project-2" cardId="card-worldview-2" inspectorContainer={inspectorHost} />);
     await waitFor(() => expect(screen.getByText('No selection.')).toBeTruthy());
     expect(screen.queryByRole('checkbox')).toBeNull();
-    expect(actionStreams.at(-1)?.url).toContain('/api/worldview/projects/project-2/actions/stream');
-    expect(actionStreams[0]?.closed).toBe(true);
   });
 
   it('applies only exact-ID Project overrides and reloads them when the Project changes', async () => {
@@ -643,64 +625,4 @@ describe('WorldView direct source presentation', () => {
     expect(screen.getByLabelText('WorldView globe')).toBeTruthy();
   });
 
-  it('returns a read-only spatial action from the live mount to the waiting turn', async () => {
-    directHost.executeAction.mockResolvedValueOnce({
-      ok: true, action: 'get_current_view_state', camera: { longitude: -82.5, latitude: 35.15 },
-    });
-    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === 'POST') {
-        return new Response(JSON.stringify({ ok: true, capability: null }), { status: 200 });
-      }
-      return projectResponse('project-1');
-    });
-    render(<WorldViewSurface {...scope} />);
-    await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady();
-    await waitFor(() => expect(actionStreams).toHaveLength(1));
-
-    act(() => actionStreams[0].emit('action', {
-      requestId: 'request-1', name: 'get_current_view_state', arguments: {},
-      disabledLayerIds: ['satellites'],
-    }));
-    await waitFor(() => expect(directHost.executeAction).toHaveBeenCalledWith(
-      'get_current_view_state', {},
-      expect.objectContaining({ disabledLayerIds: ['satellites'], signal: expect.any(AbortSignal) }),
-    ));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/worldview/projects/project-1/actions/result',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          cardId: 'card-worldview', requestId: 'request-1',
-          result: {
-            ok: true, action: 'get_current_view_state',
-            camera: { longitude: -82.5, latitude: 35.15 },
-          },
-        }),
-      }),
-    ));
-  });
-
-  it('restores the Project choice if a Card layer action settles locally but its save fails', async () => {
-    directHost.executeAction.mockResolvedValueOnce({
-      ok: true, action: 'set_layer_visibility', layerId: 'earthquakes', enabled: false,
-    });
-    fetchMock.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => (
-      init?.method === 'POST'
-        ? new Response(JSON.stringify({ ok: false, error: 'project_worldview_write_failed' }), { status: 503 })
-        : projectResponse('project-1')
-    ));
-    render(<WorldViewSurface {...scope} />);
-    await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady();
-    await waitFor(() => expect(actionStreams).toHaveLength(1));
-    act(() => actionStreams[0].emit('action', {
-      requestId: 'request-layer-1', name: 'set_layer_visibility',
-      arguments: { layerId: 'earthquakes', enabled: false }, disabledLayerIds: [],
-    }));
-    await waitFor(() => expect(directHost.setLayerVisibility)
-      .toHaveBeenCalledWith('earthquakes', true, { origin: 'restore' }));
-    openDataSources();
-    expect(screen.getByText(/Could not save the layer choice/)).toBeTruthy();
-  });
 });

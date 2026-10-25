@@ -15,7 +15,7 @@ import projectsRoutes from './projects.routes';
 import decksRoutes from './decks.routes';
 import worldSignalsRoutes from './worldSignals.routes';
 import tradingRoutes from './trading.routes';
-import worldviewRoutes, { worldviewInternalRoutes } from './worldview.routes';
+import worldviewRoutes from './worldview.routes';
 import jevGraphFocusRoutes from './jevGraphFocus.routes';
 import mcpInternalRoutes from './mcpInternal.routes';
 import cardTerminalRoutes from './cardTerminal.routes';
@@ -32,7 +32,6 @@ router.use('/auth', auth);
 router.use('/health', health);
 // The official Python MCP host calls these process-secret endpoints. Mount the
 // bridge before browser auth so it cannot be converted into a local-user session.
-router.use('/worldview', worldviewInternalRoutes);
 router.use('/cards', authMiddleware, cardOptionsRoutes, cardRunReadRoutes);
 router.use('/card-terminals', authMiddleware, cardTerminalRoutes);
 router.use('/card-profile', authMiddleware, cardProfileRoutes);

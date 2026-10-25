@@ -76,7 +76,6 @@ afterEach(() => {
 describe('Trading agent UI', () => {
   it('mounts visible Portfolio candles using TradingView and opens the selected chart', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })));
-    vi.stubGlobal('EventSource', undefined);
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     const observers: IntersectionObserverCallback[] = [];
     const disconnect = vi.fn();
@@ -108,7 +107,6 @@ describe('Trading agent UI', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), {
       status: 200, headers: { 'Content-Type': 'application/json' },
     })));
-    vi.stubGlobal('EventSource', undefined);
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     const remove = vi.fn(() => { throw new Error('detached iframe'); });
     const widget = vi.fn(function () { return { remove }; });

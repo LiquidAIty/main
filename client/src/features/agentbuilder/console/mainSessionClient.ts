@@ -34,6 +34,12 @@ export type MainConversationMessage = {
   linkedEvidenceIds?: string[];
 };
 
+export type MainSessionHistory = {
+  mainCardId: string;
+  addressableAgents: AddressableAgent[];
+  messages: MainConversationMessage[];
+};
+
 export type MainSessionEvent = {
   kind: string;
   projectId?: string;
@@ -274,56 +280,8 @@ function participant(value: unknown): MainConversationParticipant | null {
   };
 }
 
-export async function loadSessionHistory(args: {
-  projectId: string;
-  deckId?: string;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-}): Promise<{
-  mainCardId: string;
-  addressableAgents: AddressableAgent[];
-  messages: MainConversationMessage[];
-}> {
-  const params = new URLSearchParams({ projectId: args.projectId });
-  if (args.deckId) params.set('deckId', args.deckId);
-  const controller = new AbortController();
-  let timedOut = false;
-  const callerAbort = () => controller.abort();
-  if (args.signal?.aborted) callerAbort();
-  else args.signal?.addEventListener('abort', callerAbort, { once: true });
-  const timeout = globalThis.setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, args.timeoutMs ?? 15_000);
-  let response: Response;
-  try {
-    response = await fetch(`${BASE}/history?${params.toString()}`, {
-      credentials: 'include',
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (timedOut) {
-      throw new SessionStreamError({
-        code: 'conversation_history_timeout',
-        message: 'Main history read timed out.',
-        route: `${BASE}/history`,
-      });
-    }
-    throw error;
-  } finally {
-    globalThis.clearTimeout(timeout);
-    args.signal?.removeEventListener('abort', callerAbort);
-  }
-  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
-  if (!response.ok || !payload || !Array.isArray(payload.messages)) {
-    throw new SessionStreamError({
-      code: typeof payload?.error === 'string'
-        ? payload.error : 'conversation_history_read_failed',
-      message: `Main history read failed with status ${response.status}.`,
-      route: `${BASE}/history`,
-      status: response.status,
-    });
-  }
+function parseSessionHistory(payload: Record<string, unknown>): MainSessionHistory | null {
+  if (!Array.isArray(payload.messages)) return null;
   const messages = payload.messages.flatMap((value): MainConversationMessage[] => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
     const message = value as Record<string, unknown>;
@@ -368,6 +326,31 @@ export async function loadSessionHistory(args: {
     addressableAgents,
     messages,
   };
+}
+
+export async function loadSessionHistory(args: {
+  projectId: string;
+  deckId?: string;
+  signal?: AbortSignal;
+}): Promise<MainSessionHistory> {
+  const params = new URLSearchParams({ projectId: args.projectId });
+  if (args.deckId) params.set('deckId', args.deckId);
+  const response = await fetch(`${BASE}/history?${params.toString()}`, {
+    credentials: 'include',
+    signal: args.signal,
+  });
+  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const history = payload ? parseSessionHistory(payload) : null;
+  if (!response.ok || !history) {
+    throw new SessionStreamError({
+      code: typeof payload?.error === 'string'
+        ? payload.error : 'conversation_history_read_failed',
+      message: `Main history read failed with status ${response.status}.`,
+      route: `${BASE}/history`,
+      status: response.status,
+    });
+  }
+  return history;
 }
 
 export type MainVoiceStreamEvent = {

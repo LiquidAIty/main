@@ -1,8 +1,12 @@
 // Entity: Run Ledger
 // Relationship: This file returns authenticated latest Run metrics and status for one exact saved Card without exposing another Project's execution state.
+// Entity: Card Profiles
+// Relationship: The existing Card-roster read also returns Main's exact canonical-session activity summary from Hermes profiles.list.
 import { Router, type Request } from 'express';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
+import { cardRuntimeGateway } from '../services/cardRuntimeGateway';
+import { projectCardAuthority } from '../services/projectCardAuthority';
 
 const cardRunReadRoutes = Router();
 function objectRecord(value: unknown): Record<string, any> {
@@ -41,6 +45,24 @@ async function cardRunStatus(
   };
 }
 
+async function mainCanonicalSession(projectId: string, deckId: string) {
+  const authority = await projectCardAuthority(projectId, deckId);
+  const client = await cardRuntimeGateway();
+  const result = objectRecord(await client.request('profiles.list', {}));
+  const profiles = (Array.isArray(result.profiles) ? result.profiles : []).map(objectRecord);
+  const matches = profiles.filter((profile) => (
+    String(profile.name || '').toLowerCase() === authority.main.profile.toLowerCase()
+  ));
+  if (matches.length !== 1) throw new Error('main_profile_activity_unavailable');
+  const canonical = objectRecord(matches[0].canonical_session);
+  const id = String(canonical.id || '').trim();
+  const resolvedId = String(canonical.resolved_id || id).trim();
+  const lastActive = Number(canonical.last_active);
+  return id && resolvedId && Number.isFinite(lastActive)
+    ? { id, resolvedId, lastActive }
+    : null;
+}
+
 export async function authorizeCardProject(req: Request, projectId: string): Promise<boolean> {
   const userId = String((req as Request & { userId?: string }).userId || '').trim();
   if (!userId) return false;
@@ -72,11 +94,14 @@ cardRunReadRoutes.post('/runs/latest', async (req, res) => {
     if (!(await authorizeCardProject(req, projectId))) {
       return res.status(403).json({ ok: false, error: 'card_run_project_access_denied' });
     }
-    const latest = objectRecord(await requestPythonRailsJson('/domain/runs/latest', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, deckId, cardIds }),
-    }));
+    const [latest, canonicalSession] = await Promise.all([
+      requestPythonRailsJson('/domain/runs/latest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, deckId, cardIds }),
+      }).then(objectRecord),
+      mainCanonicalSession(projectId, deckId),
+    ]);
     const requested = new Set(cardIds);
     const runsByCard = new Map<string, Record<string, any>>();
     for (const value of Array.isArray(latest.runs) ? latest.runs : []) {
@@ -96,6 +121,7 @@ cardRunReadRoutes.post('/runs/latest', async (req, res) => {
       failedCardIds: observations.flatMap((observation, index) => (
         observation.status === 'rejected' ? [cardIds[index]] : []
       )),
+      mainCanonicalSession: canonicalSession,
     });
   } catch (error) {
     return res.status(503).json({

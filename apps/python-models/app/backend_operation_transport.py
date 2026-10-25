@@ -19,7 +19,6 @@ from mcp.types import TextContent
 
 
 DEFAULT_BACKEND_OPERATION_TIMEOUT_SECONDS = 30.0
-WORLDVIEW_ACTION_HTTP_TIMEOUT_SECONDS = 40.0
 
 
 def validated_backend_origin(value: str) -> str:

@@ -180,16 +180,7 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
         const body = await response.json();
         if (!controller.signal.aborted) acceptSnapshot(body as TradingState);
       }).catch(() => { if (!controller.signal.aborted) setStateError(true); });
-    if (typeof EventSource === 'undefined') return () => controller.abort();
-    const stream = new EventSource('/api/trading/events?' + query, { withCredentials: true });
-    stream.addEventListener('snapshot', event => {
-      if (controller.signal.aborted) return;
-      try { acceptSnapshot(JSON.parse((event as MessageEvent).data) as TradingState); }
-      catch { setStateError(true); }
-    });
-    stream.addEventListener('transport_error', () => setStateError(true));
-    stream.onerror = () => setStateError(true);
-    return () => { controller.abort(); stream.close(); };
+    return () => controller.abort();
   }, [acceptSnapshot, query]);
 
   const jobs = state?.jobs || [];

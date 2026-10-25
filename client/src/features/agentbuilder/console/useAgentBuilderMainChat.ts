@@ -19,6 +19,7 @@ import {
   type AddressableAgent,
   type GraphRecordIdentity,
   type MainSessionEvent,
+  type MainSessionHistory,
   type MainConversationMessage,
   type MainConversationParticipant,
   type MainRunImage,
@@ -42,6 +43,11 @@ type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
   deckId: string;
   deckRevision?: string | null;
+  mainCanonicalSession?: {
+    id: string;
+    resolvedId: string;
+    lastActive: number;
+  } | null;
   dataAnchors?: LoadedCardGraphReference['reference'][];
   onMainRunCompleted?: (
     runId: string,
@@ -102,6 +108,7 @@ export default function useAgentBuilderMainChat({
   canvasProjectId,
   deckId,
   dataAnchors = [],
+  mainCanonicalSession = null,
   onMainRunCompleted,
 }: UseAgentBuilderMainChatArgs) {
   const projectKey = canvasProjectId;
@@ -140,6 +147,39 @@ export default function useAgentBuilderMainChat({
   const voiceControllerRef = useRef<AbortController | null>(null);
   const voiceTranscriptRef = useRef<string | null>(null);
   const voiceTurnActiveRef = useRef(false);
+  const historyWatermarkRef = useRef<{ key: string; lastActive: number }>({ key: '', lastActive: 0 });
+  const latestCanonicalSessionRef = useRef(mainCanonicalSession);
+  latestCanonicalSessionRef.current = mainCanonicalSession;
+
+  const acceptHistory = useCallback((history: MainSessionHistory) => {
+    setTranscript({ key: projectKey, messages: history.messages });
+    setAuthority({
+      key: projectKey,
+      mainCardId: history.mainCardId,
+      agents: history.addressableAgents,
+    });
+    setTechnical((current) => (
+      current.key === projectKey && current.error === 'conversation_history_read_failed'
+        ? { key: projectKey, error: null }
+        : current
+    ));
+  }, [projectKey]);
+
+  const refreshHistory = useCallback(async (signal?: AbortSignal) => {
+    const history = await loadSessionHistory({
+      projectId: canvasProjectId,
+      deckId,
+      signal,
+    });
+    acceptHistory(history);
+    const canonical = latestCanonicalSessionRef.current;
+    if (canonical) {
+      historyWatermarkRef.current = {
+        key: `${projectKey}:${canonical.id}`,
+        lastActive: canonical.lastActive,
+      };
+    }
+  }, [acceptHistory, canvasProjectId, deckId, projectKey]);
 
   const messages = transcript.key === projectKey ? transcript.messages : [];
   const addressableAgents = authority.key === projectKey ? authority.agents : [];
@@ -159,6 +199,7 @@ export default function useAgentBuilderMainChat({
     voiceControllerRef.current = null;
     voiceTranscriptRef.current = null;
     voiceTurnActiveRef.current = false;
+    historyWatermarkRef.current = { key: '', lastActive: 0 };
     setTranscript({ key: projectKey, messages: [] });
     setAuthority({ key: projectKey, mainCardId: '', agents: [] });
     setTechnical({ key: projectKey, error: null });
@@ -172,20 +213,9 @@ export default function useAgentBuilderMainChat({
     const controller = new AbortController();
     let cancelled = false;
     setHistoryState({ key: projectKey, loading: true });
-    void loadSessionHistory({
-      projectId: canvasProjectId,
-      deckId,
-      signal: controller.signal,
-    })
-      .then((history) => {
+    void refreshHistory(controller.signal)
+      .then(() => {
         if (cancelled) return;
-        setTranscript({ key: projectKey, messages: history.messages });
-        setAuthority({
-          key: projectKey,
-          mainCardId: history.mainCardId,
-          agents: history.addressableAgents,
-        });
-        setTechnical({ key: projectKey, error: null });
         setHistoryState({ key: projectKey, loading: false });
       })
       .catch(() => {
@@ -197,7 +227,28 @@ export default function useAgentBuilderMainChat({
       cancelled = true;
       controller.abort();
     };
-  }, [canvasProjectId, deckId, projectKey]);
+  }, [canvasProjectId, projectKey, refreshHistory]);
+
+  useEffect(() => {
+    if (!canvasProjectId || !mainCanonicalSession || sessionHistoryLoading) return undefined;
+    const key = `${projectKey}:${mainCanonicalSession.id}`;
+    const observed = historyWatermarkRef.current;
+    if (observed.key !== key) {
+      historyWatermarkRef.current = { key, lastActive: mainCanonicalSession.lastActive };
+      return undefined;
+    }
+    if (
+      mainCanonicalSession.lastActive <= observed.lastActive
+      || activeStreamsRef.current.size > 0
+    ) return undefined;
+    const controller = new AbortController();
+    void refreshHistory(controller.signal).catch(() => {
+      if (!controller.signal.aborted) {
+        setTechnical({ key: projectKey, error: 'conversation_history_read_failed' });
+      }
+    });
+    return () => controller.abort();
+  }, [canvasProjectId, mainCanonicalSession, projectKey, refreshHistory, sessionHistoryLoading]);
 
   const requestMainText = useCallback(async (
     text: string,
@@ -372,6 +423,9 @@ export default function useAgentBuilderMainChat({
           .then(() => onMainRunCompleted?.(completedRunId))
           .catch(() => undefined);
       }
+      await refreshHistory().catch(() => {
+        setTechnical({ key: projectKey, error: 'conversation_history_read_failed' });
+      });
       return finalText;
     } catch (error) {
       if (controller.signal.aborted) {
@@ -425,6 +479,7 @@ export default function useAgentBuilderMainChat({
     mainCardId,
     onMainRunCompleted,
     projectKey,
+    refreshHistory,
   ]);
 
   const handleSend = useCallback((text: string, runInput?: MainChatRunInput) => {

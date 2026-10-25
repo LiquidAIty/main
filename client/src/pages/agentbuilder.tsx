@@ -540,6 +540,7 @@ export default function AgentBuilder(): React.ReactElement {
     canvasProjectId,
     deckId: BUILDER_DECK_ID,
     deckRevision,
+    mainCanonicalSession: cardActivity.mainCanonicalSession,
     onMainRunCompleted: refreshAfterProjectRun,
   });
   useEffect(() => {

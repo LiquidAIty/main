@@ -1,363 +1,214 @@
-// Entity: Card Terminals
-// Relationship: This file authorizes one non-Main saved Card terminal and proxies bounded browser input, output, resize frames, close states, and WebSocket upgrades.
-// Entity: Card Sessions
-// Relationship: This file resolves the exact Project/Card/profile session and attaches the terminal to that existing runtime session and agent roster.
-// Entity: Credentials
-// Relationship: This file keeps the reusable Gateway token server-side while issuing only the application-owned same-origin terminal stream path to the browser.
+/**
+ * Entity: Card Terminals
+ * Relationship: Authenticates one saved Card and proxies its visible CLI to the same profile and canonical Hermes session.
+ * Entity: Shared Gateway Connection
+ * Relationship: Opens each terminal socket with a fresh one-use Gateway ticket against the already-running shared owner.
+ */
 
-import { createHash } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { Router, type Request, type Response } from 'express';
+
+import { Router } from 'express';
 import WebSocket, { WebSocketServer, type RawData } from 'ws';
 
 import { getUserBySessionId } from '../auth/sessionStore';
-import { BUILDER_CARD_ID } from '../decks/deckDomainClient';
-import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
+import { resolveCardSession } from '../cardRuntime/cardSessions';
 import {
   CARD_RUNTIME_CONTRACT,
   cardRuntimeGateway,
   openCardTerminalSocket,
 } from '../services/cardRuntimeGateway';
 import { getOwnedProjectByReference } from '../services/projectStore';
-import { projectCardAuthority } from '../services/projectCardAuthority';
 import {
-  resolveBuilderProjectCodeDirectory,
-  resolveProductChatWorkingDirectory,
-} from '../services/workingDirectories';
-import { resolveCardSession } from '../cardRuntime/cardSessions';
+  projectCardAuthority,
+  type ProjectCardBinding,
+} from '../services/projectCardAuthority';
+import { requireOwnedProject } from './projectAccess';
 
-const cardTerminalRoutes = Router();
-const terminalProxyServer = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
-const installedServers = new WeakSet<Server>();
-const activeBrowserSockets = new Set<WebSocket>();
-const activeRuntimeSockets = new Set<WebSocket>();
+const router = Router();
+const terminalSockets = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
+let installedServer: Server | null = null;
 
-type ProjectAuthorization = { userId: string; projectSessionId: string };
-
-type TerminalBinding = {
-  projectId: string;
-  deckId: string;
-  cardId: string;
+type TerminalIdentity = { projectId: string; deckId: string; cardId: string };
+type TerminalBinding = TerminalIdentity & {
   profile: string;
   sessionId: string;
-  cols: number;
-  rows: number;
-  upstreamQuery: string;
 };
 
-async function authorizeProject(
-  req: Request,
-  res: Response,
-  projectId: string,
-): Promise<ProjectAuthorization | null> {
-  const userId = String((req as Request & { userId?: string }).userId || '').trim();
-  if (!userId) {
-    res.status(401).json({ ok: false, error: 'terminal_owner_authentication_required' });
-    return null;
-  }
-  try {
-    return await authorizeProjectOwner(projectId, userId);
-  } catch (error) {
-    if (error instanceof Error && error.message === 'terminal_project_access_denied') {
-      res.status(403).json({ ok: false, error: error.message });
-      return null;
-    }
-    throw error;
-  }
+function required(value: unknown, code: string): string {
+  const result = typeof value === 'string' ? value.trim() : '';
+  if (!result || result.length > 128) throw new Error(code);
+  return result;
 }
 
-async function authorizeProjectOwner(
-  projectId: string,
-  userId: string,
-): Promise<ProjectAuthorization> {
-  const project = await getOwnedProjectByReference(projectId, userId);
-  if (!project || project.ownerUserId !== userId) {
-    throw new Error('terminal_project_access_denied');
+function terminalDimension(value: unknown, fallback: number, maximum: number): number {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 1 ? Math.min(number, maximum) : fallback;
+}
+
+function exactCard(cards: ProjectCardBinding[], cardId: string): ProjectCardBinding {
+  const matches = cards.filter((card) => card.card.id === cardId);
+  if (matches.length !== 1 || matches[0].card.runtime.kind !== CARD_RUNTIME_CONTRACT.kind) {
+    throw new Error('card_terminal_card_not_found');
   }
-  const projectSessionId = String(project.id || '').trim();
-  if (!projectSessionId) throw new Error('terminal_project_identity_missing');
-  return { userId, projectSessionId };
+  return matches[0];
 }
 
-function terminalDimension(value: unknown, defaultValue: number, maximum: number): number {
-  return Number.isSafeInteger(value) && Number(value) >= 1
-    ? Math.min(Number(value), maximum)
-    : defaultValue;
-}
-
-async function resolveTerminalBinding(input: {
-  projectId: string;
-  deckId: string;
-  cardId: string;
-  userId: string;
-  cols?: unknown;
-  rows?: unknown;
-}): Promise<TerminalBinding> {
-  const authorization = await authorizeProjectOwner(input.projectId, input.userId);
-  const authority = await projectCardAuthority(input.projectId, input.deckId);
-  const matches = authority.cards.filter((item) => item.card.id === input.cardId);
-  if (
-    matches.length !== 1
-    || matches[0].card.runtime.kind !== CARD_RUNTIME_CONTRACT.kind
-    || matches[0].card.runtime.mode === 'magentic_one'
-  ) throw new Error('terminal_card_unavailable');
-  const target = matches[0];
-  if (target.card.runtime.mode === 'main') throw new Error('terminal_main_headless');
-  const cwd = input.cardId === BUILDER_CARD_ID
-    ? resolveBuilderProjectCodeDirectory(
-      authorization.projectSessionId,
-      authority.deck.projectCodeFolder,
-    )
-    : resolveProductChatWorkingDirectory(
-      `${input.userId}:${authorization.projectSessionId}:${input.cardId}`,
-    );
+async function resolveTerminalBinding(
+  ownerUserId: string,
+  identity: TerminalIdentity,
+): Promise<TerminalBinding> {
+  const project = await getOwnedProjectByReference(identity.projectId, ownerUserId);
+  if (!project || project.ownerUserId !== ownerUserId) throw new Error('card_terminal_access_denied');
+  const authority = await projectCardAuthority(project.id, identity.deckId);
+  const card = exactCard(authority.cards, identity.cardId);
   const client = await cardRuntimeGateway();
-  const binding = await resolveCardSession(client, authority, target, {
-    cwd,
-    projectId: input.projectId,
-    projectSessionId: authorization.projectSessionId,
-    userId: input.userId,
-  });
-  const channel = createHash('sha256').update(JSON.stringify([
-    input.userId,
-    authorization.projectSessionId,
-    input.deckId,
-    input.cardId,
-    target.profile,
-  ])).digest('hex');
-  const query = new URLSearchParams({
-    profile: target.profile,
-    project_session: binding.sessionId,
-    channel,
-    cwd,
-    attach: channel,
+  const session = await resolveCardSession(client, authority, card, {
+    projectId: project.id,
+    projectSessionId: project.id,
+    userId: ownerUserId,
   });
   return {
-    projectId: input.projectId,
-    deckId: input.deckId,
-    cardId: input.cardId,
-    profile: target.profile,
-    sessionId: binding.sessionId,
-    cols: terminalDimension(input.cols, 80, 2_000),
-    rows: terminalDimension(input.rows, 24, 1_000),
-    upstreamQuery: query.toString(),
+    projectId: project.id,
+    deckId: identity.deckId,
+    cardId: identity.cardId,
+    profile: card.profile,
+    sessionId: session.sessionId,
   };
 }
 
-function terminalStreamPath(binding: Pick<TerminalBinding, 'projectId' | 'deckId' | 'cardId'>): string {
-  return `/api/card-terminals/${encodeURIComponent(binding.projectId)}`
-    + `/${encodeURIComponent(binding.deckId)}/${encodeURIComponent(binding.cardId)}/stream`;
+function terminalStreamPath(identity: TerminalIdentity): string {
+  return `/api/card-terminals/${encodeURIComponent(identity.projectId)}`
+    + `/${encodeURIComponent(identity.deckId)}/${encodeURIComponent(identity.cardId)}/stream`;
 }
 
-cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => {
-  const projectId = String(req.params.projectId || '').trim();
-  const deckId = String(req.params.deckId || DEFAULT_PROJECT_DECK_ID).trim();
-  const cardId = String(req.params.cardId || '').trim();
-  if (!projectId || !deckId || !cardId) {
-    return res.status(400).json({ ok: false, error: 'terminal_identity_incomplete' });
-  }
-  let authorization: ProjectAuthorization | null;
+router.post('/:projectId/:deckId/:cardId/open', async (req, res) => {
   try {
-    authorization = await authorizeProject(req, res, projectId);
-  } catch {
-    return res.status(503).json({ ok: false, error: 'terminal_project_authority_unavailable' });
-  }
-  if (!authorization) return undefined;
-
-  try {
-    const binding = await resolveTerminalBinding({
-      projectId,
+    const projectId = required(req.params.projectId, 'card_terminal_project_required');
+    const deckId = required(req.params.deckId, 'card_terminal_deck_required');
+    const cardId = required(req.params.cardId, 'card_terminal_card_required');
+    const access = await requireOwnedProject(req, res, projectId);
+    if (!access) return undefined;
+    const binding = await resolveTerminalBinding(access.ownerUserId, {
+      projectId: access.projectId,
       deckId,
       cardId,
-      userId: authorization.userId,
-      cols: req.body?.cols,
-      rows: req.body?.rows,
     });
     return res.json({
-      ok: true,
       projectId: binding.projectId,
       deckId: binding.deckId,
       cardId: binding.cardId,
       profile: binding.profile,
       sessionId: binding.sessionId,
-      cols: binding.cols,
-      rows: binding.rows,
+      cols: terminalDimension(req.body?.cols, 80, 400),
+      rows: terminalDimension(req.body?.rows, 24, 200),
       websocketPath: terminalStreamPath(binding),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'terminal_open_failed';
-    const status = ['terminal_card_unavailable', 'terminal_main_headless'].includes(message)
-      ? 409
-      : message === 'terminal_project_access_denied' ? 403 : 503;
-    return res.status(status).json({ ok: false, error: message });
+    const code = error instanceof Error ? error.message : 'card_terminal_open_failed';
+    const status = code.endsWith('_required') ? 400
+      : code.endsWith('_not_found') ? 404
+        : code.endsWith('_denied') ? 403 : 503;
+    return res.status(status).json({ error: code });
   }
 });
 
-function cookieValue(header: string | undefined, name: string): string {
-  for (const part of String(header || '').split(';')) {
-    const separator = part.indexOf('=');
-    if (separator < 1 || part.slice(0, separator).trim() !== name) continue;
-    try {
-      return decodeURIComponent(part.slice(separator + 1).trim());
-    } catch {
-      return '';
-    }
-  }
-  return '';
-}
-
-function upgradeIdentity(urlValue: string | undefined): {
-  projectId: string;
-  deckId: string;
-  cardId: string;
-} | null {
-  let path: string;
+function upgradeIdentity(request: IncomingMessage): TerminalIdentity | null {
+  let parts: string[];
   try {
-    path = new URL(String(urlValue || '/'), 'http://127.0.0.1').pathname;
+    const pathname = new URL(request.url || '/', 'http://127.0.0.1').pathname;
+    parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);
   } catch {
     return null;
   }
-  const parts = path.split('/').filter(Boolean);
   if (
     parts.length !== 6
     || parts[0] !== 'api'
     || parts[1] !== 'card-terminals'
     || parts[5] !== 'stream'
   ) return null;
-  try {
-    const projectId = decodeURIComponent(parts[2]).trim();
-    const deckId = decodeURIComponent(parts[3]).trim();
-    const cardId = decodeURIComponent(parts[4]).trim();
-    return projectId && deckId && cardId ? { projectId, deckId, cardId } : null;
-  } catch {
-    return null;
+  return { projectId: parts[2], deckId: parts[3], cardId: parts[4] };
+}
+
+function cookie(request: IncomingMessage, name: string): string {
+  for (const part of String(request.headers.cookie || '').split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    try { return decodeURIComponent(part.slice(separator + 1).trim()); } catch { return ''; }
   }
-}
-
-function refuseUpgrade(socket: Duplex, status: number, message: string): void {
-  if (!socket.destroyed) {
-    socket.end(
-      `HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
-    );
-  }
-}
-
-function rawDataSize(data: RawData): number {
-  return Array.isArray(data)
-    ? data.reduce((total, chunk) => total + chunk.byteLength, 0)
-    : data.byteLength;
-}
-
-export function terminalCloseFrame(code: number, reason: string): {
-  code: number;
-  reason: string;
-} {
-  const validCode = code === 1000
-    || (code >= 1001 && code <= 1014 && ![1004, 1005, 1006].includes(code))
-    || (code >= 3000 && code <= 4999);
-  const normalizedCode = code === 0 || code === 1005
-    ? 1000
-    : validCode ? code : 1011;
-  let normalizedReason = '';
-  for (const character of String(reason || '')) {
-    if (Buffer.byteLength(normalizedReason + character, 'utf8') > 123) break;
-    normalizedReason += character;
-  }
-  return { code: normalizedCode, reason: normalizedReason };
-}
-
-function closeTerminalSocket(socket: WebSocket, code: number, reason: string): void {
-  if (socket.readyState !== WebSocket.OPEN && socket.readyState !== WebSocket.CONNECTING) return;
-  const frame = terminalCloseFrame(code, reason);
-  try {
-    socket.close(frame.code, frame.reason);
-  } catch {
-    socket.terminate();
-  }
-}
-
-function bridgeTerminal(browser: WebSocket, binding: TerminalBinding): void {
-  const runtime = openCardTerminalSocket(new URLSearchParams(binding.upstreamQuery));
-  activeBrowserSockets.add(browser);
-  activeRuntimeSockets.add(runtime);
-  const pending: Array<{ data: RawData; binary: boolean }> = [];
-  let pendingBytes = 0;
-  let closed = false;
-  const close = (code = 1000, reason = '') => {
-    if (closed) return;
-    closed = true;
-    activeBrowserSockets.delete(browser);
-    activeRuntimeSockets.delete(runtime);
-    closeTerminalSocket(browser, code, reason);
-    closeTerminalSocket(runtime, code, reason);
-  };
-  browser.on('message', (data, binary) => {
-    if (runtime.readyState === WebSocket.OPEN) {
-      runtime.send(data, { binary });
-      return;
-    }
-    const size = rawDataSize(data);
-    if (pendingBytes + size > 256 * 1024) {
-      close(1009, 'terminal input limit exceeded');
-      return;
-    }
-    pending.push({ data, binary });
-    pendingBytes += size;
-  });
-  runtime.on('open', () => {
-    for (const frame of pending.splice(0)) {
-      runtime.send(frame.data, { binary: frame.binary });
-    }
-    pendingBytes = 0;
-  });
-  runtime.on('message', (data, binary) => {
-    if (browser.readyState === WebSocket.OPEN) browser.send(data, { binary });
-  });
-  browser.on('close', (code, reason) => close(code || 1000, reason.toString()));
-  runtime.on('close', (code, reason) => close(code || 1000, reason.toString()));
-  browser.on('error', () => close(1011, 'browser terminal transport failed'));
-  runtime.on('error', () => close(1011, 'Card terminal transport failed'));
+  return '';
 }
 
 async function authorizeUpgrade(
   request: IncomingMessage,
-  identity: { projectId: string; deckId: string; cardId: string },
+  identity: TerminalIdentity,
 ): Promise<TerminalBinding> {
-  const sessionId = cookieValue(request.headers.cookie, 'sid');
-  if (!sessionId) throw new Error('terminal_owner_authentication_required');
-  const user = await getUserBySessionId(sessionId);
-  if (!user) throw new Error('terminal_owner_authentication_required');
-  return resolveTerminalBinding({ ...identity, userId: user.id });
+  const user = await getUserBySessionId(cookie(request, 'sid'));
+  if (!user) throw new Error('card_terminal_authentication_required');
+  return resolveTerminalBinding(user.id, identity);
 }
 
-export function installCardTerminalUpgrade(server: Server): void {
-  if (installedServers.has(server)) return;
-  installedServers.add(server);
-  server.on('upgrade', (request, socket, head) => {
-    const identity = upgradeIdentity(request.url);
-    if (!identity) return;
-    void authorizeUpgrade(request, identity).then((binding) => {
-      terminalProxyServer.handleUpgrade(request, socket, head, (browser) => {
-        bridgeTerminal(browser, binding);
-      });
-    }).catch((error) => {
-      const message = error instanceof Error ? error.message : 'terminal_upgrade_failed';
-      refuseUpgrade(
-        socket,
-        message === 'terminal_owner_authentication_required' ? 401
-          : message === 'terminal_project_access_denied' ? 403 : 409,
-        'Terminal upgrade refused',
-      );
+function refuseUpgrade(socket: Duplex, status = 401): void {
+  if (!socket.destroyed) {
+    socket.end(`HTTP/1.1 ${status} ${status === 404 ? 'Not Found' : 'Unauthorized'}\r\nConnection: close\r\n\r\n`);
+  }
+}
+
+function bridgeTerminal(browser: WebSocket, binding: TerminalBinding): void {
+  let gateway: WebSocket | null = null;
+  const queued: Array<{ data: RawData; binary: boolean }> = [];
+  const close = (code = 1011, reason = 'card_terminal_connection_closed') => {
+    if (browser.readyState === WebSocket.OPEN) browser.close(code, reason);
+    if (gateway?.readyState === WebSocket.OPEN || gateway?.readyState === WebSocket.CONNECTING) {
+      gateway.close();
+    }
+  };
+  browser.on('message', (data, binary) => {
+    if (gateway?.readyState === WebSocket.OPEN) gateway.send(data, { binary });
+    else queued.push({ data, binary });
+  });
+  browser.once('close', () => close(1000, 'card_terminal_browser_closed'));
+  browser.once('error', () => close());
+  void openCardTerminalSocket(binding.profile, binding.sessionId).then((socket) => {
+    gateway = socket;
+    socket.on('open', () => {
+      queued.splice(0).forEach(({ data, binary }) => socket.send(data, { binary }));
     });
+    socket.on('message', (data, binary) => {
+      if (browser.readyState === WebSocket.OPEN) browser.send(data, { binary });
+    });
+    socket.once('close', (code, reason) => {
+      const text = reason.toString().slice(0, 100) || 'card_terminal_gateway_closed';
+      if (browser.readyState === WebSocket.OPEN) browser.close(code >= 1000 ? code : 1011, text);
+    });
+    socket.once('error', () => close());
+  }).catch(() => close());
+}
+
+function handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
+  const identity = upgradeIdentity(request);
+  if (!identity) return;
+  void authorizeUpgrade(request, identity).then((binding) => {
+    terminalSockets.handleUpgrade(request, socket, head, (browser) => {
+      bridgeTerminal(browser, binding);
+    });
+  }).catch((error) => {
+    const code = error instanceof Error ? error.message : '';
+    refuseUpgrade(socket, code.endsWith('_not_found') ? 404 : 401);
   });
 }
 
-export function closeCardTerminalProxy(): void {
-  for (const socket of activeBrowserSockets) socket.close(1001, 'backend shutting down');
-  for (const socket of activeRuntimeSockets) socket.close(1001, 'backend shutting down');
-  activeBrowserSockets.clear();
-  activeRuntimeSockets.clear();
+export function installCardTerminalUpgrade(server: Server): void {
+  if (installedServer === server) return;
+  if (installedServer) installedServer.off('upgrade', handleUpgrade);
+  installedServer = server;
+  server.on('upgrade', handleUpgrade);
 }
 
-export default cardTerminalRoutes;
+export function closeCardTerminalProxy(): void {
+  if (installedServer) installedServer.off('upgrade', handleUpgrade);
+  installedServer = null;
+  for (const socket of terminalSockets.clients) socket.close(1001, 'backend_shutdown');
+}
+
+export default router;

@@ -1,6 +1,6 @@
 /**
  * Entity: Trading
- * Relationship: Authenticates Project-scoped Trading state, snapshot events, readiness, and bounded pause or resume interventions while Python rails retains domain authority.
+ * Relationship: Authenticates Project-scoped Trading state, readiness, and bounded pause or resume interventions while Python rails retains domain authority.
  */
 import { Router } from 'express';
 
@@ -76,61 +76,6 @@ export function createTradingRouter(deps: Dependencies = {
         error: error instanceof Error ? error.message : 'trading_state_failed',
       });
     }
-  });
-
-  router.get('/events', async (req, res) => {
-    let path: string;
-    try {
-      path = statePath(req.query);
-      const projectId = requiredText(req.query.projectId, 'project_id_required');
-      if (!await requireOwnedProject(req, res, projectId)) return undefined;
-    } catch (error) {
-      return res.status(400).json({
-        ok: false,
-        error: error instanceof Error ? error.message : 'trading_events_input_invalid',
-      });
-    }
-
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    res.flushHeaders?.();
-    res.write('retry: 5000\n\n');
-
-    let closed = false;
-    let reading = false;
-    let lastSnapshot = '';
-    const sendSnapshot = async () => {
-      if (closed || reading) return;
-      reading = true;
-      try {
-        const snapshot = await deps.requestRails(path, { method: 'GET' });
-        const serialized = JSON.stringify(snapshot);
-        if (!closed && serialized !== lastSnapshot) {
-          lastSnapshot = serialized;
-          res.write(`event: snapshot\ndata: ${serialized}\n\n`);
-        }
-      } catch (error) {
-        if (!closed) {
-          res.write(`event: transport_error\ndata: ${JSON.stringify({
-            error: error instanceof Error ? error.message : 'trading_event_read_failed',
-          })}\n\n`);
-        }
-      } finally {
-        reading = false;
-      }
-    };
-    const interval = setInterval(() => { void sendSnapshot(); }, 5_000);
-    interval.unref?.();
-    req.on('close', () => {
-      closed = true;
-      clearInterval(interval);
-    });
-    await sendSnapshot();
-    return undefined;
   });
 
   router.post('/intervene', async (req, res) => {

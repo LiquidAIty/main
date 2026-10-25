@@ -97,35 +97,4 @@ describe('authenticated Trading presentation transport', () => {
     expect(requestRails).not.toHaveBeenCalled();
   });
 
-  it('streams normalized snapshots through the same authenticated selector path', async () => {
-    const snapshot = {
-      cardId: 'card_trading_workbench',
-      observedAt: '2026-09-03T00:00:00Z',
-      jobs: [],
-    };
-    const { base, requestRails } = await serve(
-      vi.fn<typeof requestPythonRailsJson>(async () => snapshot),
-    );
-    const controller = new AbortController();
-    const response = await fetch(
-      `${base}/events?projectId=project-1&deckId=deck_builder&cardId=card_trading_workbench&timeframe=15Min`,
-      { signal: controller.signal },
-    );
-    expect(response.status).toBe(200);
-    expect(response.headers.get('content-type')).toContain('text/event-stream');
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let payload = '';
-    while (!payload.includes('event: snapshot')) {
-      const next = await reader.read();
-      if (next.done) break;
-      payload += decoder.decode(next.value);
-    }
-    controller.abort();
-    expect(payload).toContain(`data: ${JSON.stringify(snapshot)}`);
-    expect(requestRails).toHaveBeenCalledWith(
-      '/trading/state?projectId=project-1&deckId=deck_builder&cardId=card_trading_workbench&timeframe=15Min',
-      { method: 'GET' },
-    );
-  });
 });
