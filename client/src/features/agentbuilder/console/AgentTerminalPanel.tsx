@@ -1,7 +1,7 @@
 // Entity: Card Terminals
 // Relationship: This file owns the xterm view, forwards input and resize events, renders streamed output, and disposes terminal resources on unmount.
 // Entity: Card Sessions
-// Relationship: This file opens one session for the exact Project, deck, and Card identity while ignoring stale openings and output after retargeting.
+// Relationship: Opens a CLI viewer bound to the server-resolved Project, deck, Card, profile, and existing Hermes conversation, ignoring stale openings and output after retargeting.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';

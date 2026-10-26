@@ -5,6 +5,7 @@ import { Router } from 'express';
 import health from './health.routes';
 import auth from './auth.routes';
 import { authMiddleware } from '../middleware/auth';
+import cardTerminalRoutes from './cardTerminal.routes';
 import builderIddRoutes from './builderIdd.routes';
 import cardOptionsRoutes from './cardOptions.routes';
 import knowGraphReadRoutes from './knowGraphRead.routes';
@@ -43,5 +44,6 @@ router.use('/trading', authMiddleware, tradingRoutes);
 router.use('/worldview', authMiddleware, worldviewRoutes);
 router.use('/nrgsim', authMiddleware, nrgsimRoutes);
 router.use('/main/session', authMiddleware, mainSessionRoutes);
+router.use('/card-terminals', authMiddleware, cardTerminalRoutes);
 
 export default router;

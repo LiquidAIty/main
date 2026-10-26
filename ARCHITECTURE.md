@@ -3,12 +3,15 @@
 This document records the owners and contracts present in the current source tree. It is not a
 runtime receipt. `PLAN.md` records the current proof boundary and next ordered work, `FUTURE.md`
 contains deferred candidates, `DONT.md` records known failure patterns, and `AGENTS.md` is execution
-law.
+law. [RUNTIME.md](RUNTIME.md) is the owner-approved Bot Mode product contract;
+[nextturn.md](nextturn.md) is a replace-each-turn scratch handoff, not durable architecture or
+authorization. Dated acceptance receipts remain evidence rather than implementation owners.
 
 LiquidAIty's abandoned ACP integration and application-owned AgentTerminal/CardRuntime control stack
 are deleted. Hermes' upstream ACP implementation remains part of the vendored project, but it is not
-LiquidAIty's Card boundary. The current adapter uses HermesLatest's shipped Gateway, profile, session,
-prompt, event, and PTY contracts. Source and static proof remain distinct from a loaded product turn.
+LiquidAIty's Card boundary. Bot Mode uses Hermes Desktop's shipped Gateway client and ticket helpers;
+the full CLI uses `node-pty` in the existing backend, not a proxy to Hermes's `/api/pty`.
+Source and static proof remain distinct from a loaded product turn.
 
 ## One-line law
 
@@ -53,13 +56,25 @@ they do not independently operate CBM. Product Cards separately use only their s
 operations. See [`skills/codebasedmemory.md`](skills/codebasedmemory.md) for coverage, source fallback,
 and inverse deletion/rename mechanics.
 
+### Source Entity/Relationship tags
+
+Inline source comments use the existing `Entity:` / `Relationship:` pair: one short shared Feature
+name followed immediately by the concrete responsibility of that file for that Feature. Each pair
+must agree with current executable source. Separate tags describe separate real responsibilities;
+they are not success claims, a restatement of the filename, or a list of hoped-for integrations.
+Tests describe what their assertions exercise, not live agent acceptance. Retained transport fields
+must not be labeled as working Run/IDF or graph capabilities when their current route rejects them.
+CBM derives structural edges independently; these comments supply authored Feature relationships,
+not another metadata schema, registry, graph writer or runtime input.
+
 | Concern | Current owner | Contract |
 | --- | --- | --- |
 | Saved Card system | `saved_card_contract.py`, `saved_cards.py`, `card_invocation_configuration.py`, `card_invocation_tools.py`, `card_invocation_preparation.py`, `card_run_preparation.py`, `card_run_inputs.py`, `card_run_readback.py`, `card_run_graph_references.py`, `card_run_execution.py`, `card_run_settlement.py`, `card_run_selection_context.py`, `card_run_jev.py`, `card_run_auto_tools.py`, `card_run_auto_model.py`, `agentgraph_query.py`, `agentgraph_topology.py`, `agentgraph_run_observations.py`, and `agentgraph_inspection.py` under `apps/python-models/app/python_models/` | Separate literal owners for saved identity/runtime validation, Project/deck/Card revisions, saved execution configuration, effective tools, graph selection and IDF preparation, Run acceptance/preparation, canonical input retention, exact provider-reference evidence, readback/projection, start evidence, terminal settlement, bounded Jev context/transport, saved-ceiling AutoTools, same-provider AutoModel, AGE query/topology/observations, and read-only AgentGraph inspection |
 | Canonical Run input | `idf.py`, `idf_contract.py`, `idf_graph_records.py`, and `idf_projection.py` under `apps/python-models/app/python_models/`; sole constructor `idf.py::materialize_idf` | Literal contract, bounded graph-record construction, inspection/model projections, and one materializer which writes and rereads one UTF-8 `in.idf` before execution |
 | Card Python Script | `apps/python-models/app/python_models/card_script.py`, the existing Card editor transport, and `HermesLatest/agent/{card_turn_tools,card_script_tool}.py` | Saved Card-owned source, structural compilation, live selected-tool validation, one immutable turn contract, and execution through Hermes' existing child Python runner against profile-loaded tools; no TypeScript executor or application callback tool protocol |
 | Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, unified Think/Know/Code visual-layer controls, and no semantic routing |
-| Application HTTP transport | `apps/backend/src/routes` | Authentication, saved-scope checks, Hermes request/event translation, and Python-rails calls; it does not own Hermes processes or sessions |
+| Application HTTP transport | `apps/backend/src/routes` | Authentication, saved-scope checks, Hermes request/event translation, and Python-rails calls; the terminal route owns only its browser-attached CLI process, not Hermes's persistent Gateway or conversation |
+| Bot Mode conversation | `apps/backend/src/routes/mainSession.routes.ts`, `apps/backend/src/services/projectCardAuthority.ts`, `apps/backend/src/conversations/store.ts` | Saved wired roster, profile-scoped canonical Bot Chat, actual Gateway submissions/events, and Project conversation persistence; see the Bot Mode boundary below |
 | Hermes runtime | `HermesLatest/` | Hermes inference, profiles, sessions, tools, memory, delegation, task/dependency dispatch, Gateway, TUI, desktop, and direct-agent messaging |
 | Magnetic TaskGraph | Deferred and unproven | TaskGraph is LiquidAIty's bounded product use of the external runtime's SQLite task/dependency substrate, which that upstream project calls Kanban. The saved Magnetic Card and blue topology are preserved, but no current application TaskGraph submission, scheduling, progress, or settlement owner exists. This boundary must be remapped from current source after ordinary messaging passes live acceptance. |
 | Tool contracts and execution | `application_operation_catalog.py`, `main_worldview_operations.py`, `agent_canvas_card_operations.py`, and `backend_operation_transport.py` under `apps/python-models/app/`; `operation_definition.py`, literal contributor modules, `tool_registry.py`, and `tool_catalog.py` under `apps/python-models/app/python_models/` | One ordered application-operation catalog, literal application handler/schema owners, generic loopback transport mechanics, one authored operation shape, exact Python/provider handlers, live lookup, and deterministic model-facing projection |
@@ -70,6 +85,10 @@ and inverse deletion/rename mechanics.
 | AgentGraph | AGE/PostgreSQL through `agentgraph_topology.py` and `agentgraph_run_observations.py` | Saved Card relationships/authorization and truthful Run/reference/artifact observations remain separate writers over one AGE authority |
 
 ## Authority chain
+
+This is the retained saved-Card Run/IDF contract. It must not be inferred merely from a Bot Mode
+chat submission: the current `/api/main/session/chat` route submits directly to Hermes and does
+not itself invoke the Python Run/IDF materializer or emit Run/evidence fields.
 
 ```text
 saved Card revision
@@ -104,11 +123,11 @@ The sending user or Card supplies only the current task, images, and selected pr
 the runtime sees it. The Run artifact catalog retains the path, byte size, and hash. Receipts,
 approval state, provider lineage, AGE observations, and runtime status remain outside `in.idf`.
 
-The Project-owned `projectCodeFolder` selects a portable folder name under that Project's managed
-Builder storage. Source resolves it beneath the managed Project directory and supplies it as the
-saved Builder Card's Hermes session workspace. HermesLatest's standard terminal/file behavior and PTY
-remain the owners; LiquidAIty applies no Docker policy. The 2026-10-14 loaded pass proved the existing
-Builder terminal identity and one harmless no-tool response; newer source still requires reload.
+The Project-owned `projectCodeFolder` belongs to the managed Builder-storage contract; do not assume
+it controls the current Bot Chat CLI. `cardTerminal.routes.ts` starts the viewer from the repository
+directory, but Hermes resumes the existing conversation's workspace. The 2026-10-26 visible Builder
+CLI check reported `C:\Users\jerem` as its working directory. Project-workspace binding for that
+path remains unproven and was not silently rewritten.
 
 Each independently invoked saved Card owns its own root Run and IDF. Any external-runtime child execution
 must remain inside its owning saved Card; LiquidAIty does not manufacture per-worker IDFs from child IDs.
@@ -123,15 +142,17 @@ or disabled source is inert. General hook points remain future work. No syntheti
 
 `apps/backend/src/routes/index.ts` mounts each domain once. Browser-facing routes use normal user
 authentication. The official Python MCP host's `/api/mcp` Project/profile context, exact active saved-Card
-profile/Run context, Card-editor projection, and Hermes' `/api/card-turn` receiving-Card lifecycle use the existing process-secret
-boundary and are mounted separately from browser authentication.
+profile/Run context, and Card-editor projection use the existing process-secret boundary and are
+mounted separately from browser authentication. The current route index does not mount the retired
+`/api/card-turn` receiving-Card lifecycle or Card Run-read/Script routers.
 
 | Route family | Current responsibility |
 | --- | --- |
-| `/api/cards` | `cardOptions.routes.ts`, `cardRunRead.routes.ts`, and `cardScript.routes.ts` own Card editor options, Script validation, and read-only `POST /runs/read` latest/history/status projection; none executes a Card |
-| `/api/card-turn` | Process-authenticated preparation/start/finish for a receiving Card turn; it delegates to the existing Python Run/IDF owners and stores no session, queue, scheduler, or second transcript |
+| `/api/cards` | `cardOptions.routes.ts` supplies current Card editor options; this route does not execute a Card |
+| `/api/main/session` | `mainSession.routes.ts` owns `/chat`, `/history`, `/activity`, `/stop`, `/respond`, and `/voice/{transcribe,speak}` through the saved Project/Card scope |
+| `/api/card-terminals` | `cardTerminal.routes.ts` opens the exact Card's canonical conversation and upgrades its authenticated browser socket to a full CLI viewer |
 | `/api/idd` | `builderIdd.routes.ts` owns Builder/editor-only IDD fields, deterministic live-catalog tool projection, and Script-header projection |
-| `/api/mcp` | `mcpInternal.routes.ts` owns process-authenticated Project/profile context, exact active saved-Card profile/Run grant readback, and the configured-model/IDD projection used by Hermes profile MCP tools |
+| `/api/mcp` | `mcpInternal.routes.ts` owns process-authenticated Project/profile context, persisted Card grant readback, optional active-Run validation when a Run ID is supplied, and Card-editor projection |
 | `/api/thinkgraph` and `/api/knowgraph` | Engraphis and Graphiti projections/operations without merging authority |
 | `/api/codegraph/read` | One fixed-purpose authenticated request for Repository-scoped CodeGraph projection/file/source reads; the server injects `deck_builder`/`builder`, Python reloads that persisted Card revision, and the official MCP host enforces its live read-only CBM grants |
 | `/api/projects` | Project and deck transport |
@@ -155,7 +176,7 @@ The launch target is one supervised local process graph. Internal services do no
 | Python rails | `127.0.0.1:8003` |
 | KnowGraph | `127.0.0.1:8001` |
 | Application MCP host | `127.0.0.1:8765` |
-| Hermes Gateway, sessions and PTY | `127.0.0.1:9119` |
+| Hermes Gateway and sessions | Local descriptor resolved by Desktop's Gateway helpers; normally `127.0.0.1:9119`, not a browser-facing PTY address |
 | WorldView provider | `127.0.0.1:4174` |
 | WorldSignals backend / frontend | `127.0.0.1:8000` / `127.0.0.1:3000` by default |
 
@@ -163,40 +184,96 @@ The browser reaches the backend and companion applications only through same-ori
 The backend and supervised Hermes/Python processes hold the internal process secret; the browser does not.
 Card terminals use the authenticated backend WebSocket upgrade; the browser never receives a reusable Hermes
 token or direct PTY URL. Each saved Card profile's reserved `liquidaity` MCP connection stays on loopback and
-uses a short-lived signed bearer plus the current Project, deck, profile, and Run identity. The backend rereads
-the exact active saved Card and Run and validates the server-issued conversation identity against its AgentGraph
-Run observation before the MCP host projects or dispatches that Card's grants. The optional
+uses a signed bearer scoped to owner, Project, deck and profile. `internalMcpAuth.ts` currently gives
+that principal a twelve-hour expiry; it contains no Run ID. `/api/mcp/card-context` rechecks Project
+and profile ownership and the current persisted Card grants; it validates an active Run when a Run ID
+is actually supplied. Do not claim that ordinary Bot Mode authentication proves Run lineage. The optional
 ngrok MCP publication is a separate OAuth-protected external resource and exposes
 only the MCP host, never the internal backend routes. A separated private-service deployment remains future
 work and requires a separately approved authenticated TLS topology.
 
-## Card runtime application boundary
+## Bot Mode application boundary
 
-One independently supervised external process starts from the root `dev:card-runtime` package script.
-`apps/backend/src/services/cardRuntimeGateway.ts` is the sole application connection and terminal-socket
-boundary. Exact external names, environment variables, protocol fields, and paths remain quarantined there
-and in deployment configuration. LiquidAIty does not launch a per-Card process, own a session registry,
-supervise delivery or retries, or open a second agent/terminal execution path.
+**CURRENT — source ownership.** Hermes owns inference, profiles, canonical Bot Chats, agent-to-agent
+`message_agent` delivery, queued work, retries, recipient execution, transcripts, and continuation.
+LiquidAIty owns saved Card/topology authority, authenticated web transport, the existing Project
+conversation store, and its presentation. There is no application-owned agent executor, delivery
+queue, reply waiter, task ledger, or second transcript database.
 
-Main is the sole headless Card. `cardRuntime/cardSessions.ts` maps saved Card/profile authority to the exact
-external titled-session contract. It asks the external owner to resume that title and creates only after an
-explicit not-found response; it does not list, select, activate, recover, queue, or retry sessions. Builder's
-lower terminal stays bound to `builder`, mounted, and initially collapsed. Profile materialization reads saved
-Card authority; TypeScript remains transport and pixels. LiquidAIty sends no parallel profile fingerprint.
-`AgentTerminalManager` and the retired specialist execution paths remain absent.
-Source presence does not establish successful product execution; use the current acceptance evidence.
+```text
+MainProjectChat → useAgentBuilderMainChat → mainSessionClient
+  → authenticated mainSession.routes → Desktop HermesGateway → saved profile / Bot Chat
+Hermes replies → actual provider-row persistence → the same Project conversation
+```
 
-Fresh Card profiles are created with credential mirroring disabled. Current provider authentication remains
-scoped to the external installation/profile mechanisms; LiquidAIty has not yet
-proven distinct per-user provider credentials while two users share one reusable Card profile. Do not
-claim that multi-user credential-isolation requirement from the profile/session isolation tests alone.
+| Operation | Source owner and actual contract |
+| --- | --- |
+| Saved identity and roster | `projectCardAuthority.ts` reloads the persisted deck, enabled Card revisions and profile bindings, and requires exactly one Main. `mainSession.routes.ts::context` derives the roster from enabled valid saved edges, not all visible Cards or installed profiles. Main can reach the enabled Hermes Cards participating in that wire topology; other targets receive their incident wired peers. Orange and blue both establish reachability; blue does not itself execute workers. |
+| Shared connection | `connectGateway` imports Desktop's `apps/desktop/src/api/client.ts`, `electron/local-gateway.ts`, and `electron/local-gateway-python.ts`. Supported repo-Python Gateway ensure and interactive-ticket operations establish one shared `HermesGateway`; Desktop request limits remain in use. No local replacement protocol or application request-timeout layer is added. |
+| Profile preparation | `prepareProfiles` verifies profile ownership, refreshes the existing scoped internal MCP credential where saved application tools require it, and publishes exact wired `bot_mode_roster` values using `profiles.configure`. It does not author operating prompts or copy other Cards' prompts. Saved prompt/model/tool publication after editing a Card is not established by this roster preparation. |
+| Canonical conversation | `findExistingCanonicalChat`, `createCanonicalChat`, `openStoredBotChat`, and `openBotCanonicalChat` use `session.list`, `session.create`, `session.title`, and `session.resume`. An absent chat can be created; ambiguous chats are rejected. The canonical title is `Bot Chat`, with profile configuration followed. There is no application session registry. |
+| Ordinary and direct user input | Ordinary text targets saved Main. A leading `@Name` selects exactly one authorized wired Card by saved address; unavailable/ambiguous matches fail. The original text is passed unchanged to that profile's `prompt.submit` with a unique submission ID. Main is not asked to impersonate a directly addressed Card. |
+| Main-to-agent work | Main chooses its work through its own saved prompt and grants. Hermes performs the real `message_agent` operation and recipient execution against the configured roster. A queued receipt is not an answer, and the application generates no “I asked” or waiting prose. |
+| Foreground answer and attribution | The route correlates Gateway events by profile, session and admitted submission. `message.delta` / `message.complete` become the existing POST response's SSE frames (`session`, `text`, `done`, `error`), consumed by `mainSessionClient` through fetch. This is response transport, not an EventSource or independent event feed. The actual selected Card supplies `@Name` attribution; Main has no extra label. No Run/evidence fields are required. |
+| Conversation persistence | `conversations/store.ts` retains user submissions and actual completed provider replies in PostgreSQL. `refreshOpenBotChat` reads Hermes history and appends unseen provider-row identities once with saved speaker/session metadata. It respects Hermes's typed display/model-only metadata rather than classifying prose. `/history` rehydrates that Project conversation; the UI store is not the Hermes execution transcript. |
+| Later activity and counts | `useCardActiveAgentCounts.ts` retains the existing five-second observation cadence. `/activity` reads `profiles.list` canonical activity and `session.active_list`; counts are actual working/streaming sessions, not SQL Run counts or invented subagent totals. `useAgentBuilderMainChat` refreshes history after a changed canonical watermark, records only the summary read for that refresh, and does not overwrite active foreground output. This browser observation cadence is distinct from Hermes's execution timers. |
+| Send and Stop | A nonempty draft remains Send during work; an empty active composer exposes Stop. Hermes owns admission/busy behavior. `/stop` validates the canonical conversation and forwards `session.interrupt`. The hook's active request map is transient browser transport state, not a prompt queue or execution owner. |
+| Images | The composer validates and previews bounded files; `/chat` calls `image.attach_bytes`, then submits its returned attachment paths/MIME types with the actual prompt. Image understanding has live evidence; sent-message inline images and durable attachment presentation remain deferred. |
+| Questions and approvals | The same `/activity` request reads actual pending prompts from `session.resume`. `AgentInput` renders their questions/options; `/respond` rechecks Project, Card, canonical session, prompt identity and approval choice before calling `clarify.respond` or `approval.respond`. Only explicit user answers are sent. A live structured request/response cycle remains unproven. |
+| Voice | The hook owns browser `getUserMedia` / `MediaRecorder`, permission/recording state, cleanup, one transcript submission and reply playback. Authenticated voice routes use Desktop's profile-scoped HTTP-ticket helper and Hermes `/api/audio/transcribe` / `/api/audio/speak`; transcription uses the addressed profile, speech the actual replying Card. No provider fallback or server microphone is introduced. |
+
+**CURRENT — full CLI.** `cardTerminal.routes.ts` owns a viewer process, not another agent runtime.
+The existing `AgentTerminalPanel`/`agentTerminalClient` opens the saved non-Main Card's canonical
+conversation, then uses a same-origin WebSocket. Upgrade checks cookie authentication, allowed Origin,
+Project ownership, saved Card/profile ownership and the exact canonical session again. The browser
+cannot choose a command, executable, environment or working directory.
+
+The route checks Hermes's own TUI build-freshness receipt and uses `node-pty` inside the existing Node
+backend to run repo Python with `-m hermes_cli.main -p <profile> --tui --resume <session>`. It supplies
+the repo Python/Node/TUI locations through supported environment options. Input and resize frames go
+to that PTY; real output goes to xterm. Closing the socket kills only this viewer. The Gateway and
+saved conversation remain owned by Hermes. Main stays headless; Builder stays mounted and initially
+collapsed beneath Main, while other eligible Card CLI surfaces mount when selected. No terminal UI
+redesign, extra service, arbitrary-shell endpoint, or `/api/pty` ticket workaround is part of this path.
+
+For Oracle, the PTY executes on the server. Linux needs its own Python environment, platform-correct
+PTY dependency and TUI build, HTTPS, permitted origins, authenticated cookies and WebSocket proxying.
+Local Project/profile checks are not proof of OS isolation between untrusted tenants.
+
+**CURRENT — proof and limits, 2026-10-26.** Ordinary Main, direct Trader with `@Trader` attribution,
+real Main-to-Trader communication, persisted conversation and image understanding have accepted live
+evidence. The visible Builder CLI accepted a question, ran its Terminal tool, answered and returned
+to its prompt. Builder's explicitly requested No thanks choice was saved; collection/upload read
+back disabled. [The dated closeout](docs/reports/botmode-closeout.md) records the detailed receipts.
+
+The following are not completed by that evidence:
+
+- Local speech recognition is blocked by Windows App Control rejecting PyAV DLLs. Edge synthesis
+  passed after the authorized installed dependency update to 7.3.1; real microphone-to-reply playback
+  remains unproven. No host protection was disabled and no provider was substituted.
+- A prior terminal socket closed and left stale output visible. Reopening restored actual input;
+  the original disconnect cause and reliable recovery behavior remain unresolved.
+- Canonical Bot Chat selection is profile-scoped, not Project-keyed. Cross-Project context/roster
+  isolation for shared stable profiles and multi-user provider credentials are not established.
+- Saved Card configuration publication, structured approval/clarification, active-input steering,
+  other Card CLI turns and Oracle deployment each still need their own current acceptance.
+- Nonempty Data Anchors receive `main_data_anchor_transport_unavailable` (422). This chat route does
+  not establish the Run/IDF/completed-Main graph-capture contracts described elsewhere in this document.
+- An observed explicit recipient message plus the original delivery's process-completion notice
+  produced two real Main inputs. No application duplicate submission was established. Ordinary reply
+  prose is not suppressed to hide that distinction; details remain in the dated closeout.
+
+**DEFERRED:** inline sent images, Automatic Team and Magnetic TaskGraph execution. Passing ordinary
+Bot Mode does not start or prove those workflows. The deleted `cardRuntimeGateway`, `cardSessions`,
+and old profile-materialization path are not alternate owners to restore.
 
 ## Agent messaging, Team, and Magnetic
 
 Automatic Team behavior, task decomposition, worker dispatch, task progress,
 and Magnetic synthesis are not current and must not be documented or displayed as running. No TaskGraph work
-resumes until live Main messaging proves one real recipient execution and reply, rejection, busy handling,
-failure/Stop behavior, and truthful activity counts.
+resumes merely because ordinary messaging works. Recipient execution/reply has current live evidence;
+rejection, busy handling, failure/Stop behavior and activity semantics still require their own acceptance,
+and a new owner-approved task is required before implementing either TaskGraph workflow.
 
 ## MCP and Codebase Memory
 
@@ -206,8 +283,9 @@ request dispatch. Together they derive one MCP projection from the canonical def
 account access uses the configured OAuth resource boundary. Main and every other Card are Hermes profiles.
 Their exact saved application-tool selection is an include filter on the profile's internal loopback
 `liquidaity` MCP connection; it does not use the public GPT/plugin URL or require an external OAuth token.
-Hermes signs the current Card turn, and the MCP host accepts a call only after backend readback confirms the
-exact Project, deck, profile, active Run, and current saved grants. A Card's separately saved Hermes Tools
+Bot Mode refreshes a signed owner/Project/deck/profile credential through the existing profile MCP
+configuration. Backend context readback confirms that saved scope and current grants; Run validation
+is conditional on a supplied Run ID, not a prerequisite created by this chat route. A Card's separately saved Hermes Tools
 selection controls its ordinary Hermes toolsets: Builder currently retains web, browser, terminal, file,
 code-execution, and vision, while an empty ordinary-tool selection never removes that Card's `liquidaity`
 toolset. Saved external MCP references remain separate profile servers. External web-user OAuth Project grants
@@ -441,7 +519,7 @@ source, exact protocol evidence, and this divergence record. LiquidAIty applicat
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
 | --- | --- | --- | --- |
-| `NousResearch/hermes-agent` `0.22.5`, tag `v0.22.5`, source commit `bf0203a794a07aac3ff764972ab9087baa4e4f4e` | `tools/bot_mode_probe.py::configured_bot_roster,resolve_bot_roster`; `tui_gateway/methods_profiles.py` profile configure/readback; generated profile contracts and focused tests | Preserve upstream profile creation, sessions, `message_agent` delivery, queueing, receipts, learning, task storage, dispatch, retries, workers, PTY, MCP transport, and execution. The bounded change adds an exact profile-scoped ordered local roster: absent preserves upstream discovery, explicit empty denies every local target, and explicit values validate before persistence. | Focused vendor tests prove deterministic roster configuration/resolution and unchanged delivery behavior. Loaded application execution remains unproven. Rollback removes the profile-roster field/resolver path together; it must not retain an application delivery adapter or fallback. |
+| `NousResearch/hermes-agent` `0.22.5`, tag `v0.22.5`, source commit `bf0203a794a07aac3ff764972ab9087baa4e4f4e` | `tools/bot_mode_probe.py::configured_bot_roster,resolve_bot_roster`; `tui_gateway/methods_profiles.py` profile configure/readback; generated profile contracts and focused tests | Preserve upstream profile creation, sessions, `message_agent` delivery, queueing, receipts, learning, task storage, dispatch, retries, workers, PTY, MCP transport, and execution. The bounded change adds an exact profile-scoped ordered local roster: absent preserves upstream discovery, explicit empty denies every local target, and explicit values validate before persistence. | Focused vendor tests prove deterministic roster configuration/resolution and unchanged delivery behavior. TradingProject ordinary/direct messaging and actual agent delivery have the 2026-10-26 live evidence recorded in the Bot Mode boundary; other Projects and full parity remain unproven. Rollback removes the profile-roster field/resolver path together; it must not retain an application delivery adapter or fallback. |
 
 The existing Hermes app-server adapter also preserves provider vision input:
 `HermesLatest/tui_gateway/prompt_turn.py::_route_turn_images` respects the saved
@@ -556,5 +634,6 @@ generic R adjustment. This is not a whole-building standards transformation.
 - Actual child provider/model, Bot delivery, graph attention, external-provider calls, terminal attachment,
   and exact Run/Stop correlation require their own observed receipts. Saved or projected configuration is
   not execution proof.
-- Voice is outside the current acceptance pass and remains standard Hermes behavior. WorldView, trading,
-  and broader graph semantics retain their existing independent acceptance boundaries.
+- Bot Mode voice uses the existing Hermes audio endpoints; synthesis has current live proof while local
+  recognition has the Windows policy blocker detailed above. WorldView voice, trading, and broader graph
+  semantics retain their independent acceptance boundaries.

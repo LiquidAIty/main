@@ -4,14 +4,19 @@
 // Relationship: This file projects truthful active Card identities used by the topology canvas without inferring worker activity.
 // Entity: Main Chat
 // Relationship: The same roster refresh carries Main's canonical-session activity watermark for exact transcript rehydration.
+// Entity: Agent Input
+// Relationship: The existing roster refresh projects pending Hermes questions without another timer or request store.
 
 import { useEffect, useMemo, useState } from 'react';
 
 import type { DeckDocument } from '../../../types/agentgraph';
+import type { AgentInputRequest } from '../console/mainSessionClient';
 
 type CardRunActivity = {
   cardId: string;
   state: string;
+  activeCount?: number;
+  inputRequests?: AgentInputRequest[];
 };
 
 export type MainCanonicalSessionActivity = {
@@ -34,16 +39,19 @@ export default function useCardActiveAgentCounts({
   activeAgentCounts: Record<string, number>;
   activeCardIds: string[];
   mainCanonicalSession: MainCanonicalSessionActivity | null;
+  inputRequests: AgentInputRequest[];
 } {
   const cardIdsKey = JSON.stringify(deck.nodes.map((card) => card.id));
   const cardIds = useMemo(() => JSON.parse(cardIdsKey) as string[], [cardIdsKey]);
   const [activeAgentCounts, setActiveAgentCounts] = useState<Record<string, number>>({});
   const [mainCanonicalSession, setMainCanonicalSession] = useState<MainCanonicalSessionActivity | null>(null);
+  const [inputRequests, setInputRequests] = useState<AgentInputRequest[]>([]);
 
   useEffect(() => {
     if (!projectId || cardIds.length === 0) {
       setActiveAgentCounts({});
       setMainCanonicalSession(null);
+      setInputRequests([]);
       return undefined;
     }
 
@@ -91,6 +99,7 @@ export default function useCardActiveAgentCounts({
       }
       if (disposed || controller.signal.aborted) return;
       const nextCounts: Record<string, number> = {};
+      const nextRequests: AgentInputRequest[] = [];
       const requested = new Set(cardIds);
       const observed = new Set<string>();
       for (const status of statuses) {
@@ -103,9 +112,12 @@ export default function useCardActiveAgentCounts({
           continue;
         }
         observed.add(status.cardId);
+        nextRequests.push(...(status.inputRequests || []).filter(request => request.projectId === projectId
+          && request.deckId === deck.id && request.cardId === status.cardId));
         if (!ACTIVE_RUN_STATES.has(String(status.state || ''))) continue;
-        nextCounts[status.cardId] = 1;
+        if (Number.isSafeInteger(status.activeCount) && status.activeCount! > 0) nextCounts[status.cardId] = status.activeCount!;
       }
+      setInputRequests(nextRequests);
       setActiveAgentCounts((current) => (
         Object.keys(current).length === Object.keys(nextCounts).length
         && Object.entries(nextCounts).every(([cardId, count]) => current[cardId] === count)
@@ -127,5 +139,6 @@ export default function useCardActiveAgentCounts({
     activeAgentCounts,
     activeCardIds: Object.keys(activeAgentCounts),
     mainCanonicalSession,
+    inputRequests,
   };
 }

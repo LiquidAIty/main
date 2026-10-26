@@ -1,15 +1,16 @@
 /**
  * Entity: Main Chat
- * Relationship: This file owns the Project-scoped Main conversation view, history, streamed partial replies, error state, and one final submission per voice capture.
+ * Relationship: Owns the Project conversation view and partial replies, refreshing persisted history from observed Hermes activity without overwriting an active foreground response.
  * Entity: Projects
  * Relationship: This file resets conversation, authority, voice, and active-stream state whenever the active Project changes.
  * Entity: Card Invocation
- * Relationship: This file assembles one Main Run request from exact user text, bounded images, and selected references and retains partial text on failure or cancellation.
- * Relationship: This file retains the observed Hermes conversation identity for the existing Stop action.
+ * Relationship: Submits unchanged user text and image records through the existing chat client and retains partial text on failure or cancellation; it does not create saved Runs or IDFs.
+ * Entity: Card Sessions
+ * Relationship: Retains the responding Hermes conversation identity for Stop and aborts only this view's active request streams after interruption.
  * Entity: Voice
  * Relationship: Captures this browser's microphone, submits its Hermes transcript once, and plays the replying Card's Hermes speech without changing saved prompts.
  * Entity: Data Anchors
- * Relationship: This file converts selected reference order into bounded Run priorities without changing provider identity or resolved data.
+ * Relationship: Maps selected reference order to transport priority without resolving provider data; nonempty selections remain unsupported by the current Bot Mode route.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -34,7 +35,7 @@ export type MainProjectChatMessage = MainConversationMessage & {
   requestKey?: string;
 };
 
-export type MainChatVoicePhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
+export type MainChatVoicePhase = 'idle' | 'requesting' | 'listening' | 'processing' | 'speaking' | 'error';
 export type MainChatRunInput = { images?: MainRunImage[]; voiceTurn?: boolean };
 export const MAX_MAIN_CHAT_IMAGES = 4;
 
@@ -472,7 +473,7 @@ export default function useAgentBuilderMainChat({
     let submitted = false;
     try {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') throw new Error('microphone_unavailable');
-      setVoiceState({ key: projectKey, phase: 'processing', error: null });
+      setVoiceState({ key: projectKey, phase: 'requesting', error: null });
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
       signal.throwIfAborted();
       const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/wav']
@@ -496,7 +497,7 @@ export default function useAgentBuilderMainChat({
         recorder.start();
         setVoiceState({ key: projectKey, phase: 'listening', error: null });
       });
-      voiceRecorderRef.current = null;
+      if (voiceRecorderRef.current === recorder) voiceRecorderRef.current = null;
       signal.throwIfAborted();
       setVoiceState({ key: projectKey, phase: 'processing', error: null });
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -527,7 +528,10 @@ export default function useAgentBuilderMainChat({
           const finished = () => signal.removeEventListener('abort', cancel);
           audio.onended = () => { finished(); resolve(); };
           audio.onerror = () => { finished(); reject(new Error('voice_playback_failed')); };
-          void audio.play().then(() => setVoiceState({ key: projectKey, phase: 'speaking', error: null }))
+          void audio.play().then(() => {
+            signal.throwIfAborted();
+            setVoiceState({ key: projectKey, phase: 'speaking', error: null });
+          })
             .catch(error => { finished(); reject(error); });
         });
       }

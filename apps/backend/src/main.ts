@@ -1,5 +1,7 @@
 // Entity: Application Startup
 // Relationship: This file boots the loopback backend, applies request boundaries, waits for required migrations, mounts the API, and closes supervised connections during shutdown.
+// Entity: Card Terminals
+// Relationship: Attaches authenticated terminal upgrades to the existing HTTP server and disposes CLI viewers during shutdown.
 
 import "./config/env";
 import express from "express";
@@ -10,6 +12,7 @@ import { requestJsonBodyLimit } from "./services/requestPayloadLimits";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closeToolCatalogMcpClient } from "./services/mcp/toolCatalogMcpClient";
 import { closeMainConnection } from './routes/mainSession.routes';
+import { closeCardTerminals, installCardTerminals } from './routes/cardTerminal.routes';
 import { listenAfterRequiredMigrations } from "./db/migrations";
 
 const app = express();
@@ -146,6 +149,7 @@ function installShutdownHooks() {
 
   const shutdown = async () => {
     try {
+      closeCardTerminals();
       closeMainConnection();
       if (backendServer) await closeServer(backendServer);
       await closeToolCatalogMcpClient();
@@ -187,6 +191,7 @@ async function startServer() {
     if (backendServer === server) backendServer = null;
   });
   backendServer = server;
+  installCardTerminals(server);
   installShutdownHooks();
 }
 

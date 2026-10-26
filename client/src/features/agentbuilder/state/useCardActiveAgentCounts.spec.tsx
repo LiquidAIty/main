@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+// Entity: Card Activity
+// Relationship: Verifies that the existing activity view renders reported Hermes session counts and rejects malformed observations.
 
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -26,21 +28,21 @@ const deck = {
   version: 1,
 } as DeckDocument;
 
-describe('Run-derived Card activity', () => {
+describe('Hermes live-session Card activity', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('shows one agent only for each actual active Card Run', async () => {
+  it('shows the observed live-session count without inventing worker activity', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({
         ok: true,
         results: [
-          { cardId: 'main', state: 'running' },
-          { cardId: 'knowgraph', state: 'running', activeWorkers: 3 },
+          { cardId: 'main', state: 'running', activeCount: 1 },
+          { cardId: 'knowgraph', state: 'running', activeCount: 2, activeWorkers: 3 },
         ],
         failedCardIds: [],
       }),
@@ -51,7 +53,7 @@ describe('Run-derived Card activity', () => {
     }));
     await waitFor(() => expect(result.current.activeAgentCounts).toEqual({
       main: 1,
-      knowgraph: 1,
+      knowgraph: 2,
     }));
     expect(result.current.activeCardIds).toEqual(['main', 'knowgraph']);
     unmount();

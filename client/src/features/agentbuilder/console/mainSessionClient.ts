@@ -1,12 +1,16 @@
 /**
  * Entity: Main Chat
+ * Relationship: Loads the Project's persisted messages and wired roster and decodes the chat response stream, rejecting missing or conflicting completion frames.
  * Entity: Card Invocation
- * Relationship: This file submits exact user text, bounded images, and selected Data Anchors with unique message identities and rejects incomplete or conflicting completion frames.
- * Relationship: This file transports the saved conversation identity for Stop and preserves request failure and completion responses.
+ * Relationship: Sends unchanged user text and attached image records with a unique submission identity to the authenticated Project chat route.
+ * Entity: Card Sessions
+ * Relationship: Sends the observed Hermes conversation identity to the Stop route and preserves transport and server failures.
  * Entity: Voice
  * Relationship: Sends browser recordings and reply text through authenticated, Project-scoped Hermes transcription and speech routes.
+ * Entity: Agent Input
+ * Relationship: Returns explicit user answers with the original Project, Card, session, and Hermes prompt identity.
  * Entity: Data Anchors
- * Relationship: This file defines and transports only bounded provider reference identities, reasons, priorities, expansion limits, and required flags for the current Main Run.
+ * Relationship: Retains typed selected-reference transport fields; the current Bot Mode route rejects nonempty selections rather than materializing graph input.
  */
 
 export type AddressableAgent = {
@@ -16,6 +20,31 @@ export type AddressableAgent = {
 };
 
 export type DirectChatTarget = AddressableAgent;
+
+export type AgentInputRequest = {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  address: string;
+  sessionId: string;
+  requestId: string;
+  kind: 'approval' | 'clarify';
+  question?: string;
+  command?: string;
+  description?: string;
+  choices: string[];
+  multiSelect: boolean;
+};
+
+export async function respondToAgent(request: AgentInputRequest, answer: string): Promise<void> {
+  const response = await fetch(`${BASE}/respond`, { method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      projectId: request.projectId, deckId: request.deckId, cardId: request.cardId,
+      sessionId: request.sessionId, requestId: request.requestId, kind: request.kind, answer,
+    }) });
+  const result = await response.json();
+  if (!response.ok || result.ok !== true) throw new Error(result.error || 'agent_input_response_failed');
+}
 
 export type MainConversationMessage = {
   role: string;

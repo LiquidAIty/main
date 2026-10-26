@@ -5,9 +5,7 @@
  * Entity: Agent Messaging
  * Relationship: This file verifies @Card suggestions come only from the supplied direct roster.
  * Entity: Card Invocation
- * Relationship: This file verifies exact user text and accepted image records reach the one invocation callback while rejected submissions preserve the draft.
- * Entity: IDF
- * Relationship: This file verifies unsupported, oversized, and over-count image selections are rejected before canonical Run input.
+ * Relationship: Verifies unchanged text and accepted images reach the supplied callback, invalid image selections are rejected, and rejected submissions preserve the draft; it does not prove Hermes execution or IDF materialization.
  * Entity: Project Knowledge Graph
  * Relationship: This file verifies current assistant Entity names open exact graph focus targets without exposing markup or linking user text.
  */

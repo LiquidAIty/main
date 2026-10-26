@@ -12,6 +12,8 @@ Before doing anything else:
 2. Read the current operating rules in [DONT.md](./DONT.md); consult its historical removal record only
    for the affected boundary.
 3. Read [PLAN.md](./PLAN.md) completely.
+   Read root [nextturn.md](./nextturn.md), when present, for the previous turn's scratch handoff;
+   verify its claims against current source and the latest owner request before relying on them.
 4. Read only relevant reusable `skills/*.md` procedures; domain skills defer generic process control to
    `promptspec-receiver`.
 5. The Primary uses the Codebase Memory CLI for a bounded directional map, then direct-reads current
@@ -735,12 +737,30 @@ PLAN.md
 AGENTS.md
 DONT.md
 ARCHITECTURE.md
+RUNTIME.md
 FUTURE.md
 skills/*.md
 repo-intake/*.md only when explicitly required
 ```
 
-One exception is the PromptSpec review artifact:
+The owner-approved scratch handoff is:
+
+```text
+nextturn.md
+```
+
+The Primary rewrites this single root file at the end of each repository work turn; do not append a
+running log or create dated continuation copies. Keep it short: current requested boundary, actual
+changes, evidence and its limits, unresolved blockers, and the next relevant considerations. Remove
+stale/completed advice and revalidate anything carried forward. Put durable implementation contracts
+in `ARCHITECTURE.md`, current status in `PLAN.md`, and product requirements in `RUNTIME.md` instead.
+
+`nextturn.md` is scratch context, not a task queue, frozen review, product prompt, architecture
+authority, or permission to act. Never load it into Card prompts or runtime context. The next turn's
+explicit owner request wins; a listed idea or blocker does not authorize unrelated work. This is the
+single handoff scratch file, not permission for additional continuation reports.
+
+The separate PromptSpec review artifact, when that review is explicitly required, is:
 
 ```text
 turn.md

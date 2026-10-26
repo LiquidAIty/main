@@ -1,10 +1,18 @@
 /**
  * Entity: Main Chat
- * Relationship: Connects the existing Project conversation to saved Card profiles using Hermes Desktop's Gateway client and Bot Chat operations.
+ * Relationship: Streams admitted Hermes replies into Main Chat and persists actual provider rows through the existing Project conversation store.
  * Entity: Agent Messaging
- * Relationship: Saved wires define the roster; Hermes owns execution, message_agent, recipient delivery, and continuation.
+ * Relationship: Projects saved enabled wires into profile rosters and routes an explicit @Name to that saved Card; Hermes performs inference and message_agent delivery.
+ * Entity: Card Sessions
+ * Relationship: Reuses Desktop's Gateway client to find, create when absent, and resume each profile's canonical Bot Chat, and forwards Stop to that conversation.
+ * Entity: Card Activity
+ * Relationship: Reads Hermes live-session counts and Main's canonical activity summary without querying application Runs or inferring subagent totals.
  * Entity: Voice
  * Relationship: Forwards browser audio and completed speech text to the addressed saved profile's Hermes audio endpoints.
+ * Entity: Agent Input
+ * Relationship: Projects Hermes-owned pending questions and approvals and returns explicit user responses to their original session and request.
+ * Entity: Card Terminals
+ * Relationship: Resolves the saved non-Main Card, refreshes its scoped profile access, and opens its canonical Bot Chat for the CLI viewer.
  */
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -30,7 +38,7 @@ async function connectGateway() {
     load('apps/desktop/src/api/client.ts'), load('apps/desktop/electron/local-gateway.ts'),
     load('apps/desktop/electron/local-gateway-python.ts'),
   ]);
-  const backend = { command: executable('hermes'), args: ['gateway', 'ensure', '--json'], shell: false, env: { PYTHONPATH: root } };
+  const backend = { command: executable('python'), args: ['-m', 'hermes_cli.main', 'gateway', 'ensure', '--json'], shell: false, env: { PYTHONPATH: root } };
   const descriptor = await local.ensureLocalGateway(() => local.runGatewayEnsure(backend, root, home));
   const resolveTicket = tickets.createGatewayTicketResolver(
     async () => ({ command: executable('python'), args: [], kind: 'python', shell: false, env: { PYTHONPATH: root } }), () => root,
@@ -45,7 +53,8 @@ async function connectGateway() {
     const response = await fetch(url, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify(body), signal, redirect: 'error' });
     const result = await response.json() as Rpc;
-    if (!response.ok || result.ok !== true) throw new Error(String(result.detail || result.error || `voice_${operation}_failed`));
+    if (!response.ok || result.ok !== true) throw new Error(String(result.detail || result.error || `voice_${operation}_failed`)
+      .replace(/(?:https?|wss?):\/\/[^\s"'<>]+/g, '[provider endpoint]'));
     return result;
   };
   return { client, audio, startup: api.STARTUP_REQUEST_TIMEOUT_MS, submit: api.PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
@@ -73,8 +82,7 @@ async function requestForBot(profile: string, method: string, params: Rpc = {}) 
   return current.client.request(method, { ...params, profile }, method === 'prompt.submit' ? current.submit : current.startup);
 }
 
-async function context(req: Request, res: Response) {
-  const input = req.method === 'GET' ? req.query : req.body;
+async function context(req: Request, res: Response, input = req.method === 'GET' ? req.query : req.body) {
   const access = await requireOwnedProject(req, res, String(input?.projectId || ''));
   if (!access) return null;
   const authority = await projectCardAuthority(access.projectId, String(input?.deckId || 'deck_builder'));
@@ -119,7 +127,7 @@ async function prepareProfiles(scope: Context, target: ProjectCardBinding) {
   }));
 }
 
-async function findExistingCanonicalChat(profile: string, summary?: Rpc | null): Promise<string | null> {
+export async function findExistingCanonicalChat(profile: string, summary?: Rpc | null): Promise<string | null> {
   const result = await requestForBot(profile, 'session.list', { title: 'Bot Chat', include_hidden: true, limit: 200 });
   const rows = result.sessions.filter((row: Rpc) => (row.root_title || row.title) === 'Bot Chat');
   if (rows.length > 1) throw new Error('card_conversation_ambiguous');
@@ -147,12 +155,34 @@ async function openBotCanonicalChat(profile: string): Promise<string> {
   return openStoredBotChat(profile, sessionId);
 }
 
+export async function prepareTerminalConversation(req: Request, res: Response) {
+  const scope = await context(req, res, req.params);
+  if (!scope) return null;
+  const card = scope.authority.cards.find(item => item.card.id === req.params.cardId);
+  if (!card || card === scope.authority.main || card.card.runtime.kind !== 'hermes') {
+    res.status(400).json({ error: 'card_cli_unavailable' }); return null;
+  }
+  await prepareProfiles(scope, card);
+  return { projectId: scope.projectId, deckId: scope.deckId, cardId: card.card.id,
+    profile: card.profile, sessionId: await openBotCanonicalChat(card.profile) };
+}
+
 function failure(res: Response, error: unknown) {
   const code = error instanceof Error ? error.message : 'main_request_failed';
   if (!res.headersSent) res.status(503).json({ error: code });
   else if (!res.writableEnded && !res.destroyed) {
     res.write(`event: error\ndata: ${JSON.stringify({ code, message: code })}\n\n`); res.end();
   }
+}
+
+function projectInputRequests(scope: Context, card: ProjectCardBinding, snapshot: Rpc) {
+  return (snapshot.prompts || []).filter((prompt: Rpc) => ['approval', 'clarify'].includes(prompt.kind)).map((prompt: Rpc) => ({
+    projectId: scope.projectId, deckId: scope.deckId, cardId: card.card.id,
+    address: card === scope.authority.main ? '' : card.address || card.title,
+    sessionId: snapshot.session_id, requestId: prompt.prompt_id, kind: prompt.kind,
+    question: prompt.question, command: prompt.command, description: prompt.description,
+    choices: prompt.choices, multiSelect: prompt.multi_select === true,
+  }));
 }
 
 router.post('/activity', async (req, res) => {
@@ -165,12 +195,44 @@ router.post('/activity', async (req, res) => {
     const observed = await Promise.allSettled(cards.map(async card => {
       await assertCardProfileOwner(card.profile, scope.ownerUserId);
       const live = await requestForBot(card.profile, 'session.active_list');
-      return { cardId: card.card.id, state: live.sessions.some((row: Rpc) => ['working', 'streaming'].includes(row.status)) ? 'running' : 'idle' };
+      const working = live.sessions.filter((row: Rpc) => ['working', 'streaming'].includes(row.status));
+      const inputRequests = (await Promise.all(live.sessions.filter((row: Rpc) => row.title === 'Bot Chat'
+        && ['working', 'streaming', 'waiting'].includes(row.status)).map(async (row: Rpc) => {
+        const snapshot = await requestForBot(card.profile, 'session.resume', { session_id: row.id, defer_history: true, omit_messages: true });
+        return projectInputRequests(scope, card, snapshot);
+      }))).flat();
+      return { cardId: card.card.id, state: working.length ? 'running' : 'idle', activeCount: working.length, inputRequests };
     }));
     res.json({ ok: true, results: observed.flatMap(row => row.status === 'fulfilled' ? [row.value] : []),
       failedCardIds: observed.flatMap((row, index) => row.status === 'rejected' ? [cards[index].card.id] : []),
       mainCanonicalSession: summary ? { id: summary.id, resolvedId: summary.resolved_id || summary.id,
         lastActive: summary.last_active, messageCount: summary.message_count } : null });
+  } catch (error) { failure(res, error); }
+});
+
+router.post('/respond', async (req, res) => {
+  try {
+    const scope = await context(req, res);
+    if (!scope) return;
+    const { cardId, sessionId, requestId, kind, answer } = req.body;
+    const card = [scope.authority.main, ...scope.roster].find(item => item.card.id === cardId);
+    if (!card || !['approval', 'clarify'].includes(kind) || typeof requestId !== 'string' || typeof answer !== 'string') {
+      res.status(400).json({ error: 'agent_input_response_invalid' }); return;
+    }
+    await assertCardProfileOwner(card.profile, scope.ownerUserId);
+    if (await findExistingCanonicalChat(card.profile) !== sessionId) {
+      res.status(409).json({ error: 'main_session_changed' }); return;
+    }
+    const snapshot = await requestForBot(card.profile, 'session.resume', { session_id: sessionId, defer_history: true, omit_messages: true });
+    const prompt = snapshot.prompts?.find((item: Rpc) => item.prompt_id === requestId && item.kind === kind);
+    if (!prompt) { res.status(409).json({ error: 'agent_input_expired' }); return; }
+    if (kind === 'approval' && !prompt.choices.includes(answer)) {
+      res.status(400).json({ error: 'agent_input_choice_invalid' }); return;
+    }
+    const result = await requestForBot(card.profile, `${kind}.respond`, {
+      session_id: sessionId, request_id: requestId, [kind === 'approval' ? 'choice' : 'answer']: answer,
+    });
+    res.json({ ok: true, result });
   } catch (error) { failure(res, error); }
 });
 

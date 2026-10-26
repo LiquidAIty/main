@@ -3,7 +3,9 @@
 [Overview](README.md) · [Execution law](AGENTS.md) · [Known failures](DONT.md) · [Current architecture](ARCHITECTURE.md) · [Deferred work](FUTURE.md)
 
 This file records current status and the next approved boundary. It is not runtime input, a task
-ledger, a historical report, or authority to begin deferred work.
+ledger, a historical report, or authority to begin deferred work. Root [nextturn.md](nextturn.md) is
+the replace-each-turn scratch handoff; [ARCHITECTURE.md](ARCHITECTURE.md#bot-mode-application-boundary)
+owns the durable Bot Mode implementation description.
 
 ## Product outcome
 
@@ -19,8 +21,9 @@ LiquidAIty's MVP is a persistent Project workbench where:
 - Team remains a saved general-purpose agent; automatic worker behavior is deferred;
 - specialized domain Cards add bounded capabilities without becoming graph authorities.
 
-One canonical `in.idf` carries the exact saved Card revision, current dynamic input, selected provider
-references/data, images, and effective grants into the connected Card runtime.
+The retained saved-Card Run contract uses one canonical `in.idf` for saved revision, dynamic input,
+selected data, images and grants. The current Bot Mode chat route submits directly to Hermes; its
+working conversation is not proof of Run/IDF or completed-Main graph-capture integration.
 
 ## Current source truth
 
@@ -108,13 +111,32 @@ candidate-worker, scheduler, task-store, or worker-pool behavior is current or p
 - The connected runtime owns inference, delivery, recipient execution, transcripts, queues, retries, and
   completion. LiquidAIty has no direct target runner, reply-wait protocol, task-progress mirror, or separate
   Magnetic runtime owner.
-- Team automatic work and Magnetic task execution remain paused until ordinary messaging passes live proof.
+- Team automatic work and Magnetic task execution remain deferred. Ordinary messaging's live proof
+  does not authorize starting those separate workflows.
+
+### Bot Mode checkpoint — 2026-10-26
+
+Ordinary Main, direct `@Trader`, real Main-to-Trader delivery/reply, conversation persistence and image
+understanding have live evidence, with the owner accepting the direct replies. Builder's visible CLI
+accepted a question, executed its Terminal tool, answered and returned to its prompt. The owner's
+No thanks choice is saved with collection/upload disabled. This is not full Desktop, all-Project or
+Oracle acceptance; see [the implementation boundary](ARCHITECTURE.md#bot-mode-application-boundary)
+and [dated evidence](docs/reports/botmode-closeout.md).
+
+Remaining Bot Mode-related gaps are local voice recognition blocked by Windows App Control, actual
+microphone-to-audible-reply acceptance, genuine structured approval/clarification, prior CLI disconnect
+cause/recovery, other eligible CLI turns, intended Builder workspace binding, saved configuration
+publication, active-input steering, shared-profile Project isolation and deployment acceptance.
+Edge synthesis passed after the authorized dependency update. Inline sent images, nonempty Data Anchors,
+Automatic Team and Magnetic TaskGraphs remain outside the completed baseline. No new runtime work is
+authorized by this list.
 
 ## Current gaps before live acceptance
 
 These are acceptance gaps, not permission to expand the current runtime:
 
-1. The rejected Main messaging entry has been removed; live Main messaging acceptance is unavailable.
+1. The former removed-entry blocker is superseded by the current Bot Mode checkpoint above. Do not
+   restore the deleted application runtime owners; preserve the accepted Gateway conversation path.
 2. Main's approved quick-Web direction is not present in its source-default toolsets.
 3. Main's source-default prompt describes ThinkGraph/KnowGraph use, but the server's default new-Project
    topology does not attach those orange edges.

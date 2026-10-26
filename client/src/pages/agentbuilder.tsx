@@ -4,6 +4,9 @@
  * Entity: Projects
  * Relationship: This file binds workspace selection, navigation, canonical deck load, and save scope to the active Project.
  * Entity: Main Chat
+ * Relationship: Connects the Project conversation hook to the existing composer, server-resolved agent roster, Stop action, and voice controls.
+ * Entity: Agent Input
+ * Relationship: Passes the existing roster's Hermes questions to the Project conversation without creating another observer.
  * Entity: Builder Card
  * Relationship: This file mounts the saved Builder Card's own terminal as the permanent lower work surface beneath Main.
  * Entity: Saved Cards
@@ -1280,6 +1283,7 @@ export default function AgentBuilder(): React.ReactElement {
             });
           }}
           knowledgeProjectId={projectId}
+          inputRequests={cardActivity.inputRequests}
           entityMatcher={canonicalEntityMatcher}
           onEntityFocus={handleCanonicalEntityFocus}
           onEvidenceFocus={handleKnowEvidenceFocus}
