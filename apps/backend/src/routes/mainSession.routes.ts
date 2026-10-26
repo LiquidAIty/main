@@ -3,6 +3,8 @@
  * Relationship: Connects the existing Project conversation to saved Card profiles using Hermes Desktop's Gateway client and Bot Chat operations.
  * Entity: Agent Messaging
  * Relationship: Saved wires define the roster; Hermes owns execution, message_agent, recipient delivery, and continuation.
+ * Entity: Voice
+ * Relationship: Forwards browser audio and completed speech text to the addressed saved profile's Hermes audio endpoints.
  */
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,7 +19,7 @@ import { requireOwnedProject } from './projectAccess';
 
 const router = Router();
 type Rpc = Record<string, any>;
-let connected: Promise<{ client: any; startup: number; submit: number; closeTickets: () => void }> | undefined;
+let connected: ReturnType<typeof connectGateway> | undefined;
 
 async function connectGateway() {
   const root = path.join(resolveRepoRoot(), 'HermesLatest');
@@ -33,10 +35,20 @@ async function connectGateway() {
   const resolveTicket = tickets.createGatewayTicketResolver(
     async () => ({ command: executable('python'), args: [], kind: 'python', shell: false, env: { PYTHONPATH: root } }), () => root,
   );
+  local.configurePythonGatewayTicketClient(resolveTicket);
   const client = new api.HermesGateway();
   const ticket = await resolveTicket(descriptor.gatewayEndpoint, 'interactive');
   await client.connect(local.createLocalGatewayDials().prepare(descriptor.baseUrl, ticket, 0));
-  return { client, startup: api.STARTUP_REQUEST_TIMEOUT_MS, submit: api.PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
+  const audio = async (profile: string, operation: 'transcribe' | 'speak', body: Rpc, signal: AbortSignal) => {
+    const url = `${descriptor.baseUrl}/api/audio/${operation}?profile=${encodeURIComponent(profile)}`;
+    const headers = await local.nativeGatewayHttpHeaders(descriptor, url, home, 'POST', body);
+    const response = await fetch(url, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal, redirect: 'error' });
+    const result = await response.json() as Rpc;
+    if (!response.ok || result.ok !== true) throw new Error(String(result.detail || result.error || `voice_${operation}_failed`));
+    return result;
+  };
+  return { client, audio, startup: api.STARTUP_REQUEST_TIMEOUT_MS, submit: api.PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
     closeTickets: tickets.closeGatewayTicketBridges as () => void };
 }
 
@@ -82,6 +94,12 @@ async function context(req: Request, res: Response) {
 }
 
 type Context = NonNullable<Awaited<ReturnType<typeof context>>>;
+function addressedCard(scope: Context, message: string) {
+  const address = /^@([^\s]+)(?:\s|$)/u.exec(message)?.[1];
+  const matches = address ? scope.roster.filter(card => card.address?.toLowerCase() === address.toLowerCase()) : [scope.authority.main];
+  if (matches.length !== 1) throw new Error('main_agent_address_unavailable');
+  return matches[0];
+}
 const speaker = (card: ProjectCardBinding) => ({ kind: 'card' as const, cardId: card.card.id,
   label: card.title, profile: card.profile, address: card.address });
 
@@ -205,10 +223,7 @@ router.post('/chat', async (req, res) => {
     if (req.body.dataAnchors?.length) { res.status(422).json({ error: 'main_data_anchor_transport_unavailable' }); return; }
     const scope = await context(req, res);
     if (!scope) return;
-    const address = /^@([^\s]+)(?:\s|$)/u.exec(message)?.[1];
-    const matches = address ? scope.roster.filter(card => card.address?.toLowerCase() === address.toLowerCase()) : [scope.authority.main];
-    if (matches.length !== 1) throw new Error('main_agent_address_unavailable');
-    const card = matches[0];
+    const card = addressedCard(scope, message);
     await prepareProfiles(scope, card);
     const sessionId = await openBotCanonicalChat(card.profile);
     const history = await requestForBot(card.profile, 'session.history', { session_id: sessionId });
@@ -242,7 +257,7 @@ router.post('/chat', async (req, res) => {
         if (payload.error || payload.status === 'error') throw new Error(String(payload.error || payload.failure_reason || 'card_turn_failed'));
         const text = typeof payload.text === 'string' ? payload.text : '';
         await refreshOpenBotChat(scope, card, sessionId, before);
-        send('done', { fullText: text ? prefix + text : '' }); res.end();
+        send('done', { fullText: text ? prefix + text : '', speechText: text }); res.end();
       }).catch(error => failure(res, error));
     });
     const offState = client.onState((state: string) => {
@@ -250,6 +265,7 @@ router.post('/chat', async (req, res) => {
     });
     detach = () => { offEvent(); offState(); };
     submission = requestForBot(card.profile, 'prompt.submit', { session_id: sessionId, text: message,
+      ...(req.body.voiceTurn === true ? { voice_turn: true } : {}),
       submission_id: submissionId, ...(attachments.length ? { attachments } : {}) }).then(async receipt => {
       if (receipt.admission_id) await appendConversationTurn({ projectId: scope.projectId, conversationId: scope.projectId, messages: [{
         messageId: submissionId, role: 'user', content: message, speaker: { kind: 'user', label: 'You' }, target: speaker(card),
@@ -262,6 +278,27 @@ router.post('/chat', async (req, res) => {
     }
   } catch (error) { detach(); failure(res, error); }
 });
+
+for (const operation of ['transcribe', 'speak'] as const) {
+  router.post(`/voice/${operation}`, async (req, res) => {
+    const controller = new AbortController();
+    res.once('close', () => controller.abort());
+    try {
+      const scope = await context(req, res);
+      if (!scope) return;
+      const card = operation === 'speak'
+        ? [scope.authority.main, ...scope.roster].find(item => item.card.id === req.body.cardId)
+        : addressedCard(scope, typeof req.body.message === 'string' ? req.body.message : '');
+      if (!card) { res.status(403).json({ error: 'main_agent_address_unavailable' }); return; }
+      await assertCardProfileOwner(card.profile, scope.ownerUserId);
+      const body = operation === 'transcribe'
+        ? { data_url: req.body.dataUrl, mime_type: req.body.mimeType }
+        : { text: req.body.text };
+      const result = await (await gateway()).audio(card.profile, operation, body, controller.signal);
+      if (!res.destroyed) res.json(result);
+    } catch (error) { if (!controller.signal.aborted) failure(res, error); }
+  });
+}
 
 router.post('/stop', async (req, res) => {
   try {

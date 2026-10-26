@@ -5,6 +5,8 @@
  * Relationship: This file offers @Card completion only from Main's server-supplied authorized roster without rewriting submitted text or replies.
  * Entity: Card Invocation
  * Relationship: This file submits exact user text and bounded image records through the one Main invocation callback while keeping the composer available during active work.
+ * Entity: Voice
+ * Relationship: The existing microphone control carries the current draft and images into the same saved-agent conversation without changing layout.
  * Entity: IDF
  * Relationship: This file enforces the same image type, filename, count, and byte ceilings accepted by canonical IDF materialization.
  * Entity: Project Knowledge Graph
@@ -452,7 +454,7 @@ export default function MainProjectChat({
   error?: string | null;
   voiceError?: string | null;
   voicePhase?: MainChatVoicePhase;
-  onVoiceStart?: () => void;
+  onVoiceStart?: (draft: string, runInput: MainChatRunInput) => void | boolean | Promise<boolean>;
   onVoiceStop?: () => void;
   onStop?: () => void;
   draft?: string;
@@ -911,9 +913,17 @@ export default function MainProjectChat({
                   : voicePhase === "processing"
                     ? "Processing voice"
                     : "Speaking"}
-              onClick={voicePhase === "idle" || voicePhase === "error"
-                ? onVoiceStart
-                : onVoiceStop}
+              onClick={() => {
+                if (voicePhase !== "idle" && voicePhase !== "error") { onVoiceStop(); return; }
+                const voiceDraft = value;
+                const voiceImages = images;
+                const epoch = imageReadEpochRef.current;
+                void Promise.resolve(onVoiceStart(voiceDraft, { images: voiceImages })).then((accepted) => {
+                  if (accepted !== true || epoch !== imageReadEpochRef.current) return;
+                  if (inputRef.current?.value === voiceDraft) setValue("");
+                  setImages((current) => current === voiceImages ? [] : current);
+                });
+              }}
               disabled={interactionDisabled}
               className="rounded-full flex items-center justify-center"
               style={{

@@ -6,6 +6,8 @@
  * Entity: Card Invocation
  * Relationship: This file assembles one Main Run request from exact user text, bounded images, and selected references and retains partial text on failure or cancellation.
  * Relationship: This file retains the observed Hermes conversation identity for the existing Stop action.
+ * Entity: Voice
+ * Relationship: Captures this browser's microphone, submits its Hermes transcript once, and plays the replying Card's Hermes speech without changing saved prompts.
  * Entity: Data Anchors
  * Relationship: This file converts selected reference order into bounded Run priorities without changing provider identity or resolved data.
  */
@@ -23,9 +25,8 @@ import {
   type MainRunImage,
   SessionStreamError,
   stopSession,
-  stopVoiceCapture,
+  requestVoiceAudio,
   streamSession,
-  streamVoiceCapture,
 } from './mainSessionClient';
 
 export type MainProjectChatMessage = MainConversationMessage & {
@@ -34,7 +35,7 @@ export type MainProjectChatMessage = MainConversationMessage & {
 };
 
 export type MainChatVoicePhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
-export type MainChatRunInput = { images?: MainRunImage[] };
+export type MainChatRunInput = { images?: MainRunImage[]; voiceTurn?: boolean };
 export const MAX_MAIN_CHAT_IMAGES = 4;
 
 type UseAgentBuilderMainChatArgs = {
@@ -115,8 +116,8 @@ export default function useAgentBuilderMainChat({
   }>());
   const sessionIdRef = useRef('');
   const voiceControllerRef = useRef<AbortController | null>(null);
-  const voiceTranscriptRef = useRef<string | null>(null);
-  const voiceTurnActiveRef = useRef(false);
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
   const historyWatermarkRef = useRef<{
     key: string; lastActive: number; messageCount?: number | null;
   }>({ key: '', lastActive: 0 });
@@ -186,8 +187,8 @@ export default function useAgentBuilderMainChat({
     sessionIdRef.current = '';
     voiceControllerRef.current?.abort();
     voiceControllerRef.current = null;
-    voiceTranscriptRef.current = null;
-    voiceTurnActiveRef.current = false;
+    voiceAudioRef.current?.pause();
+    voiceAudioRef.current = null;
     historyRequestRef.current += 1;
     activityHistoryControllerRef.current?.abort();
     activityHistoryControllerRef.current = null;
@@ -218,6 +219,8 @@ export default function useAgentBuilderMainChat({
     return () => {
       cancelled = true;
       controller.abort();
+      voiceControllerRef.current?.abort();
+      voiceAudioRef.current?.pause();
       historyRequestRef.current += 1;
       activityHistoryControllerRef.current?.abort();
       activityHistoryControllerRef.current = null;
@@ -256,7 +259,7 @@ export default function useAgentBuilderMainChat({
   const requestMainText = useCallback(async (
     text: string,
     runInput: MainChatRunInput = {},
-  ): Promise<string> => {
+  ): Promise<{ text: string; cardId: string; speechText: string }> => {
     if (!text.trim()) throw new Error('main_prompt_empty');
     if (!canvasProjectId) throw new Error('main_project_required');
     const requestKey = globalThis.crypto.randomUUID();
@@ -291,6 +294,8 @@ export default function useAgentBuilderMainChat({
 
     const images = [...(runInput.images || [])];
     let finalText = '';
+    let cardId = '';
+    let speechText = '';
     let streamedText = '';
     const appendText = (chunk: string) => {
       if (!chunk) return;
@@ -352,6 +357,7 @@ export default function useAgentBuilderMainChat({
         deckId,
         message: text,
         images,
+        voiceTurn: runInput.voiceTurn,
         dataAnchors: dataAnchors.map(({ order, ...anchor }) => ({
           ...anchor,
           priority: order === 0 ? 0 : -order,
@@ -364,7 +370,9 @@ export default function useAgentBuilderMainChat({
           ) throw new Error('main_run_identity_mismatch');
           if (event.kind === 'session' && typeof event.sessionId === 'string') {
             sessionIdRef.current = event.sessionId;
+            cardId = event.cardId || '';
           }
+          if (event.kind === 'done' && typeof event.speechText === 'string') speechText = event.speechText;
           if (event.kind === 'session' || event.kind === 'text') {
             setTurnState({ key: projectKey, phase: 'active' });
           }
@@ -404,7 +412,7 @@ export default function useAgentBuilderMainChat({
               : message
           )),
         }));
-        return '';
+        return { text: '', cardId, speechText: '' };
       }
       setTranscript((current) => {
         if (current.key !== projectKey) return current;
@@ -436,7 +444,7 @@ export default function useAgentBuilderMainChat({
         setTechnical({ key: projectKey, error: 'conversation_history_read_failed' });
       });
     }
-    return finalText;
+    return { text: finalText, cardId, speechText };
   }, [
     addressableAgents,
     canvasProjectId,
@@ -455,82 +463,102 @@ export default function useAgentBuilderMainChat({
     return true;
   }, [addressableAgents, canvasProjectId, projectKey, requestMainText]);
 
-  const startVoiceSession = useCallback(() => {
-    if (!canvasProjectId || sessionPending || voiceControllerRef.current) return;
+  const startVoiceSession = useCallback(async (draft = '', runInput: MainChatRunInput = {}): Promise<boolean> => {
+    if (!canvasProjectId || voiceControllerRef.current) return false;
     const controller = new AbortController();
+    const { signal } = controller;
     voiceControllerRef.current = controller;
-    voiceTranscriptRef.current = null;
-    voiceTurnActiveRef.current = false;
-    setVoiceState({ key: projectKey, phase: 'listening', error: null });
-    void streamVoiceCapture({
-      projectId: canvasProjectId,
-      deckId,
-      signal: controller.signal,
-      onEvent: (event) => {
-        if (event.kind === 'error') {
-          setVoiceState({ key: projectKey, phase: 'error', error: event.error || 'voice_failed' });
-          return;
-        }
-        if (event.kind === 'status') {
-          const status = String(
-            event.event?.payload?.state
-            || event.event?.payload?.status
-            || event.state?.status
-            || '',
-          );
-          if (status === 'speaking') setVoiceState({ key: projectKey, phase: 'speaking', error: null });
-          else if (status === 'recording' || status === 'listening') {
-            voiceTranscriptRef.current = null;
-            setVoiceState({ key: projectKey, phase: 'listening', error: null });
-          }
-          return;
-        }
-        if (event.kind !== 'transcript') return;
-        const payload = event.event?.payload || {};
-        if (payload.stop_phrase === true || payload.no_speech_limit === true) {
-          voiceTranscriptRef.current = null;
-          voiceTurnActiveRef.current = false;
-          setVoiceState({ key: projectKey, phase: 'idle', error: null });
-          return;
-        }
-        const text = String(payload.text || payload.transcript || '').trim();
-        if (!text || voiceTranscriptRef.current === text || voiceTurnActiveRef.current) return;
-        voiceTranscriptRef.current = text;
-        voiceTurnActiveRef.current = true;
-        setVoiceState({ key: projectKey, phase: 'processing', error: null });
-        void requestMainText(text).then(() => {
-          setVoiceState({ key: projectKey, phase: 'idle', error: null });
-        }).catch((error) => {
-          setVoiceState({
-            key: projectKey,
-            phase: 'error',
-            error: error instanceof Error ? error.message : 'voice_transcript_failed',
-          });
-        }).finally(() => {
-          voiceTurnActiveRef.current = false;
-        });
-      },
-    }).catch((error) => {
-      if (controller.signal.aborted) return;
-      setVoiceState({
-        key: projectKey,
-        phase: 'error',
-        error: error instanceof Error ? error.message : 'voice_failed',
+    let stream: MediaStream | undefined;
+    let submitted = false;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') throw new Error('microphone_unavailable');
+      setVoiceState({ key: projectKey, phase: 'processing', error: null });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      signal.throwIfAborted();
+      const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/wav']
+        .find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      voiceRecorderRef.current = recorder;
+      const recorded = await new Promise<Blob>((resolve, reject) => {
+        const chunks: Blob[] = [];
+        const cancel = () => { if (recorder.state !== 'inactive') recorder.stop(); reject(signal.reason); };
+        signal.addEventListener('abort', cancel, { once: true });
+        recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+        recorder.onerror = () => {
+          signal.removeEventListener('abort', cancel);
+          reject(new Error('microphone_recording_failed'));
+        };
+        recorder.onstop = () => {
+          signal.removeEventListener('abort', cancel);
+          stream?.getTracks().forEach(track => track.stop());
+          resolve(new Blob(chunks, { type: recorder.mimeType }));
+        };
+        recorder.start();
+        setVoiceState({ key: projectKey, phase: 'listening', error: null });
       });
-    }).finally(() => {
-      if (voiceControllerRef.current === controller) voiceControllerRef.current = null;
-    });
-  }, [canvasProjectId, deckId, projectKey, requestMainText, sessionPending]);
+      voiceRecorderRef.current = null;
+      signal.throwIfAborted();
+      setVoiceState({ key: projectKey, phase: 'processing', error: null });
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(recorded);
+      });
+      const result = await requestVoiceAudio('transcribe', { projectId: canvasProjectId, deckId,
+        message: draft, dataUrl, mimeType: recorded.type }, signal);
+      signal.throwIfAborted();
+      if (typeof result.transcript !== 'string') throw new Error('voice_transcript_missing');
+      if (!result.transcript.trim()) { setVoiceState({ key: projectKey, phase: 'idle', error: null }); return false; }
+      const message = draft ? `${draft}${/\s$/u.test(draft) ? '' : ' '}${result.transcript}` : result.transcript;
+      const reply = await requestMainText(message, { ...runInput, voiceTurn: true });
+      submitted = true;
+      signal.throwIfAborted();
+      if (reply.speechText) {
+        const spoken = await requestVoiceAudio('speak', { projectId: canvasProjectId, deckId,
+          cardId: reply.cardId, text: reply.speechText }, signal);
+        signal.throwIfAborted();
+        if (!spoken.data_url?.startsWith('data:audio/')) throw new Error('voice_audio_missing');
+        const audio = new Audio(spoken.data_url);
+        voiceAudioRef.current = audio;
+        await new Promise<void>((resolve, reject) => {
+          const cancel = () => { audio.pause(); reject(signal.reason); };
+          signal.addEventListener('abort', cancel, { once: true });
+          const finished = () => signal.removeEventListener('abort', cancel);
+          audio.onended = () => { finished(); resolve(); };
+          audio.onerror = () => { finished(); reject(new Error('voice_playback_failed')); };
+          void audio.play().then(() => setVoiceState({ key: projectKey, phase: 'speaking', error: null }))
+            .catch(error => { finished(); reject(error); });
+        });
+      }
+      setVoiceState({ key: projectKey, phase: 'idle', error: null });
+      return true;
+    } catch (error) {
+      if (!signal.aborted) setVoiceState({ key: projectKey, phase: 'error',
+        error: error instanceof Error ? error.message : 'voice_failed' });
+      return submitted;
+    } finally {
+      stream?.getTracks().forEach(track => track.stop());
+      if (voiceControllerRef.current === controller) {
+        voiceControllerRef.current = null;
+        voiceRecorderRef.current = null;
+        voiceAudioRef.current?.pause();
+        voiceAudioRef.current = null;
+      }
+    }
+  }, [canvasProjectId, deckId, projectKey, requestMainText]);
 
-  const stopVoiceSession = useCallback(async () => {
-    if (!canvasProjectId) return;
-    await stopVoiceCapture({ projectId: canvasProjectId, deckId });
+  const stopVoiceSession = useCallback(() => {
+    if (voiceRecorderRef.current?.state === 'recording') {
+      voiceRecorderRef.current.stop();
+      setVoiceState({ key: projectKey, phase: 'processing', error: null });
+      return;
+    }
     voiceControllerRef.current?.abort();
     voiceControllerRef.current = null;
-    voiceTranscriptRef.current = null;
-    voiceTurnActiveRef.current = false;
+    voiceAudioRef.current?.pause();
     setVoiceState({ key: projectKey, phase: 'idle', error: null });
-  }, [canvasProjectId, deckId, projectKey]);
+  }, [projectKey]);
 
   const stopMainTurn = useCallback(async () => {
     if (!sessionPending || !canvasProjectId) return;

@@ -3,6 +3,8 @@
  * Entity: Card Invocation
  * Relationship: This file submits exact user text, bounded images, and selected Data Anchors with unique message identities and rejects incomplete or conflicting completion frames.
  * Relationship: This file transports the saved conversation identity for Stop and preserves request failure and completion responses.
+ * Entity: Voice
+ * Relationship: Sends browser recordings and reply text through authenticated, Project-scoped Hermes transcription and speech routes.
  * Entity: Data Anchors
  * Relationship: This file defines and transports only bounded provider reference identities, reasons, priorities, expansion limits, and required flags for the current Main Run.
  */
@@ -126,6 +128,7 @@ export async function streamSession(args: {
   deckId?: string;
   message: string;
   images?: MainRunImage[];
+  voiceTurn?: boolean;
   dataAnchors?: DataAnchor[];
   onEvent: (event: MainSessionEvent) => void;
   signal?: AbortSignal;
@@ -143,6 +146,7 @@ export async function streamSession(args: {
         clientMessageId: clientMessageId(),
         dataAnchors: args.dataAnchors || [],
         ...(args.images?.length ? { images: args.images } : {}),
+        ...(args.voiceTurn ? { voiceTurn: true } : {}),
       }),
       signal: args.signal,
     });
@@ -308,104 +312,31 @@ export async function loadSessionHistory(args: {
   return history;
 }
 
-export type MainVoiceStreamEvent = {
-  kind: 'ready' | 'status' | 'transcript' | 'error';
-  projectId?: string;
-  deckId?: string;
+export async function requestVoiceAudio(operation: 'transcribe' | 'speak', args: {
+  projectId: string;
+  deckId: string;
+  message?: string;
   cardId?: string;
-  state?: Record<string, unknown>;
-  event?: { payload?: Record<string, unknown> };
-  error?: string;
-};
-
-export async function streamVoiceCapture(args: {
-  projectId: string;
-  deckId: string;
-  tts?: boolean;
-  signal?: AbortSignal;
-  onEvent: (event: MainVoiceStreamEvent) => void;
-}): Promise<void> {
-  const route = `${BASE}/voice/start`;
+  dataUrl?: string;
+  mimeType?: string;
+  text?: string;
+}, signal: AbortSignal): Promise<{ transcript?: string; data_url?: string }> {
+  const route = `${BASE}/voice/${operation}`;
   const response = await fetch(route, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId: args.projectId,
-      deckId: args.deckId,
-      tts: args.tts !== false,
-    }),
-    signal: args.signal,
-  });
-  if (!response.ok || !response.body) {
-    const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
-    throw new SessionStreamError({
-      code: typeof payload?.error === 'string' ? payload.error : 'main_voice_start_failed',
-      message: `Voice start failed with status ${response.status}.`,
-      route,
-      status: response.status,
-    });
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let failure: SessionStreamError | null = null;
-  const receive = (kind: string, data: Record<string, unknown>) => {
-    if (!['ready', 'status', 'transcript', 'error'].includes(kind)) return;
-    const event = { ...data, kind } as MainVoiceStreamEvent;
-    if (
-      (event.projectId && event.projectId !== args.projectId)
-      || (event.deckId && event.deckId !== args.deckId)
-    ) {
-      throw new SessionStreamError({
-        code: 'main_voice_event_identity_mismatch',
-        message: 'Voice transport returned an event for another Project.',
-        route,
-      });
-    }
-    args.onEvent(event);
-    if (kind === 'error') {
-      failure = new SessionStreamError({
-        code: event.error || 'main_voice_stream_failed',
-        message: event.error || 'Voice transport reported a failure.',
-        route,
-      });
-    }
-  };
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    buffer = parseSseFrames(buffer, receive);
-  }
-  buffer += decoder.decode();
-  parseSseFrames(buffer, receive);
-  if (failure) throw failure;
-}
-
-export async function stopVoiceCapture(args: {
-  projectId: string;
-  deckId: string;
-  cancel?: boolean;
-}): Promise<void> {
-  const route = `${BASE}/voice/stop`;
-  const response = await fetch(route, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId: args.projectId,
-      deckId: args.deckId,
-      cancel: args.cancel === true,
-    }),
+    body: JSON.stringify(args),
+    signal,
   });
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok || payload?.ok !== true) {
     throw new SessionStreamError({
-      code: typeof payload?.error === 'string' ? payload.error : 'main_voice_stop_failed',
-      message: `Voice stop failed with status ${response.status}.`,
+      code: typeof payload?.error === 'string' ? payload.error : `voice_${operation}_failed`,
+      message: typeof payload?.error === 'string' ? payload.error : `Voice request failed with status ${response.status}.`,
       route,
       status: response.status,
     });
   }
+  return payload;
 }
