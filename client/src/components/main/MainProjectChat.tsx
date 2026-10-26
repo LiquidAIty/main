@@ -2,7 +2,7 @@
  * Entity: Main Chat
  * Relationship: This file renders the Project conversation and bounded composer, preserving drafts on rejected submissions and showing transport failures outside assistant speech.
  * Entity: Agent Messaging
- * Relationship: This file offers @Card completion only from Main's server-supplied authorized direct roster and renders the actual replying Card identity.
+ * Relationship: This file offers @Card completion only from Main's server-supplied authorized roster without rewriting submitted text or replies.
  * Entity: Card Invocation
  * Relationship: This file submits exact user text and bounded image records through the one Main invocation callback while keeping the composer available during active work.
  * Entity: IDF
@@ -61,16 +61,14 @@ function safeText(value: unknown): string {
 }
 
 type MainProjectChatMessage = {
-  role: "assistant" | "user";
+  role: string;
   text: string;
-  speaker: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
-  target?: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
   linkedEvidenceIds?: string[];
   status?: "pending" | "complete" | "error";
 };
 
 function shouldRenderMessage(message: MainProjectChatMessage): boolean {
-  return message.role !== "assistant" || Boolean(safeText(message.text).trim());
+  return Boolean(safeText(message.text).trim());
 }
 
 type ComposerImage = { name: string; mediaType: string; dataUrl: string; kind: "user-upload" };
@@ -135,7 +133,9 @@ function linkedChatText(
   onEntityFocus: ((target: CanonicalEntityFocusTarget) => void) | undefined,
   keyPrefix: string,
 ): ReactNode[] {
-  const segments = entityMatcher?.segmentMessage(role, text) || [{ text }];
+  const segments = (role === 'assistant' || role === 'user')
+    ? entityMatcher?.segmentMessage(role, text) || [{ text }]
+    : [{ text }];
   return segments.map((segment, index) => segment.target && onEntityFocus ? (
     <button
       key={`${keyPrefix}:entity:${index}`}
@@ -307,7 +307,6 @@ function renderChatMarkdown(
 function MainProjectChatMessageBubble({
   colors,
   laneWidth,
-  mainCardId,
   message,
   entityMatcher,
   onEntityFocus,
@@ -315,14 +314,13 @@ function MainProjectChatMessageBubble({
 }: {
   colors: MainProjectChatColors;
   laneWidth: number | null;
-  mainCardId?: string;
   message: MainProjectChatMessage;
   entityMatcher?: CanonicalEntityMatcher | null;
   onEntityFocus?: (target: CanonicalEntityFocusTarget) => void;
   onEvidenceFocus?: (episodeId: string) => void;
 }) {
   const text = safeText(message.text);
-  const isUser = message.role !== "assistant";
+  const isUser = message.role === "user";
   const horizontalPadding = isUser ? 30 : 32;
   const maximumBubbleWidth = laneWidth == null
     ? null
@@ -345,12 +343,6 @@ function MainProjectChatMessageBubble({
   const measuredBubbleWidth = measuredContentWidth == null
     ? null
     : Math.ceil(measuredContentWidth + horizontalPadding);
-  const showSpeaker = !isUser
-    && Boolean(message.speaker.cardId)
-    && message.speaker.cardId !== mainCardId;
-  const speakerAddress = safeText(message.speaker.address || message.speaker.label)
-    .replace(/^@/, "");
-
   return (
     <div
       style={{
@@ -366,22 +358,6 @@ function MainProjectChatMessageBubble({
           width: measuredBubbleWidth == null ? "fit-content" : measuredBubbleWidth,
         }}
       >
-        {showSpeaker ? (
-          <div
-            data-testid="main-chat-speaker"
-            style={{
-              color: message.status === "error" ? "#FF9B9B" : colors.neutral,
-              fontSize: 10.5,
-              fontWeight: 700,
-              letterSpacing: "0.04em",
-              margin: "0 6px 5px",
-              textTransform: "uppercase",
-              textAlign: "left",
-            }}
-          >
-            @{speakerAddress}
-          </div>
-        ) : null}
         <div
           style={{
             boxSizing: "border-box",
@@ -443,7 +419,6 @@ function MainProjectChatMessageBubble({
 
 export default function MainProjectChat({
   messages,
-  mainCardId,
   directChatTargets = [],
   onSend,
   knowledgeProjectId,
@@ -463,8 +438,6 @@ export default function MainProjectChat({
   onEvidenceFocus,
 }: {
   messages: MainProjectChatMessage[];
-  /** Main is the ambient voice of this chat; only directly addressed non-Main Cards need a label. */
-  mainCardId?: string;
   directChatTargets?: DirectChatTarget[];
   onSend: (t: string, runInput?: MainChatRunInput) => void | boolean;
   knowledgeProjectId: string;
@@ -499,7 +472,6 @@ export default function MainProjectChat({
   const imageReadRef = useRef(false);
   const imageReadEpochRef = useRef(0);
   const interactionDisabled = historyLoading;
-  const stopActive = busy && Boolean(onStop);
   useEffect(() => {
     imageReadEpochRef.current += 1;
     imageReadRef.current = false;
@@ -532,6 +504,7 @@ export default function MainProjectChat({
     }
   };
   const value = draft === undefined ? localDraft : draft;
+  const stopActive = busy && !value.trim() && images.length === 0 && Boolean(onStop);
   const composerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const resizeComposer = useCallback(() => {
@@ -628,7 +601,6 @@ export default function MainProjectChat({
       <MainProjectChatMessageBubble
         colors={colors}
         laneWidth={messageLaneWidth}
-        mainCardId={mainCardId}
         message={message}
         entityMatcher={entityMatcher}
         onEntityFocus={onEntityFocus}
@@ -637,7 +609,6 @@ export default function MainProjectChat({
     </div>
   ), [
     colors,
-    mainCardId,
     messageLaneWidth,
     onEntityFocus,
     onEvidenceFocus,

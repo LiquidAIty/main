@@ -2,24 +2,13 @@
  * Entity: Main Chat
  * Entity: Card Invocation
  * Relationship: This file submits exact user text, bounded images, and selected Data Anchors with unique message identities and rejects incomplete or conflicting completion frames.
- * Entity: Run Ledger
- * Relationship: This file preserves the exact Run ID and typed terminal failure or completion evidence used by Main's stop and stream consumers.
+ * Relationship: This file transports the saved conversation identity for Stop and preserves request failure and completion responses.
  * Entity: Data Anchors
  * Relationship: This file defines and transports only bounded provider reference identities, reasons, priorities, expansion limits, and required flags for the current Main Run.
  */
 
-export type MainConversationParticipant = {
-  kind: 'user' | 'card';
-  label: string;
-  cardId?: string;
-  profile?: string;
-  address?: string;
-};
-
 export type AddressableAgent = {
   cardId: string;
-  cardRevisionId: string;
-  profile: string;
   title: string;
   address: string;
 };
@@ -27,15 +16,13 @@ export type AddressableAgent = {
 export type DirectChatTarget = AddressableAgent;
 
 export type MainConversationMessage = {
-  role: 'assistant' | 'user';
+  role: string;
   text: string;
-  speaker: MainConversationParticipant;
-  target?: MainConversationParticipant;
-  linkedEvidenceIds?: string[];
+  [key: string]: unknown;
 };
 
 export type MainSessionHistory = {
-  mainCardId: string;
+  sessionId: string;
   addressableAgents: AddressableAgent[];
   messages: MainConversationMessage[];
 };
@@ -45,8 +32,6 @@ export type MainSessionEvent = {
   projectId?: string;
   deckId?: string;
   cardId?: string;
-  runId?: string;
-  participant?: unknown;
   configuration?: unknown;
   text?: unknown;
   event?: unknown;
@@ -245,8 +230,8 @@ export async function streamSession(args: {
 export async function stopSession(args: {
   projectId: string;
   deckId?: string;
-  expectedRunId: string;
-}): Promise<{ runId: string; state: string }> {
+  sessionId: string;
+}): Promise<void> {
   const response = await fetch(`${BASE}/stop`, {
     method: 'POST',
     credentials: 'include',
@@ -262,22 +247,6 @@ export async function stopSession(args: {
       status: response.status,
     });
   }
-  return { runId: String(payload.runId || ''), state: String(payload.state || 'stopping') };
-}
-
-function participant(value: unknown): MainConversationParticipant | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const item = value as Record<string, unknown>;
-  if (!['user', 'card'].includes(String(item.kind)) || typeof item.label !== 'string' || !item.label) {
-    return null;
-  }
-  return {
-    kind: item.kind as 'user' | 'card',
-    label: item.label,
-    ...(typeof item.cardId === 'string' && item.cardId ? { cardId: item.cardId } : {}),
-    ...(typeof item.profile === 'string' && item.profile ? { profile: item.profile } : {}),
-    ...(typeof item.address === 'string' && item.address ? { address: item.address } : {}),
-  };
 }
 
 function parseSessionHistory(payload: Record<string, unknown>): MainSessionHistory | null {
@@ -285,21 +254,11 @@ function parseSessionHistory(payload: Record<string, unknown>): MainSessionHisto
   const messages = payload.messages.flatMap((value): MainConversationMessage[] => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
     const message = value as Record<string, unknown>;
-    if (!['assistant', 'user'].includes(String(message.role)) || typeof message.text !== 'string') {
-      return [];
-    }
-    const speaker = participant(message.speaker);
-    const target = participant(message.target);
-    const linkedEvidenceIds = Array.isArray(message.linkedEvidenceIds)
-      ? message.linkedEvidenceIds.map(String).map(value => value.trim()).filter(Boolean)
-      : [];
-    if (!speaker || !message.text) return [];
+    if (typeof message.role !== 'string') return [];
     return [{
-      role: message.role as 'assistant' | 'user',
-      text: message.text,
-      speaker,
-      ...(target ? { target } : {}),
-      ...(linkedEvidenceIds.length ? { linkedEvidenceIds } : {}),
+      ...message,
+      role: message.role,
+      text: typeof message.text === 'string' ? message.text : String(message.context || ''),
     }];
   });
   const addressableAgents = Array.isArray(payload.addressableAgents)
@@ -308,21 +267,17 @@ function parseSessionHistory(payload: Record<string, unknown>): MainSessionHisto
         const item = value as Record<string, unknown>;
         if (
           typeof item.cardId !== 'string' || !item.cardId
-          || typeof item.cardRevisionId !== 'string' || !item.cardRevisionId
-          || typeof item.profile !== 'string' || !item.profile
           || typeof item.title !== 'string' || !item.title
           || typeof item.address !== 'string' || !item.address
         ) return [];
         return [{
           cardId: item.cardId,
-          cardRevisionId: item.cardRevisionId,
-          profile: item.profile,
           title: item.title,
           address: item.address,
         }];
       }) : [];
   return {
-    mainCardId: typeof payload.mainCardId === 'string' ? payload.mainCardId : '',
+    sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : '',
     addressableAgents,
     messages,
   };

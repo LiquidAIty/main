@@ -5,8 +5,7 @@
  * Relationship: This file resets conversation, authority, voice, and active-stream state whenever the active Project changes.
  * Entity: Card Invocation
  * Relationship: This file assembles one Main Run request from exact user text, bounded images, and selected references and retains partial text on failure or cancellation.
- * Entity: Run Ledger
- * Relationship: This file tracks the real active Run identity for stop requests and refuses to interrupt without an observed Run ID.
+ * Relationship: This file retains the observed Hermes conversation identity for the existing Stop action.
  * Entity: Data Anchors
  * Relationship: This file converts selected reference order into bounded Run priorities without changing provider identity or resolved data.
  */
@@ -21,7 +20,6 @@ import {
   type MainSessionEvent,
   type MainSessionHistory,
   type MainConversationMessage,
-  type MainConversationParticipant,
   type MainRunImage,
   SessionStreamError,
   stopSession,
@@ -47,12 +45,9 @@ type UseAgentBuilderMainChatArgs = {
     id: string;
     resolvedId: string;
     lastActive: number;
+    messageCount: number | null;
   } | null;
   dataAnchors?: LoadedCardGraphReference['reference'][];
-  onMainRunCompleted?: (
-    runId: string,
-    waitForThinkCapture?: boolean,
-  ) => void | Promise<void>;
 };
 
 export type LoadedCardGraphReference = {
@@ -75,28 +70,6 @@ export type LoadedCardGraphReference = {
   error?: string;
 };
 
-const USER_PARTICIPANT: MainConversationParticipant = { kind: 'user', label: 'You' };
-
-function participantFromEvent(value: unknown): MainConversationParticipant | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const participant = value as Record<string, unknown>;
-  if (
-    !['user', 'card'].includes(String(participant.kind))
-    || typeof participant.label !== 'string'
-    || !participant.label
-  ) return null;
-  return {
-    kind: participant.kind as 'user' | 'card',
-    label: participant.label,
-    ...(typeof participant.cardId === 'string' && participant.cardId
-      ? { cardId: participant.cardId } : {}),
-    ...(typeof participant.profile === 'string' && participant.profile
-      ? { profile: participant.profile } : {}),
-    ...(typeof participant.address === 'string' && participant.address
-      ? { address: participant.address } : {}),
-  };
-}
-
 function requestUserMessageIndex(messages: MainProjectChatMessage[], requestKey: string): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index].role === 'user' && messages[index].requestKey === requestKey) return index;
@@ -109,9 +82,8 @@ export default function useAgentBuilderMainChat({
   deckId,
   dataAnchors = [],
   mainCanonicalSession = null,
-  onMainRunCompleted,
 }: UseAgentBuilderMainChatArgs) {
-  const projectKey = canvasProjectId;
+  const projectKey = `${canvasProjectId}:${deckId}`;
   const [technical, setTechnical] = useState<{ key: string; error: string | null }>({
     key: projectKey,
     error: null,
@@ -130,9 +102,8 @@ export default function useAgentBuilderMainChat({
   }>({ key: projectKey, phase: 'idle' });
   const [authority, setAuthority] = useState<{
     key: string;
-    mainCardId: string;
     agents: AddressableAgent[];
-  }>({ key: projectKey, mainCardId: '', agents: [] });
+  }>({ key: projectKey, agents: [] });
   const [voiceState, setVoiceState] = useState<{
     key: string;
     phase: MainChatVoicePhase;
@@ -140,22 +111,29 @@ export default function useAgentBuilderMainChat({
   }>({ key: projectKey, phase: 'idle', error: null });
   const activeStreamsRef = useRef(new Map<AbortController, {
     key: string;
-    runId: string | null;
     requestKey: string;
   }>());
-  const activeRunIdRef = useRef<{ key: string; runId: string } | null>(null);
+  const sessionIdRef = useRef('');
   const voiceControllerRef = useRef<AbortController | null>(null);
   const voiceTranscriptRef = useRef<string | null>(null);
   const voiceTurnActiveRef = useRef(false);
-  const historyWatermarkRef = useRef<{ key: string; lastActive: number }>({ key: '', lastActive: 0 });
+  const historyWatermarkRef = useRef<{
+    key: string; lastActive: number; messageCount?: number | null;
+  }>({ key: '', lastActive: 0 });
+  const historyRequestRef = useRef(0);
+  const activityHistoryControllerRef = useRef<AbortController | null>(null);
   const latestCanonicalSessionRef = useRef(mainCanonicalSession);
   latestCanonicalSessionRef.current = mainCanonicalSession;
+  const canonicalSessionId = mainCanonicalSession?.id;
+  const canonicalResolvedId = mainCanonicalSession?.resolvedId;
+  const canonicalLastActive = mainCanonicalSession?.lastActive;
+  const canonicalMessageCount = mainCanonicalSession?.messageCount;
 
   const acceptHistory = useCallback((history: MainSessionHistory) => {
+    sessionIdRef.current = history.sessionId;
     setTranscript({ key: projectKey, messages: history.messages });
     setAuthority({
       key: projectKey,
-      mainCardId: history.mainCardId,
       agents: history.addressableAgents,
     });
     setTechnical((current) => (
@@ -166,24 +144,35 @@ export default function useAgentBuilderMainChat({
   }, [projectKey]);
 
   const refreshHistory = useCallback(async (signal?: AbortSignal) => {
+    const request = ++historyRequestRef.current;
+    const requestedCanonical = latestCanonicalSessionRef.current;
     const history = await loadSessionHistory({
       projectId: canvasProjectId,
       deckId,
       signal,
     });
+    const currentCanonical = latestCanonicalSessionRef.current;
+    if (
+      signal?.aborted
+      || request !== historyRequestRef.current
+      || activeStreamsRef.current.size > 0
+      || (requestedCanonical && (
+        requestedCanonical.id !== currentCanonical?.id
+        || requestedCanonical.resolvedId !== currentCanonical?.resolvedId
+      ))
+    ) return;
     acceptHistory(history);
-    const canonical = latestCanonicalSessionRef.current;
-    if (canonical) {
+    if (requestedCanonical) {
       historyWatermarkRef.current = {
-        key: `${projectKey}:${canonical.id}`,
-        lastActive: canonical.lastActive,
+        key: `${projectKey}:${requestedCanonical.id}:${requestedCanonical.resolvedId}`,
+        lastActive: requestedCanonical.lastActive,
+        messageCount: requestedCanonical.messageCount,
       };
     }
   }, [acceptHistory, canvasProjectId, deckId, projectKey]);
 
   const messages = transcript.key === projectKey ? transcript.messages : [];
   const addressableAgents = authority.key === projectKey ? authority.agents : [];
-  const mainCardId = authority.key === projectKey ? authority.mainCardId : '';
   const sessionActive = turnState.key === projectKey && turnState.phase === 'active';
   const sessionConnecting = turnState.key === projectKey && turnState.phase === 'connecting';
   const sessionPending = sessionActive || sessionConnecting;
@@ -194,14 +183,17 @@ export default function useAgentBuilderMainChat({
       if (active.key !== projectKey) controller.abort();
     }
     activeStreamsRef.current.clear();
-    activeRunIdRef.current = null;
+    sessionIdRef.current = '';
     voiceControllerRef.current?.abort();
     voiceControllerRef.current = null;
     voiceTranscriptRef.current = null;
     voiceTurnActiveRef.current = false;
+    historyRequestRef.current += 1;
+    activityHistoryControllerRef.current?.abort();
+    activityHistoryControllerRef.current = null;
     historyWatermarkRef.current = { key: '', lastActive: 0 };
     setTranscript({ key: projectKey, messages: [] });
-    setAuthority({ key: projectKey, mainCardId: '', agents: [] });
+    setAuthority({ key: projectKey, agents: [] });
     setTechnical({ key: projectKey, error: null });
     setTurnState({ key: projectKey, phase: 'idle' });
     setVoiceState({ key: projectKey, phase: 'idle', error: null });
@@ -226,29 +218,40 @@ export default function useAgentBuilderMainChat({
     return () => {
       cancelled = true;
       controller.abort();
+      historyRequestRef.current += 1;
+      activityHistoryControllerRef.current?.abort();
+      activityHistoryControllerRef.current = null;
     };
   }, [canvasProjectId, projectKey, refreshHistory]);
 
   useEffect(() => {
-    if (!canvasProjectId || !mainCanonicalSession || sessionHistoryLoading) return undefined;
-    const key = `${projectKey}:${mainCanonicalSession.id}`;
-    const observed = historyWatermarkRef.current;
-    if (observed.key !== key) {
-      historyWatermarkRef.current = { key, lastActive: mainCanonicalSession.lastActive };
-      return undefined;
-    }
     if (
-      mainCanonicalSession.lastActive <= observed.lastActive
+      !canvasProjectId || !canonicalSessionId || !canonicalResolvedId
+      || canonicalLastActive === undefined || sessionHistoryLoading
+    ) return;
+    const key = `${projectKey}:${canonicalSessionId}:${canonicalResolvedId}`;
+    const observed = historyWatermarkRef.current;
+    if (
+      (observed.key === key && canonicalLastActive <= observed.lastActive
+        && canonicalMessageCount === observed.messageCount)
       || activeStreamsRef.current.size > 0
-    ) return undefined;
+    ) return;
     const controller = new AbortController();
+    activityHistoryControllerRef.current?.abort();
+    activityHistoryControllerRef.current = controller;
     void refreshHistory(controller.signal).catch(() => {
       if (!controller.signal.aborted) {
         setTechnical({ key: projectKey, error: 'conversation_history_read_failed' });
       }
+    }).finally(() => {
+      if (activityHistoryControllerRef.current === controller) {
+        activityHistoryControllerRef.current = null;
+      }
     });
-    return () => controller.abort();
-  }, [canvasProjectId, mainCanonicalSession, projectKey, refreshHistory, sessionHistoryLoading]);
+  }, [
+    canvasProjectId, canonicalSessionId, canonicalResolvedId, canonicalLastActive, canonicalMessageCount,
+    projectKey, refreshHistory, sessionHistoryLoading, sessionPending,
+  ]);
 
   const requestMainText = useCallback(async (
     text: string,
@@ -256,11 +259,6 @@ export default function useAgentBuilderMainChat({
   ): Promise<string> => {
     if (!text.trim()) throw new Error('main_prompt_empty');
     if (!canvasProjectId) throw new Error('main_project_required');
-    let responseParticipant: MainConversationParticipant = {
-      kind: 'card',
-      label: 'Main',
-      ...(mainCardId ? { cardId: mainCardId } : {}),
-    };
     const requestKey = globalThis.crypto.randomUUID();
     const alreadyActive = activeStreamsRef.current.size > 0;
     setTranscript((current) => {
@@ -268,7 +266,6 @@ export default function useAgentBuilderMainChat({
       const userMessage: MainProjectChatMessage = {
         role: 'user',
         text,
-        speaker: USER_PARTICIPANT,
         status: 'pending',
         requestKey,
       };
@@ -290,12 +287,11 @@ export default function useAgentBuilderMainChat({
     setTechnical({ key: projectKey, error: null });
     setTurnState({ key: projectKey, phase: alreadyActive ? 'active' : 'connecting' });
     const controller = new AbortController();
-    activeStreamsRef.current.set(controller, { key: projectKey, runId: null, requestKey });
+    activeStreamsRef.current.set(controller, { key: projectKey, requestKey });
 
     const images = [...(runInput.images || [])];
-    let runId: string | null = null;
+    let finalText = '';
     let streamedText = '';
-    let responseEvidenceIds: string[] = [];
     const appendText = (chunk: string) => {
       if (!chunk) return;
       streamedText += chunk;
@@ -310,11 +306,10 @@ export default function useAgentBuilderMainChat({
           copy[assistantIndex] = {
             ...currentAssistant,
             text: currentAssistant.text + chunk,
-            speaker: responseParticipant,
           };
         } else {
           copy.push({
-            role: 'assistant', text: chunk, speaker: responseParticipant,
+            role: 'assistant', text: chunk,
             status: 'pending', requestKey,
           });
         }
@@ -324,7 +319,6 @@ export default function useAgentBuilderMainChat({
     const finishText = (
       textValue: string,
       status: 'complete' | 'error' = 'complete',
-      linkedEvidenceIds: string[] = responseEvidenceIds,
     ) => {
       setTranscript((current) => {
         if (current.key !== projectKey) return current;
@@ -339,15 +333,13 @@ export default function useAgentBuilderMainChat({
           if (assistantIndex >= 0) copy.splice(assistantIndex, 1);
         } else if (assistantIndex >= 0) {
           copy[assistantIndex] = {
-            role: 'assistant', text: retainedText, speaker: responseParticipant,
+            role: 'assistant', text: retainedText,
             status, requestKey,
-            ...(linkedEvidenceIds.length ? { linkedEvidenceIds } : {}),
           };
         } else {
           copy.push({
-            role: 'assistant', text: retainedText, speaker: responseParticipant,
+            role: 'assistant', text: retainedText,
             status, requestKey,
-            ...(linkedEvidenceIds.length ? { linkedEvidenceIds } : {}),
           });
         }
         return { key: projectKey, messages: copy };
@@ -355,7 +347,7 @@ export default function useAgentBuilderMainChat({
     };
 
     try {
-      const { finalText } = await streamSession({
+      ({ finalText } = await streamSession({
         projectId: canvasProjectId,
         deckId,
         message: text,
@@ -369,19 +361,11 @@ export default function useAgentBuilderMainChat({
           if (
             (event.projectId && event.projectId !== canvasProjectId)
             || (event.deckId && event.deckId !== deckId)
-            || (event.runId && runId && event.runId !== runId)
           ) throw new Error('main_run_identity_mismatch');
-          const observed = participantFromEvent(event.participant);
-          if (observed && (event.kind === 'text' || event.kind === 'done')) {
-            responseParticipant = observed;
+          if (event.kind === 'session' && typeof event.sessionId === 'string') {
+            sessionIdRef.current = event.sessionId;
           }
-          if (event.runId && !runId) {
-            runId = event.runId;
-            activeRunIdRef.current = { key: projectKey, runId };
-            const active = activeStreamsRef.current.get(controller);
-            if (active) active.runId = runId;
-          }
-          if (event.kind === 'run' || event.kind === 'session' || event.kind === 'text') {
+          if (event.kind === 'session' || event.kind === 'text') {
             setTurnState({ key: projectKey, phase: 'active' });
           }
           if (event.kind === 'session') {
@@ -397,13 +381,8 @@ export default function useAgentBuilderMainChat({
             }
           }
           if (event.kind === 'text') appendText(String(event.text || ''));
-          if (event.kind === 'done') {
-            responseEvidenceIds = Array.isArray(event.linkedEvidenceIds)
-              ? [...new Set(event.linkedEvidenceIds.map(String).map(value => value.trim()).filter(Boolean))]
-              : [];
-          }
         },
-      });
+      }));
       finishText(finalText || streamedText);
       setTranscript((current) => current.key !== projectKey ? current : ({
         key: projectKey,
@@ -414,19 +393,6 @@ export default function useAgentBuilderMainChat({
             : message
         )),
       }));
-      const completedRunId = runId;
-      if (
-        completedRunId
-        && String(finalText || streamedText).trim()
-      ) {
-        void Promise.resolve()
-          .then(() => onMainRunCompleted?.(completedRunId))
-          .catch(() => undefined);
-      }
-      await refreshHistory().catch(() => {
-        setTechnical({ key: projectKey, error: 'conversation_history_read_failed' });
-      });
-      return finalText;
     } catch (error) {
       if (controller.signal.aborted) {
         finishText(streamedText);
@@ -460,24 +426,22 @@ export default function useAgentBuilderMainChat({
       throw error;
     } finally {
       activeStreamsRef.current.delete(controller);
-      const projectStillActive = [...activeStreamsRef.current.values()].some(
-        (active) => active.key === projectKey,
-      );
-      if (!projectStillActive && activeRunIdRef.current?.key === projectKey) {
-        activeRunIdRef.current = null;
-      }
       setTurnState({
         key: projectKey,
         phase: activeStreamsRef.current.size ? 'active' : 'idle',
       });
     }
+    if (!controller.signal.aborted && activeStreamsRef.current.size === 0) {
+      await refreshHistory().catch(() => {
+        setTechnical({ key: projectKey, error: 'conversation_history_read_failed' });
+      });
+    }
+    return finalText;
   }, [
     addressableAgents,
     canvasProjectId,
     dataAnchors,
     deckId,
-    mainCardId,
-    onMainRunCompleted,
     projectKey,
     refreshHistory,
   ]);
@@ -489,7 +453,7 @@ export default function useAgentBuilderMainChat({
     }
     void requestMainText(text, runInput).catch(() => undefined);
     return true;
-  }, [addressableAgents, canvasProjectId, mainCardId, projectKey, requestMainText]);
+  }, [addressableAgents, canvasProjectId, projectKey, requestMainText]);
 
   const startVoiceSession = useCallback(() => {
     if (!canvasProjectId || sessionPending || voiceControllerRef.current) return;
@@ -570,17 +534,13 @@ export default function useAgentBuilderMainChat({
 
   const stopMainTurn = useCallback(async () => {
     if (!sessionPending || !canvasProjectId) return;
-    const expectedRunId = activeRunIdRef.current?.key === projectKey
-      ? activeRunIdRef.current.runId
-      : null;
-    if (!expectedRunId) throw new Error('expected_run_id_required');
-    await stopSession({ projectId: canvasProjectId, deckId, expectedRunId });
+    if (!sessionIdRef.current) throw new Error('main_session_required');
+    await stopSession({ projectId: canvasProjectId, deckId, sessionId: sessionIdRef.current });
     for (const [controller, active] of activeStreamsRef.current) {
       if (active.key !== projectKey) continue;
       controller.abort();
       activeStreamsRef.current.delete(controller);
     }
-    activeRunIdRef.current = null;
     setTurnState({
       key: projectKey,
       phase: activeStreamsRef.current.size ? 'active' : 'idle',

@@ -102,7 +102,7 @@ def test_card_runtime_uses_only_backend_resolved_saved_grants(monkeypatch):
     assert mcp_request_dispatch.request_tool_is_allowed("trading.accept_assignment") is False
 
 
-def test_card_runtime_bearer_requires_exact_active_backend_context(monkeypatch):
+def test_card_runtime_bearer_requires_exact_saved_card_context(monkeypatch):
     import jwt
 
     secret = "s" * 32
@@ -119,14 +119,18 @@ def test_card_runtime_bearer_requires_exact_active_backend_context(monkeypatch):
         "projectId": "project-one",
         "deckId": "deck_builder",
         "conversationId": "project-one",
-        "parentRunId": "run-one",
+        "parentRunId": "",
         "callerCardId": "trading",
         "grantedTools": ["forecast_market_bars"],
         "mainEntryAuthorized": False,
     }
     monkeypatch.setattr(
-        mcp_auth, "_resolve_internal_card_context_sync", lambda: context,
+        mcp_auth, "_resolve_internal_card_context_sync", lambda principal: context,
     )
+    principal = {
+        "kind": "card-runtime", "ownerUserId": "owner-one",
+        "projectId": "project-one", "deckId": "deck_builder", "profile": "trading",
+    }
     now = int(__import__("time").time())
     token = jwt.encode({
         "iss": mcp_auth.INTERNAL_MCP_ISSUER,
@@ -135,17 +139,25 @@ def test_card_runtime_bearer_requires_exact_active_backend_context(monkeypatch):
         "iat": now,
         "exp": now + 300,
         "scope": "liquidaity.main",
-        "principal": {"kind": "card-runtime"},
+        "principal": principal,
     }, secret, algorithm="HS256")
 
-    verified = verifier._verify_sync(token)
+    profile_context = mcp_auth.set_requested_card_profile("trading")
+    try:
+        verified = verifier._verify_sync(token)
+    finally:
+        mcp_auth.reset_requested_card_profile(profile_context)
     assert verified is not None
-    assert verified.claims["internal"] == {"kind": "card-runtime"}
+    assert verified.claims["internal"] == principal
     assert verified.claims["project"] == context
     monkeypatch.setattr(
-        mcp_auth, "_resolve_internal_card_context_sync", lambda: None,
+        mcp_auth, "_resolve_internal_card_context_sync", lambda principal: None,
     )
-    assert verifier._verify_sync(token) is None
+    profile_context = mcp_auth.set_requested_card_profile("trading")
+    try:
+        assert verifier._verify_sync(token) is None
+    finally:
+        mcp_auth.reset_requested_card_profile(profile_context)
 
 
 def test_catalog_preserves_provider_annotations_and_adds_only_source_identity():

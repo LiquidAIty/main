@@ -3,6 +3,8 @@
  * Relationship: This file verifies each new Project receives an independent canonical source-default deck and exact persistence readback.
  * Entity: Saved Cards
  * Relationship: This file verifies the source-default roster contains exactly Main, Builder, ThinkGraph, Magnetic, Team, and KnowGraph with stable saved identities.
+ * Entity: Card Prompts
+ * Relationship: This file verifies the six source-default prompts are loaded from dedicated Markdown assets without changing their exact persisted bytes.
  * Entity: Card Topology
  * Relationship: This file verifies the default deck contains only the intended Main-to-Builder flow and Team-to-Magnetic membership.
  * Entity: Main Chat
@@ -23,6 +25,10 @@
  * Relationship: This file verifies the exact source-default capability selections stored on the core Cards.
  */
 
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -32,7 +38,76 @@ import {
   isDefaultProjectDeckReadback,
 } from './defaultProjectDeck';
 
+const EXPECTED_PROMPT_CONTRACTS = [
+  {
+    asset: 'magnetic.md',
+    templateId: 'prompt_magentic',
+    cardId: 'card_magentic',
+    bytes: 1529,
+    sha256: '1e1c2637989231c605e9c04c54658dcb13830a51fd9abc918ed614cb2a73b5ae',
+  },
+  {
+    asset: 'main.md',
+    templateId: 'prompt_main_chat',
+    cardId: 'card_main_chat',
+    bytes: 6510,
+    sha256: '3ecfe88ac669e5719a0aba0201bab3d68d12efdae0f1866fbdc0c44f7edb7036',
+  },
+  {
+    asset: 'builder.md',
+    templateId: 'prompt_builder',
+    cardId: 'builder',
+    bytes: 1852,
+    sha256: '7ad48c7e9ae1ad707f8fe255e5da0f516c538acbf5df71d685b59a0edfbe8ed5',
+  },
+  {
+    asset: 'thinkgraph.md',
+    templateId: 'prompt_thinkgraph',
+    cardId: 'card_thinkgraph',
+    bytes: 5498,
+    sha256: 'eabc43f0cac64fb50aca8ec60583e0581b51582ea920456391f9f4939db2998d',
+  },
+  {
+    asset: 'team.md',
+    templateId: 'prompt_team',
+    cardId: 'card_team',
+    bytes: 1549,
+    sha256: 'e8636f8cfd9d6f302cfe447de110f2bccb0a4ababa4546da8895c33b62a97a67',
+  },
+  {
+    asset: 'knowgraph.md',
+    templateId: 'prompt_knowgraph',
+    cardId: 'card_knowgraph',
+    bytes: 4980,
+    sha256: '8bda90b55303353c590d5b37f83cc7efbec118c23a6e81d1743411a583ba2a82',
+  },
+] as const;
+
 describe('backend-owned default Project deck', () => {
+  it('loads byte-identical source-default prompts from dedicated Markdown assets', () => {
+    const source = readFileSync(join(__dirname, 'defaultProjectDeck.ts'), 'utf8');
+    const templates = new Map(
+      DEFAULT_PROJECT_DECK.promptTemplates.map((template) => [template.id, template.content]),
+    );
+    const cards = new Map(DEFAULT_PROJECT_DECK.nodes.map((card) => [card.id, card]));
+
+    expect(source).not.toContain('# CARD_PROMPT_V1');
+    expect(source).not.toContain('[ROLE]');
+
+    for (const contract of EXPECTED_PROMPT_CONTRACTS) {
+      const asset = readFileSync(join(__dirname, 'prompts', contract.asset), 'utf8');
+      const assetPrompt = asset.endsWith('\n') ? asset.slice(0, -1) : asset;
+      const templatePrompt = templates.get(contract.templateId);
+      const cardPrompt = cards.get(contract.cardId)?.prompt;
+
+      expect(templatePrompt).toBe(assetPrompt);
+      expect(cardPrompt).toBe(assetPrompt);
+      expect(Buffer.byteLength(assetPrompt, 'utf8')).toBe(contract.bytes);
+      expect(createHash('sha256').update(assetPrompt, 'utf8').digest('hex'))
+        .toBe(contract.sha256);
+    }
+  });
+
   it('defines exactly the six intended core Cards with unique stable profiles', () => {
     expect(DEFAULT_PROJECT_DECK.id).toBe(DEFAULT_PROJECT_DECK_ID);
     expect(DEFAULT_PROJECT_DECK.projectCodeFolder).toBe('workspace');

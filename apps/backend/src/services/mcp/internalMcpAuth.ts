@@ -1,6 +1,6 @@
 /**
  * Entity: MCP Host
- * Relationship: This file restricts backend-to-MCP transport to the canonical loopback endpoint and mints the host's signed catalog-reader principal.
+ * Relationship: This file restricts backend-to-MCP transport to the canonical loopback endpoint and signs catalog-reader or saved-Card scope for the host.
  * Entity: Credentials
  * Relationship: This file loads and timing-safely verifies the supervised internal process secret used by protected backend and MCP seams.
  * Entity: Authentication
@@ -14,7 +14,13 @@ const INTERNAL_MCP_AUDIENCE = 'liquidaity-internal-mcp';
 const DEFAULT_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp';
 const TOKEN_LIFETIME_SECONDS = 12 * 60 * 60;
 
-export type InternalMcpPrincipal = { kind: 'catalog-reader' | 'card-runtime' };
+export type InternalMcpPrincipal = { kind: 'catalog-reader' } | {
+  kind: 'card-runtime';
+  ownerUserId: string;
+  projectId: string;
+  deckId: string;
+  profile: string;
+};
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {
   const secret = String(env.LIQUIDAITY_INTERNAL_MCP_SECRET || '').trim();
@@ -44,6 +50,11 @@ export function createInternalMcpBearer(
   const secret = requiredSecret(env);
   if (!['catalog-reader', 'card-runtime'].includes(principal.kind)) {
     throw new Error('internal_mcp_principal_kind_invalid');
+  }
+  if (principal.kind === 'card-runtime'
+    && [principal.ownerUserId, principal.projectId, principal.deckId, principal.profile]
+      .some(value => typeof value !== 'string' || !value.trim())) {
+    throw new Error('internal_mcp_card_scope_required');
   }
   const header = base64UrlJson({ alg: 'HS256', typ: 'JWT' });
   const payload = base64UrlJson({

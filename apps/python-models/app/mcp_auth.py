@@ -312,14 +312,15 @@ def _resolve_external_project_context_sync(
     return _validated_project_context(context)
 
 
-def _resolve_internal_card_context_sync() -> dict[str, Any] | None:
+def _resolve_internal_card_context_sync(principal: dict[str, Any]) -> dict[str, Any] | None:
     try:
         request = Request(
             f"{BACKEND}/api/mcp/card-context",
             data=json.dumps({
-                "projectId": requested_project_id(),
-                "deckId": requested_deck_id(),
-                "profile": requested_card_profile(),
+                "ownerUserId": principal["ownerUserId"],
+                "projectId": principal["projectId"],
+                "deckId": principal["deckId"],
+                "profile": principal["profile"],
                 "conversationId": requested_conversation_id(),
                 "runId": requested_run_id(),
             }).encode("utf-8"),
@@ -392,7 +393,12 @@ class Auth0TokenVerifier:
                         return None
                 card_context = None
                 if principal.get("kind") == "card-runtime":
-                    card_context = _resolve_internal_card_context_sync()
+                    if any(not isinstance(principal.get(field), str) or not principal[field].strip()
+                           for field in ("ownerUserId", "projectId", "deckId", "profile")):
+                        return None
+                    if requested_card_profile() != principal["profile"]:
+                        return None
+                    card_context = _resolve_internal_card_context_sync(principal)
                     if card_context is None:
                         return None
                 access_token = AccessToken(

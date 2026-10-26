@@ -1,5 +1,5 @@
-// Entity: Run Ledger
-// Relationship: This file refreshes inspect-only status for each saved Card on the Hermes Bot roster cadence and counts only actual active Runs.
+// Entity: Card Activity
+// Relationship: This file refreshes Hermes's actual live-session status on the existing roster cadence.
 // Entity: Card Topology
 // Relationship: This file projects truthful active Card identities used by the topology canvas without inferring worker activity.
 // Entity: Main Chat
@@ -18,6 +18,7 @@ export type MainCanonicalSessionActivity = {
   id: string;
   resolvedId: string;
   lastActive: number;
+  messageCount: number | null;
 };
 
 const ACTIVE_RUN_STATES = new Set(['pending', 'running']);
@@ -56,7 +57,7 @@ export default function useCardActiveAgentCounts({
     const refresh = async (): Promise<void> => {
       let statuses: CardRunActivity[] = [];
       try {
-        const response = await fetch('/api/cards/runs/latest', {
+        const response = await fetch('/api/main/session/activity', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',

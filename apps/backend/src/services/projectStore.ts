@@ -18,7 +18,6 @@
 import { randomUUID } from 'crypto';
 import { pool } from '../db/pool';
 import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
-import { CARD_RUNTIME_CONTRACT } from './cardRuntimeGateway';
 import type { ProjectSummary } from '../types/project';
 
 export type OwnedProject = ProjectSummary & {
@@ -220,7 +219,7 @@ export async function assertCardProfileOwner(
       WHERE revision.runtime_kind=$2
         AND LOWER(revision.runtime_profile)=$1
      ORDER BY project.owner_user_id`,
-    [profile, CARD_RUNTIME_CONTRACT.kind],
+    [profile, 'hermes'],
   );
   const owners = rows.map((row) => String(row.owner_user_id || '').trim()).filter(Boolean);
   if (owners.length !== 1 || owners[0] !== owner) {
@@ -308,7 +307,7 @@ export async function attachSavedCardToProject(
           AND revision.runtime_kind=$4
          AND NULLIF(BTRIM(revision.runtime_profile), '') IS NOT NULL
        LIMIT 1`,
-      [input.cardRevisionId, input.cardId, ownerUserId, CARD_RUNTIME_CONTRACT.kind],
+      [input.cardRevisionId, input.cardId, ownerUserId, 'hermes'],
     );
     if (!requestedRevision.rows.length) throw new Error('saved_card_not_available');
     const runtimeProfile = String(requestedRevision.rows[0].runtime_profile);

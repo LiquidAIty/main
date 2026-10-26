@@ -1,285 +1,279 @@
 /**
  * Entity: Main Chat
- * Relationship: Authenticates one Project and transports its saved Main Card conversation through the existing Hermes Gateway.
- * Entity: Conversation Store
- * Relationship: Projects confirmed Hermes transcript rows into the existing Project conversation exactly once by provider row identity.
+ * Relationship: Connects the existing Project conversation to saved Card profiles using Hermes Desktop's Gateway client and Bot Chat operations.
+ * Entity: Agent Messaging
+ * Relationship: Saved wires define the roster; Hermes owns execution, message_agent, recipient delivery, and continuation.
  */
-
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Router, type Request, type Response } from 'express';
-
-import { resolveMainSession } from '../cardRuntime/cardSessions';
-import { savedCardAgentRoster } from '../cardRuntime/profileMaterialization';
-import {
-  appendConversationReplyOnce,
-  appendConversationTurn,
-  getConversationMessages,
-  type ConversationMessage,
-  type ConversationMessageWrite,
-  type ConversationParticipant,
-} from '../conversations/store';
-import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
-import { cardRuntimeGateway, type CardRuntimeClient, type CardRuntimeEvent } from '../services/cardRuntimeGateway';
-import { objectRecord, projectCardAuthority, type ProjectCardAuthority } from '../services/projectCardAuthority';
+import { tsImport } from 'tsx/esm/api';
+import { appendConversationReplyOnce, appendConversationTurn, getConversationMessages } from '../conversations/store';
+import { createInternalMcpBearer } from '../services/mcp/internalMcpAuth';
+import { exactStrings, objectRecord, projectCardAuthority, type ProjectCardBinding } from '../services/projectCardAuthority';
+import { assertCardProfileOwner } from '../services/projectStore';
+import { resolveRepoRoot } from '../services/workingDirectories';
 import { requireOwnedProject } from './projectAccess';
 
 const router = Router();
-const USER: ConversationParticipant = { kind: 'user', label: 'You' };
-const MESSAGE_ID = /^msg_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+type Rpc = Record<string, any>;
+let connected: Promise<{ client: any; startup: number; submit: number; closeTickets: () => void }> | undefined;
 
-type Context = {
-  projectId: string; authority: ProjectCardAuthority; client: CardRuntimeClient;
-  session: Awaited<ReturnType<typeof resolveMainSession>>;
-};
-
-type TranscriptRow = { role: 'user' | 'assistant'; text: string; rowId: number };
-
-function required(value: unknown, code: string, limit = 120_000): string {
-  const result = typeof value === 'string' ? value.trim() : '';
-  if (!result || result.length > limit) throw new Error(code);
-  return result;
+async function connectGateway() {
+  const root = path.join(resolveRepoRoot(), 'HermesLatest');
+  const home = path.join(root, '.hermes');
+  const executable = (name: string) => path.join(root, '.venv', process.platform === 'win32' ? `Scripts/${name}.exe` : `bin/${name}`);
+  const load = (file: string) => tsImport(pathToFileURL(path.join(root, file)).href, pathToFileURL(__filename).href);
+  const [api, local, tickets] = await Promise.all([
+    load('apps/desktop/src/api/client.ts'), load('apps/desktop/electron/local-gateway.ts'),
+    load('apps/desktop/electron/local-gateway-python.ts'),
+  ]);
+  const backend = { command: executable('hermes'), args: ['gateway', 'ensure', '--json'], shell: false, env: { PYTHONPATH: root } };
+  const descriptor = await local.ensureLocalGateway(() => local.runGatewayEnsure(backend, root, home));
+  const resolveTicket = tickets.createGatewayTicketResolver(
+    async () => ({ command: executable('python'), args: [], kind: 'python', shell: false, env: { PYTHONPATH: root } }), () => root,
+  );
+  const client = new api.HermesGateway();
+  const ticket = await resolveTicket(descriptor.gatewayEndpoint, 'interactive');
+  await client.connect(local.createLocalGatewayDials().prepare(descriptor.baseUrl, ticket, 0));
+  return { client, startup: api.STARTUP_REQUEST_TIMEOUT_MS, submit: api.PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
+    closeTickets: tickets.closeGatewayTicketBridges as () => void };
 }
 
-function failure(error: unknown): string {
-  const code = error instanceof Error ? error.message : '';
-  return code && code.length <= 160 && /^[a-z0-9_:-]+$/i.test(code) ? code : 'main_session_failed';
+export function closeMainConnection(): void {
+  const closing = connected;
+  connected = undefined;
+  void closing?.then(({ client, closeTickets }) => { client.close(); closeTickets(); }).catch(() => undefined);
 }
 
-function mainParticipant(authority: ProjectCardAuthority): ConversationParticipant {
-  return {
-    kind: 'card', label: authority.main.title,
-    cardId: authority.main.card.id, profile: authority.main.profile,
-    ...(authority.main.address ? { address: authority.main.address } : {}),
-  };
-}
-
-async function authorizedContext(req: Request, res: Response, projectValue: unknown, deckValue: unknown):
-Promise<Context | null> {
-  const reference = required(projectValue, 'main_project_required', 128);
-  const deckId = required(deckValue || DEFAULT_PROJECT_DECK_ID, 'main_deck_required', 128);
-  const project = await requireOwnedProject(req, res, reference);
-  if (!project) return null;
-  const authority = await projectCardAuthority(project.projectId, deckId);
-  const client = await cardRuntimeGateway();
-  const scope = { projectId: project.projectId, projectSessionId: project.projectId, userId: project.ownerUserId };
-  const session = await resolveMainSession(client, authority, scope);
-  return { projectId: project.projectId, authority, client, session };
-}
-
-async function transcript(ctx: Context): Promise<TranscriptRow[]> {
-  const result = objectRecord(await ctx.client.request('session.history', {
-    session_id: ctx.session.liveHandle,
-    profile: ctx.authority.main.profile,
-  }));
-  const messages = (Array.isArray(result.messages) ? result.messages : []).map(objectRecord);
-  return messages.flatMap((row): TranscriptRow[] => {
-    const role = String(row.role || '');
-    const text = typeof row.text === 'string'
-      ? row.text : typeof row.content === 'string' ? row.content : '';
-    const rowId = Number(row.row_id);
-    if (
-      !['user', 'assistant'].includes(role)
-      || !text.trim()
-      || row.display_kind
-      || !Number.isSafeInteger(rowId)
-      || rowId <= 0
-    ) return [];
-    return [{ role: role as TranscriptRow['role'], text, rowId }];
-  });
-}
-
-function providerId(ctx: Context, rowId: number): string {
-  return `hermes:${ctx.session.sessionId}:row:${rowId}`;
-}
-
-function write(ctx: Context, row: TranscriptRow): ConversationMessageWrite {
-  return {
-    role: row.role, content: row.text,
-    speaker: row.role === 'user' ? USER : mainParticipant(ctx.authority),
-    status: 'complete', providerMessageId: providerId(ctx, row.rowId),
-  };
-}
-
-async function projectTranscript(ctx: Context, rows: TranscriptRow[]): Promise<ConversationMessage[]> {
-  let stored = await getConversationMessages(ctx.projectId, ctx.projectId);
-  if (!stored.length && rows.length) {
-    await appendConversationTurn({
-      projectId: ctx.projectId,
-      conversationId: ctx.projectId,
-      messages: rows.map((row) => write(ctx, row)),
-    });
-  } else {
-    for (const row of rows) {
-      if (row.role !== 'assistant') continue;
-      await appendConversationReplyOnce({
-        projectId: ctx.projectId,
-        conversationId: ctx.projectId,
-        message: { ...write(ctx, row), role: 'assistant', providerMessageId: providerId(ctx, row.rowId) },
-      });
-    }
+async function gateway() {
+  if (!connected) connected = connectGateway().catch(error => { connected = undefined; throw error; });
+  const current = await connected;
+  if (current.client.connectionState !== 'open') {
+    closeMainConnection();
+    throw new Error('main_gateway_disconnected');
   }
-  stored = await getConversationMessages(ctx.projectId, ctx.projectId);
-  return stored;
+  return current;
 }
 
-function participant(message: ConversationMessage, kind: string): ConversationParticipant | null {
-  const item = message.visibleActivities?.find((activity) => activity.kind === kind);
-  if (!item || !['user', 'card'].includes(String(item.status || ''))) return null;
-  return {
-    kind: item.status as ConversationParticipant['kind'], label: item.label,
-    ...(item.cardId ? { cardId: item.cardId } : {}),
-    ...(item.profile ? { profile: item.profile } : {}), ...(item.address ? { address: item.address } : {}),
+async function requestForBot(profile: string, method: string, params: Rpc = {}) {
+  const current = await gateway();
+  return current.client.request(method, { ...params, profile }, method === 'prompt.submit' ? current.submit : current.startup);
+}
+
+async function context(req: Request, res: Response) {
+  const input = req.method === 'GET' ? req.query : req.body;
+  const access = await requireOwnedProject(req, res, String(input?.projectId || ''));
+  if (!access) return null;
+  const authority = await projectCardAuthority(access.projectId, String(input?.deckId || 'deck_builder'));
+  const wired = (card: ProjectCardBinding) => {
+    const ids = new Set<string>();
+    for (const edge of authority.deck.edges) {
+      if (edge.enabled === false || edge.edgeType === 'invalid') continue;
+      if (![edge.source, edge.target].every(id => authority.cards.some(candidate => candidate.card.id === id))) continue;
+      if (card === authority.main || edge.source === card.card.id || edge.target === card.card.id) {
+        ids.add(edge.source); ids.add(edge.target);
+      }
+    }
+    ids.delete(card.card.id);
+    return authority.cards.filter(candidate => ids.has(candidate.card.id) && candidate.card.runtime.kind === 'hermes');
   };
+  return { ...access, authority, wired, roster: wired(authority.main), deckId: authority.deck.id };
 }
 
-function visibleMessage(message: ConversationMessage): Record<string, unknown>[] {
-  if (!['user', 'assistant'].includes(message.role) || !message.content.trim()) return [];
-  const speaker = participant(message, 'conversation_speaker');
-  const target = participant(message, 'conversation_target');
-  if (!speaker) return [];
-  return [{
-    role: message.role, text: message.content, speaker,
-    ...(target ? { target } : {}),
-    ...(message.linkedEvidenceIds?.length ? { linkedEvidenceIds: message.linkedEvidenceIds } : {}),
-  }];
+type Context = NonNullable<Awaited<ReturnType<typeof context>>>;
+const speaker = (card: ProjectCardBinding) => ({ kind: 'card' as const, cardId: card.card.id,
+  label: card.title, profile: card.profile, address: card.address });
+
+async function prepareProfiles(scope: Context, target: ProjectCardBinding) {
+  await Promise.all([target, ...scope.wired(target)].map(async card => {
+    await assertCardProfileOwner(card.profile, scope.ownerUserId);
+    if (exactStrings(objectRecord(card.card.runtimeOptions).tools).length) {
+      const value = createInternalMcpBearer({ kind: 'card-runtime', ownerUserId: scope.ownerUserId,
+        projectId: scope.projectId, deckId: scope.deckId, profile: card.profile });
+      const saved = await requestForBot(card.profile, 'mcp.servers.set_api_key', { name: 'liquidaity', value });
+      if (!saved.ok) throw new Error('card_mcp_credential_refresh_failed');
+    }
+    const saved = await requestForBot(card.profile, 'profiles.configure', {
+      name: card.profile, bot_mode_roster: scope.wired(card).map(peer => peer.profile),
+    });
+    if (!saved.ok || saved.confirm_required) throw new Error('card_roster_configuration_failed');
+  }));
 }
 
-function addressableAgents(authority: ProjectCardAuthority) {
-  const profiles = new Set(savedCardAgentRoster(authority.deck, authority.main.card));
-  return authority.cards.flatMap((card) => profiles.has(card.profile) && card.address ? [{
-    cardId: card.card.id, cardRevisionId: card.cardRevisionId,
-    profile: card.profile, title: card.title, address: card.address,
-  }] : []);
+async function findExistingCanonicalChat(profile: string, summary?: Rpc | null): Promise<string | null> {
+  const result = await requestForBot(profile, 'session.list', { title: 'Bot Chat', include_hidden: true, limit: 200 });
+  const rows = result.sessions.filter((row: Rpc) => (row.root_title || row.title) === 'Bot Chat');
+  if (rows.length > 1) throw new Error('card_conversation_ambiguous');
+  if (!rows.length && summary?.id) throw new Error('card_conversation_registry_unavailable');
+  return rows.length ? String(rows[0].resolved_id || rows[0].id) : null;
 }
 
-function historyPayload(ctx: Context, messages: ConversationMessage[]): Record<string, unknown> {
-  return {
-    mainCardId: ctx.authority.main.card.id,
-    addressableAgents: addressableAgents(ctx.authority),
-    messages: messages.flatMap(visibleMessage),
-  };
-}
-
-function send(res: Response, kind: string, payload: Record<string, unknown>): void {
-  if (!res.destroyed && !res.writableEnded) res.write(`event: ${kind}\ndata: ${JSON.stringify(payload)}\n\n`);
-}
-
-function openStream(res: Response): void {
-  res.status(200).set({
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no',
+async function createCanonicalChat(profile: string): Promise<string> {
+  const created = await requestForBot(profile, 'session.create', {
+    title: 'Bot Chat', hidden: true, follow_profile_config: true,
   });
-  res.flushHeaders?.();
+  await requestForBot(profile, 'session.title', { session_id: created.session_id, title: 'Bot Chat' });
+  return String(created.stored_session_id);
+}
+
+async function openStoredBotChat(profile: string, sessionId: string): Promise<string> {
+  const opened = await requestForBot(profile, 'session.resume', { session_id: sessionId, defer_history: true, omit_messages: true });
+  return String(opened.session_id);
+}
+
+async function openBotCanonicalChat(profile: string): Promise<string> {
+  const profiles = await requestForBot(profile, 'profiles.list');
+  const summary = profiles.profiles.find((row: Rpc) => row.name === profile)?.canonical_session;
+  const sessionId = await findExistingCanonicalChat(profile, summary) ?? await createCanonicalChat(profile);
+  return openStoredBotChat(profile, sessionId);
+}
+
+function failure(res: Response, error: unknown) {
+  const code = error instanceof Error ? error.message : 'main_request_failed';
+  if (!res.headersSent) res.status(503).json({ error: code });
+  else if (!res.writableEnded && !res.destroyed) {
+    res.write(`event: error\ndata: ${JSON.stringify({ code, message: code })}\n\n`); res.end();
+  }
+}
+
+router.post('/activity', async (req, res) => {
+  try {
+    const scope = await context(req, res);
+    if (!scope) return;
+    const profiles = await requestForBot(scope.authority.main.profile, 'profiles.list');
+    const summary = profiles.profiles.find((row: Rpc) => row.name === scope.authority.main.profile)?.canonical_session;
+    const cards = [scope.authority.main, ...scope.roster];
+    const observed = await Promise.allSettled(cards.map(async card => {
+      await assertCardProfileOwner(card.profile, scope.ownerUserId);
+      const live = await requestForBot(card.profile, 'session.active_list');
+      return { cardId: card.card.id, state: live.sessions.some((row: Rpc) => ['working', 'streaming'].includes(row.status)) ? 'running' : 'idle' };
+    }));
+    res.json({ ok: true, results: observed.flatMap(row => row.status === 'fulfilled' ? [row.value] : []),
+      failedCardIds: observed.flatMap((row, index) => row.status === 'rejected' ? [cards[index].card.id] : []),
+      mainCanonicalSession: summary ? { id: summary.id, resolvedId: summary.resolved_id || summary.id,
+        lastActive: summary.last_active, messageCount: summary.message_count } : null });
+  } catch (error) { failure(res, error); }
+});
+
+async function refreshOpenBotChat(scope: Context, card: ProjectCardBinding, sessionId: string, after: number) {
+  const history = await requestForBot(card.profile, 'session.history', { session_id: sessionId });
+  for (const row of history.messages) {
+    const text = row.display_content === undefined ? row.text : row.display_content;
+    if (row.role !== 'assistant' || ['hidden', 'failed_turn'].includes(row.display_kind) || row.display_metadata?.model_only
+      || typeof text !== 'string' || !text.trim() || !Number.isSafeInteger(row.row_id) || row.row_id <= after) continue;
+    await appendConversationReplyOnce({ projectId: scope.projectId, conversationId: scope.projectId, message: {
+      role: 'assistant', content: text, speaker: speaker(card), providerContinuationRef: sessionId,
+      providerMessageId: `hermes:${card.profile}:row:${row.row_id}`,
+    } });
+  }
 }
 
 router.get('/history', async (req, res) => {
   try {
-    const ctx = await authorizedContext(req, res, req.query.projectId, req.query.deckId);
-    if (!ctx) return undefined;
-    const history = await transcript(ctx);
-    const stored = await projectTranscript(ctx, history);
-    return res.json(historyPayload(ctx, stored));
-  } catch (error) {
-    return res.status(503).json({ error: failure(error) });
-  }
+    const scope = await context(req, res);
+    if (!scope) return;
+    const { projectId, authority, roster } = scope;
+    let stored = await getConversationMessages(projectId, projectId);
+    const prefix = `hermes:${authority.main.profile}:row:`;
+    const previous = stored.filter(row => row.providerMessageId?.startsWith(prefix)).pop();
+    if (previous) {
+      await assertCardProfileOwner(authority.main.profile, scope.ownerUserId);
+      const sessionId = await findExistingCanonicalChat(authority.main.profile);
+      if (!sessionId) throw new Error('main_conversation_unavailable');
+      await refreshOpenBotChat(scope, authority.main, sessionId, Number(previous.providerMessageId!.slice(prefix.length)));
+      stored = await getConversationMessages(projectId, projectId);
+    }
+    res.json({ sessionId: stored[stored.length - 1]?.providerContinuationRef || '',
+      addressableAgents: roster.map(card => ({ cardId: card.card.id, title: card.title, address: card.address })),
+      messages: stored.map(row => {
+        const author = row.visibleActivities?.find(activity => activity.kind === 'conversation_speaker');
+        const label = author?.status === 'card' && author.cardId !== authority.main.card.id ? `@${author.address || author.label} ` : '';
+        return { messageId: row.messageId, role: row.role, text: label + row.content, status: row.status };
+      }) });
+  } catch (error) { failure(res, error); }
 });
 
 router.post('/chat', async (req, res) => {
-  let detach = () => undefined;
+  let detach = () => {};
+  res.once('close', () => detach());
   try {
-    const ctx = await authorizedContext(req, res, req.body?.projectId, req.body?.deckId);
-    if (!ctx) return undefined;
-    const text = required(req.body?.message, 'main_prompt_empty');
-    const messageId = required(req.body?.clientMessageId, 'main_message_identity_required', 128);
-    if (!MESSAGE_ID.test(messageId)) throw new Error('main_message_identity_invalid');
-    if (req.body?.images?.length || req.body?.dataAnchors?.length) throw new Error('main_text_only');
-    const before = await transcript(ctx);
-
-    openStream(res);
-
-    let ready = false;
-    let finished = false;
-    const buffered: CardRuntimeEvent[] = [];
-    let resolveTurn!: () => void;
-    let rejectTurn!: (error: Error) => void;
-    const turn = new Promise<void>((resolve, reject) => {
-      resolveTurn = resolve;
-      rejectTurn = reject;
+    const { message, clientMessageId: submissionId } = req.body;
+    if (typeof message !== 'string' || !message.trim() || typeof submissionId !== 'string' || !submissionId) {
+      res.status(400).json({ error: 'main_input_required' }); return;
+    }
+    if (req.body.dataAnchors?.length) { res.status(422).json({ error: 'main_data_anchor_transport_unavailable' }); return; }
+    const scope = await context(req, res);
+    if (!scope) return;
+    const address = /^@([^\s]+)(?:\s|$)/u.exec(message)?.[1];
+    const matches = address ? scope.roster.filter(card => card.address?.toLowerCase() === address.toLowerCase()) : [scope.authority.main];
+    if (matches.length !== 1) throw new Error('main_agent_address_unavailable');
+    const card = matches[0];
+    await prepareProfiles(scope, card);
+    const sessionId = await openBotCanonicalChat(card.profile);
+    const history = await requestForBot(card.profile, 'session.history', { session_id: sessionId });
+    const before = history.messages.reduce((id: number, row: Rpc) => Number.isSafeInteger(row.row_id) ? Math.max(id, row.row_id) : id, 0);
+    const attachments = [];
+    for (const image of req.body.images || []) {
+      const attached = await requestForBot(card.profile, 'image.attach_bytes', { session_id: sessionId, content_base64: image.dataUrl, filename: image.name });
+      attachments.push({ path: attached.path, mime: attached.mime });
+    }
+    if (res.destroyed) return;
+    res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache'); res.flushHeaders();
+    const send = (kind: string, data: Rpc) => res.write(`event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`);
+    send('session', { projectId: scope.projectId, deckId: scope.deckId, cardId: card.card.id, sessionId });
+    const prefix = card === scope.authority.main ? '' : `@${card.address} `;
+    let started = false;
+    let submission: Promise<Rpc>;
+    const { client } = await gateway();
+    const offEvent = client.onEvent((event: Rpc) => {
+      if (event.profile !== card.profile || event.session_id !== sessionId) return;
+      void submission.then(async receipt => {
+        if (res.writableEnded || res.destroyed) return;
+        const payload = event.payload || {};
+        if (event.type === 'session.info' && payload.pending?.some((row: Rpc) => row.admission_id === receipt.admission_id && row.steering)) {
+          send('done', { fullText: '' }); res.end(); return;
+        }
+        if (event.admission_id !== receipt.admission_id) return;
+        if (event.type === 'message.delta' && typeof payload.text === 'string' && payload.text) {
+          send('text', { text: (started ? '' : prefix) + payload.text }); started = true;
+        }
+        if (event.type !== 'message.complete') return;
+        if (payload.error || payload.status === 'error') throw new Error(String(payload.error || payload.failure_reason || 'card_turn_failed'));
+        const text = typeof payload.text === 'string' ? payload.text : '';
+        await refreshOpenBotChat(scope, card, sessionId, before);
+        send('done', { fullText: text ? prefix + text : '' }); res.end();
+      }).catch(error => failure(res, error));
     });
-
-    const complete = async (runtimeEvent: CardRuntimeEvent) => {
-      if (finished) return;
-      finished = true;
-      const payload = objectRecord(runtimeEvent.payload);
-      const textValue = typeof payload.text === 'string'
-        ? payload.text : typeof payload.rendered === 'string' ? payload.rendered : '';
-      if (payload.status === 'error') throw new Error(String(payload.failure_reason || 'main_turn_failed'));
-      if (!textValue.trim()) throw new Error('main_runtime_reply_missing');
-      await projectTranscript(ctx, await transcript(ctx));
-      send(res, 'done', { fullText: textValue, participant: mainParticipant(ctx.authority) });
-      res.end();
-      resolveTurn();
-    };
-
-    const receive = (runtimeEvent: CardRuntimeEvent) => {
-      if (runtimeEvent.session_id !== ctx.session.liveHandle || finished) return;
-      if (!ready) {
-        buffered.push(runtimeEvent);
-        return;
-      }
-      const payload = objectRecord(runtimeEvent.payload);
-      if (runtimeEvent.type === 'message.delta') {
-        const chunk = typeof payload.text === 'string'
-          ? payload.text : typeof payload.rendered === 'string' ? payload.rendered : '';
-        if (chunk) send(res, 'text', { text: chunk, participant: mainParticipant(ctx.authority) });
-      } else if (runtimeEvent.type === 'message.complete') {
-        void complete(runtimeEvent).catch(rejectTurn);
-      }
-    };
-
-    const offEvent = ctx.client.onEvent(receive);
-    const offState = ctx.client.onState((state) => {
-      if (state === 'closed' || state === 'error') rejectTurn(new Error('main_runtime_connection_lost'));
+    const offState = client.onState((state: string) => {
+      if (state === 'closed' || state === 'error') failure(res, new Error('main_gateway_disconnected'));
     });
     detach = () => { offEvent(); offState(); };
-    res.once('close', () => { if (!finished) resolveTurn(); detach(); });
-
-    const receipt = objectRecord(await ctx.client.request('prompt.submit', {
-      session_id: ctx.session.liveHandle,
-      profile: ctx.authority.main.profile,
-      submission_id: messageId,
-      text,
-    }));
-    const userRowId = Number(receipt.user_row_id);
-    const userProviderId = Number.isSafeInteger(userRowId) && userRowId > 0
-      ? providerId(ctx, userRowId)
-      : messageId;
-    await appendConversationTurn({
-      projectId: ctx.projectId,
-      conversationId: ctx.projectId,
-      seedMessages: before.map((row) => write(ctx, row)),
-      messages: [{
-        messageId,
-        role: 'user',
-        content: text,
-        speaker: USER,
-        status: 'complete',
-        providerMessageId: userProviderId,
-      }],
+    submission = requestForBot(card.profile, 'prompt.submit', { session_id: sessionId, text: message,
+      submission_id: submissionId, ...(attachments.length ? { attachments } : {}) }).then(async receipt => {
+      if (receipt.admission_id) await appendConversationTurn({ projectId: scope.projectId, conversationId: scope.projectId, messages: [{
+        messageId: submissionId, role: 'user', content: message, speaker: { kind: 'user', label: 'You' }, target: speaker(card),
+        providerContinuationRef: sessionId, providerMessageId: `hermes:${card.profile}:admission:${receipt.admission_id}` }] });
+      return receipt;
     });
-    send(res, 'session', { sessionId: ctx.session.sessionId, participant: mainParticipant(ctx.authority) });
-    ready = true;
-    buffered.splice(0).forEach(receive);
-    await turn;
-    return undefined;
-  } catch (error) {
-    const code = failure(error);
-    if (!res.headersSent) return res.status(503).json({ error: code });
-    send(res, 'error', { code, message: code, route: '/api/main/session/chat', status: 502 });
-    res.end();
-    return undefined;
-  } finally {
-    detach();
-  }
+    const receipt = await submission;
+    if (receipt.voice_stopped || (receipt.status === 'terminal' && ['steering', 'steered'].includes(receipt.outcome))) {
+      send('done', { fullText: '' }); res.end();
+    }
+  } catch (error) { detach(); failure(res, error); }
+});
+
+router.post('/stop', async (req, res) => {
+  try {
+    const scope = await context(req, res);
+    if (!scope) return;
+    for (const card of [scope.authority.main, ...scope.roster]) {
+      if (await findExistingCanonicalChat(card.profile) !== req.body.sessionId) continue;
+      await assertCardProfileOwner(card.profile, scope.ownerUserId);
+      res.json({ ok: true, result: await requestForBot(card.profile, 'session.interrupt', { session_id: req.body.sessionId }) }); return;
+    }
+    res.status(409).json({ error: 'main_session_changed' });
+  } catch (error) { failure(res, error); }
 });
 
 export default router;

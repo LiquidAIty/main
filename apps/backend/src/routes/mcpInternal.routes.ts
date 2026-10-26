@@ -19,9 +19,8 @@ import { resolveExternalIdentityProjectGrant } from '../auth/externalIdentityGra
 import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
 import { getDeckDocument } from '../decks/deckDomainClient';
 import { readCardRun } from '../services/cardRunLifecycle';
-import { CARD_RUNTIME_CONTRACT } from '../services/cardRuntimeGateway';
 import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
-import { getOwnedProjectByReference } from '../services/projectStore';
+import { assertCardProfileOwner, getOwnedProjectByReference } from '../services/projectStore';
 import { materializeCardEditor } from './builderIdd.routes';
 import {
   exactStrings,
@@ -60,7 +59,7 @@ mcpInternalRoutes.post('/context', async (req, res) => {
     }
     const { deck } = await getDeckDocument(project.id, DEFAULT_PROJECT_DECK_ID);
     const matchingCards = (deck?.nodes || []).filter((card) => (
-      card.runtime.kind === CARD_RUNTIME_CONTRACT.kind
+      card.runtime.kind === 'hermes'
       && card.enabled !== false
       && (
         profile
@@ -112,34 +111,37 @@ mcpInternalRoutes.post('/card-context', async (req, res) => {
     return res.status(403).json({ ok: false, error: 'internal_mcp_authorization_required' });
   }
   const projectId = String(req.body?.projectId || '').trim();
+  const ownerUserId = String(req.body?.ownerUserId || '').trim();
   const deckId = String(req.body?.deckId || '').trim();
   const profile = String(req.body?.profile || '').trim().toLowerCase();
-  const conversationId = String(req.body?.conversationId || '').trim();
+  const conversationId = String(req.body?.conversationId || projectId).trim();
   const runId = String(req.body?.runId || '').trim();
-  if (!projectId || !deckId || !profile || !conversationId || !runId) {
+  if (!ownerUserId || !projectId || !deckId || !profile) {
     return res.status(400).json({ ok: false, error: 'card_runtime_context_required' });
   }
   try {
+    const project = await getOwnedProjectByReference(projectId, ownerUserId);
+    if (!project) {
+      return res.status(403).json({ ok: false, error: 'card_runtime_project_access_denied' });
+    }
+    await assertCardProfileOwner(profile, ownerUserId);
     const authority = await projectCardAuthority(projectId, deckId);
     const matches = authority.cards.filter((candidate) => (
       candidate.card.enabled !== false
-      && candidate.card.runtime.kind === CARD_RUNTIME_CONTRACT.kind
+      && candidate.card.runtime.kind === 'hermes'
       && candidate.profile.toLowerCase() === profile
     ));
     if (matches.length !== 1) {
       return res.status(409).json({ ok: false, error: 'persisted_card_profile_unavailable' });
     }
     const matched = matches[0];
-    const run = await readCardRun({
-      projectId,
-      deckId,
-      runId,
-      cardId: matched.card.id,
-      profile: matched.profile,
-      conversationId,
-    });
-    if (!['pending', 'running'].includes(String(run.state || ''))) {
-      return res.status(409).json({ ok: false, error: 'card_turn_run_unavailable' });
+    if (runId) {
+      const run = await readCardRun({
+        projectId, deckId, runId, cardId: matched.card.id, profile: matched.profile, conversationId,
+      });
+      if (!['pending', 'running'].includes(String(run.state || ''))) {
+        return res.status(409).json({ ok: false, error: 'card_turn_run_unavailable' });
+      }
     }
     return res.json({
       ok: true,

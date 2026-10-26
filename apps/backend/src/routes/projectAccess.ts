@@ -13,6 +13,13 @@ export function authenticatedUserId(req: Request): string | null {
   return userId || null;
 }
 
+export async function authorizeCardProject(req: Request, projectId: string): Promise<boolean> {
+  const userId = authenticatedUserId(req);
+  if (!userId) return false;
+  const project = await getOwnedProjectByReference(projectId, userId);
+  return Boolean(project && project.ownerUserId === userId);
+}
+
 export async function requireOwnedProject(
   req: Request,
   res: Response,

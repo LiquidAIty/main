@@ -18,6 +18,13 @@
         "outputPath": "apps/backend/dist",
         "main": "apps/backend/src/main.ts",
         "tsConfig": "apps/backend/tsconfig.app.json",
+        "assets": [
+          {
+            "glob": "*.md",
+            "input": "apps/backend/src/decks/prompts",
+            "output": "src/decks/prompts"
+          }
+        ],
         "clean": false
       },
       "configurations": {

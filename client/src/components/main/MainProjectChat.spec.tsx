@@ -3,7 +3,7 @@
  * Entity: Main Chat
  * Relationship: This file verifies the bounded conversation viewport, draft-preserving composer, voice controls, and visible transport-error presentation.
  * Entity: Agent Messaging
- * Relationship: This file verifies @Card suggestions come only from the supplied direct roster and completed replies display the actual recipient identity.
+ * Relationship: This file verifies @Card suggestions come only from the supplied direct roster.
  * Entity: Card Invocation
  * Relationship: This file verifies exact user text and accepted image records reach the one invocation callback while rejected submissions preserve the draft.
  * Entity: IDF
@@ -143,10 +143,8 @@ describe('MainProjectChat', () => {
           messages={[{
             role: 'assistant',
             text: '**Electron** and *Neutron* refine the Rocket Lab, thesis.',
-            speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
             status: 'complete',
           }]}
-          mainCardId="card_main_chat"
           onSend={vi.fn()}
           knowledgeProjectId="project-1"
           colors={colors}
@@ -179,11 +177,9 @@ describe('MainProjectChat', () => {
           messages={[{
             role: 'assistant',
             text: 'The sourced research is ready.',
-            speaker: { kind: 'card', label: 'KnowGraph', cardId: 'card_knowgraph' },
             linkedEvidenceIds: ['know-one', 'know-two'],
             status: 'complete',
           }]}
-          mainCardId="card_main_chat"
           onSend={vi.fn()}
           knowledgeProjectId="project-1"
           colors={colors}
@@ -211,10 +207,8 @@ describe('MainProjectChat', () => {
               'MAIN_RESTORE_OK BUILDER_RESTORE_OK snake_case file_name.py',
               '_intentional emphasis_ _outer_identifier_value_',
             ].join('\n'),
-            speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
             status: 'complete',
           }]}
-          mainCardId="card_main_chat"
           onSend={vi.fn()}
           knowledgeProjectId="project-1"
           colors={colors}
@@ -505,13 +499,11 @@ describe('MainProjectChat', () => {
         messages={[]}
         directChatTargets={[
           {
-            cardId: 'builder', cardRevisionId: 'revision-builder',
-            profile: 'builder', title: 'Builder',
+            cardId: 'builder', title: 'Builder',
             address: 'Builder',
           },
           {
-            cardId: 'trading', cardRevisionId: 'revision-trading',
-            profile: 'trading', title: 'Trading',
+            cardId: 'trading', title: 'Trading',
             address: 'Trading',
           },
         ]}
@@ -529,59 +521,12 @@ describe('MainProjectChat', () => {
     expect(input.value).toBe('@Builder ');
   });
 
-  it('keeps routing metadata out of the user bubble and renders the replying Card identity', async () => {
-    render(
-      <VirtuosoMockContext.Provider value={{ viewportHeight: 420, itemHeight: 72 }}>
-        <MainProjectChat
-          messages={[
-            {
-              role: 'assistant', text: 'Main answer', status: 'complete',
-              speaker: {
-                kind: 'card', label: 'Main Chat', cardId: 'card_main_chat', profile: 'liquidaity-main',
-              },
-            },
-            {
-              role: 'user', text: '@builder Reply exactly BUILDER_DIRECT_OK', status: 'complete',
-              speaker: { kind: 'user', label: 'You' },
-              target: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder' },
-            },
-            {
-              role: 'assistant', text: 'BUILDER_DIRECT_OK', status: 'complete',
-              speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder' },
-            },
-          ]}
-          mainCardId="card_main_chat"
-          onSend={vi.fn()}
-          knowledgeProjectId="project-1"
-          colors={colors}
-        />
-      </VirtuosoMockContext.Provider>,
-    );
-
-    scrollVirtualViewportToBottom(3, 72, 420);
-
-    expect(await screen.findByText('@builder Reply exactly BUILDER_DIRECT_OK')).not.toBeNull();
-    expect(screen.queryByText('You → Builder')).toBeNull();
-    expect(screen.queryByText('You')).toBeNull();
-    expect(screen.getAllByTestId('main-chat-speaker')).toHaveLength(1);
-    const builderSpeaker = screen.getByTestId('main-chat-speaker');
-    expect(builderSpeaker.textContent).toBe('@Builder');
-    const builderFrame = builderSpeaker.closest('[data-testid="main-chat-message-frame"]');
-    expect(builderFrame?.textContent).toContain('BUILDER_DIRECT_OK');
-    expect(builderFrame?.querySelector('em')).toBeNull();
-    expect(screen.queryByText('Main Chat')).toBeNull();
-    expect(screen.getByText('Main answer')).not.toBeNull();
-  });
-
   it('mounts only a bounded Virtuoso window for the 114-message Trading history', async () => {
     const messages = Array.from({ length: 114 }, (_, index) => ({
       role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
       text: index % 5 === 0
         ? `Trading message ${index}: ${'variable height evidence '.repeat(8)}`
         : `Trading message ${index}`,
-      speaker: index % 2 === 0
-        ? { kind: 'user' as const, label: 'You' }
-        : { kind: 'card' as const, label: 'Main', cardId: 'card_main_chat' },
       status: 'complete' as const,
     }));
 
@@ -589,7 +534,6 @@ describe('MainProjectChat', () => {
       <VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 64 }}>
         <MainProjectChat
           messages={items}
-          mainCardId="card_main_chat"
           onSend={vi.fn()}
           knowledgeProjectId="trading-project"
           colors={colors}
@@ -619,7 +563,6 @@ describe('MainProjectChat', () => {
       {
         role: 'assistant',
         text: 'Trading message 114',
-        speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
         status: 'complete',
       },
     ]));
@@ -648,10 +591,8 @@ describe('MainProjectChat', () => {
           messages={[{
             role: 'assistant',
             text: 'This variable-height answer reflows through Pretext as Main changes width without replacing the conversation.',
-            speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
             status: 'complete',
           }]}
-          mainCardId="card_main_chat"
           onSend={vi.fn()}
           knowledgeProjectId="trading-project"
           colors={colors}

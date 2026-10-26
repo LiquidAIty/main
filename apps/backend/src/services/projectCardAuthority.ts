@@ -9,7 +9,6 @@
 
 import { getDeckDocument } from '../decks/deckDomainClient';
 import type { DeckCard, DeckDocument } from '../types';
-import { CARD_RUNTIME_CONTRACT } from './cardRuntimeGateway';
 
 export type ProjectCardBinding = {
   card: DeckCard;
@@ -20,6 +19,7 @@ export type ProjectCardBinding = {
 };
 
 export type ProjectCardAuthority = {
+  projectId: string;
   deck: DeckDocument;
   main: ProjectCardBinding;
   cards: ProjectCardBinding[];
@@ -77,8 +77,8 @@ export async function projectCardAuthority(
   if (!loaded.deck) throw new Error('deck_not_found');
   const cards = loaded.deck.nodes.filter(enabledCard).map(projectCardBinding);
   const mains = cards.filter(({ card }) => (
-    card.runtime.kind === CARD_RUNTIME_CONTRACT.kind && card.runtime.mode === 'main'
+    card.runtime.kind === 'hermes' && card.runtime.mode === 'main'
   ));
   if (mains.length !== 1) throw new Error('main_card_identity_invalid');
-  return { deck: loaded.deck, main: mains[0], cards };
+  return { projectId, deck: loaded.deck, main: mains[0], cards };
 }

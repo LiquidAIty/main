@@ -9,12 +9,8 @@ import routes from "./routes";
 import { requestJsonBodyLimit } from "./services/requestPayloadLimits";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closeToolCatalogMcpClient } from "./services/mcp/toolCatalogMcpClient";
-import { closeCardRuntimeGateway } from "./services/cardRuntimeGateway";
+import { closeMainConnection } from './routes/mainSession.routes';
 import { listenAfterRequiredMigrations } from "./db/migrations";
-import {
-  closeCardTerminalProxy,
-  installCardTerminalUpgrade,
-} from './routes/cardTerminal.routes';
 
 const app = express();
 app.set('etag', false);
@@ -122,7 +118,6 @@ function formatListenError(error: unknown, port: number): string {
 function listenOnPort(port: number): Promise<Server> {
   return new Promise((resolve, reject) => {
     const server = app.listen(port, '127.0.0.1');
-    installCardTerminalUpgrade(server);
 
     const cleanup = () => {
       server.off('error', onError);
@@ -151,8 +146,7 @@ function installShutdownHooks() {
 
   const shutdown = async () => {
     try {
-      closeCardTerminalProxy();
-      closeCardRuntimeGateway();
+      closeMainConnection();
       if (backendServer) await closeServer(backendServer);
       await closeToolCatalogMcpClient();
     } catch {

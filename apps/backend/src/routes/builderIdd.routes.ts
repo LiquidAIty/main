@@ -13,7 +13,7 @@ import { listToolCatalog } from '../services/mcp/toolCatalogMcpClient';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { indexLiveToolCatalog, resolveScriptToolDefinitions, searchToolCatalogDefinitions,
   type ToolCatalogDefinition } from '../cards/toolCatalogProjection';
-import { authorizeCardProject } from './cardRunRead.routes';
+import { authorizeCardProject } from './projectAccess';
 
 const builderIddRoutes = Router();
 function safeToolCatalogFailureReason(error: unknown): string {

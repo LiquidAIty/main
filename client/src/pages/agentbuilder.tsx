@@ -516,13 +516,6 @@ export default function AgentBuilder(): React.ReactElement {
     knowledgeGraphs.projections.knowgraph,
     knowledgeGraphs.projections.thinkgraph.canonicalEntityDirectory,
   ]);
-  // Entity: Building Modeling
-  // Relationship: Refreshes the mounted modeler from an observed Main/recipient completion, preserving the existing graph refresh owner.
-  const [modelingCompletedRunId, setModelingCompletedRunId] = useState('');
-  const refreshAfterProjectRun = useCallback((runId: string, waitForThinkCapture?: boolean) => {
-    setModelingCompletedRunId(runId);
-    return knowledgeGraphs.refreshAfterMainRun(runId, waitForThinkCapture);
-  }, [knowledgeGraphs.refreshAfterMainRun]);
   const {
     handleSend,
     messages,
@@ -541,7 +534,6 @@ export default function AgentBuilder(): React.ReactElement {
     deckId: BUILDER_DECK_ID,
     deckRevision,
     mainCanonicalSession: cardActivity.mainCanonicalSession,
-    onMainRunCompleted: refreshAfterProjectRun,
   });
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
@@ -1273,7 +1265,6 @@ export default function AgentBuilder(): React.ReactElement {
       <div style={{ height: '100%', minHeight: 0 }}>
         <MainProjectChat
           messages={messages}
-          mainCardId={mainCardId || undefined}
           directChatTargets={addressableAgents}
           onSend={handleSend}
           draft={mainCardId ? transientCardInputs[mainCardId] || '' : ''}
@@ -1553,7 +1544,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const workspaceCompanionSurfaceHost = (
     workspaceView === 'nrgsim' && canvasProjectId ? <Suspense fallback={null}>
-      <NrgsimWorkspace key={canvasProjectId} projectId={canvasProjectId} inspectorContainer={modelingInspectorHost} completedRunId={modelingCompletedRunId} />
+      <NrgsimWorkspace key={canvasProjectId} projectId={canvasProjectId} inspectorContainer={modelingInspectorHost} />
     </Suspense> : <CompanionSurfaceHost
       workspaceView={workspaceView}
       knowledgeSurface={
