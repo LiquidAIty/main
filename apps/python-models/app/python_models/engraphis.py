@@ -7,6 +7,10 @@ operations, graph Focus, and presentation projection live with their direct
 owners instead of this store seam.
 """
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
 # Relationship: This file owns the Project-scoped Engraphis service and exact Entity, Think, incidence, relationship, directory, and bounded snapshot read primitives.
 

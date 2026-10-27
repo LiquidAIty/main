@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file verifies one joined renderer, provider-status isolation, focus lifecycle, settings, selection, and shared Inspector without inventing graph identity or mutation.
  * Entity: ThinkGraph
@@ -814,7 +818,7 @@ describe('knowledge authority graph surfaces', () => {
         { id: 'feature:CodeGraph', label: 'CodeGraph', authority: 'codegraph', type: 'Feature', etype: 'Feature', properties: { recordKind: 'feature', featureName: 'CodeGraph' } },
         { id: 'file:surface', label: 'surface.tsx', authority: 'codegraph', type: 'File', etype: 'File', properties: { recordKind: 'file', filePath: 'client/src/surface.tsx', qualifiedName: 'file:surface', features: ['CodeGraph'] } },
       ],
-      edges: [{ id: 'feature-file', source: 'feature:CodeGraph', target: 'file:surface', predicate: 'FEATURE_CONTRIBUTION' }],
+      edges: [{ id: 'feature-file', source: 'feature:CodeGraph', target: 'file:surface', predicate: 'FEATURE_CONTRIBUTION', properties: { filePath: 'client/src/surface.tsx', relationship: 'Renders the shared graph.' } }],
     };
     const openCode = vi.fn();
     const readCodeFile = vi.fn(async () => null);
@@ -883,7 +887,7 @@ describe('knowledge authority graph surfaces', () => {
     fireEvent.click(codeLayer);
     await waitFor(() => expect(openCode).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label)).toEqual([
-      'Think one', 'Know one', 'CodeGraph', 'surface.tsx',
+      'Think one', 'Know one', 'CodeGraph',
     ]));
     expect(graph.setTypeColors).toHaveBeenCalledWith({
       Feature: '#63C79A', File: '#63C79A', Symbol: '#63C79A',
@@ -893,6 +897,12 @@ describe('knowledge authority graph surfaces', () => {
       material_role: 'CODE_MATERIAL',
       material_green: '#63C79A',
     });
+    act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.etype === 'Feature')));
+    await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label)).toEqual([
+      'Think one', 'Know one', 'CodeGraph', 'surface.tsx',
+    ]));
+    expect(screen.getByTestId('codegraph-node-details').textContent)
+      .toContain('Renders the shared graph.');
     expect(graph.data.links.find((edge: any) => edge.layer === 'codegraph'))
       .toMatchObject({ material_kind: 'solarpunk', material_color: '#63C79A' });
 

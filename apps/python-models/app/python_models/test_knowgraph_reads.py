@@ -1,5 +1,9 @@
 """Focused projection and exact-read contracts for Graphiti-backed KnowGraph."""
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
 # Relationship: This file verifies Graphiti-backed KnowGraph projection, exact Entity and episode reads, citation containment, provider identity, provenance, and Project-scoped query behavior.
 # Entity: Project Knowledge Graph

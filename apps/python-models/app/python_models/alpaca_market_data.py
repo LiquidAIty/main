@@ -12,6 +12,10 @@ or placed in any result. Live-mode credentials are rejected for this lane. When
 credentials are absent the providers return the honest ``provider_unconfigured`` status;
 provider/HTTP failures return ``provider_error``. Nothing is ever fabricated.
 """
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Market Data
 # Relationship: This file performs bounded read-only Alpaca snapshot, historical-bar, and paper-account readiness requests and returns typed availability without order authority.
 # Entity: Credentials

@@ -1,5 +1,9 @@
 """Test-owned value formatting and provider reset support for MCP contracts."""
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: MCP Host
 # Relationship: This file supplies shared result formatting and provider-reset fixtures that isolate authenticated Streamable HTTP and dispatch contract tests.
 

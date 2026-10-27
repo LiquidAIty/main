@@ -1,5 +1,9 @@
 """Saved ThinkGraph Card structured extraction contract and result projection."""
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
 # Relationship: This file defines and validates the saved ThinkGraph Card's completed-pair extraction contract and projects one bounded Think per distinct Entity.
 

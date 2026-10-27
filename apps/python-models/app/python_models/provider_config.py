@@ -11,6 +11,10 @@ Provider modules consume the TYPED, VALUE-FREE config objects exposed here inste
 scattering ``os.getenv`` calls. No secret value ever appears on a returned public object,
 exception, log line, or serialized result.
 """
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Credentials
 # Relationship: This file loads the canonical Python-rails environment, resolves file-backed secrets without overriding process values, and exposes only value-free provider configuration objects.
 # Entity: Market Data

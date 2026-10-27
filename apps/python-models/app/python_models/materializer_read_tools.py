@@ -1,4 +1,8 @@
 """Authenticated client primitives for the one official Python MCP host."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Data Anchors
 # Relationship: This file performs one bounded authenticated MCP session to hydrate selected graph references before IDF materialization without granting writes.
 # Entity: MCP Host

@@ -1,4 +1,8 @@
 """Saved-Card invocation, graph context, tool grant, and IDF preparation tests."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Card Invocation
 # Relationship: This file verifies exact saved-Card revision, sender, topology, provider, model, Script, and execution authority without alternate runners or copied context.
 #

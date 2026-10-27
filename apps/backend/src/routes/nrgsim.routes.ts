@@ -1,3 +1,7 @@
+// Graph + less = more: less code that does the same work as more code is more useful.
+// Entity names the feature; Relationship explains why this file belongs and what it contributes.
+// Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+// Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: Building Modeling
 // Relationship: Transports explicit modeling requests after resolving the authenticated user's owned Project; the browser supplies no files, commands or provider authority.
 import { Router } from 'express';

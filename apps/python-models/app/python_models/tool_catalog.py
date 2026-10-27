@@ -1,4 +1,8 @@
 """Deterministic projection of canonical operations into the selectable catalog."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Tool Catalog
 # Relationship: This file projects code-owned and authenticated provider operations into one validated catalog with explicit availability, eligibility, schemas, publications, and profile ceilings.
 

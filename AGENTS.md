@@ -26,6 +26,28 @@ The repository has deleted well over 200,000 lines of layered experiments. The m
 > When an approach changes, delete the abandoned path in the same implementation change. Never
 > declare a replacement complete while the replaced path remains live.
 
+### Source graph coding system
+
+> Less code doing the same work is more useful.
+
+Treat source as a graph, not a pile of files. Before editing a first-party source file, read its leading
+`Entity:` / `Relationship:` pairs, use the installed Codebase Memory CLI to map the relevant structural
+neighbors, then read current source. `Entity` names a stable Feature category. Its immediately adjacent
+`Relationship` explains what that exact file contributes to the Feature. CBM independently owns Files,
+Symbols, callers, imports, definitions, tests and dependency structure; source comments do not duplicate it.
+
+After an edit:
+
+- leave the header unchanged when the file still belongs to the same Feature and contributes the same responsibility;
+- update `Entity` when Feature membership genuinely changes;
+- update `Relationship` when the file's contribution genuinely changes;
+- add or remove an adjacent pair when a real responsibility is added, removed or replaced;
+- remove annotations for deleted or superseded code in the same change.
+
+Do not infer semantic categories from filenames, keywords or a deterministic classifier. A validator may
+check placement, pairing and nonempty values; semantic accuracy remains part of the agent's source review.
+Do not perform a repository-wide header rewrite unless the owner explicitly requests that exact operation.
+
 Law in one line:
 
 ```text

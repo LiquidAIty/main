@@ -1,4 +1,8 @@
 """Focused no-provider proof for the shared internal MCP Card client."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Data Anchors
 # Relationship: This file verifies Card-scoped graph hydration preserves successful bounded reads and contains unavailable or timed-out providers.
 # Entity: MCP Host

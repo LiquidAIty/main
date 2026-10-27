@@ -1,4 +1,8 @@
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file owns the Project graph workspace's independent provider load, error, refresh, neighborhood, removal, and opt-in Code state.
  * Entity: ThinkGraph
@@ -6,7 +10,7 @@
  * Entity: KnowGraph
  * Relationship: This file validates Entity-only Graphiti projections, bounds startup retries, reads exact neighborhoods, and refreshes only after confirmed Know removal.
  * Entity: CodeGraph
- * Relationship: This file opens CodeGraph only on demand, validates its read envelopes, merges exact File structure, and loads Symbol source only by explicit action.
+ * Relationship: This file opens CodeGraph only on demand, validates its read envelopes, replaces the active File structure, and loads Symbol source only by explicit action.
  * Entity: Jev Decisions
  * Relationship: This file applies validated Jev relationship physics locally to the KnowGraph presentation without modifying provider data.
  */
@@ -169,6 +173,7 @@ export default function useAgentBuilderKnowledgeGraphs({
   const codeProjectionRequestRef = useRef(0);
   const codeFileRequestRef = useRef(0);
   const codeSourceRequestRef = useRef(0);
+  const codeBaseProjectionRef = useRef(emptyCodeGraphProjection(projectId));
   const codeProjectionAbortRef = useRef<AbortController | null>(null);
   const codeFileAbortRef = useRef<AbortController | null>(null);
   const codeSourceAbortRef = useRef<AbortController | null>(null);
@@ -275,6 +280,7 @@ export default function useAgentBuilderKnowledgeGraphs({
       warning: null,
       freshness: 'unverified',
     });
+    codeBaseProjectionRef.current = emptyCodeGraphProjection(projectId);
     codeProjectionRequestRef.current += 1;
     codeFileRequestRef.current += 1;
     codeSourceRequestRef.current += 1;
@@ -330,6 +336,7 @@ export default function useAgentBuilderKnowledgeGraphs({
       const warning = envelope.status === 'partial'
         ? codeGraphMessage(envelope, 'codegraph_projection_partial')
         : null;
+      codeBaseProjectionRef.current = envelope.projection;
       setCodeGraph({
         projection: envelope.projection,
         status: 'ready',
@@ -355,30 +362,37 @@ export default function useAgentBuilderKnowledgeGraphs({
     codeFileAbortRef.current?.abort();
     const controller = new AbortController();
     codeFileAbortRef.current = controller;
-    const response = await fetch('/api/codegraph/read', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, mode: 'file', filePath }),
-      signal: controller.signal,
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(String(payload?.error || `codegraph_http_${response.status}`));
-    const envelope = validateCodeGraphReadEnvelope(payload, { projectId, mode: 'file' });
-    if (requestId !== codeFileRequestRef.current) return null;
-    if (!envelope.projection || ['unavailable', 'not_found'].includes(envelope.status)) {
-      throw new Error(codeGraphMessage(envelope, 'codegraph_file_unavailable'));
+    try {
+      const response = await fetch('/api/codegraph/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, mode: 'file', filePath }),
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(String(payload?.error || `codegraph_http_${response.status}`));
+      const envelope = validateCodeGraphReadEnvelope(payload, { projectId, mode: 'file' });
+      if (requestId !== codeFileRequestRef.current) return null;
+      if (!envelope.projection || ['unavailable', 'not_found'].includes(envelope.status)) {
+        throw new Error(codeGraphMessage(envelope, 'codegraph_file_unavailable'));
+      }
+      setCodeGraph(current => ({
+        ...current,
+        projection: mergeCodeGraphProjections(
+          codeBaseProjectionRef.current, envelope.projection!,
+        ),
+        status: 'ready',
+        error: null,
+        warning: envelope.status === 'partial'
+          ? codeGraphMessage(envelope, 'codegraph_file_partial')
+          : current.warning,
+        freshness: envelope.freshness.status,
+      }));
+      return envelope.projection;
+    } catch (error) {
+      if (controller.signal.aborted || requestId !== codeFileRequestRef.current) return null;
+      throw error;
     }
-    setCodeGraph(current => ({
-      ...current,
-      projection: mergeCodeGraphProjections(current.projection, envelope.projection!),
-      status: 'ready',
-      error: null,
-      warning: envelope.status === 'partial'
-        ? codeGraphMessage(envelope, 'codegraph_file_partial')
-        : current.warning,
-      freshness: envelope.freshness.status,
-    }));
-    return envelope.projection;
   }, [projectId]);
 
   const readCodeGraphSource = useCallback(async (
@@ -388,20 +402,25 @@ export default function useAgentBuilderKnowledgeGraphs({
     codeSourceAbortRef.current?.abort();
     const controller = new AbortController();
     codeSourceAbortRef.current = controller;
-    const response = await fetch('/api/codegraph/read', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, mode: 'source', qualifiedName }),
-      signal: controller.signal,
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(String(payload?.error || `codegraph_http_${response.status}`));
-    const envelope = validateCodeGraphReadEnvelope(payload, { projectId, mode: 'source' });
-    if (requestId !== codeSourceRequestRef.current) return null;
-    if (!envelope.selectedSymbol || ['unavailable', 'not_found'].includes(envelope.status)) {
-      throw new Error(codeGraphMessage(envelope, 'codegraph_source_unavailable'));
+    try {
+      const response = await fetch('/api/codegraph/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, mode: 'source', qualifiedName }),
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(String(payload?.error || `codegraph_http_${response.status}`));
+      const envelope = validateCodeGraphReadEnvelope(payload, { projectId, mode: 'source' });
+      if (requestId !== codeSourceRequestRef.current) return null;
+      if (!envelope.selectedSymbol || ['unavailable', 'not_found'].includes(envelope.status)) {
+        throw new Error(codeGraphMessage(envelope, 'codegraph_source_unavailable'));
+      }
+      return envelope.selectedSymbol;
+    } catch (error) {
+      if (controller.signal.aborted || requestId !== codeSourceRequestRef.current) return null;
+      throw error;
     }
-    return envelope.selectedSymbol;
   }, [projectId]);
 
   const readProviderNeighborhood = useCallback(async (

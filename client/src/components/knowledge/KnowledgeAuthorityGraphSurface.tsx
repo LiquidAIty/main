@@ -1,4 +1,8 @@
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file owns the single renderer lifecycle, camera, settings, selection, focus, and Inspector shared by the Project graph views.
  * Entity: ThinkGraph
@@ -6,7 +10,7 @@
  * Entity: KnowGraph
  * Relationship: This file renders exact Graphiti Entities, relationships, atomic and historical Knows, sources, focus neighborhoods, and confirmed episode removal actions.
  * Entity: CodeGraph
- * Relationship: This file renders opt-in Feature, File, and Symbol projections, expands a selected File, and loads exact source only after an explicit Symbol action.
+ * Relationship: This file renders the Code layer category-first, expands a selected File, and loads exact source only after an explicit Symbol action.
  * Entity: Jev Decisions
  * Relationship: This file presents validated relationship probabilities and bounded manual focus results as transient physics and navigation without writing graph meaning.
  */
@@ -51,7 +55,10 @@ import {
   type ReadProviderFocusNeighborhood,
   type SolarpunkColors,
 } from './knowledgeGraphProjection';
-import type { CodeGraphSelectedSymbol } from './codeGraphProjection';
+import {
+  codeGraphCategoryProjection,
+  type CodeGraphSelectedSymbol,
+} from './codeGraphProjection';
 import {
   CALM_FOCUS_GALAXY_SETTINGS,
   FOCUS_RELEASE_MILLISECONDS,
@@ -130,6 +137,8 @@ export function JoinedKnowledgeGraphSurface({
   const [layerVisibility, setLayerVisibility] = useState<GraphLayerVisibility>(() => ({
     ...DEFAULT_GRAPH_LAYER_VISIBILITY,
   }));
+  const [codeFeatureId, setCodeFeatureId] = useState<string | null>(null);
+  const [codeFilePath, setCodeFilePath] = useState<string | null>(null);
   const codeLayer = codeGraph || {
     projection: {
       schemaVersion: 'codegraph.projection.v1',
@@ -144,14 +153,22 @@ export function JoinedKnowledgeGraphSurface({
     warning: null,
     freshness: 'unverified',
   };
+  useEffect(() => {
+    setCodeFeatureId(null);
+    setCodeFilePath(null);
+  }, [codeLayer.projection.projectId]);
+  const visibleCodeProjection = useMemo(
+    () => codeGraphCategoryProjection(codeLayer.projection, codeFeatureId, codeFilePath),
+    [codeFeatureId, codeFilePath, codeLayer.projection],
+  );
   const presentation = useMemo(
     () => composeVisibleGraphLayers(
       projections.thinkgraph,
       projections.knowgraph,
-      codeLayer.projection,
+      visibleCodeProjection,
       layerVisibility,
     ),
-    [codeLayer.projection, layerVisibility, projections.knowgraph, projections.thinkgraph],
+    [layerVisibility, projections.knowgraph, projections.thinkgraph, visibleCodeProjection],
   );
   const visibleStatuses = [
     ...(layerVisibility.thinkgraph
@@ -194,6 +211,10 @@ export function JoinedKnowledgeGraphSurface({
     : null;
   const setLayerVisible = (layer: keyof GraphLayerVisibility, visible: boolean) => {
     setLayerVisibility(current => ({ ...current, [layer]: visible }));
+    if (layer === 'codegraph' && !visible) {
+      setCodeFeatureId(null);
+      setCodeFilePath(null);
+    }
     if (layer === 'codegraph' && visible && codeLayer.status === 'idle' && onOpenCodeGraph) {
       void onOpenCodeGraph();
     }
@@ -213,15 +234,31 @@ export function JoinedKnowledgeGraphSurface({
       warning={warning}
       onRemoveEvidence={onRemoveThinkGraphEvidence}
       onRemoveKnowEvidence={onRemoveKnowGraphEvidence}
-      onReadCodeGraphFile={onReadCodeGraphFile}
+      onReadCodeGraphFile={onReadCodeGraphFile ? async (filePath) => {
+        setCodeFilePath(filePath);
+        return onReadCodeGraphFile(filePath);
+      } : undefined}
       onReadCodeGraphSource={onReadCodeGraphSource}
+      codeNavigationActive={Boolean(codeFeatureId || codeFilePath)}
+      onSelectCodeGraphFeature={(featureId) => {
+        setCodeFeatureId(featureId);
+        setCodeFilePath(null);
+      }}
+      onClearCodeGraphFeature={() => {
+        setCodeFeatureId(null);
+        setCodeFilePath(null);
+      }}
       layerVisibility={layerVisibility}
       onLayerVisibilityChange={setLayerVisible}
-      onResetLayerVisibility={() => setLayerVisibility({ ...DEFAULT_GRAPH_LAYER_VISIBILITY })}
+      onResetLayerVisibility={() => {
+        setCodeFeatureId(null);
+        setCodeFilePath(null);
+        setLayerVisibility({ ...DEFAULT_GRAPH_LAYER_VISIBILITY });
+      }}
       layerCounts={{
         thinkgraph: projections.thinkgraph.nodes.length,
         knowgraph: projections.knowgraph.nodes.length,
-        codegraph: codeLayer.projection.nodes.length,
+        codegraph: visibleCodeProjection.nodes.length,
       }}
       codeLayerStatus={codeLayer.status}
       codeLayerFreshness={codeLayer.freshness}
@@ -274,6 +311,9 @@ export function KnowledgeGraphProjectionSurface({
   entityFocusRequest,
   onReadCodeGraphFile,
   onReadCodeGraphSource,
+  codeNavigationActive,
+  onSelectCodeGraphFeature,
+  onClearCodeGraphFeature,
   layerVisibility,
   onLayerVisibilityChange,
   onResetLayerVisibility,
@@ -294,6 +334,9 @@ export function KnowledgeGraphProjectionSurface({
   entityFocusRequest?: CanonicalEntityFocusRequest | null;
   onReadCodeGraphFile?: (filePath: string) => Promise<GraphProjectionV1 | null>;
   onReadCodeGraphSource?: (qualifiedName: string) => Promise<CodeGraphSelectedSymbol | null>;
+  codeNavigationActive?: boolean;
+  onSelectCodeGraphFeature?: (featureId: string) => void;
+  onClearCodeGraphFeature?: () => void;
   layerVisibility?: GraphLayerVisibility;
   onLayerVisibilityChange?: (
     layer: keyof GraphLayerVisibility,
@@ -369,6 +412,7 @@ export function KnowledgeGraphProjectionSurface({
   const [codeSource, setCodeSource] = useState<CodeGraphSelectedSymbol | null>(null);
   const [codeSourceLoading, setCodeSourceLoading] = useState(false);
   const [codeSourceError, setCodeSourceError] = useState<string | null>(null);
+  const codeSourceSelectionRef = useRef(0);
   const [paperViewport, setPaperViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef<{ x: number; y: number; scale: number } | null>(null);
   presentationStateRef.current = { layout, style, physicsProfile, settings };
@@ -513,6 +557,12 @@ export function KnowledgeGraphProjectionSurface({
       : activeJoinedPresentation?.providerProjections[inspectedAuthority] || null
     : displayProjection;
   const selectedProperties = selected?.properties || {};
+  useEffect(() => {
+    codeSourceSelectionRef.current += 1;
+    setCodeSource(null);
+    setCodeSourceLoading(false);
+    setCodeSourceError(null);
+  }, [selectedEdgeId, selectedId]);
   const openNodeInspector = (visualNodeId: string) => {
     setControlsOpen(false);
     setRemoveError(null);
@@ -528,6 +578,9 @@ export function KnowledgeGraphProjectionSurface({
       : authority === 'joined'
         ? activeJoinedPresentation?.codeNodeVariants?.get(visualNodeId)
         : null;
+    if (codeNode?.properties?.recordKind === 'feature' && onSelectCodeGraphFeature) {
+      onSelectCodeGraphFeature(codeNode.id);
+    }
     const filePath = codeNode?.properties?.recordKind === 'file'
       && typeof codeNode.properties.filePath === 'string'
       ? codeNode.properties.filePath
@@ -1197,19 +1250,22 @@ export function KnowledgeGraphProjectionSurface({
   };
   const loadCodeSource = async (qualifiedName: string) => {
     if (!onReadCodeGraphSource) return;
+    const requestId = ++codeSourceSelectionRef.current;
     setCodeSourceLoading(true);
     setCodeSourceError(null);
     try {
       const source = await onReadCodeGraphSource(qualifiedName);
+      if (requestId !== codeSourceSelectionRef.current) return;
       if (!source || source.cbmQualifiedName !== qualifiedName) {
         throw new Error('codegraph_source_identity_mismatch');
       }
       setCodeSource(source);
     } catch (failure) {
+      if (requestId !== codeSourceSelectionRef.current) return;
       setCodeSource(null);
       setCodeSourceError(failure instanceof Error ? failure.message : String(failure));
     } finally {
-      setCodeSourceLoading(false);
+      if (requestId === codeSourceSelectionRef.current) setCodeSourceLoading(false);
     }
   };
 
@@ -1398,6 +1454,16 @@ export function KnowledgeGraphProjectionSurface({
           >
             {warning}
           </div>
+        ) : null}
+        {layerVisibility?.codegraph && codeNavigationActive && onClearCodeGraphFeature ? (
+          <button
+            type="button"
+            data-testid="codegraph-back-to-features"
+            onClick={onClearCodeGraphFeature}
+            style={{ position: 'absolute', top: 12, left: 12, zIndex: 5 }}
+          >
+            ← All code features
+          </button>
         ) : null}
         {status === 'ready' && allNodes === 0 ? <div className="knowledge-authority-empty">
           {noVisibleLayers

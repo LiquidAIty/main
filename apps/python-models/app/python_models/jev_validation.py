@@ -5,6 +5,10 @@ Validation therefore proves that the returned numbers could represent one real
 distribution without rewriting the provider's raw values.
 """
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Jev Decisions
 # Relationship: This file validates rounded provider probability distributions and confirms that a selected winner can remain maximal within the transport's numeric precision.
 

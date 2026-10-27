@@ -1,4 +1,8 @@
 """Sole materializer and retained-file owner for one canonical Run ``in.idf``."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: IDF
 # Relationship: This file materializes, size-validates, writes, reloads, hashes, and mechanically projects the one canonical Run input without an alternate payload or silent truncation.
 

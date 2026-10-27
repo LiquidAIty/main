@@ -1,4 +1,8 @@
 """Bounded Jev transport and exact Choice response validation."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Jev Decisions
 # Relationship: This file sends bounded Choice requests to Jev and validates decision identifiers, probability distributions, winners, and confidence before application use.
 # Entity: Credentials

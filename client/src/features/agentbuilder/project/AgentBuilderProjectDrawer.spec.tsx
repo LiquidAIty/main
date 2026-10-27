@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Projects
  * Relationship: This file verifies Project creation sends only identity fields and navigates only after exact persisted deck and revision readback.
  */

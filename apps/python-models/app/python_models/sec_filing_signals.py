@@ -15,6 +15,10 @@ Hard boundaries (enforced by tests):
   * the API key is read from the environment only and never appears in any returned
 object, replay identity, error string, or log.
 """
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: WorldSignals
 # Relationship: This file performs bounded read-only SEC filing queries and maps only complete SEC.gov-sourced records into provenance-bearing WorldSignal envelopes.
 # Entity: Market Data

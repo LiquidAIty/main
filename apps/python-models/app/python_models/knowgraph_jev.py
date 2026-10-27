@@ -6,6 +6,10 @@ by the active Graphiti ingest. The ingest owner persists successful metadata on
 that same relationship; this module never admits, rejects, or rewrites facts.
 """
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
 # Relationship: This file supplies bounded source, Entity, temporal, and nearby-fact context for relationship classification without admitting, deleting, or rewriting Graphiti facts.
 #

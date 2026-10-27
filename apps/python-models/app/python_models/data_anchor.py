@@ -5,6 +5,10 @@ records, and returns stable references plus an optional transient projection. It
 never writes a graph, copies one into another authority, or materializes an IDF.
 """
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Data Anchors
 # Relationship: This file resolves exact selected ThinkGraph, KnowGraph, and CodeGraph identities into bounded model context, stable references, provenance, and an optional transient projection.
 

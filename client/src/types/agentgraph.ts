@@ -1,4 +1,8 @@
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Saved Cards
  * Relationship: This file defines the client-side saved deck, immutable Card revision identity, and saved Card configuration types consumed by the Canvas and editor.
  * Entity: Card Topology

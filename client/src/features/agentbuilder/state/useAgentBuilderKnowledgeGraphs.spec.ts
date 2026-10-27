@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: KnowGraph
  * Relationship: This file verifies accepted Know deletion refreshes the provider projection exactly once while refusal preserves the current graph and avoids false refresh.
  * Entity: Project Knowledge Graph
@@ -8,7 +12,7 @@
  * Entity: ThinkGraph
  * Relationship: This file verifies the Engraphis projection loads alongside KnowGraph without being replaced by another authority.
  * Entity: CodeGraph
- * Relationship: This file verifies CodeGraph opens only on demand, merges exact File structure, and loads current Symbol source only after explicit selection.
+ * Relationship: This file verifies CodeGraph opens only on demand, replaces the active File structure, and loads current Symbol source only after explicit selection.
  */
 
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
@@ -179,7 +183,7 @@ describe('KnowGraph route contracts', () => {
     expect(calls.filter(url => url.startsWith('/api/knowgraph/graph?'))).toHaveLength(1);
   });
 
-  it('loads CodeGraph only on demand, merges exact File structure, and reads source explicitly', async () => {
+  it('loads CodeGraph on demand, replaces File structure, and reads source explicitly', async () => {
     const codeBodies: Record<string, unknown>[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -214,15 +218,17 @@ describe('KnowGraph route contracts', () => {
           }), { status: 200 });
         }
         if (mode === 'file') {
+          const filePath = String(body.filePath);
+          const second = filePath === 'client/two.ts';
           return new Response(JSON.stringify({
             schemaVersion: 'codegraph.read.v1', status: 'ready', mode, scope,
             projection: {
               schemaVersion: 'codegraph.projection.v1', authority: 'codegraph',
               projectId: 'project-one', nodes: [
-                { id: 'file:one', label: 'one.ts', authority: 'codegraph', type: 'File', etype: 'File', properties: { recordKind: 'file', filePath: 'client/one.ts', qualifiedName: 'file:one' } },
-                { id: 'symbol:run', label: 'run', authority: 'codegraph', type: 'Function', etype: 'Symbol', properties: { recordKind: 'symbol', filePath: 'client/one.ts', qualifiedName: 'symbol:run' } },
+                { id: second ? 'file:two' : 'file:one', label: second ? 'two.ts' : 'one.ts', authority: 'codegraph', type: 'File', etype: 'File', properties: { recordKind: 'file', filePath, qualifiedName: second ? 'file:two' : 'file:one' } },
+                { id: second ? 'symbol:stop' : 'symbol:run', label: second ? 'stop' : 'run', authority: 'codegraph', type: 'Function', etype: 'Symbol', properties: { recordKind: 'symbol', filePath, qualifiedName: second ? 'symbol:stop' : 'symbol:run' } },
               ],
-              edges: [{ id: 'defines', source: 'file:one', target: 'symbol:run', predicate: 'DEFINES' }],
+              edges: [{ id: second ? 'defines-stop' : 'defines-run', source: second ? 'file:two' : 'file:one', target: second ? 'symbol:stop' : 'symbol:run', predicate: 'DEFINES' }],
             },
             selectedSymbol: null, freshness: { status: 'current', coverage: {} },
             truncated: false, errors: [],
@@ -258,6 +264,12 @@ describe('KnowGraph route contracts', () => {
     expect(result.current.codeGraph.projection.nodes.map(node => node.id))
       .toEqual(['file:one', 'symbol:run']);
     expect(result.current.codeGraph.projection.edges[0].predicate).toBe('DEFINES');
+
+    await act(async () => { await result.current.readCodeGraphFile('client/two.ts'); });
+    expect(result.current.codeGraph.projection.nodes.map(node => node.id))
+      .toEqual(['file:one', 'file:two', 'symbol:stop']);
+    expect(result.current.codeGraph.projection.nodes.some(node => node.id === 'symbol:run'))
+      .toBe(false);
 
     let source: CodeGraphSelectedSymbol | null = null;
     await act(async () => {

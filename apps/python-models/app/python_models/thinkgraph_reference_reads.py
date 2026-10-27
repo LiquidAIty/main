@@ -1,4 +1,8 @@
 """Exact project-scoped reads from the Engraphis ThinkGraph authority."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
 # Relationship: This file reads one exact Project-scoped Engraphis Entity or Think and projects bounded portable content with provider provenance and truncation.
 # Entity: Data Anchors

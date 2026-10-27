@@ -1,5 +1,9 @@
 """Deterministic proof for the Graphiti KnowGraph ingestion boundary."""
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
 # Relationship: This file contributes proof of deterministic episode identity, duplicate exclusion, interrupted settlement recovery, and exact authority readback to the KnowGraph feature.
 # Entity: Jev Decisions

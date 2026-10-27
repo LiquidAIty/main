@@ -1,5 +1,9 @@
 """Graph selection, AutoTools/AutoModel, and canonical Card IDF preparation."""
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Card Invocation
 # Relationship: This file resolves one saved Card revision, sender authority, provider/model, effective tools, Script presentation, images, and transient assignment for execution.
 #

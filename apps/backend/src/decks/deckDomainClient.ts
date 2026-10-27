@@ -1,5 +1,9 @@
 // Thin HTTP transport to the Python-owned stable Card/deck domain.
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Saved Cards
  * Relationship: This file transports exact deck reads and compare-and-set writes between TypeScript routes and the Python-owned saved Card domain.
  * Entity: Card Topology

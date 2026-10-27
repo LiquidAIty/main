@@ -1,4 +1,8 @@
 """Exact-revision saved Card configuration updates."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Saved Cards
 # Relationship: This file validates and applies an exact-revision saved Card configuration update and returns the persisted revision readback.
 # Entity: Card Profiles

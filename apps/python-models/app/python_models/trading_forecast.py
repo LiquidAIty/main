@@ -5,6 +5,10 @@ paper-data boundary.  It returns predicted OHLCV bars with explicit model and
 market-data provenance; it never creates a trade, signal, position, or order.
 """
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Trading
 # Relationship: Fetches bounded Alpaca historical bars and runs the controlled Kronos model to return read-only forecast OHLCV points with explicit market-data and model provenance.
 

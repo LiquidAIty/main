@@ -1,150 +1,107 @@
 # LiquidAIty
 
-LiquidAIty is a persistent, Project-oriented agent workbench. A Project keeps durable saved Cards,
-their prompts and grants, provider-owned graph authorities, one Project human conversation, and explicit
-execution topology. The connected Card runtime executes agents; LiquidAIty supplies authenticated product
-state, bounded context, transport, and presentation without replacing external execution ownership.
+LiquidAIty is a durable agent system for work that develops over time.
 
-This repository is in an MVP hardening phase. Current source is authoritative. Static source,
-deterministic tests, a loaded service, a real saved-Card Run, persisted readback, and visual acceptance
-are separate proof tiers.
+Instead of treating every conversation as a disposable chat, LiquidAIty organizes work inside a
+**Project**. A Project preserves its agents, instructions, tools, relationships, conversation,
+knowledge, runs, and artifacts so the system can continue from an established state rather than
+reconstructing itself on every turn.
 
-## Read this repository
+## Durable Projects
+
+Each Project brings together:
+
+- **saved Cards** with stable identities, prompts, models, tools, and runtime profiles;
+- **Main**, the human-facing conversation and bounded orchestrator;
+- **Builder**, the construction agent for prompts, Cards, applications, interfaces, code, and artifacts;
+- **specialized Cards** for work such as research, analysis, trading, world intelligence, or modeling;
+- **explicit connections** that determine which saved agents may communicate or participate in coordinated work;
+- **provider-owned knowledge** that remains attributable to its real source and storage authority;
+- **Runs and artifacts** that preserve what was actually invoked and produced.
+
+A Card is not a temporary role invented for one answer. It is a saved agent with its own durable
+configuration and runtime identity. Connecting Cards makes collaboration explicit without merging their
+prompts, tools, histories, or responsibilities.
+
+## One workbench, separate authorities
+
+LiquidAIty keeps four different kinds of graph information separate:
+
+| Graph | What it represents | Authority |
+| --- | --- | --- |
+| **ThinkGraph** | How Project reasoning, decisions, and ideas develop | Engraphis |
+| **KnowGraph** | Sourced observations, evidence, and provenance | Graphiti / Neo4j |
+| **CodeGraph** | Repository files, symbols, callers, imports, tests, and dependencies | Codebase Memory |
+| **AgentGraph** | Saved Card relationships and truthful Run observations | Apache AGE / PostgreSQL |
+
+The interface may present related information together, but presentation does not create another graph or
+another writer. Reasoning is not evidence, source code is not Project memory, and visible agent connections
+do not by themselves prove that work executed.
+
+## How people use it
+
+The normal entry point is Main. A person can reason with the Project, consult a connected specialist, ask
+Builder to turn established context into something concrete, inspect the supporting knowledge, and review the
+result without replacing the saved agents or their authority.
+
+The same durable Project model can support different domains. Trading, world intelligence, and building-energy
+modeling are specialized applications of the system; they do not redefine the core agent, graph, or runtime
+contracts.
+
+## Engineering model
+
+LiquidAIty follows a deliberately small ownership rule:
+
+```text
+TypeScript = transport and pixels
+Python rails = runtime preparation and deterministic computation
+models = semantic reasoning
+saved Cards and graph topology = identity and authority
+```
+
+The repository also uses a source-owned CodeGraph overlay:
+
+```text
+Entity = the Feature category a file belongs to
+Relationship = what that exact file contributes
+CBM = the independently derived structural graph
+```
+
+Source annotations explain meaning; Codebase Memory supplies structure. They join on the repository-relative
+file path without copying either authority into the other.
+
+## Repository guide
+
+| Path | Purpose |
+| --- | --- |
+| `client/` | React workbench and visual surfaces |
+| `apps/backend/` | Authenticated HTTP/SSE transport and saved Project access |
+| `apps/python-models/` | Python rails, Card/Run preparation, graph adapters, and deterministic operations |
+| `services/knowgraph/` | KnowGraph ingestion and Graphiti integration |
+| `agent-products/` | Specialized product applications and controlled imports |
+| `HermesLatest/`, `GraphitiLatest/`, `EngraphisLatest/` | Controlled upstream forks with bounded local divergences |
 
 The canonical documents have distinct jobs:
 
-| Document | Authority |
+| Document | Purpose |
 | --- | --- |
-| [AGENTS.md](AGENTS.md) | Repository execution law and the PromptSpec process |
+| [PLAN.md](PLAN.md) | Current status, evidence, gaps, and next accepted boundary |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Current technical owners, contracts, and controlled divergences |
+| [RUNTIME.md](RUNTIME.md) | Product runtime and acceptance contract |
+| [AGENTS.md](AGENTS.md) | Repository execution law for coding agents |
 | [DONT.md](DONT.md) | Prohibitions and known failure patterns |
-| [PLAN.md](PLAN.md) | Current status, gaps, and next approved boundary |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Detailed current source owners and contracts |
-| [FUTURE.md](FUTURE.md) | Deferred candidates, never execution authority |
-| [skills/](skills/) | Conditional domain procedures; PromptSpec process stays in `promptspec-receiver` |
+| [FUTURE.md](FUTURE.md) | Deferred possibilities, not current behavior or permission |
 
-Historical reports and old PromptSpecs are evidence only. They do not override current source or the
-owner's latest instruction.
+Current source and real runtime evidence remain authoritative when a historical report or stale description
+disagrees.
 
-## Current MVP
+## Local development
 
-The server attaches six core saved Cards to a new agent Project by their current saved revisions:
-
-| Card | Current responsibility |
-| --- | --- |
-| Main | Human-facing Project conversation and bounded orchestration |
-| Builder | Prompts, Cards, applications, UI, code, artifacts, and construction work |
-| ThinkGraph | Engraphis-backed Project reasoning; automatic User/Main-pair intake is not currently connected |
-| KnowGraph | Graphiti-backed sourced research, provenance, and queued Know ingestion |
-| Magnetic | Saved coordination agent; blue-worker execution remains deferred and unproven |
-| Team | General-purpose saved agent reached through ordinary agent messaging |
-
-Persisted PostgreSQL Card revisions and grants—not TypeScript seed objects—are runtime authority for an
-existing Project. WorldView, WorldSignals, Trading, and other domain Cards are specialized saved Cards
-when deliberately attached; they are not universal members of every new Project and do not replace the
-core graph authorities.
-
-## Separate graph authorities
-
-```text
-ThinkGraph = Engraphis progressive Project reasoning
-KnowGraph  = Graphiti / Neo4j sourced evidence and provenance
-CodeGraph  = Codebase Memory repository structure
-AgentGraph = AGE / PostgreSQL saved topology and truthful Run observations
-```
-
-One logical Project Entity may have one Engraphis provider identity and one Graphiti provider identity.
-The canonical Entity directory keeps those provider identities separate. The joined graph can present
-an exact same-name pair as one visual Entity, but that presentation is not a third graph, shared provider
-ID, semantic merger, or additional writer.
-
-## Execution boundaries
-
-- **Team** remains a saved general-purpose agent. Automatic worker behavior is deferred until live proof.
-- **Magnetic** remains a saved coordination agent with blue membership. Its task execution path is deferred
-  until ordinary messaging is proven end to end.
-- **Python rails** owns deterministic Card/Run preparation, graph adapters, tool dispatch, IDF/IDD,
-  validation, and settlement.
-- **The backend** owns authenticated HTTP/SSE transport, saved scope, Card-runtime transport,
-  profile/session binding, and event correlation.
-- **React/TypeScript** owns transport-facing UI and pixels, not semantic routing or graph meaning.
-
-## Current versus approved direction
-
-These distinctions are load-bearing:
-
-### Current
-
-- Main's source-default Card has no Web toolset.
-- Main is the fast front door: it answers straightforward requests normally, grounds uncertain material in
-  both ThinkGraph reasoning and KnowGraph evidence, compares two plausible options when useful, and delegates
-  sustained building/reasoning/research to the owning saved Card rather than performing it inline.
-- Exact Data Anchors and one canonical `in.idf` carry selected provider graph data.
-- The completed-pair preparation, extraction, and settlement rails remain available, but no automatic
-  User/Main-pair caller is current. Explicitly selected ThinkGraph work continues through its saved Card.
-- `project_graph.list_entities` exposes the complete exact Entity directory and
-  `project_graph.read_entity_context` performs an exact Entity-scoped read for the supplied query while
-  preserving separate provider IDs. The operation defaults to one Jev-ranked **Relevant** record plus one
-  distinct newest **Recent** record per authority.
-- Main, Builder, ThinkGraph, and KnowGraph receive the current Entity/Relationship map plus the default
-  Relevant/Recent grounding before inference. Engraphis recall supplies Think candidates; Graphiti
-  Entity search plus exact `entity_uuid` reads supplies Know candidates; Jev ranks the bounded provider
-  candidates. TypeScript does not search or rank prose.
-- Thinks faithfully steelman the user's current idea. One valid Know is one first-class Graphiti object with
-  one sourced observation, one bounded interpretation, one inspectable citation, and one exact Entity
-  attachment. Supporting, challenging, contextual and neutral Knows are separate valid records; research
-  coverage and later synthesis provide balance rather than forcing two sides into every Know.
-- The Entity inspector defaults to KnowGraph when both authorities exist. It shows at most two current
-  provider-projected attached Thinks or Knows; it has no current Search/Results control or Relevant/Recent
-  switch. Agent grounding and inspector presentation are separate contracts.
-- Only Entities are visible Project graph nodes. Thinks, Knows, source episodes, citations, and provider
-  references remain attached evidence/provenance rather than extra canvas nodes.
-- Entity radius is a linear presentation scale over the full attached Think-and-Know word total. Existing
-  Jev relationship physics remains movement/centrality authority.
-- The visible **Think** and **Know** color-key labels select isolated provider views; an empty-canvas click
-  returns the one combined view. View settings remain in the graph inspector.
-- KnowGraph owns sourced research and Graphiti persistence; Thinks are framing, never evidence.
-- KnowGraph writes through queued `graphiti.add_know`, which stores a typed `Episodic:Know`, stores one exact
-  `entity_uuid`, removes Know `ABOUT` and `MENTIONS` attachment edges, updates Graphiti communities by
-  default, and may join a continuing research-thread Saga. Python rails verifies the citation before passing
-  it as typed fields; Graphiti keeps plain-text episode content for extraction and hybrid retrieval. Processing
-  acceptance supplies an exact Know UUID/content hash but is not materialization proof; `graphiti.get_know`
-  provides the exact readback.
-
-### Approved direction, not current behavior
-
-- Main may gain bounded quick Web research without taking over durable evidence correlation.
-- Materially used quick-Web evidence may be handed to KnowGraph for verification and persistence.
-- An optional Entity-history search/time interaction may be designed later without changing automatic
-  agent grounding; no such inspector interaction is current.
-
-### Deferred
-
-- A Project Knowledge Dashboard derived from both graph authorities.
-- Any new repository wiki, review Card, or automated documentation-maintenance system.
-- KnowGraph-Team integration and broader trading execution.
-
-## PromptSpec development law
-
-Substantial repository work begins by loading the installed `promptspec-receiver` skill. The Primary
-maps current ownership with the Codebase Memory CLI, may use up to two read-only scouts, decomposes work
-into ordered tasks with a Key Objective and Definition of Done, and remains the only implementation
-writer. Agent behavior requires real loaded-runtime acceptance rather than mocks.
-
-Before completion, documentation coherence is reviewed, implementation bytes are frozen, and an
-independent Agent 3 writes repo-root `turn.md` with per-file SHA-256 hashes and a combined
-`REVIEW_SNAPSHOT_SHA256`. The Primary does not patch after final review begins. A failed review stops for
-owner disposition.
-
-See [AGENTS.md](AGENTS.md) for the controlling repository process. The installed skill supplies the
-generic PromptSpec procedure and defers to these repository-local instructions.
-
-## Development entry point
-
-Canonical local startup is:
+The canonical full-stack launcher is:
 
 ```powershell
 npm run dev:fresh
 ```
 
-Do not start duplicate component processes to work around a failed owner. Current readiness and the next
-authorized proof boundary are recorded in [PLAN.md](PLAN.md).
+It owns the supported local application tree. Do not start duplicate component processes to work around a
+failed owner. See [PLAN.md](PLAN.md) for the current proof boundary and unresolved prerequisites.

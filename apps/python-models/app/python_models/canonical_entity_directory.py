@@ -1,5 +1,9 @@
 """Complete cross-authority Entity identities for exact shared-name context."""
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Project Knowledge Graph
 # Relationship: This file validates complete provider Entity directories, joins only exact canonical-name bytes, and emits a bounded revisioned identity map without copying records or edges.
 # Entity: ThinkGraph

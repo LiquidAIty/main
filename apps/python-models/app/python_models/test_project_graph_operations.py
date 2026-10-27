@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Project Knowledge Graph
 # Relationship: This file verifies exact Entity-directory reads and bounded Relevant plus distinct Recent context from separate graph authorities.
 # Entity: ThinkGraph

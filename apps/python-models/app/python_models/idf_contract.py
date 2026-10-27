@@ -1,4 +1,8 @@
 """Literal schema and byte contract for the canonical retained IDF."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: IDF
 # Relationship: This file defines the four-part canonical IDF schema, secret-free validation, historical byte loading, and the versioned reject-only size policy for new Runs.
 

@@ -1,6 +1,10 @@
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: CodeGraph
- * Relationship: This file validates official CBM structural projections, preserves source-owned Feature memberships, and derives non-authoritative filters without duplicating File identity.
+ * Relationship: This file validates CBM projections and derives source-tagged Feature membership and active structural views without duplicating identity.
  *
  * Entity: Project Knowledge Graph
  * Relationship: This file supplies the shared graph workspace with fail-closed Code view parsing, stable expansion merges, and presentation-only Feature filtering.
@@ -248,4 +252,70 @@ export function codeGraphFeatures(projection: GraphProjectionV1): GraphProjectio
   return projection.nodes
     .filter(node => codeNodeKind(node) === 'feature')
     .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+export function codeGraphCategoryProjection(
+  projection: GraphProjectionV1,
+  featureId: string | null,
+  selectedFilePath: string | null,
+): GraphProjectionV1 {
+  const features = codeGraphFeatures(projection);
+  const selectedFeature = featureId
+    ? features.find(node => node.id === featureId)
+    : undefined;
+  if (!selectedFeature) {
+    return {
+      ...projection,
+      counts: { nodes: features.length, edges: 0 },
+      nodes: features,
+      edges: [],
+    };
+  }
+  const nodeById = new Map(projection.nodes.map(node => [node.id, node]));
+  const memberships = projection.edges.filter(edge => (
+    edge.source === selectedFeature.id
+    && edge.predicate === 'FEATURE_CONTRIBUTION'
+    && nodeById.has(edge.target)
+  ));
+  const files = memberships.flatMap((edge): GraphProjectionNode[] => {
+    const node = nodeById.get(edge.target);
+    return node && codeNodeKind(node) === 'file' ? [node] : [];
+  });
+  const filePaths = new Set(files.map(node => String(node.properties?.filePath || '')));
+  const activeFile = selectedFilePath && filePaths.has(selectedFilePath)
+    ? selectedFilePath
+    : null;
+  const structuralEdges = activeFile
+    ? projection.edges.filter(edge => (
+      edge.properties?.recordKind === 'structural-relationship'
+      && edge.properties?.selectedFilePath === activeFile
+      && nodeById.has(edge.source)
+      && nodeById.has(edge.target)
+    ))
+    : [];
+  const nodeIds = new Set([
+    selectedFeature.id,
+    ...files.map(node => node.id),
+    ...structuralEdges.flatMap(edge => [edge.source, edge.target]),
+  ]);
+  const selectedFeatureWithRelationships: GraphProjectionNode = {
+    ...selectedFeature,
+    properties: {
+      ...(selectedFeature.properties || {}),
+      contributions: memberships.map(edge => ({
+        feature: String(edge.properties?.filePath || nodeById.get(edge.target)?.label || 'File'),
+        relationship: String(edge.properties?.relationship || ''),
+      })),
+    },
+  };
+  const nodes = projection.nodes
+    .filter(node => nodeIds.has(node.id))
+    .map(node => node.id === selectedFeature.id ? selectedFeatureWithRelationships : node);
+  const edges = [...memberships, ...structuralEdges];
+  return {
+    ...projection,
+    counts: { nodes: nodes.length, edges: edges.length },
+    nodes,
+    edges,
+  };
 }

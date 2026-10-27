@@ -1,5 +1,9 @@
 """Saved AGE Card topology and authorization projections."""
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: AgentGraph
 # Relationship: This file persists and loads Project-owned Card vertices and relationships through exact fixed AGE queries.
 # Entity: Card Topology
