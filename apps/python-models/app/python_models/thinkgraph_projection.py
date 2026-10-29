@@ -25,11 +25,13 @@ from .engraphis import (
     THINK_INCIDENCE_KIND,
     bounded_graph_snapshot,
     endpoint_thinks,
+    entity_mention_references,
     exact_think_entity_ids,
     newest_think_sort_key,
     validated_think_metadata,
     get_service,
     project_id,
+    think_mentions,
 )
 from .engraphis_operations import inspect
 from .thinkgraph_relationship_classification import winner_probability
@@ -82,6 +84,8 @@ def _bounded_entity_nodes(
         ))
     think_limit_hit = len(latest_thinks) > 24
     latest_thinks = latest_thinks[:24]
+    mentions = think_mentions(store, project=project, workspace_id=workspace_id,
+                             memory_ids=[think["memory_id"] for think in latest_thinks])
     think_by_entity: dict[str, list[dict[str, Any]]] = {}
     for think in latest_thinks:
         think_by_entity.setdefault(str(think["entity_id"]), []).append(think)
@@ -96,6 +100,7 @@ def _bounded_entity_nodes(
             "summary": think["content"],
             "content": think["content"],
             "metadata": {"relations": deepcopy(think["relations"])},
+            "mentions": mentions.get(think["memory_id"], []),
             "validFrom": think.get("valid_from"),
             "validTo": think.get("valid_to"),
             "ingestedAt": think.get("ingested_at"),
@@ -116,6 +121,8 @@ def _bounded_entity_nodes(
                 "nodeType": str(engraphis_entity.get("type") or "Concept"),
                 "focus": bool(engraphis_entity.get("focus")),
                 "evidence": evidence,
+                "references": entity_mention_references(store, project=project,
+                    workspace_id=workspace_id, entity_id=entity_id),
                 "attachedWordCount": sum(
                     _think_word_count(item)
                     for item in evidence
@@ -371,6 +378,10 @@ def _scene_think_evidence(
                 "ingestedAt": memory.get("ingested_at"),
                 "expiredAt": memory.get("expired_at"),
             }
+    mentions = think_mentions(service.store, project=project, workspace_id=workspace_id,
+                             memory_ids=list(supporting))
+    for memory_id, evidence in supporting.items():
+        evidence["mentions"] = mentions.get(memory_id, [])
     return supporting, entity_thinks
 
 
@@ -479,6 +490,11 @@ def projection(project: str, entity_id: str | None = None) -> dict:
         supporting=supporting,
         entity_thinks=entity_thinks,
     )
+    workspace = service.store.conn.execute("SELECT id FROM workspaces WHERE name=?", (project,)).fetchone()
+    if workspace is not None:
+        for node in nodes:
+            node["properties"]["references"] = entity_mention_references(service.store,
+                project=project, workspace_id=str(workspace["id"]), entity_id=node["id"])
     edges = _project_scene_edges(scene, supporting)
     revision = hashlib.sha256(json.dumps([nodes, edges], sort_keys=True).encode()).hexdigest()
     return {"schemaVersion": "thinkgraph.engraphis.v1", "authority": "engraphis", "projectId": project,

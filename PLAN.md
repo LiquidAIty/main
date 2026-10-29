@@ -87,7 +87,21 @@ Raw conversation events are not Thinks and do not become Entity nodes.
 The existing successful-save handoff invokes the saved ThinkGraph Card using `prompt.submit`, then
 uses the existing Think/Jev settlement writer. The rejected invocation-scope plugin and its callback
 and transport additions are removed from source. The handoff is back at the saved pre-plugin baseline;
-this is not proof that ThinkGraph works. No replacement is implemented in the cleanup stage.
+the 2026-10-29 Trading recovery and test 419 subsequently exercised real completed-pair writes and
+preview readback. No replacement plugin is implemented.
+
+The completed-pair prompt now distinguishes substantive Entity-specific reasoning from general strategy
+and incidental mentions. Each Think retains one primary native incidence. The existing Engraphis text
+mention linker records secondary references separately; they do not copy Thinks onto other Entities or
+create semantic relationships. The inspector renders persisted mentions and incoming references, with
+clickable targets limited to exact current canvas Entities. The proposed content-only visibility filter
+was removed at the owner's direction. No ABOUT fanout or second Entity store was introduced.
+
+Test 419 and its comparison follow-up produced 13 nonempty, distinct Thinks on 9 Entities, with 14 current
+Jev relationships and one primary incidence per Think. ASTS and LUNR retained their separate reasoning;
+an actual Call options Think mention opened ASTS without creating another record. This is bounded live
+evidence, not a claim that every substantive statement in every response is extracted. Agent context
+depth, native hook delivery, and the startup/activity delay remain separate follow-ups.
 
 #### Remaining storage task — private database selection per user account
 
@@ -102,7 +116,7 @@ the invocation repair does not accept it as the final multi-user design.
 - Do not create a database per Card, agent, Hermes session, or invocation.
 
 This is a separate remaining task. No database layout, migration, connection-owner change, or
-cutover is part of the current cleanup stage.
+cutover is part of this Think allocation and mention repair.
 
 ### KnowGraph
 

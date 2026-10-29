@@ -225,6 +225,56 @@ def public_think_metadata(value: Any) -> dict[str, Any]:
     return metadata
 
 
+def think_mentions(store: Any, *, project: str, workspace_id: str,
+                   memory_ids: list[str]) -> dict[str, list[dict[str, str]]]:
+    """Read native text mentions without promoting them to primary attachments."""
+    primary = exact_think_entity_ids(store, workspace_id=workspace_id, memory_ids=memory_ids)
+    result: dict[str, list[dict[str, str]]] = {}
+    for row in store.list_memory_entities(
+        SearchFilter(workspace_id=workspace_id), memory_ids=memory_ids,
+    ):
+        memory_id = str(row["memory_id"])
+        if row.get("source_kind") != "text_mention" or memory_id not in primary:
+            continue
+        entity_id = canonical_entity_id(store, str(row["entity_id"]))
+        if entity_id == primary[memory_id]:
+            continue
+        entity = store.conn.execute(
+            "SELECT name FROM entities WHERE id=? AND workspace_id=?",
+            (entity_id, workspace_id),
+        ).fetchone()
+        if entity is not None:
+            result.setdefault(memory_id, []).append({
+                "id": str(row["id"]), "projectId": project,
+                "engraphisEntityId": entity_id, "canonicalName": str(entity["name"]),
+            })
+    return result
+
+
+def entity_mention_references(store: Any, *, project: str, workspace_id: str,
+                              entity_id: str) -> list[dict[str, str]]:
+    """Read incoming native mention links separately from this Entity's Thinks."""
+    rows = [row for row in store.list_memory_entities(
+        SearchFilter(workspace_id=workspace_id), entity_ids=[entity_id],
+    ) if row.get("source_kind") == "text_mention"]
+    primary = exact_think_entity_ids(store, workspace_id=workspace_id,
+                                    memory_ids=[str(row["memory_id"]) for row in rows])
+    references: list[dict[str, str]] = []
+    for row in rows:
+        memory_id = str(row["memory_id"])
+        owner_id = primary.get(memory_id)
+        if not owner_id or owner_id == entity_id:
+            continue
+        memory = store.get_memory(memory_id)
+        owner = _entity_row(store, owner_id)
+        if memory is None or owner is None or validated_think_metadata(memory) is None:
+            continue
+        references.append({"id": str(row["id"]), "projectId": project,
+            "engraphisMemoryId": memory_id, "engraphisEntityId": owner_id,
+            "canonicalName": str(owner["name"]), "title": str(memory.title or owner["name"])})
+    return references
+
+
 def _bounded_snapshot_entities(
     store: Any,
     *,

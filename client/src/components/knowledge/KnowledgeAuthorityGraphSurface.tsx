@@ -6,7 +6,7 @@
  * Entity: Project Knowledge Graph
  * Relationship: This file owns the single renderer lifecycle, camera, settings, selection, focus, and Inspector shared by the Project graph views.
  * Entity: ThinkGraph
- * Relationship: This file renders exact Engraphis nodes, relationships, Think records, Jev provenance, focus neighborhoods, and confirmed removal actions.
+ * Relationship: This file renders exact Engraphis nodes, relationships, Think records, native mention references, Jev provenance, focus neighborhoods, and confirmed removal actions.
  * Entity: KnowGraph
  * Relationship: This file renders exact Graphiti Entities, relationships, atomic and historical Knows, sources, focus neighborhoods, and confirmed episode removal actions.
  * Entity: CodeGraph
@@ -30,8 +30,10 @@ import {
   type JevGraphPhysicsProfile,
 } from './jevGraphPhysics';
 import {
+  createPersistedEntityMentionMatcher,
   resolveCanonicalEntityFocusVisualId,
   type CanonicalEntityFocusRequest,
+  type CanonicalEntityFocusTarget,
 } from '../builder/canonicalEntityLinks';
 import {
   DEFAULT_SOLARPUNK_COLORS,
@@ -592,6 +594,17 @@ export function KnowledgeGraphProjectionSurface({
     }
   };
   inspectNodeRef.current = openNodeInspector;
+  const mentionVisualId = (target: CanonicalEntityFocusTarget) => displayProjection
+    ? resolveCanonicalEntityFocusVisualId({ projection: displayProjection,
+      joinedPresentation: activeJoinedPresentation, directory: canonicalEntityDirectory,
+      request: { ...target, requestId: 1 } })
+    : null;
+  const openMention = (target: CanonicalEntityFocusTarget) => {
+    const visualId = mentionVisualId(target);
+    if (!visualId) return;
+    openNodeInspector(visualId);
+    setSelectedAuthority(target.view === 'all' ? null : target.view);
+  };
   const syncPaper = () => {
     const graph = graphRef.current;
     if (!graph) return;
@@ -1677,12 +1690,39 @@ export function KnowledgeGraphProjectionSurface({
             key={item.id}
             item={item}
             heading="Think"
+            renderText={text => createPersistedEntityMentionMatcher(canonicalEntityDirectory, item.mentions)
+              ?.segmentMessage('assistant', text).map((segment, index) => segment.target && mentionVisualId(segment.target) ? <button key={index} type="button"
+                aria-label={`Open ${segment.text} in graph`}
+                style={{ display: 'inline', width: 'auto', margin: 0, padding: 0, border: 0,
+                  background: 'transparent', color: 'inherit', font: 'inherit', fontStyle: 'italic',
+                  textDecoration: 'underline dotted', textUnderlineOffset: 3, cursor: 'pointer' }}
+                onClick={() => { void openMention(segment.target!); }}>{segment.text}</button> : segment.text) || text}
             removing={removingId === item.id}
             onRemove={inspectedAuthority === 'thinkgraph' && onRemoveEvidence
               ? () => { void deleteThink(item.id); }
               : undefined}
           />)}
         </section> : null}
+        {inspectedAuthority === 'thinkgraph' && selected && !selectedEdge && !visibleThinks.length
+          ? <p>No Think is attached yet.</p>
+          : null}
+        {inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
+          && Array.isArray(selectedProperties.references) && selectedProperties.references.length > 0
+          ? <section className="graph-inspector-records" aria-label="Mention references">
+            <h4>Mentioned in</h4>
+            {selectedProperties.references.map((reference: Record<string, string>) => {
+              const target: CanonicalEntityFocusTarget = {
+                  projectId: reference.projectId, directorySha256: canonicalEntityDirectory?.sha256 || '',
+                  canonicalName: reference.canonicalName, view: 'thinkgraph',
+                  members: [{ authority: 'thinkgraph', entityId: reference.engraphisEntityId }],
+              };
+              return mentionVisualId(target)
+                ? <button type="button" key={reference.id} data-reference-memory-id={reference.engraphisMemoryId}
+                  onClick={() => openMention(target)}>{reference.title}</button>
+                : <p key={reference.id}>{reference.title}</p>;
+            })}
+          </section>
+          : null}
         {visibleKnowItems.length ? <section className="graph-inspector-records" data-testid="knowledge-know-records">
           <h4>{visibleKnowItems.length > 1 ? 'Current Knows' : 'Current Know'}</h4>
           {visibleKnowItems.map((record, index) => <KnowGraphKnow

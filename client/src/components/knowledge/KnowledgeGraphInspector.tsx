@@ -16,6 +16,7 @@
  * Relationship: This file presents exact CBM File/Symbol identity, source-owned Feature contributions, bounded structural neighbors, and explicitly loaded source without creating another Inspector.
  */
 
+import type { ReactNode } from 'react';
 import type { CodeGraphSelectedSymbol } from './codeGraphProjection';
 import type { GraphProjectionNode } from './knowledgeGraphProjection';
 
@@ -181,11 +182,13 @@ export function ThinkRecordCard({
   heading,
   removing = false,
   onRemove,
+  renderText,
 }: {
   item: Record<string, any>;
   heading: string;
   removing?: boolean;
   onRemove?: () => void;
+  renderText?: (text: string) => ReactNode;
 }) {
   const entryTime = graphEntryTime(item.ingestedAt);
   const summary = typeof item.summary === 'string' && item.summary.trim()
@@ -194,6 +197,7 @@ export function ThinkRecordCard({
       ? item.content
       : null;
   const relationships = thinkRelationships(item);
+  const detail = item.detail ?? item.metadata?.structured_extraction?.think?.detail;
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
       <h4>{String(item.title || heading)}</h4>
@@ -201,7 +205,11 @@ export function ThinkRecordCard({
     {entryTime ? <p className="graph-record-time"><time dateTime={entryTime.dateTime}>
       {entryTime.label}
     </time></p> : null}
-    {summary ? <p>{summary}</p> : null}
+    {summary ? <p>{renderText ? renderText(summary) : summary}</p> : null}
+    {typeof detail === 'string' && detail.trim() && detail !== summary ? <details>
+      <summary>More</summary>
+      <p>{renderText ? renderText(detail) : detail}</p>
+    </details> : null}
     {relationships.length ? <section className="graph-think-section">
       <h5>Relationships</h5>
       <ul>{relationships.map(value => <li key={value}>{value}</li>)}</ul>

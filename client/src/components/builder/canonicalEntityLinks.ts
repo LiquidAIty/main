@@ -7,6 +7,8 @@
  * Relationship: This file turns exact current Entity names in assistant messages into selectable text segments while leaving user text, code, URLs, and citations untouched.
  * Entity: Project Knowledge Graph
  * Relationship: This file resolves each selectable chat Entity against current ThinkGraph and KnowGraph provider identities and refuses stale or mismatched graph evidence.
+ * Entity: ThinkGraph
+ * Relationship: This file renders native persisted Think mentions as exact Project-scoped Entity references without assigning the Think to another Entity.
  */
 import type {
   GraphProjectionNode,
@@ -224,6 +226,7 @@ function buildTargets(
 function buildTrie(
   targets: CanonicalEntityFocusTarget[],
   directory: CanonicalEntityDirectory,
+  caseInsensitive = false,
 ): TrieNode {
   const root: TrieNode = { children: new Map() };
   const targetsByName = new Map(targets.map(target => [target.canonicalName, target]));
@@ -232,7 +235,7 @@ function buildTrie(
   )) {
     let node = root;
     for (let index = 0; index < canonicalName.length; index += 1) {
-      const character = canonicalName[index];
+      const character = caseInsensitive ? canonicalName[index].toLowerCase() : canonicalName[index];
       const child = node.children.get(character) || { children: new Map() };
       node.children.set(character, child);
       node = child;
@@ -246,6 +249,7 @@ function buildTrie(
 function segmentText(
   trie: TrieNode,
   text: string,
+  caseInsensitive = false,
 ): CanonicalEntityTextSegment[] {
   const mask = protectedCharacters(text);
   const protectedPrefix = new Uint32Array(text.length + 1);
@@ -261,7 +265,7 @@ function segmentText(
     if (mask[start]) continue;
     let node = trie;
     for (let end = start; end < text.length; end += 1) {
-      node = node.children.get(text[end])!;
+      node = node.children.get(caseInsensitive ? text[end].toLowerCase() : text[end])!;
       if (!node) break;
       if (node.terminal
         && protectedPrefix[end + 1] === protectedPrefix[start]
@@ -317,6 +321,28 @@ export function createCanonicalEntityMatcher(
       ? segmentText(trie, text)
       : [{ text }],
   };
+}
+
+export function createPersistedEntityMentionMatcher(
+  directory: CanonicalEntityDirectory | null | undefined,
+  mentions: unknown,
+): CanonicalEntityMatcher | null {
+  if (!isCanonicalEntityDirectory(directory) || !Array.isArray(mentions)) return null;
+  const targets: CanonicalEntityFocusTarget[] = [];
+  for (const mention of mentions) {
+    if (!mention || typeof mention !== 'object' || mention.projectId !== directory.projectId
+      || typeof mention.id !== 'string' || !mention.id) continue;
+    const header = directory.entities.find(entity => entity.canonicalName === mention.canonicalName
+      && readCanonicalEntityProviderPointers(entity)?.some(pointer =>
+        pointer.authority === 'thinkgraph' && pointer.entityId === mention.engraphisEntityId));
+    if (!header || targets.some(target => target.canonicalName === header.canonicalName)) continue;
+    targets.push({ projectId: directory.projectId, directorySha256: directory.sha256,
+      canonicalName: header.canonicalName, view: 'thinkgraph',
+      members: [{ authority: 'thinkgraph', entityId: mention.engraphisEntityId }] });
+  }
+  const trie = buildTrie(targets, directory, true);
+  return { revisionKey: directory.sha256,
+    segmentMessage: (role, text) => role === 'assistant' ? segmentText(trie, text, true) : [{ text }] };
 }
 
 function exactFocusNode(
