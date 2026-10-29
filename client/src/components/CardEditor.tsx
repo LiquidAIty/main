@@ -24,6 +24,7 @@ import type {
   CardRuntime,
 } from '../types/agentgraph';
 import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
+import HermesSkillGraph from '../features/agentbuilder/HermesSkillGraph';
 import {
   applyCardProfileOperation,
   loadCardProfile,
@@ -431,6 +432,10 @@ export function CardEditor({
   const [cardProfileState, setCardProfileState] = useState<CardProfileView | null>(null);
   const [cardProfileStatus, setCardProfileStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [cardProfileError, setCardProfileError] = useState<string | null>(null);
+  const [profileSettingBusy, setProfileSettingBusy] = useState(false);
+  const [profileSettingError, setProfileSettingError] = useState<string | null>(null);
+  const profileIdentityRef = useRef('');
+  profileIdentityRef.current = `${projectId}:${deckId}:${cardId}`;
   const [cardLearningDetail, setCardLearningDetail] = useState<{
     kind: 'memory' | 'skill';
     id: string;
@@ -823,6 +828,29 @@ export function CardEditor({
       setCardLearningError(error instanceof Error ? error.message : 'Card learning node unavailable.');
     }
   }, [projectId, deckId, cardId]);
+
+  const changeProfileSetting = async (method: 'toolset.toggle' | 'skill.toggle', name: string, enabled: boolean) => {
+    if (profileSettingBusy) return;
+    const identity = profileIdentityRef.current;
+    setProfileSettingBusy(true);
+    setProfileSettingError(null);
+    try {
+      const state = await applyCardProfileOperation({ projectId, deckId, cardId,
+        change: { method, params: { name, enabled } } });
+      if (profileIdentityRef.current !== identity) return;
+      acceptCardProfileReadback(state);
+      if (method === 'toolset.toggle') {
+        setToolsetsText(state.profile.toolsets.filter(row => row.enabled && row.platform === 'cli').map(row => row.name).join('\n'));
+      } else {
+        setSkillsText(state.profile.skills.filter(row => row.enabled).map(row => row.name).join('\n'));
+      }
+      markDraftDirty();
+    } catch (error) {
+      if (profileIdentityRef.current === identity) setProfileSettingError(error instanceof Error ? error.message : 'Card setting failed.');
+    } finally {
+      setProfileSettingBusy(false);
+    }
+  };
 
   const saveCurrentDraft = useCallback(async (): Promise<void> => {
       const learningRevision = cardLearningRevisionRef.current;
@@ -1263,101 +1291,43 @@ export function CardEditor({
     }
     if (sectionTab === 'Skills') {
       return (
-        <section
-          data-testid="agent-manager-skills"
-          style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid rgba(126,232,226,.18)', borderRadius: 8, background: 'rgba(24,34,36,0.44)' }}
-        >
-          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Skills</div>
-          <textarea
-            aria-label="Card skill grants"
-            value={skillsText}
-            onChange={(event) => {
-              setSkillsText(event.target.value);
-              markDraftDirty();
-            }}
-            placeholder="One skill ID per line"
-            rows={5}
-          />
-          {runtimeKind !== 'hermes' ? null : cardProfileStatus === 'failed' ? (
-            <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {cardProfileError || 'Skills unavailable.'}
-            </div>
+        <section data-testid="agent-manager-skills" style={{ display: 'grid', gap: 12 }}>
+          {cardProfileStatus === 'failed' ? (
+            <div role="alert">{cardProfileError || 'Skills unavailable.'}</div>
           ) : cardProfileState ? (
             <>
-              <details data-testid="effective-card-skills">
-                <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
-                  Loaded
-                </summary>
-                <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
+              <HermesSkillGraph graph={cardProfileState.profile.learning.graph}
+                profile={cardProfileState.binding.profile}
+                onOpenNode={(id) => void openCardLearningNode(id)} />
+              <details>
+                <summary>Installed skills</summary>
+                <div style={{ display: 'grid', gap: 6 }}>
                   {cardProfileState.profile.skills.map((skill) => (
-                    <div key={skill.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
-                      {skill.name} · {skill.enabled ? 'enabled' : 'disabled'}
-                    </div>
+                    <label key={skill.name}>
+                      <input type="checkbox" checked={skill.enabled} disabled={profileSettingBusy}
+                        aria-label={`Enable skill ${skill.name}`}
+                        onChange={(event) => void changeProfileSetting('skill.toggle', skill.name, event.target.checked)} />
+                      {' '}{skill.name}
+                    </label>
                   ))}
                 </div>
               </details>
-              {cardProfileState.profile.learning.buckets.some((bucket) => bucket.nodes.length > 0) ? (
-                <section aria-label="Learning" style={{ display: 'grid', gap: 7 }}>
-                  <div style={{ color: '#D5E4E8', fontSize: 11.5, fontWeight: 600 }}>Learning</div>
-                  {cardProfileState.profile.learning.buckets.map((bucket) => (
-                    bucket.nodes.length ? (
-                      <div key={`${bucket.index}:${bucket.date}`} style={{ display: 'grid', gap: 5 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#80969F', fontSize: 10.5 }}>
-                          <span aria-hidden="true" style={{ width: 5, height: 5, borderRadius: '50%', background: bucket.color || '#80969F' }} />
-                          <span>{bucket.label || bucket.date}</span>
-                        </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                          {bucket.nodes.map((node) => (
-                            <button
-                              key={node.id}
-                              type="button"
-                              aria-label={`Open ${node.fullLabel || node.label}`}
-                              title={node.meta || node.fullLabel || node.label}
-                              onClick={() => void openCardLearningNode(node.id)}
-                              style={{
-                                minWidth: 0,
-                                padding: '4px 7px',
-                                border: '1px solid #3A4A4F',
-                                borderRadius: 999,
-                                background: 'rgba(20,31,31,0.46)',
-                                color: '#B8C8CD',
-                                fontSize: 10.5,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              {node.glyph ? `${node.glyph} ` : ''}{node.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null
-                  ))}
-                </section>
-              ) : null}
-              {cardLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening…</div> : null}
-              {cardLearningStatus === 'failed' ? (
-                <div role="alert" style={{ color: '#FFA2A2' }}>{cardLearningError}</div>
-              ) : null}
+              {profileSettingError ? <div role="alert">{profileSettingError}</div> : null}
+              {cardLearningStatus === 'loading' ? <div role="status">Opening…</div> : null}
+              {cardLearningStatus === 'failed' ? <div role="alert">{cardLearningError}</div> : null}
               {cardLearningDetail ? (
-                <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #42565C', borderRadius: 6 }}>
+                <section style={{ display: 'grid', gap: 6 }}>
                   <strong>{cardLearningDetail.kind}: {cardLearningDetail.label}</strong>
-                  <textarea
-                    aria-label="Learning"
-                    value={cardLearningDraft}
+                  <textarea aria-label="Learning" value={cardLearningDraft} rows={10}
                     onChange={(event) => {
                       setCardLearningDraft(event.target.value);
                       learningEditsRef.current.set(cardLearningDetail.id, event.target.value);
                       markCardLearningDirty();
-                    }}
-                    rows={10}
-                    style={{ width: '100%', minWidth: 0, padding: 10, background: 'rgba(14,20,22,0.48)', color: '#D5E4E8', border: '1px solid rgba(126,232,226,.2)', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
-                  />
+                    }} />
                 </section>
               ) : null}
             </>
-          ) : (
-            <div role="status" style={{ color: '#80969F', fontSize: 11 }}>Loading…</div>
-          )}
+          ) : <div role="status">Loading Hermes learning graph…</div>}
         </section>
       );
     }
@@ -1542,6 +1512,26 @@ export function CardEditor({
     if (sectionTab === 'Tools') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <section aria-label="Hermes tools" style={{ display: 'grid', gap: 8 }}>
+            <strong>Hermes</strong>
+            {cardProfileStatus === 'failed' ? <div role="alert">{cardProfileError}</div>
+              : !cardProfileState ? <div role="status">Loading Hermes tools…</div>
+              : cardProfileState.profile.toolsets.map(toolset => (
+                <div key={toolset.name}>
+                  <label title={toolset.description}>
+                    <input type="checkbox" checked={toolset.enabled} disabled={profileSettingBusy}
+                      aria-label={`Enable Hermes ${toolset.name}`}
+                      onChange={(event) => void changeProfileSetting('toolset.toggle', toolset.name, event.target.checked)} />
+                    {' '}{toolset.label || toolset.name}
+                  </label>
+                  {toolset.tools?.length ? <details style={{ paddingLeft: 22 }}>
+                    <summary>{toolset.tools.length} tools</summary>
+                    {toolset.tools.map(name => <div key={name}><code>{name}</code></div>)}
+                  </details> : null}
+                </div>
+              ))}
+            {profileSettingError ? <div role="alert">{profileSettingError}</div> : null}
+          </section>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
             Application capabilities
           </div>

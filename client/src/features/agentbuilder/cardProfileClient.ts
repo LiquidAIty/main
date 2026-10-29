@@ -20,38 +20,26 @@ export type CardMcpServerView = {
   toolFilter: string[];
 };
 
+// The graph payload returned by Hermes Desktop's /api/learning/graph.
+export type CardLearningGraph = {
+  nodes: Array<{
+    id: string; label: string; kind: 'memory' | 'skill';
+    memorySource?: 'memory' | 'profile'; timestamp?: number | null;
+    category: string; useCount: number; state: string; createdBy: string | null; pinned: boolean;
+  }>;
+  edges: Array<{ source: string; target: string }>;
+  clusters: Array<{ category: string; count: number }>;
+  memory: Array<{ source: 'memory' | 'profile'; timestamp?: number | null; title: string; body: string; fingerprint?: string }>;
+  stats: Record<string, unknown>;
+};
+
 export type CardProfileView = {
   profile: {
     name: string;
-    description: string;
-    soul: string;
-    model: { provider: string; default: string };
     skills: Array<{ name: string; enabled: boolean }>;
-    toolsets: Array<{ name: string; label?: string; enabled: boolean; tool_count?: number }>;
-    toolsetsPinned: boolean;
-    mcpServers: CardMcpServerView[];
+    toolsets: Array<{ name: string; label?: string; description?: string; enabled: boolean; tools?: string[]; platform?: string; configured?: boolean }>;
     learning: {
-      count: number;
-      summary: string[];
-      buckets: Array<{
-        index: number;
-        label: string;
-        date: string;
-        skills: number;
-        memories: number;
-        total: number;
-        category: string | null;
-        color: string | null;
-        nodes: Array<{
-          id: string;
-          glyph: string;
-          label: string;
-          fullLabel: string;
-          meta: string;
-          body: string;
-          style: string;
-        }>;
-      }>;
+      graph: CardLearningGraph;
     };
   };
   binding: {
@@ -61,6 +49,7 @@ export type CardProfileView = {
 };
 
 export type CardProfileOperation =
+  | { method: 'toolset.toggle' | 'skill.toggle'; params: { name: string; enabled: boolean } }
   | { method: 'learning.detail'; params: { id: string } }
   | { method: 'learning.edit'; params: { id: string; content: string } }
   | { method: 'mcp.servers.test'; params: { name: string } }

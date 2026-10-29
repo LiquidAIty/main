@@ -214,6 +214,7 @@ export default defineConfig(({ mode, command }) => {
       ],
     },
     resolve: {
+      alias: { '@/lib/time': path.resolve(repoRoot, 'HermesLatest/apps/desktop/src/lib/time.ts') },
       dedupe: [
         'react',
         'react-dom',

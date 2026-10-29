@@ -78,12 +78,31 @@ from that saved source and uses the existing extraction and Think settlement pat
 grants or Card prompts are required. The prior automatic-capture paragraph was not proof of the restored
 Bot Mode source and must not be used to reintroduce a Main-session completion hook.
 
-Current stage: conversation storage and explicit saved-pair preparation only. Source uses Engraphis's
-existing raw-event ledger at `db/engraphis.sqlite`; the old schema-20 `db/thinkgraph.sqlite` is preserved
-untouched. Old test conversations are not migrated, seeded, replayed or processed. Raw conversation
-events are not Thinks and do not become Entity nodes. The existing Think settlement owner is unchanged.
-The owner explicitly requires stopping before `bot_relay.deliver`: no handoff, agent invocation or
-automatic extraction is connected in this stage. Loaded storage and live agent proof remain separate.
+Current storage uses Engraphis's existing raw-event ledger at the fixed application-instance
+`db/engraphis.sqlite`, with Project-named workspaces. This is **not per-user database selection**:
+Project ownership is enforced at the application boundary. The old schema-20 `db/thinkgraph.sqlite`
+is preserved untouched. Old test conversations are not migrated, seeded, replayed or processed.
+Raw conversation events are not Thinks and do not become Entity nodes.
+
+The existing successful-save handoff invokes the saved ThinkGraph Card using `prompt.submit`, then
+uses the existing Think/Jev settlement writer. The rejected invocation-scope plugin and its callback
+and transport additions are removed from source. The handoff is back at the saved pre-plugin baseline;
+this is not proof that ThinkGraph works. No replacement is implemented in the cleanup stage.
+
+#### Remaining storage task — private database selection per user account
+
+The intended private Engraphis layout is **one SQLite database per authenticated user account,
+containing that user's multiple Project workspaces**. Preserving the current instance database for
+the invocation repair does not accept it as the final multi-user design.
+
+- Select the database server-side from authenticated ownership, never model input or a profile name.
+- Preserve the existing Project workspace structure within each user's database and retain Project authorization.
+- Scope connections to requests/jobs; do not introduce a global mutable "current user" database switch.
+- Preserve existing data with a verified migration and readback before any cutover.
+- Do not create a database per Card, agent, Hermes session, or invocation.
+
+This is a separate remaining task. No database layout, migration, connection-owner change, or
+cutover is part of the current cleanup stage.
 
 ### KnowGraph
 

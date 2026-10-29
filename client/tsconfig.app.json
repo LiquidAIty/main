@@ -19,7 +19,8 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "module": "esnext",
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    "paths": { "@/lib/time": ["../HermesLatest/apps/desktop/src/lib/time.ts"] }
   },
   "exclude": [
     "../agent-products/nrgsim/**/*.spec.ts",
@@ -40,6 +41,15 @@
     "vitest.config.mts"
   ],
   "include": [
+    "../HermesLatest/apps/desktop/src/app/starmap/simulation.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/render.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/color.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/constants.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/geometry.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/text.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/time-axis.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/types.ts",
+    "../HermesLatest/apps/desktop/src/lib/time.ts",
     "../agent-products/nrgsim/client/src/components/energy/**/*.tsx",
     "../agent-products/nrgsim/client/src/features/energy/*.ts",
     "../agent-products/nrgsim/client/src/types/*.ts",

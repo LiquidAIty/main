@@ -151,7 +151,6 @@ export function CardScriptEditor({
   const scriptRef = useRef(script);
   const onChangeRef = useRef(onChange);
   const applyingExternalSourceRef = useRef(false);
-  const [opened, setOpened] = useState(Boolean(script.source.trim()));
   const [editorStatus, setEditorStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [editorError, setEditorError] = useState<string | null>(null);
   const [featuresReady, setFeaturesReady] = useState(false);
@@ -160,11 +159,7 @@ export function CardScriptEditor({
   onChangeRef.current = onChange;
 
   useEffect(() => {
-    if (script.source.trim()) setOpened(true);
-  }, [cardId, script.source]);
-
-  useEffect(() => {
-    if (!opened || !hostRef.current) return undefined;
+    if (!hostRef.current) return undefined;
     let cancelled = false;
     let disposeEditor: (() => void) | null = null;
     setEditorStatus('loading');
@@ -206,7 +201,7 @@ export function CardScriptEditor({
       cancelled = true;
       disposeEditor?.();
     };
-  }, [cardId, opened]);
+  }, [cardId]);
 
   useEffect(() => {
     const model = modelRef.current;
@@ -220,14 +215,6 @@ export function CardScriptEditor({
     editorRef.current?.focus();
     void editorRef.current?.getAction(action)?.run();
   };
-
-  if (!opened && !script.source.trim()) {
-    return (
-      <section data-testid="card-script-editor" className="card-script-ide">
-        <button type="button" onClick={() => setOpened(true)}>Add Python script</button>
-      </section>
-    );
-  }
 
   return (
     <section data-testid="card-script-editor" className="card-script-ide">

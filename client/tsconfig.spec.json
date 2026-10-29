@@ -30,7 +30,8 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "module": "esnext",
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    "paths": { "@/lib/time": ["../HermesLatest/apps/desktop/src/lib/time.ts"] }
   },
   "include": [
     "vite.config.ts",
