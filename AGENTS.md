@@ -483,13 +483,14 @@ AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and 
 
 One authority and one writer per graph.
 
-Main is not the owner of ThinkGraph writes. After one ordinary Main Run completes, the backend preserves the
-ordered user-message references on that Run, invokes the exact authorized saved ThinkGraph Card through the
-repo-owned Hermes adapter, and submits that Card's structured result to the existing completed-pair Python
-preparation and settlement owners exactly once. User additions during active inference invisibly steer the same
-Run and produce one aggregate completed exchange; LiquidAIty owns no chat prompt queue. No candidate graph,
-approval state, shadow graph, raw conversation Memory, regex-first skeleton, broad cleanup path, generic target
-runner, or second graph writer may substitute for that bounded caller. KnowGraph retains sourced research through its existing
+Main and Bot Mode are not ThinkGraph processing owners. The full application conversation belongs in
+Engraphis as raw source records; explicit saved pairs feed the existing Think preparation and settlement
+owners. The storage-side one-way delivery is a separate step and is not connected in the current stage.
+Do not change Main's session route, vendored code, agent tools, grants or Card prompts for this work.
+Do not migrate or replay old test conversations, guess pair identity, or fabricate Run provenance.
+LiquidAIty owns no chat prompt queue. No candidate graph, approval state, shadow graph, raw conversation
+Memory, regex-first skeleton, broad cleanup path, generic target runner or second graph writer may
+substitute for this boundary. KnowGraph retains sourced research through its existing
 research agent and queued Graphiti intake. Its dedicated Entity write stores one exact `entity_uuid` property and removes
 any Know `ABOUT` or `MENTIONS` attachment edge. Only Entities render as Project graph nodes; Thinks, Knows,
 Graphiti episodes, citations, and supporting IDs remain attached properties or provenance. Engraphis

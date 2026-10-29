@@ -215,7 +215,7 @@ Hermes replies → actual provider-row persistence → the same Project conversa
 | Ordinary and direct user input | Ordinary text targets saved Main. A leading `@Name` selects exactly one authorized wired Card by saved address; unavailable/ambiguous matches fail. The original text is passed unchanged to that profile's `prompt.submit` with a unique submission ID. Main is not asked to impersonate a directly addressed Card. |
 | Main-to-agent work | Main chooses its work through its own saved prompt and grants. Hermes performs the real `message_agent` operation and recipient execution against the configured roster. A queued receipt is not an answer, and the application generates no “I asked” or waiting prose. |
 | Foreground answer and attribution | The route correlates Gateway events by profile, session and admitted submission. `message.delta` / `message.complete` become the existing POST response's SSE frames (`session`, `text`, `done`, `error`), consumed by `mainSessionClient` through fetch. This is response transport, not an EventSource or independent event feed. The actual selected Card supplies `@Name` attribution; Main has no extra label. No Run/evidence fields are required. |
-| Conversation persistence | `conversations/store.ts` retains user submissions and actual completed provider replies in PostgreSQL. `refreshOpenBotChat` reads Hermes history and appends unseen provider-row identities once with saved speaker/session metadata. It respects Hermes's typed display/model-only metadata rather than classifying prose. `/history` rehydrates that Project conversation; the UI store is not the Hermes execution transcript. |
+| Conversation persistence | `conversations/store.ts` keeps the existing interface and transports full ordered application messages to Engraphis through Python rails. `conversations.py` uses the existing raw-event ledger; PostgreSQL resolves Project identity but does not read/write conversation content. `refreshOpenBotChat` and Main's route remain unchanged. `/history` reads the Engraphis application conversation, separate from Hermes execution history. No old test conversation is imported or used as fallback. |
 | Later activity and counts | `useCardActiveAgentCounts.ts` retains the existing five-second observation cadence. `/activity` reads `profiles.list` canonical activity and `session.active_list`; counts are actual working/streaming sessions, not SQL Run counts or invented subagent totals. `useAgentBuilderMainChat` refreshes history after a changed canonical watermark, records only the summary read for that refresh, and does not overwrite active foreground output. This browser observation cadence is distinct from Hermes's execution timers. |
 | Send and Stop | A nonempty draft remains Send during work; an empty active composer exposes Stop. Hermes owns admission/busy behavior. `/stop` validates the canonical conversation and forwards `session.interrupt`. The hook's active request map is transient browser transport state, not a prompt queue or execution owner. |
 | Images | The composer validates and previews bounded files; `/chat` calls `image.attach_bytes`, then submits its returned attachment paths/MIME types with the actual prompt. Image understanding has live evidence; sent-message inline images and durable attachment presentation remain deferred. |
@@ -332,9 +332,11 @@ AgentGraph = AGE Card topology and truthful execution observations
 
 Each graph has one authority and one writer. Run-scoped Context Selections may carry bounded provider
 IDs, data, and provenance together in `in.idf`; that transport is not another graph and does not copy
-ownership. A completed ordinary Main Run preserves its ordered conversation-message references as Run
-evidence, executes the exact authorized saved ThinkGraph Card through the repo-owned Hermes adapter, and
-submits that structured output to the existing Python preparation and settlement owners exactly once.
+ownership. Application conversations are raw source events in Engraphis. The approved next connection
+hands each new saved pair one way to ThinkGraph, outside Main's route; existing extraction and settlement
+remain the Think write path. This stage stops before that connection: explicit saved message references
+can be read and prepared, but no automatic agent invocation or delivery is connected. There are no new
+agent tools, grants, prompts, Bot Mode changes or vendored edits.
 
 Engraphis owns Entity identity, memory/entity incidence, bi-temporal fields, provider evidence, graph scene
 projection, and its existing force/galaxy vocabulary. One portable ThinkGraph unit is a **Think**: one
@@ -463,7 +465,11 @@ create/edit mode, PLAN loader, semantic TypeScript router, or alternate prompt e
 
 ## Persistence and identity
 
-- PostgreSQL stores saved Cards, decks, revisions, Runs, conversations, and artifact metadata.
+- PostgreSQL stores saved Cards, decks, revisions, Runs, and artifact metadata. Historical conversation
+  tables are retained but no longer serve the application conversation-store interface.
+- The full new application conversation and ThinkGraph share the existing Engraphis provider at
+  `db/engraphis.sqlite`, scoped by Project. The prior schema-20 `db/thinkgraph.sqlite` is left untouched;
+  no old conversation or graph data is copied into the fresh database.
 - AGE/PostgreSQL stores accepted Card relationships and execution observations.
 - Hermes profile homes store Hermes configuration, sessions, memory, skills, and Kanban state.
 - Engraphis, Graphiti/Neo4j, and CBM retain their own graph data.

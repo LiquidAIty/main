@@ -56,8 +56,11 @@ class ThinkGraphStructuredFact(_StructuredModel):
     entity: str = Field(min_length=1, max_length=256)
     entities: list[str] = Field(min_length=1, max_length=20)
     relations: list[ThinkGraphStructuredRelation] = Field(
-        default_factory=list,
         max_length=10,
+        description=(
+            "Explicit directed relationships grounded in this completed pair. "
+            "Return an empty list only when this Entity has no supported outgoing relationship."
+        ),
     )
     think: ThinkGraphThink
 
@@ -126,15 +129,26 @@ def llm_structured_contract(
     )
     prompt += (
         "\nTHINKGRAPH ENTITY-SPECIFIC THINKS:\n"
+        "First extract the semantic graph expressed by this completed pair: canonical "
+        "Entities and concepts, and meaningful directed relationships between them. "
+        "Then write the Entity-specific Thinks without losing those relationships. "
+        "Entities are not limited to named people or companies: a concrete system, "
+        "process, metric, or concept explicitly discussed in the pair can be a meaningful "
+        "relationship endpoint. Do not reduce relational reasoning to a disconnected "
+        "list of summaries. Preserve conditions and uncertainty in the relationship "
+        "wording; do not invent causation or connect Entities merely because they co-occur. "
         "Return zero or more objects in the facts array with mtype='episodic'. Return an "
         "empty facts array when the completed pair adds no useful current Project reasoning. A completed "
-        "pair may yield Thinks for several useful Entities, but never more than one Think "
+        "pair may yield Think properties for several useful Entities, but never more than one Think "
         "for the same Entity in this pair. Every Think attaches only to its exact `entity`. "
         "Write `think.summary` as one simple, concise, self-contained paragraph sized for "
         "the compact Entity card. Use optional `think.detail` for any longer technical "
         "explanation, Relationship reasoning, caveats, or other depth; detail remains part "
         "of the same Think and may be as long as useful. Store the identical compact body in "
         "`content` and `think.summary`. Do not copy one Entity's Think onto another Entity. "
+        "Do not write an all-Entity report or repeat the whole pair's conclusions on each "
+        "Entity. Each Think states that Entity's specific reasoning; mention another Entity "
+        "only when needed to explain a grounded relationship or comparison involving its owner. "
         "Steelman the user's actual intent from this completed pair and return a refinement, "
         "correction, contradiction, genuinely new idea, or empty facts. Automatic intake receives "
         "no prior Think bodies; do not invent historical comparison or treat the Entity map as "
@@ -142,9 +156,18 @@ def llm_structured_contract(
         "Preserve material decisions, questions, preferences, corrections, assumptions, "
         "and uncertainty relevant to that Entity. Relationships remain separate directed "
         "Entity-to-Entity edges: list each relationship exactly once, under the fact whose "
-        "`entity` is its source. Each relation object has exactly source, relation, and "
-        "target. In each fact, `entities` contains its one Think Entity plus every exact "
-        "target Entity used by that fact's Relationships. Use concise free-form "
+        "`entity` is its source. Return at most 20 relationships across the entire facts array. "
+        "Each relation object has exactly source, relation, and "
+        "target. Always include the `relations` array. Every new Entity must be a source "
+        "or target of a meaningful relationship grounded in the pair; do not accept an "
+        "isolated new Entity or invent an edge to qualify it. An existing connected Entity "
+        "may receive a new Think without a new relationship. A Think is an Entity property, "
+        "not a relationship; relationship prose separately states how its endpoints relate. "
+        "In each fact, `entities` contains its one Think Entity plus every exact "
+        "target Entity used by that fact's Relationships. Before returning, check that "
+        "each relationship's source and target strings occur exactly in that fact's "
+        "entities list; do not omit an endpoint or substitute a differently worded name. "
+        "Use concise free-form "
         "relationship language grounded in the pair, not a "
         "normalized edge label. Jev alone chooses the durable relationship label and math. "
         "Inspect the supplied Project Entity map before naming Entities. Reuse an exact "
@@ -200,6 +223,7 @@ def project_saved_card_thinks(facts: list[Any]) -> list[dict[str, Any]]:
         raise ThinkGraphIntakeError("thinkgraph_card_entity_think_count_invalid")
     outputs: list[dict[str, Any]] = []
     entity_keys: set[str] = set()
+    think_bodies: set[tuple[str, str]] = set()
     relationship_keys: set[tuple[str, str, str]] = set()
     relationship_count = 0
     for fact in facts:
@@ -224,6 +248,10 @@ def project_saved_card_thinks(facts: list[Any]) -> list[dict[str, Any]]:
         if entity_key in entity_keys:
             raise ThinkGraphIntakeError("thinkgraph_card_entity_duplicate")
         entity_keys.add(entity_key)
+        think_body = (str(fact.content), str(raw_think.get("detail") or ""))
+        if think_body in think_bodies:
+            raise ThinkGraphIntakeError("thinkgraph_card_think_duplicate")
+        think_bodies.add(think_body)
         for relationship in relationships:
             if not isinstance(relationship, dict):
                 raise ThinkGraphIntakeError("thinkgraph_card_think_payload_invalid")

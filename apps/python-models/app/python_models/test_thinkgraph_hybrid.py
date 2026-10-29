@@ -347,6 +347,8 @@ def test_custom_schema_supports_at_most_one_episodic_think_per_entity() -> None:
     assert "think" in str(schema)
     assert "never more than one Think for the same Entity" in prompt
     assert "Jev alone" in prompt
+    assert "at most 20 relationships across the entire facts array" in prompt
+    assert "do not omit an endpoint" in prompt
 
 
 def test_optional_think_detail_remains_inside_the_same_structured_think() -> None:
@@ -362,6 +364,40 @@ def test_optional_think_detail_remains_inside_the_same_structured_think() -> Non
 
     assert projected[0]["detail"] == detail
     assert projected[0]["summary"] == facts[0].content
+
+
+def test_relationship_output_is_explicit_even_for_an_incoming_only_entity() -> None:
+    output = _structured_output()
+    fact = output["facts"][0]
+    fact["entities"] = [fact["entity"]]
+    fact["relations"] = []
+    facts = completed_pair_extraction.extract_saved_card_facts(
+        output, pair_text="USER: x\nMAIN: y", context={}, card_run=_card_run(),
+    )
+    assert completed_pair_extraction.project_saved_card_thinks(facts)[0]["relationships"] == []
+    del fact["relations"]
+    with pytest.raises(relationship_vocabulary.ThinkGraphIntakeError,
+                       match="thinkgraph_card_llm_structured_invalid"):
+        completed_pair_extraction.extract_saved_card_facts(
+            output, pair_text="USER: x\nMAIN: y", context={}, card_run=_card_run(),
+        )
+
+
+def test_identical_think_cannot_be_copied_to_different_entities() -> None:
+    output = _structured_output()
+    first = output["facts"][0]
+    first["entities"] = [first["entity"]]
+    first["relations"] = []
+    second = deepcopy(first)
+    second["entity"] = "Electron"
+    second["entities"] = ["Electron"]
+    output["facts"].append(second)
+    facts = completed_pair_extraction.extract_saved_card_facts(
+        output, pair_text="USER: x\nMAIN: y", context={}, card_run=_card_run(),
+    )
+    with pytest.raises(relationship_vocabulary.ThinkGraphIntakeError,
+                       match="thinkgraph_card_think_duplicate"):
+        completed_pair_extraction.project_saved_card_thinks(facts)
 
 
 def test_multiple_entity_chunks_are_distinct_and_relationships_are_source_owned() -> None:
@@ -536,6 +572,43 @@ def test_empty_entity_card_output_is_a_true_noop(
     assert settled["changedEdgeIds"] == []
     assert calls == 0
     assert _table_counts(engraphis_service) == before
+
+
+def test_new_isolated_entity_is_rejected_before_any_graph_write(
+    engraphis_service: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = _structured_output()
+    output["facts"][0]["relations"] = []
+    output["facts"][0]["entities"] = ["Rocket Lab"]
+    before = _table_counts(engraphis_service)
+    with pytest.raises(relationship_vocabulary.ThinkGraphIntakeError,
+                       match="thinkgraph_card_entity_relationship_required"):
+        _settle(engraphis_service, monkeypatch, payload=_settle_payload(output=output))
+    assert _table_counts(engraphis_service) == before
+
+
+def test_incoming_relationship_qualifies_a_new_entity_and_existing_entity_accepts_later_think(
+    engraphis_service: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = _structured_output()
+    incoming = _fact(entity="Electron", summary="Electron is Rocket Lab's launch vehicle.")
+    incoming["entities"] = ["Electron"]
+    incoming["relations"] = []
+    output["facts"].append(incoming)
+    initial = _settle(engraphis_service, monkeypatch, payload=_settle_payload(output=output))
+    assert len(initial["thinks"]) == 2
+    assert len(initial["relationships"]) == 1
+    assert len(initial["newEntities"]) == 2
+    later = _structured_output()
+    later["facts"][0]["relations"] = []
+    later["facts"][0]["entities"] = ["Rocket Lab"]
+    result = _settle(engraphis_service, monkeypatch, payload=_settle_payload(
+        _completed("main-run-two"), output=later,
+    ))
+    assert len(result["thinks"]) == 1
+    assert result["newEntities"] == []
+    assert result["relationships"] == []
+    assert len(engraphis_service.store.list_entities()) == 2
 
 
 def test_one_pair_writes_one_think_and_only_jev_edge(

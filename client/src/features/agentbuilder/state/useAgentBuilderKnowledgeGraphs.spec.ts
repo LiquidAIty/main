@@ -16,7 +16,7 @@
  */
 
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GraphProjectionV1 } from '../../../components/knowledge/knowledgeGraphProjection';
 import type { CodeGraphSelectedSymbol } from '../../../components/knowledge/codeGraphProjection';
@@ -35,14 +35,29 @@ function projection(): GraphProjectionV1 {
   };
 }
 
+class GraphStream extends EventTarget {
+  static connections: GraphStream[] = [];
+  close = vi.fn();
+  constructor(public url: string, public options: EventSourceInit) {
+    super();
+    GraphStream.connections.push(this);
+  }
+}
+
+beforeEach(() => {
+  GraphStream.connections = [];
+  vi.stubGlobal('EventSource', GraphStream);
+});
+
 describe('KnowGraph route contracts', () => {
-  it('refreshes ThinkGraph after the exact completed Main Run settles', async () => {
+  it('refreshes committed ThinkGraph data without Main, a Run ID, or a KnowGraph reload', async () => {
     const calls: string[] = [];
+    let currentProjection = projection();
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       calls.push(url);
       if (url.startsWith('/api/thinkgraph/projection?')) {
-        return new Response(JSON.stringify(projection()), { status: 200 });
+        return new Response(JSON.stringify(currentProjection), { status: 200 });
       }
       return new Response(JSON.stringify({ nodes: [], relationships: [] }), { status: 200 });
     }));
@@ -53,19 +68,23 @@ describe('KnowGraph route contracts', () => {
     }));
     await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
 
-    await act(async () => { await result.current.refreshAfterMainRun('run-one'); });
+    const stream = GraphStream.connections[0];
+    expect(stream.url).toBe('/api/thinkgraph/events?projectId=project-one');
+    expect(stream.options).toEqual({ withCredentials: true });
+    currentProjection = { ...projection(), nodes: [...projection().nodes, { id: 'created-entity', label: 'Created' }] };
+    await act(async () => { stream.dispatchEvent(new Event('changed')); });
+    await waitFor(() => expect(result.current.projections.thinkgraph.nodes).toHaveLength(3));
 
     const refresh = calls.filter(url => url.startsWith('/api/thinkgraph/projection?')).at(-1);
     const query = new URLSearchParams(refresh?.split('?')[1] || '');
     expect(query.get('projectId')).toBe('project-one');
-    expect(query.get('afterRunId')).toBe('run-one');
+    expect(query.has('afterRunId')).toBe(false);
     const knowCalls = calls.filter(url => url.startsWith('/api/knowgraph/graph?'));
-    expect(knowCalls).toHaveLength(2);
-    expect(calls.lastIndexOf(knowCalls.at(-1)!))
-      .toBeGreaterThan(calls.lastIndexOf(refresh!));
+    expect(knowCalls).toHaveLength(1);
+    expect(calls.some(url => url.includes('/main/'))).toBe(false);
   });
 
-  it('surfaces the exact completed-pair capture failure instead of a fake projection error', async () => {
+  it('preserves the previous graph and reports a provider read failure after a change', async () => {
     let thinkReads = 0;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -73,7 +92,7 @@ describe('KnowGraph route contracts', () => {
         thinkReads += 1;
         if (thinkReads > 1) {
           return new Response(JSON.stringify({
-            error: 'thinkgraph_saved_card_not_authorized',
+            error: 'engraphis_unavailable',
           }), { status: 502 });
         }
         return new Response(JSON.stringify(projection()), { status: 200 });
@@ -87,13 +106,15 @@ describe('KnowGraph route contracts', () => {
     }));
     await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
 
-    await act(async () => { await result.current.refreshAfterMainRun('run-one'); });
+    const before = result.current.projections.thinkgraph;
+    await act(async () => { GraphStream.connections[0].dispatchEvent(new Event('changed')); });
 
     expect(result.current.statuses.thinkgraph).toBe('error');
-    expect(result.current.errors.thinkgraph).toBe('thinkgraph_saved_card_not_authorized');
+    expect(result.current.errors.thinkgraph).toBe('engraphis_unavailable');
+    expect(result.current.projections.thinkgraph).toBe(before);
   });
 
-  it('refreshes both providers after an addressed graph Card without waiting on Main capture', async () => {
+  it('recovers missed updates on stream readiness and closes on unmount', async () => {
     const calls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -103,18 +124,28 @@ describe('KnowGraph route contracts', () => {
       }
       return new Response(JSON.stringify({ nodes: [], relationships: [] }), { status: 200 });
     }));
-    const { result } = renderHook(() => useAgentBuilderKnowledgeGraphs({
+    const { result, unmount } = renderHook(() => useAgentBuilderKnowledgeGraphs({
       projectId: 'project-one', deckId: 'deck-one', conversationId: 'conversation-one',
     }));
     await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
 
-    await act(async () => { await result.current.refreshAfterMainRun('run-graph-card', false); });
+    const stream = GraphStream.connections[0];
+    await act(async () => { stream.dispatchEvent(new Event('error')); });
+    expect(result.current.errors.thinkgraph).toContain('disconnected');
+    await act(async () => { stream.dispatchEvent(new Event('ready')); });
+    await waitFor(() => expect(result.current.errors.thinkgraph).toBeUndefined());
 
     const refresh = calls.filter(url => url.startsWith('/api/thinkgraph/projection?')).at(-1)!;
     const query = new URLSearchParams(refresh.split('?')[1] || '');
     expect(query.get('projectId')).toBe('project-one');
     expect(query.has('afterRunId')).toBe(false);
-    expect(calls.filter(url => url.startsWith('/api/knowgraph/graph?'))).toHaveLength(2);
+    expect(calls.filter(url => url.startsWith('/api/knowgraph/graph?'))).toHaveLength(1);
+    expect(calls.filter(url => url.startsWith('/api/thinkgraph/projection?'))).toHaveLength(2);
+    unmount();
+    expect(stream.close).toHaveBeenCalledOnce();
+    const reads = calls.length;
+    stream.dispatchEvent(new Event('changed'));
+    expect(calls).toHaveLength(reads);
   });
 
   it('sends one exact delete request and refreshes after the server confirms it', async () => {

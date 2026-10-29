@@ -69,13 +69,13 @@ owns source boundaries. A historical report is evidence, never permission to act
 Engraphis owns ThinkGraph; Graphiti/Neo4j owns KnowGraph; CBM owns CodeGraph; AGE owns
 saved Card relationships and observed Run lineage. Do not resurrect Constellation or combine writers.
 
-Main is not the owner of ThinkGraph writes. One successfully completed ordinary Main Run is captured exactly
-once: the backend preserves its ordered user-message references on the Run, invokes the exact authorized saved
-ThinkGraph Card through the repo-owned Hermes adapter, and passes that Card's structured result to the existing
-Python preparation and settlement owners. Additional user input while Main is active invisibly steers that same
-Run and becomes part of its one completed exchange. Do not add an application or Hermes prompt queue, restore
-the rejected generic TypeScript child-Card executor, or substitute a regex-first graph skeleton, candidate or
-approval state, shadow graph, direct model edge writer, second extractor, or database-side semantic shortcut.
+Main and Bot Mode are not ThinkGraph processing owners. Store the full new application conversation in
+Engraphis, then read explicit saved pairs for the existing Think extraction/settlement path. Do not add
+agent tools, grants, prompts, or Main-session hooks for this workflow. No vendored edits and no migration
+or replay of old test conversations. The current stage stops before the storage-side one-way delivery.
+Do not infer an exact pair from the most recent two rows, fabricate a Run receipt, add an application or
+Hermes prompt queue, restore a generic child-Card executor, or substitute a regex-first graph skeleton,
+candidate/approval state, shadow graph, direct model edge writer or second extractor.
 KnowGraph retains actual sourced research through its existing owner. Its dedicated queued Entity write stores
 one exact `entity_uuid` property and removes any Know `ABOUT` or `MENTIONS` attachment edge.
 One current Know is one first-class `Episodic:Know`: one verified source document and exact passage, one

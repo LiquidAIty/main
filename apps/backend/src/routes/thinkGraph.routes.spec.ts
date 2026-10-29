@@ -21,10 +21,10 @@ const mocks = vi.hoisted(() => ({
   fetchThinkGraphProjection: vi.fn(),
   fetchThinkGraphNeighborhood: vi.fn(),
   requestPythonRailsJson: vi.fn(),
-  waitForActiveThinkGraphCapture: vi.fn(async () => undefined),
   requireOwnedProject: vi.fn(async (..._args: unknown[]): Promise<{
     ownerUserId: string;
-  } | null> => ({ ownerUserId: 'owner-one' })),
+    projectId: string;
+  } | null> => ({ ownerUserId: 'owner-one', projectId: String(_args[2]) })),
 }));
 
 vi.mock('./projectAccess', () => ({
@@ -37,11 +37,7 @@ vi.mock('../services/pythonRailsClient', () => ({
   requestPythonRailsJson: mocks.requestPythonRailsJson,
 }));
 
-vi.mock('../services/thinkGraphCaptureSynchronization', () => ({
-  waitForActiveThinkGraphCapture: mocks.waitForActiveThinkGraphCapture,
-}));
-
-import thinkGraphRoutes from './thinkGraph.routes';
+import thinkGraphRoutes, { notifyThinkGraphChanged } from './thinkGraph.routes';
 
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
@@ -65,10 +61,8 @@ afterEach(() => {
   mocks.fetchThinkGraphProjection.mockReset();
   mocks.fetchThinkGraphNeighborhood.mockReset();
   mocks.requestPythonRailsJson.mockReset();
-  mocks.waitForActiveThinkGraphCapture.mockReset();
-  mocks.waitForActiveThinkGraphCapture.mockResolvedValue(undefined);
   mocks.requireOwnedProject.mockReset();
-  mocks.requireOwnedProject.mockResolvedValue({ ownerUserId: 'owner-one' });
+  mocks.requireOwnedProject.mockImplementation(async (...args) => ({ ownerUserId: 'owner-one', projectId: String(args[2]) }));
 });
 
 describe('ThinkGraph Engraphis read transport', () => {
@@ -127,24 +121,45 @@ describe('ThinkGraph Engraphis read transport', () => {
     }
   });
 
-  it('waits for the exact completed Main Run capture before reading its projection', async () => {
-    mocks.fetchThinkGraphProjection.mockResolvedValue({
-      schemaVersion: 'thinkgraph.engraphis.v1',
-      projectId: 'project-1',
-      nodes: [],
-      edges: [],
-    });
+  it('streams only the authorized Project commits and supports a fresh read on reconnect', async () => {
+    const { server, baseUrl } = await createApiServer();
+    const controller = new AbortController();
+    try {
+      const response = await fetch(`${baseUrl}/events?projectId=project-1`, { signal: controller.signal });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/event-stream');
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      expect(decoder.decode((await reader.read()).value)).toBe('event: ready\ndata: {"projectId":"project-1"}\n\n');
+      notifyThinkGraphChanged('project-other');
+      notifyThinkGraphChanged('project-1');
+      expect(decoder.decode((await reader.read()).value)).toBe('event: changed\ndata: {"projectId":"project-1"}\n\n');
+      await reader.cancel();
+      notifyThinkGraphChanged('project-1');
+      const reconnect = await fetch(`${baseUrl}/events?projectId=project-1`, { signal: controller.signal });
+      const next = reconnect.body!.getReader();
+      expect(decoder.decode((await next.read()).value)).toContain('event: ready');
+      await next.cancel();
+      expect(mocks.fetchThinkGraphProjection).not.toHaveBeenCalled();
+    } finally {
+      controller.abort();
+      server.closeAllConnections();
+      await closeServer(server);
+    }
+  });
+
+  it('refuses graph subscriptions without a Project or its ownership', async () => {
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(
-        `${baseUrl}/projection?projectId=project-1&afterRunId=run-1`,
-      );
-      expect(response.status).toBe(200);
-      expect(mocks.waitForActiveThinkGraphCapture).toHaveBeenCalledWith(
-        'project-1', 'run-1',
-      );
-      expect(mocks.waitForActiveThinkGraphCapture.mock.invocationCallOrder[0])
-        .toBeLessThan(mocks.fetchThinkGraphProjection.mock.invocationCallOrder[0]);
+      expect((await fetch(`${baseUrl}/events`)).status).toBe(400);
+      expect(mocks.requireOwnedProject).not.toHaveBeenCalled();
+      mocks.requireOwnedProject.mockImplementationOnce(async (...args: unknown[]) => {
+        (args[1] as Response).status(404).json({ error: 'project_not_found' });
+        return null;
+      });
+      const denied = await fetch(`${baseUrl}/events?projectId=project-other`);
+      expect(denied.status).toBe(404);
+      expect(denied.headers.get('content-type')).not.toContain('text/event-stream');
     } finally {
       await closeServer(server);
     }

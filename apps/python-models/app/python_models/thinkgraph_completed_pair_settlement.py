@@ -14,14 +14,16 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Callable
 
-from engraphis.core.interfaces import FactSpec, MemoryType, Node, Scope
+from engraphis.core.interfaces import FactSpec, MemoryType, Node, Scope, SearchFilter
 
 from .engraphis import (
     THINK_INCIDENCE_KIND,
     THINKGRAPH_INTAKE_LOCK,
     exact_think_entity_ids,
+    existing_entity_for_name,
     get_service,
     graph_revision,
+    jev_edge_provenance,
     validated_think_metadata,
 )
 from .thinkgraph_completed_pair_extraction import (
@@ -293,6 +295,22 @@ def _settle_new_completed_pair(
             "changedEdgeIds": [],
             "affectedNodeIds": [],
         }
+    endpoints = {
+        relationship[key].casefold()
+        for output in outputs for relationship in output["relationships"]
+        for key in ("source", "target")
+    }
+    for output in outputs:
+        if output["entity"].casefold() in endpoints:
+            continue
+        existing = existing_entity_for_name(
+            store, workspace_id=workspace_id, name=output["entity"],
+        )
+        if existing and any(jev_edge_provenance(edge) is not None for edge in store.neighbors(
+            [str(existing["id"])], flt=SearchFilter(workspace_id=workspace_id),
+        )):
+            continue
+        raise ThinkGraphIntakeError("thinkgraph_card_entity_relationship_required")
     decisions_by_output: list[list[dict[str, Any]]] = []
     for output in outputs:
         relationships = output["relationships"]

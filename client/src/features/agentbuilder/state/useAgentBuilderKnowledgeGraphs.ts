@@ -6,7 +6,7 @@
  * Entity: Project Knowledge Graph
  * Relationship: This file owns the Project graph workspace's independent provider load, error, refresh, neighborhood, removal, and opt-in Code state.
  * Entity: ThinkGraph
- * Relationship: This file validates and refreshes the Engraphis projection, reads exact neighborhoods, and refreshes only after confirmed Think removal.
+ * Relationship: This file reads Engraphis projections and neighborhoods and subscribes to Project graph commits independently of Main chat.
  * Entity: KnowGraph
  * Relationship: This file validates Entity-only Graphiti projections, bounds startup retries, reads exact neighborhoods, and refreshes only after confirmed Know removal.
  * Entity: CodeGraph
@@ -38,8 +38,7 @@ type KnowledgeGraphState = {
   ) => Promise<GraphProjectionV1>;
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
   removeKnowGraphEvidence: (episodeId: string) => Promise<void>;
-  refreshThinkGraph: (afterRunId?: string) => Promise<void>;
-  refreshAfterMainRun: (runId: string, waitForThinkCapture?: boolean) => Promise<void>;
+  refreshThinkGraph: () => Promise<void>;
   codeGraph: {
     projection: GraphProjectionV1;
     status: 'idle' | 'loading' | 'ready' | 'error';
@@ -178,7 +177,7 @@ export default function useAgentBuilderKnowledgeGraphs({
   const codeFileAbortRef = useRef<AbortController | null>(null);
   const codeSourceAbortRef = useRef<AbortController | null>(null);
 
-  const refreshThinkGraph = useCallback(async (afterRunId?: string) => {
+  const refreshThinkGraph = useCallback(async () => {
     const requestId = ++thinkRequestRef.current;
     thinkAbortRef.current?.abort();
     const controller = new AbortController();
@@ -190,7 +189,6 @@ export default function useAgentBuilderKnowledgeGraphs({
     setStatuses((current) => ({ ...current, thinkgraph: 'loading' }));
     try {
       const query = new URLSearchParams({ projectId });
-      if (afterRunId?.trim()) query.set('afterRunId', afterRunId.trim());
       const response = await fetch(`/api/thinkgraph/projection?${query}`, {
         signal: controller.signal,
       });
@@ -302,6 +300,25 @@ export default function useAgentBuilderKnowledgeGraphs({
       codeSourceAbortRef.current?.abort();
     };
   }, [conversationId, deckId, projectId, refreshKnowGraph, refreshThinkGraph]);
+
+  useEffect(() => {
+    if (!projectId.trim()) return undefined;
+    const query = new URLSearchParams({ projectId });
+    const stream = new EventSource(`/api/thinkgraph/events?${query}`, { withCredentials: true });
+    const refresh = () => { void refreshThinkGraph(); };
+    const disconnected = () => {
+      setErrors(current => ({ ...current, thinkgraph: 'ThinkGraph live updates disconnected. Reconnecting.' }));
+    };
+    stream.addEventListener('ready', refresh);
+    stream.addEventListener('changed', refresh);
+    stream.addEventListener('error', disconnected);
+    return () => {
+      stream.removeEventListener('ready', refresh);
+      stream.removeEventListener('changed', refresh);
+      stream.removeEventListener('error', disconnected);
+      stream.close();
+    };
+  }, [projectId, refreshThinkGraph]);
 
   const loadCodeGraph = useCallback(async (): Promise<GraphProjectionV1 | null> => {
     const requestId = ++codeProjectionRequestRef.current;
@@ -473,17 +490,6 @@ export default function useAgentBuilderKnowledgeGraphs({
     await refreshKnowGraph();
   }, [projectId, refreshKnowGraph]);
 
-  const refreshAfterMainRun = useCallback(async (
-    runId: string,
-    waitForThinkCapture = true,
-  ) => {
-    try {
-      await refreshThinkGraph(waitForThinkCapture ? runId : undefined);
-    } finally {
-      await refreshKnowGraph();
-    }
-  }, [refreshKnowGraph, refreshThinkGraph]);
-
   return {
     projections,
     errors,
@@ -492,7 +498,6 @@ export default function useAgentBuilderKnowledgeGraphs({
     removeThinkGraphEvidence,
     removeKnowGraphEvidence,
     refreshThinkGraph,
-    refreshAfterMainRun,
     codeGraph,
     loadCodeGraph,
     readCodeGraphFile,

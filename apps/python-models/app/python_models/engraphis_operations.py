@@ -287,9 +287,18 @@ def inspect(project: str, id_field: str, identifier: str) -> dict:
     return result
 
 
-def private_operation(project: str, operation: str, arguments: dict) -> dict:
+def private_operation(project: str, operation: str, arguments: dict) -> dict | list[dict]:
     """Application operations outside model tool grants."""
     project = project_id(project)
+    if operation == "conversation":
+        from .conversations import conversation_operation
+        return conversation_operation(project, str(arguments.get("action") or ""), arguments)
+    if operation == "prepare_conversation_pair":
+        from .conversations import read_pair
+        from .thinkgraph_completed_pair_preparation import prepare_completed_pair
+        source = read_pair(project, arguments.get("conversationId"),
+                           arguments.get("userMessageIds"), arguments.get("assistantMessageId"))
+        return {"source": source, "preparation": prepare_completed_pair(source)}
     if operation == "retire":
         if set(arguments) != {"memoryId"}:
             raise ValueError("engraphis_memory_reference_invalid")

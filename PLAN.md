@@ -73,11 +73,17 @@ profile, or historical screenshot cannot establish one Project's current configu
 
 ### ThinkGraph
 
-Each successfully completed ordinary Main Run now supplies exactly one completed exchange to ThinkGraph.
-PostgreSQL retains the ordered user messages, the Run observation retains their ordered message IDs, the exact
-authorized saved ThinkGraph Card performs structured extraction through Hermes, and Python rails remains the
-sole preparation and settlement owner. An in-flight user addition steers the active Main Run invisibly and does
-not create a second Run or a second completed pair.
+The approved design stores the full application conversation in Engraphis. ThinkGraph receives new pairs
+from that saved source and uses the existing extraction and Think settlement path; no new agent tools,
+grants or Card prompts are required. The prior automatic-capture paragraph was not proof of the restored
+Bot Mode source and must not be used to reintroduce a Main-session completion hook.
+
+Current stage: conversation storage and explicit saved-pair preparation only. Source uses Engraphis's
+existing raw-event ledger at `db/engraphis.sqlite`; the old schema-20 `db/thinkgraph.sqlite` is preserved
+untouched. Old test conversations are not migrated, seeded, replayed or processed. Raw conversation
+events are not Thinks and do not become Entity nodes. The existing Think settlement owner is unchanged.
+The owner explicitly requires stopping before `bot_relay.deliver`: no handoff, agent invocation or
+automatic extraction is connected in this stage. Loaded storage and live agent proof remain separate.
 
 ### KnowGraph
 
@@ -253,13 +259,14 @@ positive evidence is recorded in `turn.md`. No additional CBM lifecycle mutation
 Any new CBM restart, repair, reindex, cache access, project mutation, or configuration change still requires
 a new exact owner instruction.
 
-## Completed Main capture boundary
+## Conversation storage checkpoint before delivery
 
-Automatic completed-Main capture uses the persisted Main-to-ThinkGraph authority, the current repo-owned
-Hermes adapter, the exact saved ThinkGraph Card, and the existing Python preparation/settlement owners. It has
-no candidate queue, approval/shadow graph, alternate writer, direct public target runner, or UI-owned semantic
-step. Graph optimization, time-sort interaction, entitlement, retention/billing policy, reset, report surface,
-and quick-Web evidence handoff remain outside this boundary.
+Main keeps its existing conversation-store calls. Only the storage implementation changes underneath
+that interface. PostgreSQL remains the saved Project/Card authority, not a fallback conversation store.
+Pairs are read using explicit ordered user-message IDs and an exact assistant-message ID; preparation
+does not guess from the latest messages, call a model, or mutate Thinks. The existing structured extraction
+and Think/Jev settlement contracts remain in place. Complete and verify this stage before connecting
+the storage-side one-way handoff; Main's route, Bot Mode and vendored source stay unchanged.
 
 ## Proof tiers still separate
 

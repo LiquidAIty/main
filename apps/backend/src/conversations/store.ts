@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Main Chat
- * Relationship: This file persists the Project conversation's user turns and completed Card replies exactly once with stable ordering and truthful speaker and target identity.
+ * Relationship: This file transports full Project conversations to Engraphis and starts the bounded ThinkGraph handoff only after a new completed reply commits.
  * Entity: Projects
  * Relationship: This file resolves each conversation against the canonical Project identity and keeps message ordering isolated within that Project conversation.
  */
@@ -12,15 +12,12 @@
 // This store persists Main's application conversation: user-authored turns and
 // completed provider replies with truthful Card speaker identity. Python remains
 // the sole owner of saved Card Runs and their IDFs.
-import { randomUUID } from 'crypto';
-import type { PoolClient } from 'pg';
 import { pool } from '../db/pool';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
+import { submitSavedThinkPair } from './thinkGraphHandoff';
 
 const PROJECTS_TABLE = 'ag_catalog.projects';
-const CONVERSATIONS_TABLE = 'ag_catalog.conversations';
-const MESSAGES_TABLE = 'ag_catalog.conversation_messages';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MESSAGE_ID_REGEX = /^msg_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type ConversationRole = 'user' | 'assistant' | 'system' | 'tool' | 'question' | 'answer';
 export type ConversationMessageStatus = 'pending' | 'streaming' | 'complete' | 'error';
@@ -76,193 +73,43 @@ export type ConversationMessage = {
   seq: number;
 };
 
-function projectLookup(projectId: string, parameterIndex = 1): { clause: string; value: string } {
-  return {
-    clause: UUID_REGEX.test(projectId) ? `id = $${parameterIndex}` : `code = $${parameterIndex}`,
-    value: projectId,
-  };
-}
-
-function iso(value: unknown): string {
-  if (value instanceof Date) return value.toISOString();
-  return new Date(String(value)).toISOString();
-}
-
-function stringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === 'string');
-}
-
-function exactLinkedEvidenceIds(value: unknown): string[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) throw new Error('conversation_evidence_ids_invalid');
-  const values = value.map(item => typeof item === 'string' ? item.trim() : '');
-  if (values.some(item => !item) || new Set(values).size !== values.length) {
-    throw new Error('conversation_evidence_ids_invalid');
-  }
-  return values;
-}
-
-function visibleActivities(value: unknown): VisibleActivity[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return value as VisibleActivity[];
-}
-
-function mapMessage(row: Record<string, any>): ConversationMessage {
-  return {
-    messageId: String(row.message_id),
-    projectId: String(row.project_id),
-    conversationId: String(row.conversation_id),
-    parentMessageId: row.parent_message_id == null ? null : String(row.parent_message_id),
-    role: row.role as ConversationRole,
-    content: String(row.content ?? ''),
-    status: row.status as ConversationMessageStatus,
-    createdAt: iso(row.created_at),
-    completedAt: row.completed_at == null ? null : iso(row.completed_at),
-    providerContinuationRef: row.provider_continuation_ref == null
-      ? null
-      : String(row.provider_continuation_ref),
-    providerMessageId: row.provider_message_id == null ? null : String(row.provider_message_id),
-    linkedPlanDraftId: row.linked_plan_draft_id == null ? null : String(row.linked_plan_draft_id),
-    linkedPlanStepId: row.linked_plan_step_id == null ? null : String(row.linked_plan_step_id),
-    linkedArtifactIds: stringArray(row.linked_artifact_ids),
-    linkedEvidenceIds: stringArray(row.linked_evidence_ids),
-    visibleActivities: visibleActivities(row.visible_activities),
-    seq: Number(row.seq),
-  };
-}
-
-async function withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await operation(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function resolveProjectId(
-  client: Pick<PoolClient, 'query'>,
-  projectId: string,
-): Promise<string> {
-  const lookup = projectLookup(projectId);
-  const result = await client.query(
-    `SELECT id FROM ${PROJECTS_TABLE} WHERE ${lookup.clause} LIMIT 1`,
-    [lookup.value],
+async function storage(action: string, input: { projectId: string; conversationId: string; [key: string]: unknown }): Promise<unknown> {
+  const { projectId, ...arguments_ } = input;
+  const project = await pool.query(
+    `SELECT id FROM ${PROJECTS_TABLE} WHERE ${UUID_REGEX.test(projectId) ? 'id' : 'code'} = $1 LIMIT 1`,
+    [projectId],
   );
-  if (!result.rows.length) throw new Error('project_not_found');
-  return String(result.rows[0].id);
+  if (!project.rows.length) throw new Error('project_not_found');
+  return requestPythonRailsJson('/thinkgraph/operation', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId: String(project.rows[0].id), operation: 'conversation',
+      arguments: { action, ...arguments_ } }),
+  });
 }
 
-function participantActivity(
-  kind: 'conversation_speaker' | 'conversation_target',
-  participant: ConversationParticipant,
-): VisibleActivity {
-  return {
-    kind,
-    label: participant.label,
-    status: participant.kind,
-    ...(participant.cardId ? { cardId: participant.cardId, ref: participant.cardId } : {}),
-    ...(participant.profile ? { profile: participant.profile } : {}),
-    ...(participant.address ? { address: participant.address } : {}),
-  };
-}
-
-/**
- * Append one completed Main-conversation turn. If this is the first projected turn,
- * the caller may supply the already-read Main history as a one-time seed.
- * The transaction locks the existing conversation row so speaker ordering and
- * sequence identities remain exact under concurrent requests.
- */
 export async function appendConversationTurn(input: {
   projectId: string;
   conversationId: string;
   seedMessages?: ConversationMessageWrite[];
   messages: ConversationMessageWrite[];
 }): Promise<ConversationMessage[]> {
-  if (!input.conversationId.trim() || input.messages.length === 0) {
-    throw new Error('conversation_turn_invalid');
+  return await storage('append', input) as ConversationMessage[];
+}
+
+export async function appendConversationReplyOnce(input: {
+  projectId: string;
+  conversationId: string;
+  message: ConversationMessageWrite & { role: 'assistant'; providerMessageId: string };
+}): Promise<{ inserted: boolean; message: ConversationMessage }> {
+  const saved = await storage('reply', input) as { inserted: boolean; message: ConversationMessage };
+  if (saved.inserted && saved.message.status === 'complete'
+    && (input.message.status === undefined || input.message.status === 'complete')) {
+    void submitSavedThinkPair(saved.message).catch(error => {
+      console.error('[thinkgraph]', { messageId: saved.message.messageId,
+        error: error instanceof Error ? error.message : 'submission_failed' });
+    });
   }
-  return withTransaction(async (client) => {
-    const canonicalProjectId = await resolveProjectId(client, input.projectId);
-    await client.query(
-      `INSERT INTO ${CONVERSATIONS_TABLE} (project_id, conversation_id)
-       VALUES ($1::uuid, $2)
-       ON CONFLICT (project_id, conversation_id) DO NOTHING`,
-      [canonicalProjectId, input.conversationId],
-    );
-    const locked = await client.query(
-      `SELECT next_seq FROM ${CONVERSATIONS_TABLE}
-       WHERE project_id = $1::uuid AND conversation_id = $2
-       FOR UPDATE`,
-      [canonicalProjectId, input.conversationId],
-    );
-    if (!locked.rows.length) throw new Error('conversation_not_found');
-    const existing = await client.query(
-      `SELECT 1 FROM ${MESSAGES_TABLE}
-       WHERE project_id = $1::uuid AND conversation_id = $2
-       LIMIT 1`,
-      [canonicalProjectId, input.conversationId],
-    );
-    const writes = [
-      ...(existing.rows.length ? [] : input.seedMessages || []),
-      ...input.messages,
-    ];
-    if (writes.length === 0) return [];
-    const sequence = await client.query(
-      `UPDATE ${CONVERSATIONS_TABLE}
-       SET next_seq = next_seq + $3, updated_at = NOW()
-       WHERE project_id = $1::uuid AND conversation_id = $2
-       RETURNING next_seq`,
-      [canonicalProjectId, input.conversationId, writes.length],
-    );
-    if (!sequence.rows.length) throw new Error('conversation_not_found');
-    const firstSequence = Number(sequence.rows[0].next_seq) - writes.length + 1;
-    const inserted: ConversationMessage[] = [];
-    for (const [index, write] of writes.entries()) {
-      if (write.messageId && !MESSAGE_ID_REGEX.test(write.messageId)) {
-        throw new Error('conversation_message_id_invalid');
-      }
-      const activities = [
-        participantActivity('conversation_speaker', write.speaker),
-        ...(write.target ? [participantActivity('conversation_target', write.target)] : []),
-      ];
-      const status = write.status || 'complete';
-      const linkedEvidenceIds = exactLinkedEvidenceIds(write.linkedEvidenceIds);
-      const result = await client.query(
-        `INSERT INTO ${MESSAGES_TABLE} (
-           project_id, conversation_id, message_id, role, content, status, seq,
-           completed_at, provider_continuation_ref, provider_message_id,
-           linked_evidence_ids, visible_activities
-         )
-         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7,
-                 CASE WHEN $6 = 'pending' THEN NULL ELSE NOW() END,
-                 $8, $9, $10::jsonb, $11::jsonb)
-         RETURNING *`,
-        [
-          canonicalProjectId,
-          input.conversationId,
-          write.messageId || `msg_${randomUUID()}`,
-          write.role,
-          write.content,
-          status,
-          firstSequence + index,
-          write.providerContinuationRef ?? null,
-          write.providerMessageId ?? null,
-          JSON.stringify(linkedEvidenceIds),
-          JSON.stringify(activities),
-        ],
-      );
-      inserted.push(mapMessage(result.rows[0]));
-    }
-    return inserted;
-  });
+  return saved;
 }
 
 export async function settleConversationMessage(input: {
@@ -272,128 +119,9 @@ export async function settleConversationMessage(input: {
   providerMessageId: string;
   status: Extract<ConversationMessageStatus, 'complete' | 'error'>;
 }): Promise<ConversationMessage> {
-  if (
-    !input.conversationId.trim()
-    || !MESSAGE_ID_REGEX.test(input.messageId)
-    || !input.providerMessageId.trim()
-  ) throw new Error('conversation_message_settlement_invalid');
-  return withTransaction(async (client) => {
-    const canonicalProjectId = await resolveProjectId(client, input.projectId);
-    const result = await client.query(
-      `UPDATE ${MESSAGES_TABLE}
-       SET status = $5, completed_at = NOW()
-       WHERE project_id = $1::uuid AND conversation_id = $2
-         AND message_id = $3 AND provider_message_id = $4
-         AND status = 'pending'
-       RETURNING *`,
-      [
-        canonicalProjectId,
-        input.conversationId,
-        input.messageId,
-        input.providerMessageId,
-        input.status,
-      ],
-    );
-    if (result.rows.length !== 1) throw new Error('conversation_message_settlement_mismatch');
-    return mapMessage(result.rows[0]);
-  });
+  return await storage('settle', input) as ConversationMessage;
 }
 
-/**
- * Append one completed Card reply exactly once by provider message id.
- * The existing conversation-row lock is the serialization owner, so concurrent
- * completion observers cannot allocate duplicate sequence numbers or messages.
- */
-export async function appendConversationReplyOnce(input: {
-  projectId: string;
-  conversationId: string;
-  message: ConversationMessageWrite & { role: 'assistant'; providerMessageId: string };
-}): Promise<{ inserted: boolean; message: ConversationMessage }> {
-  const providerMessageId = input.message.providerMessageId.trim();
-  if (!input.conversationId.trim() || !providerMessageId || !input.message.content.trim()) {
-    throw new Error('conversation_reply_invalid');
-  }
-  if (input.message.messageId && !MESSAGE_ID_REGEX.test(input.message.messageId)) {
-    throw new Error('conversation_message_id_invalid');
-  }
-  return withTransaction(async (client) => {
-    const canonicalProjectId = await resolveProjectId(client, input.projectId);
-    await client.query(
-      `INSERT INTO ${CONVERSATIONS_TABLE} (project_id, conversation_id)
-       VALUES ($1::uuid, $2)
-       ON CONFLICT (project_id, conversation_id) DO NOTHING`,
-      [canonicalProjectId, input.conversationId],
-    );
-    const locked = await client.query(
-      `SELECT next_seq FROM ${CONVERSATIONS_TABLE}
-       WHERE project_id = $1::uuid AND conversation_id = $2
-       FOR UPDATE`,
-      [canonicalProjectId, input.conversationId],
-    );
-    if (!locked.rows.length) throw new Error('conversation_not_found');
-    const existing = await client.query(
-      `SELECT * FROM ${MESSAGES_TABLE}
-       WHERE project_id = $1::uuid AND conversation_id = $2
-         AND provider_message_id = $3
-       ORDER BY seq ASC
-       LIMIT 1`,
-      [canonicalProjectId, input.conversationId, providerMessageId],
-    );
-    if (existing.rows.length) {
-      return { inserted: false, message: mapMessage(existing.rows[0]) };
-    }
-    const sequence = await client.query(
-      `UPDATE ${CONVERSATIONS_TABLE}
-       SET next_seq = next_seq + 1, updated_at = NOW()
-       WHERE project_id = $1::uuid AND conversation_id = $2
-       RETURNING next_seq`,
-      [canonicalProjectId, input.conversationId],
-    );
-    if (!sequence.rows.length) throw new Error('conversation_not_found');
-    const activities = [
-      participantActivity('conversation_speaker', input.message.speaker),
-      ...(input.message.target
-        ? [participantActivity('conversation_target', input.message.target)]
-        : []),
-    ];
-    const linkedEvidenceIds = exactLinkedEvidenceIds(input.message.linkedEvidenceIds);
-    const result = await client.query(
-      `INSERT INTO ${MESSAGES_TABLE} (
-         project_id, conversation_id, message_id, role, content, status, seq,
-         completed_at, provider_continuation_ref, provider_message_id,
-         linked_evidence_ids, visible_activities
-       )
-       VALUES ($1::uuid, $2, $3, 'assistant', $4, 'complete', $5, NOW(), $6, $7, $8::jsonb, $9::jsonb)
-       RETURNING *`,
-      [
-        canonicalProjectId,
-        input.conversationId,
-        input.message.messageId || `msg_${randomUUID()}`,
-        input.message.content,
-        Number(sequence.rows[0].next_seq),
-        input.message.providerContinuationRef ?? null,
-        providerMessageId,
-        JSON.stringify(linkedEvidenceIds),
-        JSON.stringify(activities),
-      ],
-    );
-    return { inserted: true, message: mapMessage(result.rows[0]) };
-  });
-}
-
-export async function getConversationMessages(
-  projectId: string,
-  conversationId: string,
-): Promise<ConversationMessage[]> {
-  const lookup = projectLookup(projectId);
-  const result = await pool.query(
-    `SELECT message.*
-     FROM ${MESSAGES_TABLE} AS message
-     JOIN ${PROJECTS_TABLE} AS project ON project.id = message.project_id
-     WHERE project.${lookup.clause}
-       AND message.conversation_id = $2
-     ORDER BY message.seq ASC`,
-    [lookup.value, conversationId],
-  );
-  return result.rows.map(mapMessage);
+export async function getConversationMessages(projectId: string, conversationId: string): Promise<ConversationMessage[]> {
+  return await storage('read', { projectId, conversationId }) as ConversationMessage[];
 }
