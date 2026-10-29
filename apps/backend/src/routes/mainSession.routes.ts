@@ -82,8 +82,14 @@ async function gateway() {
 }
 
 async function requestForBot(profile: string, method: string, params: Rpc = {}) {
-  const current = await gateway();
-  return current.client.request(method, { ...params, profile }, method === 'prompt.submit' ? current.submit : current.startup);
+  const started = performance.now();
+  try {
+    const current = await gateway();
+    return await current.client.request(method, { ...params, profile }, method === 'prompt.submit' ? current.submit : current.startup);
+  } finally {
+    const elapsedMs = Math.round(performance.now() - started);
+    if (elapsedMs >= 1000) console.info('[card-rpc-timing]', { profile, method, elapsedMs });
+  }
 }
 
 async function context(req: Request, res: Response, input = req.method === 'GET' ? req.query : req.body) {
@@ -131,11 +137,10 @@ async function prepareProfiles(scope: Context, target: ProjectCardBinding) {
   }));
 }
 
-export async function findExistingCanonicalChat(profile: string, summary?: Rpc | null): Promise<string | null> {
+export async function findExistingCanonicalChat(profile: string): Promise<string | null> {
   const result = await requestForBot(profile, 'session.list', { title: 'Bot Chat', include_hidden: true, limit: 200 });
   const rows = result.sessions.filter((row: Rpc) => (row.root_title || row.title) === 'Bot Chat');
   if (rows.length > 1) throw new Error('card_conversation_ambiguous');
-  if (!rows.length && summary?.id) throw new Error('card_conversation_registry_unavailable');
   return rows.length ? String(rows[0].resolved_id || rows[0].id) : null;
 }
 
@@ -153,9 +158,9 @@ async function openStoredBotChat(profile: string, sessionId: string): Promise<st
 }
 
 async function openBotCanonicalChat(profile: string): Promise<string> {
-  const profiles = await requestForBot(profile, 'profiles.list');
-  const summary = profiles.profiles.find((row: Rpc) => row.name === profile)?.canonical_session;
-  const sessionId = await findExistingCanonicalChat(profile, summary) ?? await createCanonicalChat(profile);
+  // The exact native title lookup already resolves this profile's canonical Chat.
+  // Enumerating every installed profile before each open adds no authority.
+  const sessionId = await findExistingCanonicalChat(profile) ?? await createCanonicalChat(profile);
   return openStoredBotChat(profile, sessionId);
 }
 

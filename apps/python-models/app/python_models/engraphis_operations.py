@@ -307,7 +307,7 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict | l
         if preparation["structuredExtractionRequired"]:
             entity_map = build_project_entity_map(project)
             # Server-authorized invocation data, not an agent tool or credential.
-            # The native hook receives this snapshot through frozen client_env.
+            # The native hook receives this snapshot with the exact Bot delivery.
             result["projectMapContext"] = {
                 "ownerUserId": project_principal(project)["id"],
                 "projectId": project,

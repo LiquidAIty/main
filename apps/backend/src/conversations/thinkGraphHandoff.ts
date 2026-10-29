@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: ThinkGraph
- * Relationship: Submits one committed conversation pair to the saved ThinkGraph profile through Hermes prompt.submit, outside Main's route.
+ * Relationship: Delivers one committed conversation pair to the saved ThinkGraph Bot Chat through Hermes bot_relay.deliver, outside Main's route.
  */
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -20,8 +20,7 @@ import type { ConversationMessage } from './store';
 
 type Rpc = Record<string, any>;
 
-// Native ticketed transport: the former caller drops client_env. Keep the
-// saved-pair owner, app-visible session classification, and Hermes' shared RPC channel.
+// Attach to the existing profile authority using Hermes' own ticket and RPC channel.
 async function connectProfile(profile: string, onEvent: (event: Rpc) => void, onClose: () => void) {
   const root = path.join(resolveRepoRoot(), 'HermesLatest');
   const home = path.join(root, '.hermes', 'profiles', profile);
@@ -126,36 +125,44 @@ export async function submitSavedThinkPair(answer: ConversationMessage): Promise
     if (!prepared.preparation?.structuredExtractionRequired) return;
     client.close();
     client = await connectProfile(target.profile, event => eventHandler(event), () => closedHandler());
-    const created = await request('session.create', {
-      request_id: prepared.preparation.pairReference, source: 'gui', hidden: true, follow_profile_config: true,
-      client_env: { PROJECT_GRAPH_CONTEXT: JSON.stringify(prepared.projectMapContext) },
-    });
-    const sessionId = created.session_id || created.ref?.session_id;
+    const chat = await request('session.resume', { title: 'Bot Chat' });
+    const sessionId = chat.session_id;
     if (!sessionId) throw new Error('thinkgraph_submission_session_unavailable');
+    let admissionId = '';
     const completion = new Promise<Rpc>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('thinkgraph_completion_timeout')), 1_800_000);
       eventHandler = (event: Rpc) => {
-        if (event.session_id === sessionId && event.type === 'message.complete') resolve(event);
+        if (event.session_id === sessionId && event.admission_id === admissionId
+          && event.type === 'message.complete') resolve(event);
       };
       closedHandler = () => reject(new Error('thinkgraph_connection_closed'));
       detach = () => { clearTimeout(timeout); eventHandler = () => {}; closedHandler = () => {}; };
     });
     // A submission error may precede the completion; keep its rejection observed.
     void completion.catch(() => undefined);
-    const submitted = await request('prompt.submit', {
-      session_id: sessionId, submission_id: prepared.preparation.pairReference, finite: true,
-      text: ['EXTRACTION_PROMPT:', prepared.preparation.enrichmentPrompt,
-        'OUTPUT_SCHEMA:', JSON.stringify(prepared.preparation.enrichmentSchema)].join('\n'),
+    const submitted = await request('bot_relay.deliver', {
+      id: prepared.preparation.pairReference.replace(/^pair_/, ''),
+      profile: target.profile, session_id: sessionId,
+      message: JSON.stringify({
+        projectMapContext: prepared.projectMapContext,
+        input: ['EXTRACTION_PROMPT:', prepared.preparation.enrichmentPrompt,
+          'OUTPUT_SCHEMA:', JSON.stringify(prepared.preparation.enrichmentSchema)].join('\n'),
+      }),
     });
-    if (!submitted.admission_id) throw new Error('thinkgraph_submission_not_admitted');
-    const event = await completion;
-    if (event.admission_id !== submitted.admission_id) throw new Error('thinkgraph_completion_identity_mismatch');
-    const receipt = await request('prompt.receipt', {
-      session_id: sessionId, admission_id: submitted.admission_id, include_result: true,
+    admissionId = submitted.retry_admission_id || submitted.admission_id;
+    if (!admissionId || submitted.session_id !== sessionId) throw new Error('thinkgraph_submission_not_admitted');
+    let receipt = await request('prompt.receipt', {
+      session_id: sessionId, admission_id: admissionId, include_result: true,
     });
+    if (receipt.status !== 'terminal') {
+      await completion;
+      receipt = await request('prompt.receipt', {
+        session_id: sessionId, admission_id: admissionId, include_result: true,
+      });
+    }
     if (receipt.status !== 'terminal' || receipt.outcome !== 'completed'
       || receipt.result?.partial || receipt.result?.interrupted || receipt.result?.failed
-      || receipt.admission_id !== submitted.admission_id || receipt.ref?.session_id !== sessionId) {
+      || receipt.admission_id !== admissionId || receipt.ref?.session_id !== sessionId) {
       throw new Error('thinkgraph_execution_not_completed');
     }
     const settled = await requestPythonRailsJson('/thinkgraph/completed-pair/settle', {
@@ -164,7 +171,7 @@ export async function submitSavedThinkPair(answer: ConversationMessage): Promise
         structuredOutput: JSON.parse(receipt.result.final_response),
         cardRun: { cardId: target.card.id, revisionId: target.cardRevisionId, profile: target.profile,
           // The exact Hermes execution receipt, not a fabricated application Run.
-          runId: submitted.admission_id, hermesSessionId: sessionId,
+          runId: admissionId, hermesSessionId: sessionId,
           resolvedProvider: receipt.result.provider, resolvedModel: receipt.result.model },
       }),
     }) as Rpc;

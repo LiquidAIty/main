@@ -127,6 +127,28 @@ router.delete('/:projectId', async (req, res) => {
     if (!access) return;
     client = await pool.connect();
     await client.query('BEGIN');
+    const owned = await client.query(
+      'SELECT id FROM ag_catalog.projects WHERE id=$1 AND owner_user_id=$2 FOR UPDATE',
+      [access.projectId, access.ownerUserId],
+    );
+    if (!owned.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, error: 'project_not_found' });
+    }
+    // Delete this Project's dependent rows in one transaction. Other Projects'
+    // Card presences, revisions and Hermes profiles are not deletion targets.
+    // A cross-Project revision reference still refuses the whole transaction.
+    await client.query(
+      'DELETE FROM ag_catalog.run_artifacts WHERE producing_run_id IN '
+      + '(SELECT run_id FROM ag_catalog.agent_runs WHERE project_id=$1)', [access.projectId],
+    );
+    await client.query('DELETE FROM ag_catalog.agent_runs WHERE project_id=$1', [access.projectId]);
+    await client.query('DELETE FROM ag_catalog.deck_card_memberships WHERE project_id=$1', [access.projectId]);
+    await client.query('UPDATE ag_catalog.agent_cards SET current_revision_id=NULL WHERE project_id=$1', [access.projectId]);
+    await client.query('DELETE FROM ag_catalog.agent_card_revisions WHERE project_id=$1', [access.projectId]);
+    await client.query('DELETE FROM ag_catalog.agent_cards WHERE project_id=$1', [access.projectId]);
+    await client.query('DELETE FROM ag_catalog.deck_legacy_snapshots WHERE project_id=$1', [access.projectId]);
+    await client.query('DELETE FROM ag_catalog.agent_decks WHERE project_id=$1', [access.projectId]);
     const result = await client.query(
       'DELETE FROM ag_catalog.projects WHERE id = $1 AND owner_user_id = $2 RETURNING id',
       [access.projectId, access.ownerUserId],
