@@ -191,7 +191,7 @@ def relationship_vocabulary_state(labels: tuple[str, ...]) -> dict[str, Any]:
 
 def read_project_relationship_vocabulary(project: str) -> dict[str, Any]:
     """Read the one durable vocabulary shared by this project's graph twins."""
-    service = get_service()
+    service = get_service(project)
     with THINKGRAPH_INTAKE_LOCK:
         workspace_id = service.store.get_or_create_workspace(project_id(project))
         labels = project_relationship_vocabulary(service.store, workspace_id)
@@ -203,7 +203,7 @@ def promote_project_relationship_label(
     label: str,
 ) -> dict[str, Any]:
     """Promote one already-winning label through the shared Engraphis project seam."""
-    service = get_service()
+    service = get_service(project)
     with THINKGRAPH_INTAKE_LOCK:
         workspace_id = service.store.get_or_create_workspace(project_id(project))
         with service.store.write_transaction():

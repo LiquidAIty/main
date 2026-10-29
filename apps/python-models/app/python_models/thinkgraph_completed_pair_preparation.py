@@ -114,7 +114,7 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
     payload = validate_completed_pair_payload(payload)
     project = payload["projectId"]
     pair_text = f"USER:\n{payload['userMessage']}\n\nMAIN:\n{payload['mainResponse']}"
-    service = get_service()
+    service = get_service(project)
     with THINKGRAPH_INTAKE_LOCK:
         workspace_id = service.store.get_or_create_workspace(project)
         revision_before = graph_revision(service.store, workspace_id)

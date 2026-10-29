@@ -44,7 +44,7 @@ from app.python_models.knowgraph_graphiti_read_support import (
 
 
 def _thinkgraph_relationships(project: str) -> list[dict[str, Any]]:
-    service = get_service()
+    service = get_service(project)
     project = project_id(project)
     with SERVICE_LOCK:
         workspace = service.store.conn.execute(

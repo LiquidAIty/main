@@ -511,7 +511,7 @@ def settle_completed_pair(
         _validate_settle_payload(payload)
     )
     project = completed["projectId"]
-    service = get_service()
+    service = get_service(project)
     with THINKGRAPH_INTAKE_LOCK:
         store = service.store
         workspace_id = store.get_or_create_workspace(project)

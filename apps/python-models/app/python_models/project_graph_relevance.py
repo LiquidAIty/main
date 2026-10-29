@@ -77,7 +77,7 @@ def _provider_think_records(
     query: str,
     result_limit: int = 1,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    service = get_service()
+    service = get_service(project)
     project = project_id(project)
     candidate_limit = _candidate_limit(result_limit)
     recent = read_recent_project_thinks(project, limit=result_limit)

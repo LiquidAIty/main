@@ -96,7 +96,7 @@ def conversation_operation(project: str, action: str, arguments: dict):
     if arguments.get("seedMessages"):
         raise ValueError("conversation_history_import_disabled")
     with SERVICE_LOCK:
-        service = get_service()
+        service = get_service(project)
         store = service.store
         with store.write_transaction():
             scope = store.conn.execute("SELECT id FROM workspaces WHERE name=?", (project,)).fetchone()

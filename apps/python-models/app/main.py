@@ -6,7 +6,7 @@
 # Entity: Application Startup
 # Relationship: This file composes the Python-rails FastAPI application, loads validated configuration, mounts the established domain routers, and exposes process health.
 # Entity: ThinkGraph
-# Relationship: This file starts the Engraphis service warmup during application lifespan without moving ThinkGraph authority into the transport layer.
+# Relationship: This file closes the account-scoped Engraphis services at shutdown; database selection waits for an authorized Project request.
 
 from contextlib import asynccontextmanager
 
@@ -32,26 +32,11 @@ _modeling_spec.loader.exec_module(_modeling_routes)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
-    import logging
-    from app.python_models.engraphis import get_service
-
-    async def warm():
-        try:
-            await asyncio.to_thread(get_service)
-        except Exception:
-            logging.getLogger(__name__).exception("ThinkGraph initialization failed")
-
-    warmup = asyncio.create_task(warm())
-    app.state.thinkgraph_warmup = warmup
+    from app.python_models.engraphis import close_engine
     try:
         yield
     finally:
-        if not warmup.done():
-            warmup.cancel()
-            try:
-                await warmup
-            except asyncio.CancelledError:
-                pass
+        await asyncio.to_thread(close_engine)
 
 
 app = FastAPI(lifespan=lifespan)

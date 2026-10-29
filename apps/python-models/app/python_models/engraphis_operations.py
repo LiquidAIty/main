@@ -28,6 +28,7 @@ from .engraphis import (
     public_think_metadata,
     validated_think_metadata,
     get_service,
+    project_principal,
     project_id,
 )
 
@@ -188,8 +189,10 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
                 raise ValueError("thinkgraph_scope_is_owned_by_project")
             nested["workspace"] = project
             arguments["arguments"] = nested
-    get_service()
-    response = await server.call_tool(name, arguments)
+    from engraphis.service_context import bind_service
+    # Native request-local binding; never switch the standalone MCP singleton.
+    with bind_service(get_service(project), principal=project_principal(project)):
+        response = await server.call_tool(name, arguments)
     content = response.content if hasattr(response, "content") else response[0] if isinstance(response, tuple) else response
     if getattr(response, "is_error", False):
         raise ValueError(" ".join(getattr(block, "text", "") for block in content))
@@ -210,7 +213,7 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
 
 
 def inspect(project: str, id_field: str, identifier: str) -> dict:
-    service = get_service()
+    service = get_service(project)
     project = project_id(project)
     if id_field == "engraphisEntityId":
         entity = service.graph_entity(
@@ -296,15 +299,32 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict | l
     if operation == "prepare_conversation_pair":
         from .conversations import read_pair
         from .thinkgraph_completed_pair_preparation import prepare_completed_pair
+        from .project_entity_map import build_project_entity_map, append_project_entity_map
         source = read_pair(project, arguments.get("conversationId"),
                            arguments.get("userMessageIds"), arguments.get("assistantMessageId"))
-        return {"source": source, "preparation": prepare_completed_pair(source)}
+        preparation = prepare_completed_pair(source)
+        result = {"source": source, "preparation": preparation}
+        if preparation["structuredExtractionRequired"]:
+            entity_map = build_project_entity_map(project)
+            # Server-authorized invocation data, not an agent tool or credential.
+            # The native hook receives this snapshot through frozen client_env.
+            result["projectMapContext"] = {
+                "ownerUserId": project_principal(project)["id"],
+                "projectId": project,
+                "conversationId": source["conversationId"],
+                "pairReference": preparation["pairReference"],
+                "text": append_project_entity_map("", entity_map),
+                "counts": entity_map["counts"],
+                "mapSha256": entity_map["sha256"],
+                "readDurationMs": entity_map["readDurationMs"],
+            }
+        return result
     if operation == "retire":
         if set(arguments) != {"memoryId"}:
             raise ValueError("engraphis_memory_reference_invalid")
         memory_id = str(arguments.get("memoryId") or "")
         with SERVICE_LOCK:
-            return get_service().retire(memory_id, workspace=project,
+            return get_service(project).retire(memory_id, workspace=project,
                 reason="Removed in ThinkGraph", actor="user")
     if operation == "retire_relationship":
         if set(arguments) != {"edgeId"}:
@@ -313,7 +333,7 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict | l
         if not edge_id:
             raise ValueError("engraphis_relationship_reference_invalid")
         with SERVICE_LOCK:
-            service = get_service()
+            service = get_service(project)
             workspace = service.store.conn.execute(
                 "SELECT id FROM workspaces WHERE name=?",
                 (project,),
@@ -333,7 +353,7 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict | l
         if arguments != {"confirmed": True}:
             raise ValueError("thinkgraph_workspace_delete_requires_confirmation")
         with SERVICE_LOCK:
-            return get_service().delete_workspace(project)
+            return get_service(project).delete_workspace(project)
     if operation == "inspect":
         if set(arguments) == {"entityId"}:
             return inspect(

@@ -458,7 +458,7 @@ def _project_scene_edges(
 
 
 def projection(project: str, entity_id: str | None = None) -> dict:
-    service = get_service()
+    service = get_service(project)
     project = project_id(project)
     if entity_id:
         return _bounded_entity_projection(

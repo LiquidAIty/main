@@ -7,15 +7,69 @@
  * Relationship: Submits one committed conversation pair to the saved ThinkGraph profile through Hermes prompt.submit, outside Main's route.
  */
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
+import WebSocket from 'ws';
 import { tsImport } from 'tsx/esm/api';
 import { projectCardAuthority } from '../services/projectCardAuthority';
-import { fetchThinkGraphProjection, requestPythonRailsJson } from '../services/pythonRailsClient';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { resolveRepoRoot } from '../services/workingDirectories';
 import { notifyThinkGraphChanged } from '../routes/thinkGraph.routes';
 import type { ConversationMessage } from './store';
 
 type Rpc = Record<string, any>;
+
+// Native ticketed transport: the former caller drops client_env. Keep the
+// saved-pair owner, app-visible session classification, and Hermes' shared RPC channel.
+async function connectProfile(profile: string, onEvent: (event: Rpc) => void, onClose: () => void) {
+  const root = path.join(resolveRepoRoot(), 'HermesLatest');
+  const home = path.join(root, '.hermes', 'profiles', profile);
+  const { JsonRpcRequestChannel } = await tsImport(
+    pathToFileURL(path.join(root, 'apps/shared/src/json-rpc-channel.ts')).href,
+    pathToFileURL(__filename).href,
+  );
+  const bootstrap = [
+    'import json,os',
+    'from pathlib import Path',
+    'from hermes_cli.gateway_runtime import discover_gateway_endpoint',
+    'from hermes_cli.gateway_client import _session_ticket,gateway_ws_target',
+    'home=Path(os.environ["HERMES_HOME"])',
+    'found=discover_gateway_endpoint(home)',
+    'if found.endpoint is None: raise RuntimeError("existing_gateway_unavailable")',
+    'print(json.dumps(gateway_ws_target(found.endpoint,_session_ticket(home,found.endpoint))))',
+  ].join('\n');
+  const { stdout } = await promisify(execFile)(
+    path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'),
+    ['-c', bootstrap],
+    { cwd: root, env: { ...process.env, HERMES_HOME: home, PYTHONPATH: root },
+      windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 },
+  );
+  const [url, protocols] = JSON.parse(stdout);
+  const socket = new WebSocket(url, protocols, { handshakeTimeout: 10000 });
+  const channel = new JsonRpcRequestChannel({ onEvent });
+  let closing = false;
+  socket.on('message', data => channel.handleFrame(data.toString()));
+  socket.on('close', () => { channel.detach(new Error('thinkgraph_connection_closed')); if (!closing) onClose(); });
+  socket.on('error', () => { channel.detach(new Error('thinkgraph_connection_error')); if (!closing) onClose(); });
+  await new Promise<void>((resolve, reject) => {
+    socket.once('error', reject);
+    socket.once('open', () => {
+      if (socket.protocol !== protocols[0]) {
+        socket.close();
+        reject(new Error('thinkgraph_gateway_protocol_mismatch'));
+      } else {
+        channel.attach({ send: (text: string) => socket.send(text) });
+        channel.startHeartbeat();
+        resolve();
+      }
+    });
+  });
+  return {
+    request: (method: string, params: Rpc) => channel.request(method, params),
+    close: () => { closing = true; channel.detach(new Error('thinkgraph_connection_closed')); socket.close(); },
+  };
+}
 
 export async function submitSavedThinkPair(answer: ConversationMessage): Promise<void> {
   if (answer.role !== 'assistant' || answer.status !== 'complete') return;
@@ -28,28 +82,12 @@ export async function submitSavedThinkPair(answer: ConversationMessage): Promise
     && ((edge.source === authority.main.card.id && edge.target === target.card.id)
       || (edge.target === authority.main.card.id && edge.source === target.card.id)))) return;
 
-  const root = path.join(resolveRepoRoot(), 'HermesLatest');
-  const home = path.join(root, '.hermes');
-  const load = (file: string) => tsImport(pathToFileURL(path.join(root, file)).href, pathToFileURL(__filename).href);
-  const [api, local, tickets] = await Promise.all([
-    load('apps/desktop/src/api/client.ts'), load('apps/desktop/electron/local-gateway.ts'),
-    load('apps/desktop/electron/local-gateway-python.ts'),
-  ]);
-  const python = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
-  // Existing provider discovery only: never start, ensure or restart the Gateway.
-  const discovery = 'import os,json; from dataclasses import asdict; from hermes_cli.gateway_runtime import discover_gateway_endpoint; print(json.dumps(asdict(discover_gateway_endpoint(os.environ["HERMES_HOME"])),default=list))';
-  const descriptor = await local.ensureLocalGateway(() => local.runGatewayEnsure({
-    command: python, args: ['-c', discovery], shell: false, env: { PYTHONPATH: root },
-  }, root, home, process.env, { timeoutMs: 15000, label: 'Hermes endpoint discovery' }));
-  const resolveTicket = tickets.createGatewayTicketResolver(
-    async () => ({ command: python, args: [], kind: 'python', shell: false, env: { PYTHONPATH: root } }), () => root,
-  );
-  const client = new api.HermesGateway();
-  const request = (profile: string, method: string, params: Rpc) => client.request(method, { ...params, profile });
+  let eventHandler = (_event: Rpc) => {};
+  let closedHandler = () => {};
+  let client = await connectProfile(speaker.profile!, event => eventHandler(event), () => closedHandler());
+  const request = (method: string, params: Rpc) => client.request(method, params);
   let detach = () => {};
   try {
-    const ticket = await resolveTicket(descriptor.gatewayEndpoint, 'interactive');
-    await client.connect(local.createLocalGatewayDials().prepare(descriptor.baseUrl, ticket, 0));
     const stored = await requestPythonRailsJson('/thinkgraph/operation', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId: answer.projectId, operation: 'conversation',
@@ -62,7 +100,7 @@ export async function submitSavedThinkPair(answer: ConversationMessage): Promise
     for (const user of candidates.reverse()) {
       const admissionId = user.providerMessageId!.split(':').pop();
       // Read identity from the exact admission, not message bodies from a session history.
-      const receipt = await request(speaker.profile!, 'prompt.receipt', {
+      const receipt = await request('prompt.receipt', {
         session_id: answer.providerContinuationRef, admission_id: admissionId, include_result: true,
       });
       const turn = receipt.result?.persisted_turn;
@@ -86,34 +124,33 @@ export async function submitSavedThinkPair(answer: ConversationMessage): Promise
       } }),
     }) as Rpc;
     if (!prepared.preparation?.structuredExtractionRequired) return;
-    const graph = await fetchThinkGraphProjection(answer.projectId) as Rpc;
-    const created = await request(target.profile, 'session.create', {
-      request_id: prepared.preparation.pairReference, source: 'oneshot', hidden: true, follow_profile_config: true,
+    client.close();
+    client = await connectProfile(target.profile, event => eventHandler(event), () => closedHandler());
+    const created = await request('session.create', {
+      request_id: prepared.preparation.pairReference, source: 'gui', hidden: true, follow_profile_config: true,
+      client_env: { PROJECT_GRAPH_CONTEXT: JSON.stringify(prepared.projectMapContext) },
     });
     const sessionId = created.session_id || created.ref?.session_id;
     if (!sessionId) throw new Error('thinkgraph_submission_session_unavailable');
     const completion = new Promise<Rpc>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('thinkgraph_completion_timeout')), api.PROMPT_SUBMIT_REQUEST_TIMEOUT_MS);
-      const offEvent = client.onEvent((event: Rpc) => {
-        if (event.profile === target.profile && event.session_id === sessionId && event.type === 'message.complete') resolve(event);
-      });
-      const offState = client.onState((state: string) => {
-        if (state === 'closed' || state === 'error') reject(new Error('thinkgraph_connection_closed'));
-      });
-      detach = () => { clearTimeout(timeout); offEvent(); offState(); };
+      const timeout = setTimeout(() => reject(new Error('thinkgraph_completion_timeout')), 1_800_000);
+      eventHandler = (event: Rpc) => {
+        if (event.session_id === sessionId && event.type === 'message.complete') resolve(event);
+      };
+      closedHandler = () => reject(new Error('thinkgraph_connection_closed'));
+      detach = () => { clearTimeout(timeout); eventHandler = () => {}; closedHandler = () => {}; };
     });
     // A submission error may precede the completion; keep its rejection observed.
     void completion.catch(() => undefined);
-    const submitted = await request(target.profile, 'prompt.submit', {
+    const submitted = await request('prompt.submit', {
       session_id: sessionId, submission_id: prepared.preparation.pairReference, finite: true,
       text: ['EXTRACTION_PROMPT:', prepared.preparation.enrichmentPrompt,
-        'OUTPUT_SCHEMA:', JSON.stringify(prepared.preparation.enrichmentSchema),
-        'PROJECT_ENTITY_MAP:', JSON.stringify(graph.canonicalEntityDirectory)].join('\n'),
+        'OUTPUT_SCHEMA:', JSON.stringify(prepared.preparation.enrichmentSchema)].join('\n'),
     });
     if (!submitted.admission_id) throw new Error('thinkgraph_submission_not_admitted');
     const event = await completion;
     if (event.admission_id !== submitted.admission_id) throw new Error('thinkgraph_completion_identity_mismatch');
-    const receipt = await request(target.profile, 'prompt.receipt', {
+    const receipt = await request('prompt.receipt', {
       session_id: sessionId, admission_id: submitted.admission_id, include_result: true,
     });
     if (receipt.status !== 'terminal' || receipt.outcome !== 'completed'

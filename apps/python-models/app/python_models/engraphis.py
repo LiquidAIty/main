@@ -1,6 +1,6 @@
 """Engraphis-backed ThinkGraph service and exact read primitives.
 
-Python rails owns one Engraphis service. Workspace binding comes from the
+Python rails owns one Engraphis service per user account. Workspace binding comes from the
 authenticated project; neither tool callers nor the browser choose another
 database or tenant. Relationship admission, completed-pair settlement, Smart
 operations, graph Focus, and presentation projection live with their direct
@@ -12,7 +12,7 @@ owners instead of this store seam.
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
-# Relationship: This file owns the Project-scoped Engraphis service and exact Entity, Think, incidence, relationship, directory, and bounded snapshot read primitives.
+# Relationship: This file selects the Project owner's private Engraphis database and provides exact Entity, Think, incidence, relationship, directory, and bounded snapshot reads.
 
 from __future__ import annotations
 
@@ -29,10 +29,10 @@ from typing import Any
 
 from engraphis.core.interfaces import MemoryType, SearchFilter
 
-DATABASE = Path(__file__).resolve().parents[4] / "db" / "engraphis.sqlite"
+DATABASE_ROOT = Path(__file__).resolve().parents[4] / "db" / "users"
 MODEL = "local:sentence-transformers/all-MiniLM-L6-v2"
 MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
-_service = None
+_services: dict[str, Any] = {}
 SERVICE_LOCK = threading.RLock()
 THINKGRAPH_INTAKE_LOCK = threading.RLock()
 THINK_INCIDENCE_KIND = "structured_extractor"
@@ -44,30 +44,48 @@ def project_id(value: str) -> str:
     return value
 
 
-def get_service():
-    global _service
+def project_principal(project: str) -> dict[str, str]:
+    """Resolve storage ownership from PostgreSQL, never a profile or caller's path.
+
+    Public routes and MCP authorize Project access before this private storage
+    seam. Re-read its owner here so a Project can never select another user's file.
+    """
+    from .postgres import connect_postgres
+
+    project = project_id(project)
+    with connect_postgres() as connection:
+        row = connection.execute(
+            'SELECT u.id, u.email FROM ag_catalog.projects p '
+            'JOIN public."User" u ON u.id=p.owner_user_id WHERE p.id::text=%s',
+            (project,),
+        ).fetchone()
+    if row is None or not re.fullmatch(r"[A-Za-z0-9_-]+", str(row[0])):
+        raise ValueError("thinkgraph_project_owner_unavailable")
+    return {"id": str(row[0]), "email": str(row[1]), "role": "member"}
+
+
+def get_service(project: str):
+    owner = project_principal(project)["id"]
     with SERVICE_LOCK:
-        if _service is None:
+        if owner not in _services:
             from engraphis.service import MemoryService
-            from engraphis.mcp_server import set_service
-            DATABASE.parent.mkdir(parents=True, exist_ok=True)
+            database = DATABASE_ROOT / owner / "engraphis.sqlite"
+            database.parent.mkdir(parents=True, exist_ok=True)
             service = MemoryService.create(
-                str(DATABASE), embed_model=MODEL, embed_revision=MODEL_REVISION,
+                str(database), embed_model=MODEL, embed_revision=MODEL_REVISION,
                 require_immutable_models=True, require_exact_backends=True,
                 extractor="none", graph_extractor="none",
                 retention_supervisor="none", allow_automatic_critical_retention=False,
             )
-            set_service(service)
-            _service = service
-        return _service
+            _services[owner] = service
+        return _services[owner]
 
 
 def close_engine():
-    global _service
     with SERVICE_LOCK:
-        if _service is not None:
-            _service.close()
-            _service = None
+        for service in _services.values():
+            service.close()
+        _services.clear()
 
 
 atexit.register(close_engine)
@@ -569,7 +587,7 @@ def read_entity_thinks(
 ) -> list[dict[str, Any]]:
     """Read current/recent Thinks for one exact Engraphis Entity ID."""
 
-    service = get_service()
+    service = get_service(project)
     project = project_id(project)
     entity_id = str(engraphis_entity_id or "").strip()
     if not entity_id:
@@ -611,7 +629,7 @@ def read_recent_project_thinks(
 
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 12:
         raise ValueError("thinkgraph_recent_think_limit_invalid")
-    service = get_service()
+    service = get_service(project)
     project = project_id(project)
     with SERVICE_LOCK:
         workspace = service.store.conn.execute(
@@ -654,7 +672,7 @@ def read_recent_project_thinks(
 def read_entity_directory(project: str) -> dict[str, Any]:
     """Return every canonical Project Entity identity without Think bodies or edges."""
 
-    service = get_service()
+    service = get_service(project)
     project = project_id(project)
     with SERVICE_LOCK:
         row = service.store.conn.execute(

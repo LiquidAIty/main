@@ -1,0 +1,6 @@
+name: project-graph
+version: 1.0.0
+description: Supplies the application's authorized Project Entity/Relationship snapshot before inference.
+provides_hooks:
+  - pre_llm_call
+  - pre_api_request
