@@ -33,7 +33,14 @@ class ThinkGraphThink(_StructuredModel):
 
 
 class ThinkGraphStructuredRelation(_StructuredModel):
-    source: str = Field(min_length=1, max_length=256)
+    source: str = Field(
+        min_length=1,
+        max_length=256,
+        description=(
+            "Exact canonical name of the containing fact's entity. "
+            "Must equal that fact's entity, not another entry in its entities list."
+        ),
+    )
     relation: str = Field(
         min_length=1,
         max_length=512,
@@ -42,7 +49,14 @@ class ThinkGraphStructuredRelation(_StructuredModel):
             "Do not choose a canonical ThinkGraph edge predicate; Jev classifies it later."
         ),
     )
-    target: str = Field(min_length=1, max_length=256)
+    target: str = Field(
+        min_length=1,
+        max_length=256,
+        description=(
+            "Exact canonical name of the other endpoint, included in the containing "
+            "fact's entities list and different from source."
+        ),
+    )
 
 
 class ThinkGraphStructuredFact(_StructuredModel):
@@ -53,12 +67,22 @@ class ThinkGraphStructuredFact(_StructuredModel):
     mtype: Literal["episodic"] = "episodic"
     importance: float = Field(default=0.0, ge=0.0, le=1.0)
     keywords: list[str] = Field(default_factory=list, max_length=16)
-    entity: str = Field(min_length=1, max_length=256)
-    entities: list[str] = Field(min_length=1, max_length=20)
+    entity: str = Field(
+        min_length=1,
+        max_length=256,
+        description="The one exact canonical Entity that owns this Think and is the source of every relation in this fact.",
+    )
+    entities: list[str] = Field(
+        min_length=1,
+        max_length=20,
+        description="This fact's entity plus its exact relationship targets; listing an Entity here does not make it this Think's owner or a permitted relationship source.",
+    )
     relations: list[ThinkGraphStructuredRelation] = Field(
         max_length=10,
         description=(
-            "Explicit directed relationships grounded in this completed pair. "
+            "Outgoing relationships from this fact's entity, grounded in this completed pair. "
+            "Every source must equal this fact's entity; an existing map edge with a "
+            "different source cannot be nested here. "
             "Return an empty list only when this Entity has no supported outgoing relationship."
         ),
     )
