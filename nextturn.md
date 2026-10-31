@@ -1,6 +1,5 @@
-# Next turn — unfinished
+# Next turn — unfinished only
 
-Read at chat start, then wipe. Write only missed or unfinished work at turn end.
-
-- PromptBlocks → SOUL publication: verify and restore the intended connection from saved Card PromptBlocks to the generated Hermes SOUL through the existing supported publication boundary. The inspected Card save path persists the prompt but does not update the bound profile. PromptBlocks are authoritative; do not hand-edit SOUL, create a second prompt source, or change Main/runtime/environment without an explicitly approved scope.
-- ThinkGraph: the new ownership descriptions in the existing extraction schema still need Python rails reload and a new real-turn check. Validation remains strict. The rejected ASTS exchange has not been replayed or repaired in storage.
+- PromptBlocks → generated SOUL publication remains deferred. Do not hand-edit SOUL or mix it into graph processing.
+- Verify the loaded Source excerpts / Open full exchange controls visually. Preview attachment is blocked by the CDP `Emulation.setFocusEmulationEnabled` timeout; do not claim visual acceptance.
+- Positive live mixed Think + private-context proof still needs a genuine user-authored explicit preference. Do not invent one or reprocess already-settled exchanges for that proof.

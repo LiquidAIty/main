@@ -27,6 +27,7 @@ from .engraphis import (
 from .thinkgraph_completed_pair_extraction import (
     extract_saved_card_facts,
     project_saved_card_thinks,
+    validate_source_chunks,
 )
 from .thinkgraph_completed_pair_preparation import (
     existing_source_pair_thinks,
@@ -68,6 +69,7 @@ def _think_metadata(
                 **({"detail": output["detail"]} if output.get("detail") else {}),
                 "entity": output["entity"],
                 "relationships": deepcopy(output["relationships"]),
+                **({"research": deepcopy(output["research"])} if output.get("research") else {}),
             },
         },
         "consolidation_exempt": True,
@@ -85,6 +87,7 @@ def _think_metadata(
             "fact_index": fact_index,
             "fact_count": fact_count,
             "source_pair": source_pair(completed),
+            **({"source_chunks": output["source_chunks"]} if output.get("source_chunks") else {}),
         },
         "provenance": {
             "source": "saved_thinkgraph_card",
@@ -175,7 +178,7 @@ def _validate_settle_payload(
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     completed_keys = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
-        "hermesSessionId", "completedAt", "userMessage", "mainResponse",
+        "hermesSessionId", "completedAt", "userMessage", "mainResponse", "sourceReferences",
     }
     extras = {"pairReference", "structuredOutput", "cardRun"}
     if set(payload) - completed_keys - extras:
@@ -270,18 +273,47 @@ def _settle_new_completed_pair(
         card_run=card_run,
     )
     outputs = project_saved_card_thinks(facts)
+    from .conversations import source_chunks, index_source_chunks
+    chunks = source_chunks(project, completed["sourceReferences"]) if completed.get("sourceReferences") else []
+    if completed.get("sourceReferences"):
+        validate_source_chunks(card_output, chunks)
+    by_id = {chunk["id"]: {"id": chunk["id"], "sha256": chunk["sha256"]} for chunk in chunks}
+    for output in outputs:
+        output["source_chunks"] = [by_id[key] for key in output["sourceChunkIds"]]
+    from .personal_context import save_personal_context
+    from .thinkgraph_completed_pair_extraction import ThinkGraphStructuredOutput
+    private_entries = [entry.model_dump() for entry in ThinkGraphStructuredOutput.model_validate(card_output).personalContext]
+    for entry in private_entries:
+        entry["source_chunks"] = [by_id[key] for key in entry["sourceChunkIds"]]
+    private_ids: list[str] = []
+
+    def index_sources() -> dict[str, Any]:
+        try:
+            result = index_source_chunks(project, chunks)
+            if result.get("quarantined"):
+                raise RuntimeError("source_chunk_quarantined")
+            return result
+        except Exception as error:
+            raise ThinkGraphIntakeError("thinkgraph_source_index_failed") from error
+
     relationship_vocabulary = project_relationship_vocabulary(store, workspace_id)
     if not outputs:
+        with store.write_transaction():
+            private_ids = save_personal_context(service, completed, pair_reference_value, private_entries)
+            source_index = index_sources()
+        revision = graph_revision(store, workspace_id)
         return {
             "ok": True,
             "projectId": project,
             "pairReference": pair_reference_value,
             "thinkMemoryIds": [],
             "thinks": [],
+            "personalContextIds": private_ids,
+            "sourceIndex": source_index,
             "intakeOperation": "noop",
             "intakeOperations": [],
-            "revision": revision_before,
-            "revisionChanged": False,
+            "revision": revision,
+            "revisionChanged": revision != revision_before,
             "status": "completed",
             "cardRun": card_run,
             "relationships": [],
@@ -317,6 +349,7 @@ def _settle_new_completed_pair(
         "changedNodeIds": [],
         "changedEdgeIds": [],
     }
+    source_index: dict[str, Any] = {}
     existing_entity_ids = {
         str(entity.id) for entity in store.list_entities()
         if entity.workspace_id == workspace_id and entity.repo_id is None
@@ -403,6 +436,8 @@ def _settle_new_completed_pair(
             "changedNodeIds": list(dict.fromkeys(changed_node_ids)),
             "changedEdgeIds": list(dict.fromkeys(changed_edge_ids)),
         })
+        private_ids.extend(save_personal_context(service, completed, pair_reference_value, private_entries))
+        source_index.update(index_sources())
 
     try:
         saved_thinks = _save_think_batch(
@@ -474,6 +509,8 @@ def _settle_new_completed_pair(
         "projectId": project,
         "pairReference": pair_reference_value,
         "thinkMemoryIds": memory_ids,
+        "personalContextIds": private_ids,
+        "sourceIndex": source_index,
         "thinks": [
             {
                 **attachment,

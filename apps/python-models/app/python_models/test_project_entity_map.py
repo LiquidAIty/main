@@ -119,7 +119,7 @@ def test_thinkgraph_map_keeps_only_jev_relationships(
             workspace_id=workspace_id,
             provenance={"source": "generic"},
         ))
-        monkeypatch.setattr(project_entity_map, "get_service", lambda: service)
+        monkeypatch.setattr(project_entity_map, "get_service", lambda _project: service)
 
         relationships = project_entity_map._thinkgraph_relationships("project-one")
 

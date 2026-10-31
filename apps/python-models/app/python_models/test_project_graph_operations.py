@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 
 from app import project_graph_operations
-from app.python_models import engraphis, knowgraph_exact_reads, project_graph_relevance
+from app.python_models import engraphis, knowgraph_exact_reads, project_graph_relevance, personal_context
 
 
 def _directory() -> dict:
@@ -58,6 +58,7 @@ def test_project_graph_definitions_expose_exact_list_and_context_reads() -> None
 def test_read_entity_context_returns_one_most_relevant_and_one_distinct_recent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(personal_context, "read_personal_context", lambda _project: {"records": []})
     monkeypatch.setattr(
         project_graph_operations,
         "build_canonical_entity_directory",

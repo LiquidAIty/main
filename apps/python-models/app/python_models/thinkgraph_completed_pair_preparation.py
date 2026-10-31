@@ -1,11 +1,11 @@
-"""Completed User/Main pair identity, duplicate reads, and non-writing preparation."""
+"""Completed exchange identity, duplicate reads, and chunk-first extraction preparation."""
 
 # Graph + less = more: less code that does the same work as more code is more useful.
 # Entity names the feature; Relationship explains why this file belongs and what it contributes.
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
-# Relationship: This file validates one completed User/Main pair, detects duplicate prior intake, and prepares the saved ThinkGraph Card extraction without mutating the graph.
+# Relationship: Validates a canonical completed exchange, detects prior intake, and supplies its exact prepared source chunks to one saved ThinkGraph extraction without embedding or graph mutation.
 
 from __future__ import annotations
 
@@ -38,12 +38,14 @@ def source_pair(payload: dict[str, Any]) -> dict[str, Any]:
     } | {
         "user_sha256": text_hash(payload["userMessage"]),
         "main_sha256": text_hash(payload["mainResponse"]),
+        **({"sourceReferences": payload["sourceReferences"]} if payload.get("sourceReferences") else {}),
     }
 
 
 def pair_reference(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
-        source_pair(payload), ensure_ascii=False, sort_keys=True,
+        {key: value for key, value in source_pair(payload).items() if key != "sourceReferences"},
+        ensure_ascii=False, sort_keys=True,
         separators=(",", ":"),
     )
     return f"pair_{text_hash(encoded)}"
@@ -93,12 +95,12 @@ def validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     allowed = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
-        "hermesSessionId", "completedAt", "userMessage", "mainResponse",
+        "hermesSessionId", "completedAt", "userMessage", "mainResponse", "sourceReferences",
     }
     if set(payload) - allowed:
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     cleaned = dict(payload)
-    for key in allowed:
+    for key in allowed - {"sourceReferences"}:
         if key in cleaned and not isinstance(cleaned[key], str):
             raise ValueError("thinkgraph_completed_pair_payload_invalid")
     cleaned["projectId"] = project_id(str(cleaned.get("projectId") or ""))
@@ -106,6 +108,17 @@ def validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
     cleaned["mainResponse"] = str(cleaned.get("mainResponse") or "")
     if not cleaned["userMessage"].strip() or not cleaned["mainResponse"].strip():
         raise ValueError("thinkgraph_completed_pair_text_required")
+    if "sourceReferences" in cleaned:
+        from .conversations import read_pair
+        references = cleaned["sourceReferences"]
+        if not isinstance(references, list) or len(references) != 1:
+            raise ValueError("thinkgraph_completed_pair_sources_invalid")
+        reference = references[0]
+        if not isinstance(reference, dict) or set(reference) != {"conversationId", "userMessageIds", "assistantMessageId"}:
+            raise ValueError("thinkgraph_completed_pair_sources_invalid")
+        exact = read_pair(cleaned["projectId"], reference["conversationId"], reference["userMessageIds"], reference["assistantMessageId"])
+        if any(exact[key] != cleaned.get(key) for key in ("conversationId", "userMessage", "mainResponse", "completedAt", "hermesSessionId")):
+            raise ValueError("thinkgraph_completed_pair_sources_mismatch")
     return cleaned
 
 
@@ -124,11 +137,14 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
             workspace_id=workspace_id,
             pair_reference=pair_reference_value,
         )
-        if existing:
+        from .personal_context import pair_context_ids, read_personal_context
+        personal_ids = pair_context_ids(service, workspace_id, pair_reference_value)
+        if existing or personal_ids:
             return {
                 "ok": True,
                 "projectId": project,
                 "thinkMemoryIds": [memory.id for memory in existing],
+                "personalContextIds": personal_ids,
                 "pairReference": pair_reference_value,
                 "intakeOperation": "noop",
                 "structuredExtractionRequired": False,
@@ -138,9 +154,12 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
                     "status": "duplicate_noop",
                 },
             }
+        from .conversations import source_chunks
+        chunks = source_chunks(project, payload["sourceReferences"], prepare=True) if payload.get("sourceReferences") else None
         enrichment_schema, enrichment_prompt = llm_structured_contract(
             pair_text,
-            {},
+            {"personalContext": read_personal_context(project)["records"]},
+            chunks=chunks,
         )
         return {
             "ok": True,

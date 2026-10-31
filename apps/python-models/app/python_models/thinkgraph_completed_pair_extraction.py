@@ -27,9 +27,17 @@ class _StructuredModel(BaseModel):
     )
 
 
+class ThinkGraphResearch(_StructuredModel):
+    question: str = Field(min_length=1, max_length=2000, description="One unresolved factual question relevant to this Entity; not a generic interest or an execution request.")
+    why: str = Field(min_length=1, max_length=4000, description="Why the answer matters to this Think's reasoning.")
+    sourceChunkIds: list[str] = Field(default_factory=list, description="Supplied chunk IDs supporting this question and why it matters; a subset of this Think's citations.")
+
+
 class ThinkGraphThink(_StructuredModel):
     summary: str = Field(min_length=1, max_length=100_000)
     detail: str | None = Field(default=None, min_length=1)
+    research: ThinkGraphResearch | None = None
+    sourceChunkIds: list[str] = Field(default_factory=list, description="Exact supplied chunk IDs supporting this Think, including its relationships. Cite one or more; never invent IDs or cite the entire exchange indiscriminately.")
 
 
 class ThinkGraphStructuredRelation(_StructuredModel):
@@ -118,6 +126,20 @@ class ThinkGraphStructuredFact(_StructuredModel):
         return self
 
 
+class PrivateUserContext(_StructuredModel):
+    subject: str = Field(min_length=1, max_length=256, description="Stable topic of this interest/preference/instruction. Reuse an applicable existing subject when the user updates that same preference; distinct preferences need distinct subjects.")
+    content: str = Field(min_length=1, max_length=4000, description="Only an interest, preference or instruction explicitly expressed by the user; never inferred ownership, risk tolerance, or an assistant's guess.")
+    kind: Literal["interest", "preference", "instruction"]
+    scope: Literal["personal", "project", "temporary"]
+    quote: str = Field(min_length=1, max_length=4000, description="Exact supporting passage copied from the USER message, never MAIN.")
+    sourceChunkIds: list[str] = Field(default_factory=list, description="Exact supplied USER chunk IDs supporting the quote; never cite MAIN as a user preference.")
+
+
+class ThinkGraphStructuredOutput(_StructuredModel):
+    facts: list[ThinkGraphStructuredFact] = Field(max_length=20)
+    personalContext: list[PrivateUserContext] = Field(default_factory=list, max_length=12)
+
+
 class _SavedCardStructuredResult:
     """LLM protocol bridge: the saved Card already performed the model call."""
 
@@ -142,15 +164,19 @@ def _engraphis_structured_extractor(llm: Any) -> Any:
 def llm_structured_contract(
     pair_text: str,
     context: dict[str, Any],
+    *, chunks: list[dict] | None = None,
 ) -> tuple[dict[str, Any], str]:
-    extractor = _engraphis_structured_extractor(
-        _SavedCardStructuredResult({}, "schema-only", "schema-only")
-    )
     context_text = json.dumps(context, ensure_ascii=False, sort_keys=True)
-    _, schema = extractor.extraction_contract(
-        pair_text,
-        context=context_text,
-    )
+    schema = ThinkGraphStructuredOutput.model_json_schema()
+    if chunks is not None:
+        pair_text = json.dumps([{key: chunk[key] for key in
+                                ("id", "role", "messageId", "index", "count", "heading", "content")}
+                               for chunk in chunks], ensure_ascii=False, separators=(",", ":"))
+        for name in ("ThinkGraphThink", "ThinkGraphResearch", "PrivateUserContext"):
+            definition = schema["$defs"][name]
+            definition.setdefault("required", []).append("sourceChunkIds")
+            definition["properties"]["sourceChunkIds"]["minItems"] = 1
+            definition["properties"]["sourceChunkIds"]["uniqueItems"] = True
     prompt = (
         "THINKGRAPH ENTITY-SPECIFIC THINKS:\n"
         "Summarize the thinking expressed in this completed user/assistant pair: "
@@ -206,7 +232,11 @@ def llm_structured_contract(
         "no prior Think bodies; do not invent historical comparison or treat the Entity map as "
         "conversation history. "
         "Preserve material decisions, questions, preferences, corrections, assumptions, "
-        "and uncertainty relevant to that Entity. Relationships remain separate directed "
+        "and uncertainty relevant to that Entity. Preserve numeric comparisons and list order "
+        "exactly within their own section: a table's row number is not the rank in a later "
+        "shares or calls list. Do not add an inferred rank or an unsupported superlative. "
+        "Optional detail must add useful reasoning, not unnecessary restatement of rankings. "
+        "Relationships remain separate directed "
         "Entity-to-Entity edges: list each relationship exactly once, under the fact whose "
         "`entity` is its source. Return at most 20 relationships across the entire facts array. "
         "Each relation object has exactly source, relation, and "
@@ -244,10 +274,50 @@ def llm_structured_contract(
         "Skip handoff announcements, pending-work status, and conversational acknowledgements. "
         "The schema's facts array is a transport field for Thinks, not a declaration of "
         "factual authority.\n"
+        "PERSONAL CONTEXT: Return a separate personalContext array for explicit user interests, "
+        "preferences and standing instructions, with the exact supporting USER quote and its "
+        "personal, project or temporary scope. Never infer ownership or risk tolerance from an "
+        "interest. An assistant's claim is not a user preference. A mixed pair can yield both "
+        "Thinks and personalContext; do not classify the whole pair into only one category. "
+        "Return [] when the user states no such context. These private records are not Entities.\n"
+        "RESEARCH: A Think may include research with one focused factual question and why its "
+        "answer matters. An interest alone is not a research request. This is retained intent, "
+        "not work to execute: do not launch research or claim an answer.\n"
+        + ("SOURCE CHUNKS: TEXT contains all ordered chunks from one completed exchange. "
+           "Read them together, respecting role and message order. Overlap repeats context, not "
+           "another claim. Chunk boundaries do not force a Think boundary. Each Think, private "
+           "context entry and research question must cite its supporting sourceChunkIds. A Think "
+           "may cite several chunks and several Thinks may cite the same chunk. Cite only supplied "
+           "IDs. Private context must cite USER chunks; research cites a subset of its Think's "
+           "chunks. The map supplies identity/context, never source evidence.\n" if chunks is not None else "")
+        +
         f"\nCONTEXT:\n{context_text}\n"
         f"\nTEXT:\n{pair_text}\n"
     )
     return schema, prompt
+
+
+def validate_source_chunks(value: dict, chunks: list[dict]) -> None:
+    """Validate citation identity and attribution, not semantic meaning."""
+    available = {chunk["id"]: chunk for chunk in chunks}
+
+    def check(entry: dict, allowed: set[str]) -> set[str]:
+        ids = entry.get("sourceChunkIds", [])
+        if not ids or len(ids) != len(set(ids)) or not set(ids) <= allowed:
+            raise ThinkGraphIntakeError("thinkgraph_source_chunk_reference_invalid")
+        return set(ids)
+
+    for fact in value["facts"]:
+        think = fact["think"]
+        ids = check(think, set(available))
+        if think.get("research"):
+            check(think["research"], ids)
+    for entry in value.get("personalContext", []):
+        ids = check(entry, {key for key, chunk in available.items() if chunk["role"] == "user"})
+        # Quote validation against the original User message remains with the private writer.
+        # Require its cited source to include at least a real part of that exact quotation.
+        if not any(entry["quote"] in available[key]["content"] for key in ids):
+            raise ThinkGraphIntakeError("personal_context_quote_not_in_cited_chunk")
 
 
 def extract_saved_card_facts(
@@ -259,16 +329,20 @@ def extract_saved_card_facts(
 ) -> list[Any]:
     if (
         not isinstance(value, dict)
-        or set(value) != {"facts"}
+        or set(value) - {"facts", "personalContext"}
         or not isinstance(value.get("facts"), list)
         or not 0 <= len(value["facts"]) <= 20
     ):
         raise ThinkGraphIntakeError("thinkgraph_card_entity_think_count_invalid")
+    try:
+        ThinkGraphStructuredOutput.model_validate(value)
+    except ValueError as error:
+        raise ThinkGraphIntakeError("thinkgraph_card_llm_structured_invalid") from error
     if not value["facts"]:
         return []
     extractor = _engraphis_structured_extractor(
         _SavedCardStructuredResult(
-            value,
+            {"facts": value["facts"]},
             card_run["resolvedProvider"],
             card_run["resolvedModel"],
         )
@@ -343,5 +417,7 @@ def project_saved_card_thinks(facts: list[Any]) -> list[dict[str, Any]]:
             "keywords": list(fact.keywords),
             "entity": entity,
             "relationships": deepcopy(relationships),
+            "sourceChunkIds": list(raw_think.get("sourceChunkIds", [])),
+            **({"research": deepcopy(raw_think["research"])} if raw_think.get("research") else {}),
         })
     return outputs

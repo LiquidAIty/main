@@ -166,6 +166,8 @@ def read_entity_context(
         "limit": limit,
         "entities": result_entities,
     }
+    from app.python_models.personal_context import read_personal_context
+    payload["personalContext"] = read_personal_context(projectId)["records"]
     payload["sha256"] = hashlib.sha256(
         _canonical_json(payload).encode("utf-8")
     ).hexdigest()
@@ -379,6 +381,7 @@ def project_graph_operation_definitions(
             "Read bounded Relevant and distinct Recent exact Thinks and Knows for exact "
             "current Project Entity directory references. The owning graphs produce provider "
             "candidates and Jev rates them against the supplied current request/context. "
+            "Also returns applicable explicit private user context with its source references and declared scope. "
             "Performs no fuzzy Entity lookup, Entity creation, or graph write."
         ),
         parameters_schema={
@@ -408,6 +411,7 @@ def project_graph_operation_definitions(
                 "groundingRevision": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 12},
                 "entities": {"type": "array", "items": context_entity},
+                "personalContext": {"type": "array", "items": {"type": "object"}},
                 "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             },
             "required": [

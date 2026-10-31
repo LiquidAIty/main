@@ -296,6 +296,25 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict | l
     if operation == "conversation":
         from .conversations import conversation_operation
         return conversation_operation(project, str(arguments.get("action") or ""), arguments)
+    if operation == "source_exchanges":
+        from .conversations import read_source_exchanges
+        if "memoryId" not in arguments or set(arguments) - {"memoryId", "includeExchange"} or not isinstance(arguments.get("includeExchange", False), bool):
+            raise ValueError("source_memory_reference_required")
+        return read_source_exchanges(project, str(arguments["memoryId"]), include_exchange=arguments.get("includeExchange", False))
+    if operation == "search_sources":
+        from .conversations import search_source_exchanges
+        return search_source_exchanges(project, arguments.get("query"), arguments.get("limit", 5))
+    if operation == "index_sources":
+        from .conversations import index_source_exchanges
+        return index_source_exchanges(project, arguments.get("conversationId"))
+    if operation == "personal_context":
+        from .personal_context import read_personal_context
+        return read_personal_context(project, conversation=str(arguments.get("conversationId") or ""), inspect_all=True)
+    if operation == "correct_personal_context":
+        from .personal_context import correct_personal_context
+        if set(arguments) != {"memoryId", "content"}:
+            raise ValueError("personal_context_correction_invalid")
+        return correct_personal_context(project, str(arguments["memoryId"]), arguments["content"])
     if operation == "prepare_conversation_pair":
         from .conversations import read_pair
         from .thinkgraph_completed_pair_preparation import prepare_completed_pair
@@ -303,6 +322,8 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict | l
         source = read_pair(project, arguments.get("conversationId"),
                            arguments.get("userMessageIds"), arguments.get("assistantMessageId"))
         preparation = prepare_completed_pair(source)
+        from .conversations import register_source_pair
+        register_source_pair(project, preparation["pairReference"], source["sourceReferences"][0])
         result = {"source": source, "preparation": preparation}
         if preparation["structuredExtractionRequired"]:
             entity_map = build_project_entity_map(project)

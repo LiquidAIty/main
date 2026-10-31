@@ -50,12 +50,18 @@ from app.python_models.thinkgraph_reference_reads import read_thinkgraph_exact
 
 
 @pytest.fixture()
-def engraphis_service():
+def engraphis_service(monkeypatch):
     from engraphis.service import MemoryService
 
     service = MemoryService.create(
         ":memory:", extractor="none", graph_extractor="none"
     )
+    from app.python_models import conversations, engraphis_operations, personal_context
+    for module in (service_adapter, conversations, engraphis_operations, personal_context,
+                   completed_pair_preparation, completed_pair_settlement, projection_adapter):
+        monkeypatch.setattr(module, "get_service", lambda _project: service)
+    for module in (service_adapter, engraphis_operations, personal_context):
+        monkeypatch.setattr(module, "project_principal", lambda _project: {"id": "test-owner"})
     try:
         yield service
     finally:
@@ -88,7 +94,6 @@ def test_exact_thinkgraph_read_is_project_scoped_and_read_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     first, _ = _seed_reference_graph(engraphis_service)
-    monkeypatch.setattr(service_adapter, "_service", engraphis_service)
     before = engraphis_service.store.conn.total_changes
 
     record = read_thinkgraph_exact(
@@ -113,8 +118,6 @@ def test_exact_thinkgraph_read_accepts_project_scoped_engraphis_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, second = _seed_reference_graph(engraphis_service)
-    monkeypatch.setattr(service_adapter, "_service", engraphis_service)
-
     record = read_thinkgraph_exact(
         "project-1",
         "engraphisMemoryId",
@@ -318,7 +321,6 @@ def _settle(
     payload: dict[str, Any] | None = None,
     classifier: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    monkeypatch.setattr(service_adapter, "_service", service)
     return completed_pair_settlement.settle_completed_pair(
         payload or _settle_payload(),
         classifier=classifier or _classifier(),
@@ -473,7 +475,6 @@ def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(service_adapter, "_service", engraphis_service)
     before = _table_counts(engraphis_service)
 
     prepared = completed_pair_preparation.prepare_completed_pair(_completed())
@@ -574,17 +575,24 @@ def test_empty_entity_card_output_is_a_true_noop(
     assert _table_counts(engraphis_service) == before
 
 
-def test_new_isolated_entity_is_rejected_before_any_graph_write(
+def test_new_grounded_entity_keeps_one_think_without_manufactured_relationship(
     engraphis_service: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output = _structured_output()
     output["facts"][0]["relations"] = []
     output["facts"][0]["entities"] = ["Rocket Lab"]
-    before = _table_counts(engraphis_service)
-    with pytest.raises(relationship_vocabulary.ThinkGraphIntakeError,
-                       match="thinkgraph_card_entity_relationship_required"):
-        _settle(engraphis_service, monkeypatch, payload=_settle_payload(output=output))
-    assert _table_counts(engraphis_service) == before
+    def must_not_classify(*args, **kwargs):
+        pytest.fail("No relationship was proposed")
+    result = _settle(engraphis_service, monkeypatch, payload=_settle_payload(output=output),
+                     classifier=must_not_classify)
+    assert len(result["thinkMemoryIds"]) == len(result["newEntities"]) == 1
+    assert result["relationships"] == []
+    assert _table_counts(engraphis_service) == {
+        "memories": 1, "entities": 1, "edges": 0, "memory_entities": 2, "edge_supports": 0,
+    }
+    incidence = engraphis_service.store.list_memory_entities(memory_ids=result["thinkMemoryIds"])
+    assert {row["source_kind"] for row in incidence} == {"structured_extractor", "text_mention"}
+    assert {row["entity_id"] for row in incidence} == {result["thinks"][0]["engraphisEntityId"]}
 
 
 def test_incoming_relationship_qualifies_a_new_entity_and_existing_entity_accepts_later_think(
@@ -677,7 +685,9 @@ def test_one_pair_writes_one_think_and_only_jev_edge(
     incidence = engraphis_service.store.list_memory_entities(
         memory_ids=[memory_id]
     )
-    assert {row["entity_id"] for row in incidence} == {entity_ids["Rocket Lab"]}
+    assert {row["entity_id"] for row in incidence} == {entity_ids["Rocket Lab"], entity_ids["Electron"]}
+    mentions = [row for row in incidence if row["source_kind"] == "text_mention"]
+    assert {row["entity_id"] for row in mentions} == {entity_ids["Rocket Lab"], entity_ids["Electron"]}
     direct_incidence = [
         row for row in incidence if row["source_kind"] == "structured_extractor"
     ]
@@ -1171,7 +1181,6 @@ def test_projection_excludes_memory_nodes(
         calls.append(kwargs)
         return {"nodes": [], "edges": [], "meta": {"truncated": False}}
 
-    monkeypatch.setattr(service_adapter, "_service", engraphis_service)
     monkeypatch.setattr(engraphis_service, "graph_scene", graph_scene)
     monkeypatch.setattr(projection_adapter, "_projection_entity_directory", lambda _project: None)
 

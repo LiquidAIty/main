@@ -35,9 +35,50 @@ import {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('shared knowledge inspector', () => {
+  it('loads only cited excerpts, opens the full exchange deliberately, and permits collapse', async () => {
+    const source = {
+      status: 'available', conversationId: 'chat-one', assistantMessageId: 'answer-one',
+      completedAt: '2026-10-30T10:00:00Z', chunks: [{ id: 'question-one:0', status: 'available',
+        role: 'user', content: 'Supporting excerpt.', index: 0, count: 2 }],
+    };
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ sources: [source] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ sources: [{ ...source, messages: [
+        { messageId: 'question-one', role: 'user', content: 'Original user question.', createdAt: '2026-10-30T09:59:00Z' },
+        { messageId: 'answer-one', role: 'assistant', content: 'Original Main response.', createdAt: '2026-10-30T10:00:00Z' },
+      ],
+    }] }) });
+    vi.stubGlobal('fetch', fetch);
+    render(<ThinkRecordCard projectId="project-one" item={{ id: 'think-one', summary: 'Derived reasoning.',
+      metadata: { thinkgraph_origin: { source_chunks: [{ id: 'question-one:0' }] } } }} heading="Think" />);
+    expect(fetch).not.toHaveBeenCalled();
+    const details = screen.getByText('Source excerpts (1)').closest('details')!;
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+    expect(await screen.findByText('Supporting excerpt.')).toBeTruthy();
+    expect(screen.queryByText('Original user question.')).toBeNull();
+    expect(screen.queryByText('Original Main response.')).toBeNull();
+    expect(fetch).toHaveBeenCalledWith('/api/thinkgraph/sources?projectId=project-one&memoryId=think-one', expect.any(Object));
+    fireEvent.click(screen.getByRole('button', { name: 'Open full exchange' }));
+    expect(await screen.findByText('Original user question.')).toBeTruthy();
+    expect(screen.getByText('Original Main response.')).toBeTruthy();
+    expect(fetch).toHaveBeenLastCalledWith('/api/thinkgraph/sources?projectId=project-one&memoryId=think-one&includeExchange=true', expect.any(Object));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(details.open).toBe(false);
+  });
+
+  it('shows retained research intent without claiming execution', () => {
+    render(<ThinkRecordCard item={{ id: 'think-one', summary: 'Reasoning.', research: {
+      question: 'What financing is committed?', why: 'It changes the dilution concern.',
+    } }} heading="Think" />);
+    expect(screen.getByText('Research question')).toBeTruthy();
+    expect(screen.getByText('Retained question · research has not been started.')).toBeTruthy();
+  });
+
   it('uses only the exact attached Graphiti episode identity for a Know', () => {
     expect(knowEvidenceIdentity({ graphitiEpisodeId: 'episode-1' })).toBe('episode-1');
     expect(knowEvidenceIdentity({ graphitiEpisodeId: '  ' })).toBeNull();
