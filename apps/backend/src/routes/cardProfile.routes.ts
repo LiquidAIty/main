@@ -1,13 +1,21 @@
 /**
- * Graph + less = more: change the smallest existing path; never duplicate its authority.
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Card Profiles
- * Relationship: Resolves an owner-authorized saved Card and forwards its settings to the same profile-scoped HTTP APIs used by Hermes Desktop.
+ * Relationship: Resolves an owner-authorized saved Card, forwards settings through Hermes Desktop's profile APIs, and publishes saved Main or KnowGraph plugin configuration.
  * Entity: Tool Catalog
  * Relationship: Reads and toggles Hermes toolsets separately from application tool grants.
  * Entity: Skills
  * Relationship: Returns the Hermes learning graph unchanged and forwards exact node reads and edits.
+ * Entity: KnowGraph
+ * Relationship: Publishes the saved KnowGraph prompt, model, selected toolsets and MCP ceiling, verifies prompt readback, and activates its existing graph plugin.
  */
 import path from 'node:path';
+import { lstat, mkdir, realpath, symlink } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { Router } from 'express';
 import { tsImport } from 'tsx/esm/api';
@@ -15,6 +23,7 @@ import { getDeckDocument } from '../decks/deckDomainClient';
 import { assertCardProfileOwner } from '../services/projectStore';
 import { resolveRepoRoot } from '../services/workingDirectories';
 import { requireOwnedProject } from './projectAccess';
+import { MODEL_REGISTRY } from '../llm/models.config';
 
 type Json = Record<string, any>;
 
@@ -50,7 +59,20 @@ async function profileApi(profile: string) {
   };
 }
 
-export function createCardProfileRouter(connect = profileApi) {
+async function activateGraphPlugin(profile: string) {
+  const root = path.join(resolveRepoRoot(), 'HermesLatest');
+  const { stdout } = await promisify(execFile)(path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'),
+    ['-c', 'import json; from hermes_cli.plugins_activation import reload_running_gateway; print(json.dumps(reload_running_gateway()))'],
+    { cwd: root, env: { ...process.env, HERMES_HOME: path.join(root, '.hermes/profiles', profile), PYTHONPATH: root },
+      windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 });
+  const result = JSON.parse(stdout);
+  if (!result?.reloaded || !result.activations?.some((entry: Json) => entry.name === 'project-graph')) {
+    throw new Error('project_graph_plugin_activation_unavailable');
+  }
+  return result;
+}
+
+export function createCardProfileRouter(connect = profileApi, activate = activateGraphPlugin) {
   const router = Router();
   router.all('/cards/:cardId/:operation?', async (req, res) => {
     try {
@@ -66,7 +88,55 @@ export function createCardProfileRouter(connect = profileApi) {
       let result: unknown;
       if (req.method === 'POST' && req.params.operation === 'operations') {
         const params = req.body.params || {};
-        if (req.body.method === 'toolset.toggle' || req.body.method === 'skill.toggle') {
+        if (req.body.method === 'profile.publish') {
+          if (!['main', 'knowgraph'].includes(profile)) return res.status(403).json({ ok: false, error: 'graph_profile_publication_scope' });
+          const options = card.runtimeOptions || {};
+          const pluginSource = path.join(resolveRepoRoot(), 'apps/python-models/plugins/project-graph');
+          const pluginTarget = path.join(resolveRepoRoot(), 'HermesLatest/.hermes/profiles', profile, 'plugins/project-graph');
+          const installed = await lstat(pluginTarget).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return null; throw error;
+          });
+          if (installed) {
+            if (await realpath(pluginTarget) !== await realpath(pluginSource)) throw new Error('project_graph_plugin_source_conflict');
+          } else {
+            await mkdir(path.dirname(pluginTarget), { recursive: true });
+            await symlink(pluginSource, pluginTarget, process.platform === 'win32' ? 'junction' : 'dir');
+          }
+          // The editor's serialized PromptBlocks are already the saved composition.
+          // A caller cannot submit replacement prompt/model/grants to this operation.
+          if (profile === 'knowgraph') {
+            const model = MODEL_REGISTRY[String(options.modelKey || '')];
+            if (!model || !String(card.prompt || '').startsWith('# CARD_PROMPT_V1')) throw new Error('saved_profile_configuration_invalid');
+            await api(`/api/profiles/${encodeURIComponent(profile)}/soul`, 'PUT', { content: card.prompt });
+            await api('/api/model/set', 'POST', { scope: 'main', profile,
+              provider: options.accessMode === 'chatgpt-account' ? 'openai-codex' : model.provider,
+              model: model.id, confirm_expensive_model: true });
+          }
+          const currentConfig = await api('/api/config');
+          const selectedToolsets = options.toolsets || [];
+          await api('/api/config', 'PUT', { profile, config: {
+            ...(profile === 'knowgraph' ? {
+              platform_toolsets: { cli: selectedToolsets },
+              agent: { disabled_toolsets: [...new Set([
+                ...(currentConfig.agent?.disabled_toolsets || []),
+                ...(currentConfig.platform_toolsets?.cli || []),
+                'project', 'catalog', 'desktop_ui',
+              ])].filter(name => !selectedToolsets.includes(name)) },
+            } : {}),
+            plugins: { enabled: [...new Set([...(currentConfig.plugins?.enabled || []), 'project-graph'])],
+              disabled: (currentConfig.plugins?.disabled || []).filter((name: string) => name !== 'project-graph'),
+              entries: { 'project-graph': { settings: { recipient: profile }, mcp_allowlist: ['liquidaity'] } } },
+            hooks: { output_spill: { max_chars: 65536 } },
+            mcp_servers: { liquidaity: { tools: { include: options.tools || [],
+              ...(profile === 'knowgraph' ? { resources: false, prompts: false } : {}) },
+              ...(profile === 'knowgraph' ? { timeout: 600 } : {}) } },
+          } });
+          const published = profile === 'knowgraph'
+            ? await api(`/api/profiles/${encodeURIComponent(profile)}/soul`) : null;
+          if (published && published.content !== card.prompt) throw new Error('saved_prompt_publication_mismatch');
+          const activation = await activate(profile);
+          result = { published: true, cardId: card.id, profile, pluginActivated: activation.reloaded === true };
+        } else if (req.body.method === 'toolset.toggle' || req.body.method === 'skill.toggle') {
           if (typeof params.name !== 'string' || !params.name.trim() || typeof params.enabled !== 'boolean') {
             return res.status(400).json({ ok: false, error: 'card_profile_toggle_invalid' });
           }
@@ -92,7 +162,8 @@ export function createCardProfileRouter(connect = profileApi) {
         binding: { profile, mode: card.runtime.mode },
         profile: { name: profile, skills, toolsets, learning: { graph } },
       });
-    } catch {
+    } catch (error) {
+      console.warn('[card-profile]', error instanceof Error ? error.message : 'unknown profile failure');
       return res.status(503).json({ ok: false, error: 'card_profile_unavailable' });
     }
   });

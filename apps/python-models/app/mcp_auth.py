@@ -9,7 +9,7 @@
 # Entity: MCP Host
 # Relationship: This file supplies the MCP host's OAuth resource contract, token verifier, authenticated request context, and internal-principal validation.
 # Entity: Projects
-# Relationship: This file resolves a verified external identity to one owner-scoped Project context and rejects absent or malformed Project bindings.
+# Relationship: This file validates owner-scoped Project bindings from verified tokens or resolved native admissions and exposes their exact saved Card grants to MCP dispatch.
 # Entity: Card Profiles
 # Relationship: This file carries the validated saved-profile identity requested by a profile-owned MCP connection into the backend context lookup.
 # Entity: Tool Catalog
@@ -269,6 +269,10 @@ def authenticated_project_context() -> dict[str, Any] | None:
     expires_at = getattr(access_token, "expires_at", None)
     if expires_at is not None and float(expires_at) <= time.time():
         return None
+    from app.python_models.project_graph_invocation import CURRENT_GRAPH_INVOCATION
+    invocation = CURRENT_GRAPH_INVOCATION.get()
+    if invocation is not None and invocation.get("authorization"):
+        return _validated_project_context(invocation["authorization"])
     claims = getattr(access_token, "claims", None)
     context = claims.get("project") if isinstance(claims, dict) else None
     return _validated_project_context(context)

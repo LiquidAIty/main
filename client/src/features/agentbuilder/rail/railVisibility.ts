@@ -4,9 +4,9 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Agent Builder
- * Relationship: This file derives Agent Builder rail visibility from enabled saved Card identities while keeping UI availability separate from execution authority.
+ * Relationship: Derives optional rail visibility from enabled saved Card identities and their enabled wires without changing execution authority.
  * Entity: Saved Cards
- * Relationship: This file reads exact enabled Card identities to decide which optional product surfaces are visible.
+ * Relationship: Requires a live saved connection for optional surfaces; ThinkGraph alone controls the combined Graphs icon.
  */
 
 import type {
@@ -37,16 +37,6 @@ type ProgressiveRailVisibility = {
   showTrading: boolean;
 };
 
-function hasEnabledCard(
-  nodes: readonly AgentCardInstance[],
-  predicate: (card: AgentCardInstance) => boolean,
-): boolean {
-  return nodes.some((node) => (
-    node.enabled !== false
-    && predicate(node)
-  ));
-}
-
 function hasConnectedEnabledCard(
   deck: Pick<DeckDocument, 'nodes' | 'edges'>,
   predicate: (card: AgentCardInstance) => boolean,
@@ -56,29 +46,24 @@ function hasConnectedEnabledCard(
     && predicate(node)
     && deck.edges.some((edge) => (
       edge.enabled !== false
+      && edge.edgeType !== 'invalid'
       && (edge.source === node.id || edge.target === node.id)
+      && deck.nodes.some(other => other.id !== node.id && other.enabled !== false
+        && other.id === (edge.source === node.id ? edge.target : edge.source))
     ))
   ));
 }
 
 export function deriveVisibleRailItems({
   deck,
-  workspaceView,
 }: {
   deck: Pick<DeckDocument, 'nodes' | 'edges'>;
-  workspaceView: string;
 }): ProgressiveRailVisibility {
   return {
-    // Project graphs are an owner-visible workbench, not a card-topology capability.
-    showKnowledge: true,
-    showWorldsignal:
-      workspaceView === 'worldsignal' ||
-      hasConnectedEnabledCard(deck, isWorldSignalsAgentCard),
-    showWorldview:
-      workspaceView === 'worldview' ||
-      hasEnabledCard(deck.nodes, isWorldViewCard),
-    showTrading:
-      workspaceView === 'trading' ||
-      hasEnabledCard(deck.nodes, isTradingAgentCard),
+    showKnowledge: hasConnectedEnabledCard(deck,
+      card => card.runtime.kind === 'hermes' && card.runtime.profile === 'thinkgraph'),
+    showWorldsignal: hasConnectedEnabledCard(deck, isWorldSignalsAgentCard),
+    showWorldview: hasConnectedEnabledCard(deck, isWorldViewCard),
+    showTrading: hasConnectedEnabledCard(deck, isTradingAgentCard),
   };
 }

@@ -137,7 +137,7 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
             workspace_id=workspace_id,
             pair_reference=pair_reference_value,
         )
-        from .personal_context import pair_context_ids, read_personal_context
+        from .personal_context import pair_context_ids
         personal_ids = pair_context_ids(service, workspace_id, pair_reference_value)
         if existing or personal_ids:
             return {
@@ -158,7 +158,7 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
         chunks = source_chunks(project, payload["sourceReferences"], prepare=True) if payload.get("sourceReferences") else None
         enrichment_schema, enrichment_prompt = llm_structured_contract(
             pair_text,
-            {"personalContext": read_personal_context(project)["records"]},
+            {},
             chunks=chunks,
         )
         return {

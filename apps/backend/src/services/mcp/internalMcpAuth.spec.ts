@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: MCP Host
- * Relationship: This file verifies internal MCP transport resolves only the canonical loopback host and signs only the catalog-reader principal.
+ * Relationship: This file verifies loopback-only MCP transport and stable, exactly scoped Card credentials without changing catalog-reader issuance.
  * Entity: Credentials
  * Relationship: This file verifies missing, short, or foreign internal process secrets are rejected without weakening timing-safe comparison.
  * Entity: Authentication
@@ -56,6 +56,37 @@ describe('internal MCP catalog authentication', () => {
     expect(resolveInternalMcpUrl(env)).toBe('http://127.0.0.1:8765/mcp');
     expect(() => resolveInternalMcpUrl({ ...env, LIQUIDAITY_INTERNAL_MCP_URL: 'https://example.com/mcp' }))
       .toThrow('internal_mcp_url_must_be_loopback_http');
+  });
+
+  it('keeps Card credential bytes stable within the hour and rotates at the next boundary', () => {
+    const principal = { kind: 'card-runtime' as const, ownerUserId: 'owner',
+      projectId: 'project', deckId: 'deck', profile: 'knowgraph' };
+    const token = createInternalMcpBearer(principal, env, 7200);
+    expect(createInternalMcpBearer(principal, env, 10799)).toBe(token);
+    expect(createInternalMcpBearer(principal, env, 10800)).not.toBe(token);
+    const claims = verifyBearer(token);
+    expect(claims).toMatchObject({ sub: 'card-runtime', iat: 7200, exp: 50400,
+      scope: 'liquidaity.main', principal });
+    expect(claims.exp - 10799).toBeLessThanOrEqual(12 * 60 * 60);
+  });
+
+  it('never reuses Card credentials across owner, Project, deck, profile, or signing secret', () => {
+    const principal = { kind: 'card-runtime' as const, ownerUserId: 'owner',
+      projectId: 'project', deckId: 'deck', profile: 'knowgraph' };
+    const token = createInternalMcpBearer(principal, env, 7200);
+    for (const field of ['ownerUserId', 'projectId', 'deckId', 'profile'] as const) {
+      const changed = { ...principal, [field]: `${principal[field]}-other` };
+      const scoped = createInternalMcpBearer(changed, env, 7201);
+      expect(scoped).not.toBe(token);
+      expect(verifyBearer(scoped).principal).toEqual(changed);
+      expect(() => createInternalMcpBearer({ ...principal, [field]: '' }, env, 7201))
+        .toThrow('internal_mcp_card_scope_required');
+    }
+    expect(createInternalMcpBearer(principal, {
+      ...env, LIQUIDAITY_INTERNAL_MCP_SECRET: 'abcdef0123456789abcdef0123456789ab',
+    }, 7201)).not.toBe(token);
+    expect(createInternalMcpBearer({ kind: 'catalog-reader' }, env, 7201))
+      .not.toBe(createInternalMcpBearer({ kind: 'catalog-reader' }, env, 7202));
   });
 
   it('authenticates the process bridge secret without accepting short or foreign values', () => {

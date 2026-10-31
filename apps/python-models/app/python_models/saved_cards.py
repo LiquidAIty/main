@@ -7,7 +7,7 @@
 # Entity: Saved Cards
 # Relationship: This file persists Project-scoped decks and immutable Card revisions through optimistic, read-backed PostgreSQL transactions.
 # Entity: Projects
-# Relationship: This file resolves exact Project identity and stores each Project's deck name, portable Builder code folder, templates, revision, and save timestamp.
+# Relationship: This file resolves exact Project identity and stores each Project's deck name, portable Builder code folder, templates, revision, save timestamp, and automatic-research choice.
 # Entity: Card Topology
 # Relationship: This file validates and persists Card placement plus orange and blue edges while rejecting missing endpoints, duplicate connections, and invalid Magnetic membership.
 # Entity: AgentGraph
@@ -60,6 +60,24 @@ def resolve_project_record(cursor: Any, project_id: str) -> dict[str, Any]:
     if row is None:
         raise CardDomainError("project_not_found")
     return dict(row)
+
+
+def project_research_policy(project_id: str, enabled: bool | None = None) -> dict[str, Any]:
+    """One Project choice in its existing permissions object; absent means off."""
+    if enabled is not None and type(enabled) is not bool:
+        raise CardDomainError("automatic_research_setting_invalid")
+    with connect_postgres() as connection:
+        if enabled is not None:
+            connection.execute(
+                "UPDATE ag_catalog.projects SET agent_permissions=jsonb_set(COALESCE(agent_permissions,'{}'::jsonb),"
+                "'{automaticResearch}',%s::jsonb) WHERE id::text=%s", (canonical_json(enabled), project_id))
+        row = connection.execute(
+            "SELECT COALESCE(agent_permissions->'automaticResearch','false'::jsonb) FROM ag_catalog.projects WHERE id::text=%s",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            raise CardDomainError("project_not_found")
+        return {"projectId": project_id, "enabled": row[0] is True, "perExchangeLimit": 1}
 
 def _validated_deck_collections(
     document: dict[str, Any],

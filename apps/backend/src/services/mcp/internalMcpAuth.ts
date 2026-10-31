@@ -17,6 +17,7 @@ const INTERNAL_MCP_ISSUER = 'liquidaity-runtime';
 const INTERNAL_MCP_AUDIENCE = 'liquidaity-internal-mcp';
 const DEFAULT_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp';
 const TOKEN_LIFETIME_SECONDS = 12 * 60 * 60;
+const CARD_ISSUANCE_WINDOW_SECONDS = 60 * 60;
 
 export type InternalMcpPrincipal = { kind: 'catalog-reader' } | {
   kind: 'card-runtime';
@@ -60,13 +61,18 @@ export function createInternalMcpBearer(
       .some(value => typeof value !== 'string' || !value.trim())) {
     throw new Error('internal_mcp_card_scope_required');
   }
+  // Identical Card scope must not rebuild Hermes' MCP connection on every chat.
+  // Round down so reuse never extends the existing maximum token lifetime.
+  const issuedAt = principal.kind === 'card-runtime'
+    ? Math.floor(nowSeconds / CARD_ISSUANCE_WINDOW_SECONDS) * CARD_ISSUANCE_WINDOW_SECONDS
+    : nowSeconds;
   const header = base64UrlJson({ alg: 'HS256', typ: 'JWT' });
   const payload = base64UrlJson({
     iss: INTERNAL_MCP_ISSUER,
     aud: INTERNAL_MCP_AUDIENCE,
     sub: principal.kind,
-    iat: nowSeconds,
-    exp: nowSeconds + TOKEN_LIFETIME_SECONDS,
+    iat: issuedAt,
+    exp: issuedAt + TOKEN_LIFETIME_SECONDS,
     scope: 'liquidaity.main',
     principal,
   });

@@ -13,7 +13,7 @@ from __future__ import annotations
 # Entity: Jev Decisions
 # Relationship: This file verifies stale or nonexact Entity references are rejected before bounded relevance ranking.
 # Entity: Tool Catalog
-# Relationship: This file verifies the two Project graph read operations expose exact read-only definitions and schemas.
+# Relationship: This file verifies Project graph list, context and map reads plus Main-only research preparation expose exact schemas, access modes and grants.
 
 import pytest
 
@@ -49,9 +49,14 @@ def test_project_graph_definitions_expose_exact_list_and_context_reads() -> None
     assert [definition.canonical_id for definition in definitions] == [
         "project_graph.list_entities",
         "project_graph.read_entity_context",
+        "project_graph.read_map",
+        "project_graph.prepare_research",
     ]
-    assert all(definition.access == "read" for definition in definitions)
-    assert all(definition.annotations["readOnlyHint"] is True for definition in definitions)
+    assert all(definition.access == "read" for definition in definitions[:3])
+    assert all(definition.annotations["readOnlyHint"] is True for definition in definitions[:3])
+    assert definitions[3].access == "write"
+    assert definitions[3].grant_profiles == frozenset({"main"})
+    assert "automatic_pair" not in definitions[3].parameters_schema["properties"]
     assert "entityKind" not in str([definition.parameters_schema for definition in definitions])
 
 
@@ -200,3 +205,31 @@ def test_read_entity_context_rejects_non_exact_or_stale_reference(
             }],
             query="current request",
         )
+
+
+def test_research_indication_and_detail_survive_exact_context_projection(monkeypatch):
+    monkeypatch.setattr(project_graph_operations, "build_canonical_entity_directory", lambda _: _directory())
+    monkeypatch.setattr(personal_context, "read_personal_context", lambda _: {"records": []})
+    def think(identifier):
+        return {"memory_id": identifier, "entity_id": "eng-1", "content": "Funding is unresolved.",
+                "detail": "Committed funding would clarify dilution.", "researchRequested": True}
+    monkeypatch.setattr(engraphis, "read_entity_thinks", lambda *a, **k: [think("recent")])
+    monkeypatch.setattr(engraphis, "read_entity_think_candidates", lambda *a, **k: [think("recent"), think("earlier")])
+    monkeypatch.setattr(knowgraph_exact_reads, "read_knowgraph_entity_knows", lambda *a, **k: [])
+    monkeypatch.setattr(knowgraph_exact_reads, "read_knowgraph_entity_know_candidates", lambda *a, **k: [])
+    build = project_graph_relevance.build_project_graph_grounding
+    def rank(_query, _context, candidates, _limit):
+        return {"thinkgraph": {"status": "success", "decisionId": "isolated-test", "records": candidates["thinkgraph"]}}
+    monkeypatch.setattr(project_graph_relevance, "build_project_graph_grounding",
+                        lambda *a, **k: build(*a, **k, relevance_rater=rank))
+    result = project_graph_operations.read_entity_context(
+        projectId="project-1", entities=_directory()["entities"], query="funding uncertainty",
+    )
+    selected = result["entities"][0]["thinks"]
+    for field, identifier in (("recent", "recent"), ("relevant", "earlier")):
+        assert selected[field][0]["engraphisMemoryId"] == identifier
+        assert selected[field][0]["researchRequested"] is True
+        assert selected[field][0]["detail"] == "Committed funding would clarify dilution."
+    definition = project_graph_operations.project_graph_operation_definitions(frozenset({"external-mcp"}))[1]
+    schema = definition.output_schema["properties"]["entities"]["items"]["properties"]["thinks"]
+    assert schema["properties"]["recent"]["items"]["properties"]["researchRequested"] == {"type": "boolean"}

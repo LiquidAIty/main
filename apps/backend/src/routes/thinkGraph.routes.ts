@@ -8,7 +8,7 @@
  * Entity: Authentication
  * Relationship: This file requires ownership of the exact Project before forwarding any ThinkGraph read or retirement operation.
  * Entity: Project Knowledge Graph
- * Relationship: This file supplies the shared Project graph workspace with the provider-owned ThinkGraph projection and bounded focus neighborhoods.
+ * Relationship: Supplies provider-owned ThinkGraph projections and neighborhoods and carries separate ThinkGraph and KnowGraph refresh notifications over one Project-scoped stream.
  */
 
 import { Router, type Response } from 'express';
@@ -90,10 +90,11 @@ thinkGraphRoutes.get('/source-search', async (req, res) => {
   }
 });
 
-export function notifyThinkGraphChanged(projectId: string): void {
+export function notifyThinkGraphChanged(projectId: string, authority: 'thinkgraph' | 'knowgraph' = 'thinkgraph'): void {
   for (const [response, project] of graphStreams) {
     if (project !== projectId || response.destroyed || response.writableEnded) continue;
-    if (!response.write(`event: changed\ndata: ${JSON.stringify({ projectId })}\n\n`)) response.end();
+    const event = authority === 'thinkgraph' ? 'changed' : 'knowgraph_changed';
+    if (!response.write(`event: ${event}\ndata: ${JSON.stringify({ projectId })}\n\n`)) response.end();
   }
 }
 

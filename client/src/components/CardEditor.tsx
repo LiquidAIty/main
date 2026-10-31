@@ -3,15 +3,15 @@
 // Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 // Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: Saved Cards
-// Relationship: This file edits one saved Card's title, prompt, runtime, model, reasoning, delegation, skills, tools, connections, orchestrator skill, and optional Python source.
+// Relationship: Edits one saved Card's title, prompt and runtime options, including model, reasoning, delegation, skills, tools, orchestrator skill and optional Python source.
 // Entity: Agent Builder
-// Relationship: This file owns the human-facing Prompt, Runtime, Memory, Skills, Tools, and Script editing surfaces inside the construction workspace.
+// Relationship: Owns the human-facing Prompt, Runtime, Skills and Tools surfaces, including the embedded Script editor, inside the construction workspace.
 // Entity: IDD
 // Relationship: This file loads the current Card-editor field and choice projection instead of maintaining a second runtime configuration dictionary.
 // Entity: Card Profiles
-// Relationship: This file reads effective profile state and learning details without exposing transport diagnostics or interactive MCP authentication in every Card editor.
+// Relationship: Reads effective profile state, applies skill/toolset toggles and learning edits, and requests KnowGraph profile publication after the saved-Card write.
 // Entity: Tool Catalog
-// Relationship: This file searches and selects live profile-eligible capabilities while preserving unresolved saved selections and the Card's explicit grant ceiling.
+// Relationship: Displays selected application capabilities from IDD, preserves unavailable saved selections, and edits the Card's explicit grants through checkboxes.
 // Entity: Card Scripts
 // Relationship: This file mounts the saved Python Script editor and persists only the visible Script configuration returned by that bounded editor.
 // Entity: Run Ledger
@@ -663,7 +663,7 @@ export function CardEditor({
       });
     return () => controller.abort();
   // Card profile readback is identity-scoped and deliberately independent from
-  // unsaved Card drafts. Card save never mutates the bound profile.
+  // unsaved Card drafts. KnowGraph publication follows a successful saved-Card write.
   }, [isLocalConfigMode, projectId, deckId, cardId, acceptCardProfileReadback]);
 
 
@@ -860,6 +860,15 @@ export function CardEditor({
         if (!profileState || !projectId || !deckId || !cardId) throw new Error('Card profile unavailable.');
       }
       await runSaveConfig();
+      if (projectId && deckId && cardId && localConfig?.runtime.kind === 'hermes'
+          && localConfig.runtime.profile === 'knowgraph') {
+        try {
+          await applyCardProfileOperation({ projectId, deckId, cardId,
+            change: { method: 'profile.publish', params: {} } });
+        } catch (error) {
+          throw new Error(`Card saved; profile publication failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       if (cardLearningDirtyRef.current) {
         let latestReadback = profileState;
         for (const [id, content] of learningEdits) {
@@ -874,7 +883,7 @@ export function CardEditor({
           if (latestReadback) acceptCardProfileReadback(latestReadback);
         }
       }
-  }, [runSaveConfig, projectId, deckId, cardId, acceptCardProfileReadback]);
+  }, [runSaveConfig, projectId, deckId, cardId, localConfig, acceptCardProfileReadback]);
 
   const saveLatestDraftRef = useRef(saveCurrentDraft);
   useLayoutEffect(() => {

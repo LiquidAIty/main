@@ -16,6 +16,8 @@
 // Relationship: This file accepts an optional parent Run only when it matches the resolved Card and remains pending or running.
 // Entity: IDD
 // Relationship: This file returns the canonical Card-editor materialization for one exact Project, deck, and Card to the internal MCP process.
+// Entity: KnowGraph
+// Relationship: Forwards process-authorized KnowGraph change notifications to the graph stream after resolving the supplied Project and owner.
 
 import { Router, type Request } from 'express';
 
@@ -26,6 +28,7 @@ import { readCardRun } from '../services/cardRunLifecycle';
 import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
 import { assertCardProfileOwner, getOwnedProjectByReference } from '../services/projectStore';
 import { materializeCardEditor } from './builderIdd.routes';
+import { notifyThinkGraphChanged } from './thinkGraph.routes';
 import {
   exactStrings,
   objectRecord,
@@ -37,6 +40,14 @@ const mcpInternalRoutes = Router();
 function processAuthorized(req: Request): boolean {
   return internalMcpProcessSecretAuthorized(req.headers['x-liquidaity-internal-mcp-secret']);
 }
+
+mcpInternalRoutes.post('/graph-changed', async (req, res) => {
+  if (!processAuthorized(req)) return res.status(403).json({ error: 'internal_mcp_authorization_required' });
+  const project = await getOwnedProjectByReference(String(req.body?.projectId || ''), String(req.body?.ownerUserId || ''));
+  if (!project) return res.status(404).json({ error: 'project_not_found' });
+  notifyThinkGraphChanged(project.id, 'knowgraph');
+  return res.json({ ok: true });
+});
 
 mcpInternalRoutes.post('/context', async (req, res) => {
   if (!processAuthorized(req)) {

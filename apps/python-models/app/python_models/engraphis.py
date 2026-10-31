@@ -233,6 +233,7 @@ def validated_think_metadata(memory: Any) -> dict[str, Any] | None:
         **({"detail": detail} if detail is not None else {}),
         "entity": entity,
         "relationships": deepcopy(relationships),
+        **({"researchRequested": True} if value.get("researchRequested") is True else {}),
     }
 
 
@@ -569,6 +570,8 @@ def endpoint_thinks(
             "content": memory.content,
             "summary": think["summary"],
             "keywords": list(memory.keywords)[:16],
+            **({"detail": think["detail"]} if think.get("detail") else {}),
+            **({"researchRequested": True} if think.get("researchRequested") is True else {}),
             "relations": deepcopy(think["relationships"]),
             "ingested_at": memory.ingested_at,
             "valid_from": memory.valid_from,

@@ -6,7 +6,9 @@
 # Entity: Main Chat
 # Relationship: Verifies exact message storage, transactions, deduplication, isolation and persistent readback.
 # Entity: ThinkGraph
-# Relationship: Verifies explicit stored-pair reads reach the existing preparation contract without graph writes or agent delivery.
+# Relationship: Verifies explicit stored-pair preparation and settlement preserve source chunks, same-pass research indication, exact Think attachment, and historical metadata without agent delivery.
+# Entity: Personal Context
+# Relationship: Verifies direct private-context quotation and ownership constraints remain separate from Entities and the completed-pair Think flow.
 
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
@@ -217,7 +219,7 @@ def test_private_context_requires_user_quote_and_stays_out_of_entities(archive):
 
 
 @pytest.mark.parametrize("index_failure", [False, True])
-def test_mixed_pair_settles_think_and_private_context_atomically_without_duplicate_nodes(archive, monkeypatch, index_failure):
+def test_research_indication_settles_with_chunks_without_private_classification_or_duplicate_nodes(archive, monkeypatch, index_failure):
     service, _ = archive
     question = call("append", messages=[user("I like space stocks. What funding is committed?")])[0]
     answer = call("reply", message=reply())["message"]
@@ -230,10 +232,8 @@ def test_mixed_pair_settles_think_and_private_context_atomically_without_duplica
         "resolvedModel": "mechanics-only",
     }, "structuredOutput": {"facts": [{"content": "Funding is unresolved.", "title": "Funding",
         "entity": "Space stocks", "entities": ["Space stocks"], "relations": [],
-        "think": {"summary": "Funding is unresolved.", "sourceChunkIds": [user_chunk], "research": {
-            "question": "What funding is committed?", "why": "It affects the funding uncertainty.", "sourceChunkIds": [user_chunk]}}}],
-        "personalContext": [{"subject": "space stocks", "kind": "interest", "scope": "personal",
-            "content": "Interested in space stocks", "quote": "I like space stocks.", "sourceChunkIds": [user_chunk]}]}}
+        "think": {"summary": "Funding is unresolved.", "detail": "Committed funding would clarify the dilution concern.",
+                  "sourceChunkIds": [user_chunk], "researchRequested": True}}]}}
     if index_failure:
         from .thinkgraph_relationship_vocabulary import ThinkGraphIntakeError
         with monkeypatch.context() as patch:
@@ -247,10 +247,16 @@ def test_mixed_pair_settles_think_and_private_context_atomically_without_duplica
         assert conversations.source_chunks("project-one", source["sourceReferences"]) == chunks
         assert call("read") == [question, answer]
     first = settlement.settle_completed_pair(payload)
-    assert len(first["thinkMemoryIds"]) == len(first["personalContextIds"]) == 1
+    assert len(first["thinkMemoryIds"]) == 1
+    assert first["personalContextIds"] == []
+    assert personal_context.read_personal_context("project-one")["records"] == []
     assert len(service.store.list_entities()) == 1
     memory = service.store.get_memory(first["thinkMemoryIds"][0])
-    assert memory.metadata["structured_extraction"]["think"]["research"]["question"] == "What funding is committed?"
+    assert memory.metadata["structured_extraction"]["think"]["researchRequested"] is True
+    assert first["thinks"][0]["researchRequested"] is True
+    attached = engraphis.read_entity_thinks("project-one", first["thinks"][0]["engraphisEntityId"])
+    assert attached[0]["researchRequested"] is True
+    assert attached[0]["detail"] == "Committed funding would clarify the dilution concern."
     assert memory.metadata["thinkgraph_origin"]["source_chunks"] == [{"id": user_chunk, "sha256": chunks[0]["sha256"]}]
     assert first["sourceIndex"]["indexed"] == 2
     excerpts = conversations.read_source_exchanges("project-one", memory.id)["sources"][0]
@@ -290,7 +296,7 @@ def test_native_chunks_preserve_coverage_occurrences_and_are_not_rechunked(archi
     assert call("read") == before
 
 
-def test_source_citations_reject_foreign_missing_duplicate_and_assistant_preferences():
+def test_source_citations_reject_foreign_missing_duplicate_and_preserve_speakers():
     from app.python_models.thinkgraph_completed_pair_extraction import validate_source_chunks
     from app.python_models.thinkgraph_relationship_vocabulary import ThinkGraphIntakeError
     chunks = [{"id": "user:0", "role": "user", "content": "An explicit preference."},
@@ -298,18 +304,47 @@ def test_source_citations_reject_foreign_missing_duplicate_and_assistant_prefere
     for ids in ([], ["foreign:0"], ["user:0", "user:0"]):
         with pytest.raises(ThinkGraphIntakeError, match="source_chunk_reference_invalid"):
             validate_source_chunks({"facts": [{"think": {"sourceChunkIds": ids}}]}, chunks)
-    with pytest.raises(ThinkGraphIntakeError, match="source_chunk_reference_invalid"):
-        validate_source_chunks({"facts": [], "personalContext": [{"sourceChunkIds": ["main:0"], "quote": "Assistant inference."}]}, chunks)
-    with pytest.raises(ThinkGraphIntakeError, match="source_chunk_reference_invalid"):
-        validate_source_chunks({"facts": [{"think": {"sourceChunkIds": ["user:0"],
-            "research": {"sourceChunkIds": ["main:0"]}}}]}, chunks)
+    validate_source_chunks({"facts": [{"think": {"sourceChunkIds": ["user:0", "main:0"],
+        "researchRequested": True}}]}, chunks)
+    assert [chunk["role"] for chunk in chunks] == ["user", "assistant"]
 
 
-def test_research_question_is_not_an_execution_request():
-    from app.python_models.thinkgraph_completed_pair_extraction import ThinkGraphStructuredOutput
-    result = ThinkGraphStructuredOutput.model_validate({"facts": [{
+def test_optional_research_indication_is_strict_and_has_no_separate_classification():
+    from copy import deepcopy
+    from pydantic import ValidationError
+    from app.python_models.thinkgraph_completed_pair_extraction import ThinkGraphStructuredOutput, llm_structured_contract
+    value = {"facts": [{
         "content": "The funding uncertainty matters.", "title": "Funding", "entity": "Company",
         "entities": ["Company"], "relations": [], "think": {"summary": "The funding uncertainty matters.",
-        "research": {"question": "What funding is committed?", "why": "It changes the dilution concern."}},
-    }], "personalContext": []})
-    assert result.facts[0].think.research.question == "What funding is committed?"
+        "sourceChunkIds": ["user:0"]},
+    }]}
+    assert ThinkGraphStructuredOutput.model_validate(value).facts[0].think.researchRequested is False
+    value["facts"][0]["think"]["researchRequested"] = True
+    assert ThinkGraphStructuredOutput.model_validate(value).facts[0].think.researchRequested is True
+    for invalid in ("true", 1, None):
+        malformed = deepcopy(value)
+        malformed["facts"][0]["think"]["researchRequested"] = invalid
+        with pytest.raises(ValidationError):
+            ThinkGraphStructuredOutput.model_validate(malformed)
+    with pytest.raises(ValidationError):
+        ThinkGraphStructuredOutput.model_validate({**value, "personalContext": []})
+    malformed = deepcopy(value)
+    malformed["facts"][0]["think"]["research"] = {"question": "What funding?", "why": "Dilution."}
+    with pytest.raises(ValidationError):
+        ThinkGraphStructuredOutput.model_validate(malformed)
+    schema, prompt = llm_structured_contract("USER: x MAIN: y", {})
+    assert set(schema["properties"]) == {"facts"}
+    assert "research" not in schema["$defs"]["ThinkGraphThink"]["properties"]
+    assert "PrivateUserContext" not in schema["$defs"]
+    assert "strongest research candidate first" in prompt
+
+
+def test_historical_research_metadata_remains_readable():
+    from types import SimpleNamespace
+    legacy = {"summary": "Funding uncertainty matters.", "entity": "Company", "relationships": [],
+              "research": {"question": "What funding is committed?", "why": "Dilution uncertainty."}}
+    metadata = {"thinkgraph_origin": {"authority": "thinkgraph"}, "structured_extraction": {"think": legacy}}
+    memory = SimpleNamespace(mtype="episodic", metadata=metadata)
+    assert engraphis.validated_think_metadata(memory)["summary"] == legacy["summary"]
+    assert "researchRequested" not in engraphis.validated_think_metadata(memory)
+    assert memory.metadata["structured_extraction"]["think"]["research"] == legacy["research"]

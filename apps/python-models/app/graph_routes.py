@@ -8,17 +8,53 @@
 # Entity: ThinkGraph
 # Relationship: This file exposes Engraphis projection, neighborhood, operation, completed-pair preparation, and completed-pair settlement routes.
 # Entity: KnowGraph
-# Relationship: This file exposes Graphiti projection, neighborhood, and bounded Jev fact-classification routes while Graphiti remains writer.
+# Relationship: This file exposes Graphiti reads, bounded Jev fact classification, and process-authenticated research context, policy, and preparation routes while Graphiti remains writer.
 # Entity: CodeGraph
 # Relationship: This file exposes the fixed saved-Builder CodeGraph read route and forwards validation failures without raw provider access.
 # Entity: Jev Decisions
 # Relationship: This file exposes bounded focus and shared relationship-vocabulary operations and returns explicit unavailable decisions without a success-shaped fallback.
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from typing import Any
 
 graph_settlement_router = APIRouter()
 graph_read_router = APIRouter()
+
+
+def _research_process_authorized(request: Request) -> None:
+    import hmac
+    import os
+    secret = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "")
+    if len(secret) < 32 or not hmac.compare_digest(secret, request.headers.get("X-LiquidAIty-Internal-MCP-Secret", "")):
+        raise HTTPException(403, "internal_process_authorization_required")
+
+
+@graph_settlement_router.post("/knowgraph/research/context")
+async def knowgraph_research_context(payload: dict[str, Any], request: Request):
+    _research_process_authorized(request)
+    import asyncio
+    from app.python_models.project_graph_invocation import local_context_operation
+    try:
+        return await asyncio.to_thread(local_context_operation, payload.get("operation"), payload)
+    except (ValueError, KeyError, TypeError) as error:
+        raise HTTPException(400, str(error)) from None
+
+
+@graph_settlement_router.post("/knowgraph/research/policy")
+async def knowgraph_research_policy(payload: dict[str, Any], request: Request):
+    _research_process_authorized(request)
+    from app.python_models.saved_cards import project_research_policy
+    import asyncio
+    return await asyncio.to_thread(project_research_policy, str(payload.get("projectId") or ""), payload.get("enabled"))
+
+
+@graph_settlement_router.post("/knowgraph/research/prepare")
+async def knowgraph_research_prepare(payload: dict[str, Any], request: Request):
+    _research_process_authorized(request)
+    from app.python_models.project_graph_invocation import prepare_automatic_research
+    import asyncio
+    return await asyncio.to_thread(prepare_automatic_research, str(payload.get("projectId") or ""),
+                                   str(payload.get("pairReference") or ""), str(payload.get("thinkId") or ""))
 
 @graph_settlement_router.post("/knowgraph/jev/classify")
 async def knowgraph_jev_classify(payload: dict[str, Any]):

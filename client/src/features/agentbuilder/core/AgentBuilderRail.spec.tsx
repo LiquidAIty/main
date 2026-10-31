@@ -63,6 +63,15 @@ function render(node: React.ReactElement) {
 }
 
 describe('AgentBuilderRail Add Agent control', () => {
+  it('keeps Agent Canvas but hides disconnected optional icons even in an open workspace', () => {
+    const host = render(<AgentBuilderRail {...baseProps} workspaceView="knowledge"
+      visibleRailItems={{ showKnowledge: false, showWorldsignal: false, showWorldview: false, showTrading: false }} />);
+    expect(host.querySelector('[aria-label="Agents"]')).not.toBeNull();
+    for (const label of ['WorldView', 'Graphs', 'Trading', 'World']) {
+      expect(host.querySelector(`[aria-label="${label}"]`)).toBeNull();
+    }
+  });
+
   it('shows the hex-plus Agents control', () => {
     const host = render(<AgentBuilderRail {...baseProps} visibleRailItems={baseVisibility} />);
     const button = host.querySelector('[data-testid="rail-plus-button"]') as HTMLButtonElement;

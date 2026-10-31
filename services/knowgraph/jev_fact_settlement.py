@@ -5,7 +5,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
-# Relationship: This file contributes current ingested Graphiti facts and validated relationship metadata persistence to the KnowGraph feature without replacing provider-owned fact text.
+# Relationship: This file projects actual episode facts with their PDF or web-research provenance and persists validated Jev metadata without replacing provider-owned fact text.
 # Entity: Jev Decisions
 # Relationship: This file contributes bounded choice validation and idempotent fact-classification reuse or repair to the Jev Decisions feature.
 
@@ -26,6 +26,61 @@ KNOWGRAPH_JEV_MODEL = "typesafe/jev-1.13"
 KNOWGRAPH_JEV_QUESTION_SCHEMA_VERSION = "knowgraph.relationship-choice.v3"
 KNOWGRAPH_JEV_CONTROL_OUTCOMES = {"INSUFFICIENT_CONTEXT"}
 MAX_JEV_FACTS_PER_INGEST = 64
+
+
+async def read_episode_facts(
+    graphiti: Any,
+    *,
+    episode_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    result = await graphiti.driver.execute_query(
+        """
+        MATCH (source:Entity)-[fact]->(target:Entity)
+        WHERE $episode_id IN coalesce(fact.episodes, [])
+        RETURN toString(fact.uuid) AS uuid,
+               toString(fact.source_node_uuid) AS source_node_uuid,
+               toString(fact.target_node_uuid) AS target_node_uuid,
+               fact.name AS name,
+               fact.fact AS fact,
+               fact.episodes AS episodes,
+               fact.created_at AS created_at,
+               fact.valid_at AS valid_at,
+               fact.invalid_at AS invalid_at,
+               fact.expired_at AS expired_at,
+               toString(source.uuid) AS source_uuid,
+               source.name AS source_name,
+               toString(target.uuid) AS target_uuid,
+               target.name AS target_name
+        ORDER BY toString(fact.uuid)
+        """,
+        episode_id=episode_id,
+        routing_="r",
+    )
+    edges: list[dict[str, Any]] = []
+    nodes: dict[str, dict[str, Any]] = {}
+    for record in graphiti_runtime.graphiti_records(result):
+        fact_id = str(record.get("uuid") or "").strip()
+        source_id = str(record.get("source_uuid") or "").strip()
+        target_id = str(record.get("target_uuid") or "").strip()
+        if not fact_id or not source_id or not target_id:
+            continue
+        nodes[source_id] = {
+            "uuid": source_id,
+            "name": str(record.get("source_name") or ""),
+        }
+        nodes[target_id] = {
+            "uuid": target_id,
+            "name": str(record.get("target_name") or ""),
+        }
+        edges.append({
+            key: record.get(key)
+            for key in (
+                "uuid", "source_node_uuid", "target_node_uuid", "name", "fact",
+                "episodes", "created_at", "valid_at", "invalid_at", "expired_at",
+            )
+        })
+    return edges, list(nodes.values())
+
 
 
 def _sha256_hex(value: str) -> str:
@@ -496,6 +551,7 @@ async def classify_episode_facts_with_jev(
     text: str,
     reference_time: datetime,
     relationship_vocabulary: dict[str, Any],
+    source_type: str = "pdf_upload",
 ) -> dict[str, Any]:
     """Classify only new or materially changed facts returned by this episode."""
     names = {
@@ -530,7 +586,7 @@ async def classify_episode_facts_with_jev(
                 "source_name": source_name,
                 "source_reference": source_reference,
                 "source_path": source_reference,
-                "source_type": "pdf_upload",
+                "source_type": source_type,
                 "reference_time": reference_time.isoformat(),
                 "content": text,
             }],

@@ -35,6 +35,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
 _CBM_HOST_REPO_ROOT = os.path.normpath(_REPO_ROOT)
 CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _PROVIDER_TOOL_TIMEOUT_SECONDS = 30.0
+GRAPHITI_KNOW_WRITE_TIMEOUT_SECONDS = 600.0
 PROVIDER_PREFIXES = {
     "cbm": "cbm.",
     "graphiti": "graphiti.",
@@ -446,7 +447,7 @@ async def call_graphiti_operation(name: str, arguments: dict[str, Any]) -> Any:
     try:
         result = await asyncio.wait_for(
             mcp_graphiti_provider.call_graphiti_tool(name, arguments),
-            timeout=_PROVIDER_TOOL_TIMEOUT_SECONDS,
+            timeout=GRAPHITI_KNOW_WRITE_TIMEOUT_SECONDS if name == "add_know" else _PROVIDER_TOOL_TIMEOUT_SECONDS,
         )
     except TimeoutError as error:
         raise RuntimeError(f"graphiti_timeout:{name}") from error

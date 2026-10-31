@@ -5,11 +5,12 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
-# Relationship: This file validates typed Know and citation properties from first-class Graphiti nodes.
+# Relationship: This file validates typed Know and citation properties and decodes bounded research-origin records from first-class Graphiti nodes.
 
 from __future__ import annotations
 
 import re
+import json
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
@@ -104,6 +105,15 @@ def know_from_properties(properties: dict[str, Any]) -> dict[str, Any] | None:
     if relation and relation not in KNOW_DIRECTION_RELATIONS:
         return None
     content_hash = _text(properties.get("content_hash"), maximum=64)
+    origins = []
+    for raw in properties.get("research_origins") or []:
+        try:
+            origin = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if (isinstance(origin, dict) and isinstance(origin.get("requestId"), str)
+                and isinstance(origin.get("thinkIds"), list) and isinstance(origin.get("entityNames"), list)):
+            origins.append(origin)
     return {
         "kind": "Know",
         "observation": observation,
@@ -115,6 +125,7 @@ def know_from_properties(properties: dict[str, Any]) -> dict[str, Any] | None:
             else {}
         ),
         **({"contentHash": content_hash} if content_hash else {}),
+        **({"researchOrigins": origins[-12:], "researchOriginCount": len(origins)} if origins else {}),
     }
 
 

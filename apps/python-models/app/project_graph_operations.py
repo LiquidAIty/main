@@ -1,10 +1,10 @@
-"""Read-only exact Project Entity operations."""
+"""Exact Project Entity reads and admission-scoped research preparation."""
 # Graph + less = more: less code that does the same work as more code is more useful.
 # Entity names the feature; Relationship explains why this file belongs and what it contributes.
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Project Knowledge Graph
-# Relationship: This file publishes explicit grantable Entity-directory and bounded cross-authority context reads while each graph provider retains data ownership.
+# Relationship: This file publishes exact Entity-directory and bounded cross-authority context reads together with the native-admission map and research-preparation operations.
 # Entity: ThinkGraph
 # Relationship: This file reads exact Engraphis Entity Think candidates and returns one distinct Recent plus Jev-ranked Relevant selection.
 # Entity: KnowGraph
@@ -12,7 +12,7 @@
 # Entity: Jev Decisions
 # Relationship: This file uses Jev only to rank bounded provider-owned candidates against the current request and never writes relevance into either graph.
 # Entity: Tool Catalog
-# Relationship: This file defines the exact schemas, access hints, server-injected Project scope, and handlers for the two Project graph read operations.
+# Relationship: This file defines Entity/context read schemas and combines their access, scope, and handlers with the invocation owner's map-read and research-preparation definitions.
 
 from __future__ import annotations
 
@@ -102,6 +102,7 @@ def read_entity_context(
                 "engraphisEntityId": think["entity_id"],
                 "body": think["content"],
                 **({"detail": think["detail"]} if think.get("detail") else {}),
+                **({"researchRequested": True} if think.get("researchRequested") is True else {}),
                 "validFrom": think.get("valid_from"),
                 "validTo": think.get("valid_to"),
                 "ingestedAt": think.get("ingested_at"),
@@ -110,6 +111,7 @@ def read_entity_context(
                 "engraphisEntityId": think["entity_id"],
                 "body": think["content"],
                 **({"detail": think["detail"]} if think.get("detail") else {}),
+                **({"researchRequested": True} if think.get("researchRequested") is True else {}),
                 "validFrom": think.get("valid_from"),
                 "validTo": think.get("valid_to"),
                 "ingestedAt": think.get("ingested_at"),
@@ -177,6 +179,7 @@ def read_entity_context(
 def project_graph_operation_definitions(
     external: frozenset[str],
 ) -> list[OperationDefinition]:
+    from app.python_models.project_graph_invocation import operation_definitions
     entity_base = {
         "type": "object",
         "properties": {
@@ -214,6 +217,7 @@ def project_graph_operation_definitions(
             "engraphisEntityId": {"type": "string", "minLength": 1},
             "body": {"type": "string", "minLength": 1},
             "detail": {"type": "string", "minLength": 1},
+            "researchRequested": {"type": "boolean"},
             "validFrom": {}, "validTo": {}, "ingestedAt": {},
             "relevance": {"type": "number", "minimum": 0, "maximum": 1},
             "relevanceRank": {"type": "integer", "minimum": 1, "maximum": 12},
@@ -268,6 +272,8 @@ def project_graph_operation_definitions(
             "citation": know_citation,
             "direction": know_direction,
             "contentHash": {"type": "string", "minLength": 1},
+            "researchOrigins": {"type": "array", "maxItems": 12, "items": {"type": "object"}},
+            "researchOriginCount": {"type": "integer", "minimum": 1},
         },
         "required": [
             "graphitiEpisodeId", "graphitiEntityId", "kind",
@@ -434,4 +440,4 @@ def project_graph_operation_definitions(
         },
         server_injected_arguments=frozenset({"projectId"}),
         dispatcher_context_arguments=frozenset({"projectId"}),
-    )]
+    )] + operation_definitions(external)

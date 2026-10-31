@@ -3,12 +3,15 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Project Knowledge Graph
-# Relationship: Declares the native hooks and request middleware that deliver the application's authorized Project map without agent-facing tools.
+# Relationship: Declares the native hooks and request middleware for authorized Project-map delivery and scoped research preparation without agent-facing tools.
 name: project-graph
 version: 1.0.0
 description: Supplies the application's authorized Project Entity/Relationship snapshot before inference.
 provides_hooks:
   - pre_llm_call
   - pre_api_request
+  - pre_tool_call
+  - post_llm_call
+  - on_session_end
 provides_middleware:
   - llm_request

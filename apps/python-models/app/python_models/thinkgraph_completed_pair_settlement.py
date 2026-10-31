@@ -5,7 +5,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
-# Relationship: This file atomically settles a completed User/Main pair as bounded Entity-specific Thinks, exact attachments, and durable Engraphis relationships.
+# Relationship: This file atomically settles a completed User/Main pair as bounded Entity-specific Thinks with their same-pass research indication, exact attachments, and durable Engraphis relationships.
 # Entity: Jev Decisions
 # Relationship: This file requires a validated Jev choice for every proposed ThinkGraph relationship before writing or replacing its durable edge.
 
@@ -69,7 +69,7 @@ def _think_metadata(
                 **({"detail": output["detail"]} if output.get("detail") else {}),
                 "entity": output["entity"],
                 "relationships": deepcopy(output["relationships"]),
-                **({"research": deepcopy(output["research"])} if output.get("research") else {}),
+                **({"researchRequested": True} if output.get("researchRequested") is True else {}),
             },
         },
         "consolidation_exempt": True,
@@ -280,12 +280,6 @@ def _settle_new_completed_pair(
     by_id = {chunk["id"]: {"id": chunk["id"], "sha256": chunk["sha256"]} for chunk in chunks}
     for output in outputs:
         output["source_chunks"] = [by_id[key] for key in output["sourceChunkIds"]]
-    from .personal_context import save_personal_context
-    from .thinkgraph_completed_pair_extraction import ThinkGraphStructuredOutput
-    private_entries = [entry.model_dump() for entry in ThinkGraphStructuredOutput.model_validate(card_output).personalContext]
-    for entry in private_entries:
-        entry["source_chunks"] = [by_id[key] for key in entry["sourceChunkIds"]]
-    private_ids: list[str] = []
 
     def index_sources() -> dict[str, Any]:
         try:
@@ -299,7 +293,6 @@ def _settle_new_completed_pair(
     relationship_vocabulary = project_relationship_vocabulary(store, workspace_id)
     if not outputs:
         with store.write_transaction():
-            private_ids = save_personal_context(service, completed, pair_reference_value, private_entries)
             source_index = index_sources()
         revision = graph_revision(store, workspace_id)
         return {
@@ -308,7 +301,7 @@ def _settle_new_completed_pair(
             "pairReference": pair_reference_value,
             "thinkMemoryIds": [],
             "thinks": [],
-            "personalContextIds": private_ids,
+            "personalContextIds": [],
             "sourceIndex": source_index,
             "intakeOperation": "noop",
             "intakeOperations": [],
@@ -436,7 +429,6 @@ def _settle_new_completed_pair(
             "changedNodeIds": list(dict.fromkeys(changed_node_ids)),
             "changedEdgeIds": list(dict.fromkeys(changed_edge_ids)),
         })
-        private_ids.extend(save_personal_context(service, completed, pair_reference_value, private_entries))
         source_index.update(index_sources())
 
     try:
@@ -509,12 +501,13 @@ def _settle_new_completed_pair(
         "projectId": project,
         "pairReference": pair_reference_value,
         "thinkMemoryIds": memory_ids,
-        "personalContextIds": private_ids,
+        "personalContextIds": [],
         "sourceIndex": source_index,
         "thinks": [
             {
                 **attachment,
                 "body": output["summary"],
+                **({"researchRequested": True} if output.get("researchRequested") is True else {}),
             }
             for attachment, output in zip(
                 settled_graph["attachments"], outputs, strict=True

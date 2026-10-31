@@ -208,60 +208,6 @@ async def _record_episode_settlement(
         raise RuntimeError("knowgraph_episode_settlement_readback_invalid")
 
 
-async def _read_episode_facts(
-    graphiti: Any,
-    *,
-    episode_id: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    result = await graphiti.driver.execute_query(
-        """
-        MATCH (source:Entity)-[fact]->(target:Entity)
-        WHERE $episode_id IN coalesce(fact.episodes, [])
-        RETURN toString(fact.uuid) AS uuid,
-               toString(fact.source_node_uuid) AS source_node_uuid,
-               toString(fact.target_node_uuid) AS target_node_uuid,
-               fact.name AS name,
-               fact.fact AS fact,
-               fact.episodes AS episodes,
-               fact.created_at AS created_at,
-               fact.valid_at AS valid_at,
-               fact.invalid_at AS invalid_at,
-               fact.expired_at AS expired_at,
-               toString(source.uuid) AS source_uuid,
-               source.name AS source_name,
-               toString(target.uuid) AS target_uuid,
-               target.name AS target_name
-        ORDER BY toString(fact.uuid)
-        """,
-        episode_id=episode_id,
-        routing_="r",
-    )
-    edges: list[dict[str, Any]] = []
-    nodes: dict[str, dict[str, Any]] = {}
-    for record in graphiti_runtime.graphiti_records(result):
-        fact_id = str(record.get("uuid") or "").strip()
-        source_id = str(record.get("source_uuid") or "").strip()
-        target_id = str(record.get("target_uuid") or "").strip()
-        if not fact_id or not source_id or not target_id:
-            continue
-        nodes[source_id] = {
-            "uuid": source_id,
-            "name": str(record.get("source_name") or ""),
-        }
-        nodes[target_id] = {
-            "uuid": target_id,
-            "name": str(record.get("target_name") or ""),
-        }
-        edges.append({
-            key: record.get(key)
-            for key in (
-                "uuid", "source_node_uuid", "target_node_uuid", "name", "fact",
-                "episodes", "created_at", "valid_at", "invalid_at", "expired_at",
-            )
-        })
-    return edges, list(nodes.values())
-
-
 def _empty_jev_classification(status: str, reason: str) -> dict[str, Any]:
     return {
         "status": status,
@@ -321,7 +267,7 @@ async def _ingest_pdf_episode(
                 provider=runtime.provider,
                 model_id=runtime.model_id,
             )
-            edges, nodes = await _read_episode_facts(
+            edges, nodes = await jev_fact_settlement.read_episode_facts(
                 graphiti,
                 episode_id=existing_episode_id,
             )

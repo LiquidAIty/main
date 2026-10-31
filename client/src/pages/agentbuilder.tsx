@@ -25,6 +25,14 @@
  * Relationship: This file mounts the shared ThinkGraph, KnowGraph, and CodeGraph workspace and routes exact chat Entity focus into that surface.
  * Entity: CodeGraph
  * Relationship: This file passes the bounded open, File expansion, and explicit Symbol source-read operations into the shared graph workspace.
+ * Entity: Building Modeling
+ * Relationship: Reads Project modeling availability and mounts the existing NRGSIM workspace and its controls in the shared Inspector.
+ * Entity: Trading
+ * Relationship: Opens the saved Trading Card's application surface and saves its Inspector configuration through the existing Card editor owner.
+ * Entity: WorldSignals
+ * Relationship: Connects the saved WorldSignals Card's surface, layer state and requested settings sections to the shared Inspector.
+ * Entity: WorldView
+ * Relationship: Resolves the saved WorldView profile and mounts its surface and controls through the shared workspace and Inspector.
  */
 
 import React, {
@@ -354,9 +362,8 @@ export default function AgentBuilder(): React.ReactElement {
     () =>
       deriveVisibleRailItems({
         deck,
-        workspaceView,
       }),
-    [deck, workspaceView],
+    [deck],
   );
   const {
     inspectorDrawerOpen,

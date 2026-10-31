@@ -1,20 +1,39 @@
-"""Native Project-map context for application-authored Bot deliveries.
+"""Native Project-map context for admitted Main, KnowGraph and ThinkGraph turns.
 
 Transport JSON is unwrapped for this request only. Hermes retains its Bot Chat
 and transcript; unrelated conversation history is not extraction input.
-No tools, graph writes, credentials, or session state are owned here.
+Granted application operations supply context; native admissions remain execution authority.
 """
 # Graph + less = more: less code that does the same work as more code is more useful.
 # Entity names the feature; Relationship explains why this file belongs and what it contributes.
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Project Knowledge Graph
-# Relationship: Injects the current delivery's compact Project map with exact identities, directed relationships, temporal state and two stored Jev candidates, without evidence bodies or another graph read.
+# Relationship: Injects one compact map through native admission-bound reads, preserves prepared ThinkGraph delivery, and scopes Main and KnowGraph research context and calls to the current native turn.
 import json
 import logging
 import math
 
 logger = logging.getLogger(__name__)
+# Hermes dispatches callbacks on separate threads; retain only the current
+# native turn's context, keyed by its documented opaque turn_id, until turn end.
+_turn_context = {}
+_call_mcp = None
+_recipient = "thinkgraph"
+
+
+def _graph_call(name, arguments):
+    result = _call_mcp("liquidaity", "project_graph." + name, arguments, timeout=20)
+    if result.get("truncated") or result.get("ok") is False:
+        logger.warning("project_graph_call_failed operation=%s error=%s", name, result.get("error", "truncated result"))
+        raise ValueError("project_graph_context_unavailable")
+    if isinstance(result, dict) and "result" in result:
+        result = json.loads(result["result"]) if isinstance(result["result"], str) else result["result"]
+    if not isinstance(result, dict) or result.get("error") or result.get("ok") is False:
+        logger.warning("project_graph_call_rejected operation=%s error=%s", name,
+                       result.get("error") if isinstance(result, dict) else "invalid response")
+        raise ValueError("project_graph_context_unavailable")
+    return result
 
 
 def invocation(text):
@@ -34,6 +53,19 @@ def invocation(text):
             )):
         raise ValueError("project_graph_invocation_invalid")
     return envelope, text.lstrip()[end:]
+
+
+def prepared_invocation(text):
+    if _recipient == "thinkgraph":
+        return invocation(text)
+    if _recipient != "knowgraph" or not isinstance(text, str):
+        return None
+    _, marker, body = text.partition("PROJECT_RESEARCH_REQUEST:")
+    reference, separator, envelope = body.partition("\n")
+    parsed = invocation(envelope) if marker and separator else None
+    if parsed and parsed[0]["projectMapContext"]["pairReference"] != reference:
+        raise ValueError("project_graph_research_reference_mismatch")
+    return parsed
 
 
 def map_text(context):
@@ -77,7 +109,11 @@ def map_text(context):
             "entities": graph["entities"], "relationships": relationships}
     explanation = (
         "### Current Project Entity Map\n"
-        "Reuse exact Entity IDs. Jev weights describe relative preference among relationship labels, "
+        "Reuse canonical Entity names across graphs. Provider IDs are not interchangeable: "
+        "engraphisEntityId belongs only to ThinkGraph; graphitiEntityId belongs only to KnowGraph. "
+        "When graphitiEntityId is absent, omit entity_uuid from Graphiti writes and use entity_name; "
+        "the existing name resolver creates the first permitted Graphiti representation. "
+        "Jev weights describe relative preference among relationship labels, "
         "not the truth of the underlying claim. Candidates describe the same directed relationship; "
         "only the leading two are shown and omitted candidates may retain weight. The stored label "
         "is preserved separately. Graph ownership remains significant. Retrieve the relevant Thinks "
@@ -87,9 +123,18 @@ def map_text(context):
 
 
 def project_map_context(*, session_id, user_message, **kwargs):
-    parsed = invocation(user_message)
+    parsed = prepared_invocation(user_message)
+    if _recipient in {"main", "knowgraph"}:
+        turn = kwargs.get("turn_id")
+        history = kwargs.get("conversation_history") or []
+        user = next((row for row in reversed(history) if row.get("role") == "user"), {})
+        admission = user.get("platform_message_id")
+        if not admission or not turn or _call_mcp is None:
+            return None
+        _turn_context[turn] = {"admission": admission, "packet": (
+            {"projectMapContext": parsed[0]["projectMapContext"]} if parsed else None), "sessionId": session_id}
     if parsed is None:
-        return None  # Not an application prepared-pair delivery.
+        return None  # Native tool discovery/reconnection precedes request middleware.
     context = parsed[0]["projectMapContext"]
     logger.info("project_graph_context session=%s project=%s pair=%s counts=%s map=%s read_ms=%s",
                 session_id, context["projectId"], context["pairReference"],
@@ -110,10 +155,29 @@ def prepare_model_request(*, request, session_id, **kwargs):
     current = messages[index]
     content = current.get("content")
     parts = content if isinstance(content, list) else [{"text": content}]
-    if not parts or not isinstance(parts[0], dict):
-        return None
-    parsed = invocation(parts[0].get("text"))
+    parsed = prepared_invocation(parts[0].get("text")) if parts and isinstance(parts[0], dict) else None
+    if _recipient in {"main", "knowgraph"} and parsed is None:
+        context = _turn_context.get(kwargs.get("turn_id"))
+        if not context:
+            return None
+        if context["packet"] is None:
+            context["packet"] = _graph_call("read_map", {"_nativeAdmissionId": context["admission"]})
+        packet = context["packet"]
+        text = map_text(packet["projectMapContext"])
+        if packet.get("selectedContext"):
+            text += "\nSelected research context (Thinks are framing, not evidence):\n" + json.dumps(packet["selectedContext"], ensure_ascii=False)
+        if _recipient == "knowgraph":
+            text += "\nResearch assignment:\n" + json.dumps(packet["research"], ensure_ascii=False)
+        content = current.get("content")
+        rendered = ([*content, {"type": "text", "text": text}] if isinstance(content, list)
+                    else str(content or "") + "\n\n" + text)
+        prior = (messages[:index] if _recipient == "main" else
+                 [row for row in messages[:index] if row.get("role") in {"system", "developer"}])
+        return {"request": {**request, key: [*prior, {**current, "content": rendered}, *messages[index + 1:]]},
+                "reason": "current scoped Project map"}
     if parsed is None:
+        # Ordinary Main/KnowGraph turns retain their native history. Only the
+        # established prepared ThinkGraph envelope excludes prior chat.
         return None
     envelope, injected = parsed
     text = envelope["input"] + injected
@@ -126,18 +190,64 @@ def prepare_model_request(*, request, session_id, **kwargs):
 
 
 def observe_map_delivery(*, session_id, user_message, request_messages, **kwargs):
-    parsed = invocation(user_message)
+    parsed = prepared_invocation(user_message)
     if parsed is None:
-        return
-    context = parsed[0]["projectMapContext"]
+        current = _turn_context.get(kwargs.get("turn_id"))
+        if not current or not current.get("packet"):
+            return
+        context = current["packet"]["projectMapContext"]
+    else:
+        context = parsed[0]["projectMapContext"]
     encoded = json.dumps(request_messages, ensure_ascii=False)
     delivered = json.dumps(map_text(context), ensure_ascii=False)[1:-1] in encoded
-    wrapped = json.dumps(user_message, ensure_ascii=False)[1:-1] in encoded
-    logger.info("project_graph_request session=%s map=%s delivered=%s transport_wrapper_present=%s",
-                session_id, context.get("mapSha256"), delivered, wrapped)
+    wrapped = parsed is not None and json.dumps(user_message, ensure_ascii=False)[1:-1] in encoded
+    count = encoded.count(json.dumps(map_text(context), ensure_ascii=False)[1:-1])
+    logger.info("project_graph_request session=%s map=%s delivered=%s copies=%s transport_wrapper_present=%s",
+                session_id, context.get("mapSha256"), delivered, count, wrapped)
 
 
 def register(ctx):
+    global _call_mcp, _recipient
+    _call_mcp = ctx.call_mcp
+    _recipient = ctx.get_config("recipient", "thinkgraph")
     ctx.register_hook("pre_llm_call", project_map_context)
     ctx.register_middleware("llm_request", prepare_model_request)
     ctx.register_hook("pre_api_request", observe_map_delivery)
+    ctx.register_hook("pre_tool_call", before_tool)
+    ctx.register_hook("post_llm_call", end_context)
+    ctx.register_hook("on_session_end", end_context)
+
+
+def before_tool(*, tool_name, args, session_id="", **kwargs):
+    graph_tool = tool_name.startswith(tuple("mcp__liquidaity__" + family
+        for family in ("project_graph_", "graphiti_", "engraphis_")))
+    current = _turn_context.get(kwargs.get("turn_id"))
+    if not current:
+        if _recipient in {"main", "knowgraph"} and (graph_tool
+                or (tool_name == "message_agent" and str(args.get("target", "")).lstrip("@").casefold() == "knowgraph")):
+            return {"action": "block", "message": "The current native turn has no authorized Project context; nothing was submitted."}
+        return None
+    admission = current["admission"]
+    if graph_tool:
+        return {"action": "modify", "args": {**args, "_nativeAdmissionId": admission}}
+    if tool_name != "message_agent" or str(args.get("target", "")).lstrip("@").casefold() != "knowgraph":
+        return None
+    try:
+        message = str(args.get("message") or "")
+        if message.startswith("PROJECT_RESEARCH_REQUEST:"):
+            return None  # A reference already prepared by the granted operation.
+        selection = json.loads(message)
+        prepared = _graph_call("prepare_research", {**selection, "_nativeAdmissionId": admission})
+        return {"action": "modify", "args": {**args, "message": prepared["message"]}}
+    except Exception as error:
+        logger.warning("project_graph_research_not_sent reason=%s", error)
+        return {"action": "block", "message": "Research context preparation failed; no message was delivered to KnowGraph. Do not retry automatically or guess different Entity IDs. Report the preparation failure."}
+
+
+def end_context(*, session_id, turn_id="", **kwargs):
+    if turn_id:
+        _turn_context.pop(turn_id, None)
+        return
+    for turn, context in list(_turn_context.items()):
+        if context["sessionId"] == session_id:
+            _turn_context.pop(turn, None)

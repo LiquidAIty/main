@@ -9,13 +9,14 @@
 # Entity: Tool Catalog
 # Relationship: This file resolves only published operation definitions, enforces each request's exact grants, rejects caller-supplied server identity, and invokes the selected canonical operation.
 # Entity: Authentication
-# Relationship: This file injects only the Project, Card, Run, and caller scope established by the authenticated request principal.
+# Relationship: This file resolves supplied native admission references through the trusted context owner, binds their saved authorization for one request, and injects authenticated Project, Card, Run, and caller scope.
 
 from __future__ import annotations
 
 import asyncio
 import inspect
 import json
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -276,6 +277,8 @@ async def dispatch_tool(
 
 
 def mcp_tool_timeout_seconds(name: str) -> float:
+    if name == "graphiti.add_know":
+        return mcp_provider_operations.GRAPHITI_KNOW_WRITE_TIMEOUT_SECONDS
     if name in {'building_model.read_case', 'building_model.edit_inputs'}:
         return 960.0  # Existing Python rails worker: 900 s; HTTP forwarding: 930 s.
     definition = operation_definition(name)
@@ -304,7 +307,24 @@ async def execute_tool_request(
         **(mcp_auth.oauth_trace_fields() if transport == "mcp" else {}),
     }
     mcp_observability.trace("tool_call_started", **trace_fields)
+    from app.python_models.project_graph_invocation import CURRENT_GRAPH_INVOCATION, rails_context
+    scope_token = None
     try:
+        arguments = dict(arguments)
+        admission = arguments.pop("_nativeAdmissionId", None)
+        if admission is not None:
+            principal = mcp_auth.internal_mcp_principal() or {}
+            scope_started = time.monotonic()
+            invocation = await asyncio.to_thread(rails_context, "resolve", principal=principal, admissionId=admission)
+            mcp_observability.trace("graph_invocation_resolved", **trace_fields,
+                duration_ms=round((time.monotonic() - scope_started) * 1000))
+            authorization = await asyncio.to_thread(mcp_auth._resolve_internal_card_context_sync,
+                {**principal, "projectId": invocation["projectId"]})
+            if authorization is None:
+                raise ValueError("graph_invocation_authorization_unavailable")
+            scope_token = CURRENT_GRAPH_INVOCATION.set({**invocation, "authorization": authorization})
+            mcp_observability.trace("graph_invocation_authorized", **trace_fields,
+                duration_ms=round((time.monotonic() - scope_started) * 1000))
         result = await asyncio.wait_for(
             dispatch_tool(tool_name, arguments),
             timeout=mcp_tool_timeout_seconds(tool_name),
@@ -351,6 +371,9 @@ async def execute_tool_request(
             isError=True,
         )
         return result
+    finally:
+        if scope_token is not None:
+            CURRENT_GRAPH_INVOCATION.reset(scope_token)
 
 
 async def call_tool(name: str, arguments: dict[str, Any]) -> Any:

@@ -8,7 +8,7 @@
  * Entity: ThinkGraph
  * Relationship: This file reads Engraphis projections and neighborhoods and subscribes to Project graph commits independently of Main chat.
  * Entity: KnowGraph
- * Relationship: This file validates Entity-only Graphiti projections, bounds startup retries, reads exact neighborhoods, and refreshes only after confirmed Know removal.
+ * Relationship: Validates Entity-only Graphiti projections, bounds read retries, reads exact neighborhoods, and refreshes on KnowGraph change notifications or confirmed Know removal.
  * Entity: CodeGraph
  * Relationship: This file opens CodeGraph only on demand, validates its read envelopes, replaces the active File structure, and loads Symbol source only by explicit action.
  * Entity: Jev Decisions
@@ -306,19 +306,22 @@ export default function useAgentBuilderKnowledgeGraphs({
     const query = new URLSearchParams({ projectId });
     const stream = new EventSource(`/api/thinkgraph/events?${query}`, { withCredentials: true });
     const refresh = () => { void refreshThinkGraph(); };
+    const refreshResearch = () => { void refreshKnowGraph(); };
     const disconnected = () => {
       setErrors(current => ({ ...current, thinkgraph: 'ThinkGraph live updates disconnected. Reconnecting.' }));
     };
     stream.addEventListener('ready', refresh);
     stream.addEventListener('changed', refresh);
+    stream.addEventListener('knowgraph_changed', refreshResearch);
     stream.addEventListener('error', disconnected);
     return () => {
       stream.removeEventListener('ready', refresh);
       stream.removeEventListener('changed', refresh);
+      stream.removeEventListener('knowgraph_changed', refreshResearch);
       stream.removeEventListener('error', disconnected);
       stream.close();
     };
-  }, [projectId, refreshThinkGraph]);
+  }, [projectId, refreshThinkGraph, refreshKnowGraph]);
 
   const loadCodeGraph = useCallback(async (): Promise<GraphProjectionV1 | null> => {
     const requestId = ++codeProjectionRequestRef.current;

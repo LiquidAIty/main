@@ -4,120 +4,69 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Agent Builder
- * Relationship: This file verifies Agent Builder rail visibility follows enabled saved Card identities.
+ * Relationship: Verifies optional rail icons follow enabled connections and update on disconnect/reconnect.
  * Entity: Saved Cards
- * Relationship: This file verifies Card identity, rather than orange or blue wires, controls optional surface visibility.
+ * Relationship: Preserves stable Card identification and proves KnowGraph alone cannot enable Graphs.
  */
-
 import { describe, expect, it } from 'vitest';
-
 import type { AgentCardInstance, DeckDocument } from '../../../types/agentgraph';
 import { deriveVisibleRailItems, isWorldViewCard } from './railVisibility';
 
-const worldView: AgentCardInstance = {
-  id: 'card-generated-id',
-  title: 'WorldView',
-  role: 'Geospatial orchestration',
-  prompt: 'Operate the one Earth experience.',
-  templateId: 'template_assist',
-  runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldview' },
-  runtimeOptions: {},
-  position: { x: 0, y: 0 },
-};
-
-const worldSignals: AgentCardInstance = {
-  ...worldView,
-  id: 'card_worldsignals_agent',
-  title: 'WorldSignals',
-  runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldsignals' },
-  runtimeOptions: {},
-};
-
-const trading: AgentCardInstance = {
-  ...worldView,
-  id: 'card_trading_workbench',
-  title: 'Trader',
-  runtime: { kind: 'hermes', mode: 'delegate', profile: 'trader' },
-  runtimeOptions: {},
-};
-
-function visible(
-  nodes: AgentCardInstance[],
-  workspaceView = 'canvas',
-): ReturnType<typeof deriveVisibleRailItems> {
-  return deriveVisibleRailItems({
-    deck: { nodes, edges: [] },
-    workspaceView,
-  });
-}
+const card = (id: string, profile: string): AgentCardInstance => ({
+  id, title: profile, role: '', prompt: '', templateId: 'template_assist',
+  runtime: { kind: 'hermes', mode: 'delegate', profile }, runtimeOptions: {}, position: { x: 0, y: 0 },
+});
+const main = card('card_main_chat', 'main');
+const worldView = card('generated-worldview-id', 'worldview');
+const worldSignals = card('card_worldsignals_agent', 'worldsignals');
+const trading = card('card_trading_workbench', 'trading');
+const think = card('card_thinkgraph', 'thinkgraph');
+const know = card('card_knowgraph', 'knowgraph');
+const nodes = [main, worldView, worldSignals, trading, think, know];
+const hidden = { showKnowledge: false, showWorldsignal: false, showWorldview: false, showTrading: false };
+const wire = (target: string, edgeType: 'flow' | 'magentic_option' = 'flow'): DeckDocument['edges'][number] =>
+  ({ id: target, source: main.id, target, edgeType });
 
 describe('product rail visibility', () => {
-  it('recognizes the one Earth surface from its stable saved profile, not Card id', () => {
+  it('recognizes WorldView by its stable profile, not its Card id', () => {
     expect(isWorldViewCard(worldView)).toBe(true);
-    expect(isWorldViewCard({
-      ...worldView,
-      id: 'another-saved-identity',
-    })).toBe(true);
+    expect(isWorldViewCard({ ...worldView, id: 'another-id' })).toBe(true);
     expect(isWorldViewCard(worldSignals)).toBe(false);
   });
 
-  it('does not show disconnected WorldSignals while preserving other enabled product surfaces', () => {
-    expect(visible([
-      worldView,
-      worldSignals,
-      trading,
-    ])).toEqual({
-      showKnowledge: true,
-      showWorldsignal: false,
-      showWorldview: true,
-      showTrading: true,
-    });
+  it('hides disconnected optional surfaces even while their Cards still exist', () => {
+    expect(deriveVisibleRailItems({ deck: { nodes, edges: [] } })).toEqual(hidden);
   });
 
-  it('shows WorldSignals only when its saved Card is connected', () => {
-    const deck = {
-      nodes: [worldSignals],
-      edges: [{
-        id: 'worldsignals-flow',
-        source: 'card_main_chat',
-        target: worldSignals.id,
-        edgeType: 'flow' as const,
-      }],
-    };
-    expect(deriveVisibleRailItems({ deck, workspaceView: 'canvas' }).showWorldsignal).toBe(true);
+  it.each(['flow', 'magentic_option'] as const)('accepts an enabled %s wire and reacts to disconnect/reconnect', edgeType => {
+    const edges = [worldView, worldSignals, trading, think].map(node => wire(node.id, edgeType));
+    const deck = { nodes, edges };
+    const shown = { showKnowledge: true, showWorldsignal: true, showWorldview: true, showTrading: true };
+    expect(deriveVisibleRailItems({ deck })).toEqual(shown);
+    expect(deriveVisibleRailItems({ deck: { ...deck, edges: [] } })).toEqual(hidden);
+    expect(deriveVisibleRailItems({ deck })).toEqual(shown);
   });
 
-  it('keeps orange and blue wires independent from surface visibility', () => {
-    const nodes = [worldView];
-    const withoutWires = deriveVisibleRailItems({
-      deck: { nodes, edges: [] },
-      workspaceView: 'canvas',
-    });
-    const withUnrelatedWires = deriveVisibleRailItems({
-      deck: {
-        nodes,
-        edges: [
-          { id: 'orange', source: 'main', target: worldView.id, edgeType: 'flow' },
-          {
-            id: 'blue', source: 'card_magentic', target: worldView.id,
-            edgeType: 'magentic_option',
-          },
-        ],
-      },
-      workspaceView: 'canvas',
-    });
-
-    expect(withUnrelatedWires).toEqual(withoutWires);
-    expect(withoutWires.showWorldview).toBe(true);
+  it('uses ThinkGraph alone for Graphs, independently of KnowGraph', () => {
+    expect(deriveVisibleRailItems({ deck: { nodes, edges: [wire(know.id)] } }).showKnowledge).toBe(false);
+    expect(deriveVisibleRailItems({ deck: { nodes, edges: [wire(think.id)] } }).showKnowledge).toBe(true);
   });
 
-  it('hides a disabled saved Card unless its already-open workspace remains active', () => {
-    const disabled = {
-      ...worldView,
-      enabled: false,
-    };
+  it('ignores disabled Cards, disabled wires, dangling endpoints and self-wires', () => {
+    for (const deck of [
+      { nodes: nodes.map(node => ({ ...node, enabled: false })), edges: [wire(worldView.id)] },
+      { nodes, edges: [{ ...wire(worldView.id), enabled: false }] },
+      { nodes, edges: [{ ...wire(worldView.id), edgeType: 'invalid' as const }] },
+      { nodes, edges: [{ ...wire(worldView.id), source: 'missing' }] },
+      { nodes, edges: [{ ...wire(worldView.id), source: worldView.id }] },
+      { nodes: nodes.map(node => node.id === main.id ? { ...node, enabled: false } : node), edges: [wire(worldView.id)] },
+    ]) expect(deriveVisibleRailItems({ deck })).toEqual(hidden);
+  });
 
-    expect(visible([disabled]).showWorldview).toBe(false);
-    expect(visible([disabled], 'worldview').showWorldview).toBe(true);
+  it('keeps an icon while another valid connection remains, regardless of edge direction', () => {
+    expect(deriveVisibleRailItems({ deck: { nodes, edges: [
+      { ...wire(worldView.id), enabled: false },
+      { id: 'reverse', source: worldView.id, target: main.id, edgeType: 'flow' },
+    ] } }).showWorldview).toBe(true);
   });
 });

@@ -4,15 +4,19 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
-# Relationship: This file contributes bounded PDF ingestion, Project-scoped episode deletion, provider-safe errors, and runtime health to the KnowGraph feature.
+# Relationship: This file exposes bounded PDF ingestion, Project-scoped episode deletion, process-authenticated research settlement, provider-safe ingestion errors, and runtime health.
+# Entity: Jev Decisions
+# Relationship: This file loads one persisted Know and its actual Graphiti facts, then supplies web evidence and Project vocabulary to the existing Jev settlement owner.
 
 from __future__ import annotations
 
 import logging
+import hmac
+import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from graphiti_core.errors import NodeNotFoundError
@@ -31,6 +35,30 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 class GraphitiEpisodeDeleteRequest(BaseModel):
     project_id: str
     graphiti_episode_uuid: str
+
+
+class ResearchSettlementRequest(BaseModel):
+    project_id: str
+    know_uuid: str
+
+
+@app.post("/research/settle")
+async def settle_research(payload: ResearchSettlementRequest, request: Request):
+    secret = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "")
+    if len(secret) < 32 or not hmac.compare_digest(secret, request.headers.get("X-LiquidAIty-Internal-MCP-Secret", "")):
+        raise HTTPException(403, "internal_process_authorization_required")
+    import jev_fact_settlement
+    _runtime, graphiti, _database = graphiti_runtime.create_graphiti_runtime()
+    try:
+        know = await graphiti.get_know(payload.know_uuid, group_id=graphiti_project_group_id(payload.project_id))
+        edges, nodes = await jev_fact_settlement.read_episode_facts(graphiti, episode_id=know.uuid)
+        return await jev_fact_settlement.classify_episode_facts_with_jev(
+            graphiti, project_id=payload.project_id, edges=edges, nodes=nodes, episode_id=know.uuid,
+            source_name=know.citation.title, source_reference=know.citation.resolved_url or know.citation.url,
+            text=know.content, reference_time=know.valid_at, source_type="web_research",
+            relationship_vocabulary=await jev_fact_settlement.read_project_relationship_vocabulary(payload.project_id))
+    finally:
+        await graphiti.driver.close()
 
 
 def _ingest_error(error: Exception) -> tuple[int, str, str]:
