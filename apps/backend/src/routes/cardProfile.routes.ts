@@ -116,6 +116,7 @@ export function createCardProfileRouter(connect = profileApi, activate = activat
           const selectedToolsets = options.toolsets || [];
           await api('/api/config', 'PUT', { profile, config: {
             ...(profile === 'knowgraph' ? {
+              tools: { tool_search: { enabled: 'off' } },
               platform_toolsets: { cli: selectedToolsets },
               agent: { disabled_toolsets: [...new Set([
                 ...(currentConfig.agent?.disabled_toolsets || []),

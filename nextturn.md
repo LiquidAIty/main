@@ -1,0 +1,8 @@
+# Unfinished work only
+
+- Main Bot-reply follow-up: the three-Entity research batch saved/read back and returned successfully, but Main's extra graph/quote lookups during the incoming KnowGraph reply failed. Correlate any future repair to the original immutable research/native admission; do not weaken scope guards or use a last-active Project. The incoming admission carries bot:knowgraph and plain result text rather than prepared research scope.
+- Chat presentation visual acceptance: current projected Entity/Know references now render as named graph links; focused rendering/click checks and client TypeScript checks pass. Preview serves the changed modules, but browser control timed out, so visual acceptance is unproven. Older records absent from the bounded projection are not guessed.
+- KnowGraph automatic research remains OFF. Finish automatic off/on/committed-Think dispatch, name/scope/retry acceptance and nonempty Jev assessment. Main-directed batch writing/readback is proven; do not repeat the old citation-copy retries.
+- Canvas dragging: owner confirms reproducible save-uncertain freeze. Capture the failed PUT and [builder][deck-save-proof].error. Do not discard local positions/wires or blame reload without evidence.
+- Roster/activity audit: repeated profiles.list and wired-Card session reads, plus repeated roster preparation on opens, remain deferred. Investigate initial deck read plus wire-change invalidation; preserve genuine native activity observations.
+- Builder map, PDF/image ingestion, Jev sorting/relationship-quality/isolated-node review, and 3D/layered views remain deferred.

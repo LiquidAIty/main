@@ -17,11 +17,12 @@ from __future__ import annotations
 import asyncio
 import copy
 import inspect
+import json
 import os
 from importlib import metadata as importlib_metadata
 from typing import Any
 
-from mcp.types import Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 
 _GRAPHITI_MODULE: Any | None = None
@@ -248,7 +249,27 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
         from app.python_models.knowgraph_research import add_research_know
         principal = mcp_auth.internal_mcp_principal() or {}
         if CURRENT_GRAPH_INVOCATION.get() is not None or principal.get("profile") == "knowgraph":
-            return await add_research_know(graphiti_module_ref, arguments)
+            try:
+                value = await add_research_know(graphiti_module_ref, arguments)
+            except ValueError as error:
+                if str(error) != "Know UUID is already used by a different episode":
+                    raise
+                from app.application_tool_error import ApplicationToolError
+                raise ApplicationToolError(
+                    "know_content_conflict: This UUID already exists with different content. "
+                    "The saved Know was not changed. Read it and preserve its exact field values."
+                ) from error
+            know = value["know"]
+            receipt = {
+                "message": f"Know {know['uuid']} saved; settlement {value['status']}",
+                "know_uuid": know["uuid"], "content_hash": know["content_hash"],
+                "group_id": know["group_id"], "entity_name": arguments["entity_name"],
+                "entity_uuid": know["entity_uuid"], **value,
+            }
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(receipt, ensure_ascii=False))],
+                structuredContent={"result": receipt}, isError=value["status"] != "completed",
+            )
         # Existing explicitly granted non-research callers keep Graphiti's contract.
         # A native KnowGraph turn can never escape its required research scope.
     if name == "get_know":
@@ -260,7 +281,12 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
         projected = know_from_properties(dict(rows[0]["properties"])) if rows else None
         origins = {key: projected[key] for key in ("researchOrigins", "researchOriginCount")
                    if projected and key in projected}
-        return {"know": {**graphiti_module_ref._know_result(know), **origins}}
+        payload = {"message": f"Found Know {know.uuid}",
+                   "know": {**graphiti_module_ref._know_result(know), **origins}}
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
+            structuredContent={"result": payload}, isError=False,
+        )
     return await graphiti_module_ref.mcp.call_tool(name, dict(arguments))
 
 

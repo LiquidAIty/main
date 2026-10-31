@@ -8,7 +8,7 @@ import pytest
 
 import graphiti_core.graphiti as graphiti_module
 from graphiti_core.driver.driver import GraphProvider
-from graphiti_core.edges import Edge, EntityEdge
+from graphiti_core.edges import CommunityEdge, Edge, EntityEdge
 from graphiti_core.graphiti import AddEpisodeResults, Graphiti
 from graphiti_core.knows import (
     KnowCitation,
@@ -18,7 +18,7 @@ from graphiti_core.knows import (
     know_episode_content,
     resolve_know_entity,
 )
-from graphiti_core.nodes import EntityNode, EpisodeType, EpisodicNode, Node
+from graphiti_core.nodes import CommunityNode, EntityNode, EpisodeType, EpisodicNode, Node
 from graphiti_core.search.search_config import SearchResults
 from graphiti_core.tracer import NoOpTracer
 
@@ -328,12 +328,16 @@ def test_know_content_identity_excludes_retrieval_time():
 
 
 @pytest.mark.asyncio
-async def test_add_episode_creates_a_new_episode_for_a_caller_supplied_uuid(monkeypatch):
+@pytest.mark.parametrize('node_count', [0, 1, 2, 3])
+@pytest.mark.parametrize('update_communities', [False, True])
+async def test_add_episode_creates_a_new_episode_for_a_caller_supplied_uuid(
+    monkeypatch, node_count, update_communities
+):
     now = datetime(2026, 10, 20, tzinfo=timezone.utc)
     driver = SimpleNamespace(provider=GraphProvider.NEO4J, _database='g1')
     graphiti = Graphiti.__new__(Graphiti)
     graphiti.driver = driver
-    graphiti.clients = SimpleNamespace(driver=driver)
+    graphiti.clients = SimpleNamespace(driver=driver, llm_client=object(), embedder=object())
     graphiti.tracer = NoOpTracer()
     graphiti.max_coroutines = 1
     graphiti.store_raw_episode_content = True
@@ -341,16 +345,25 @@ async def test_add_episode_creates_a_new_episode_for_a_caller_supplied_uuid(monk
     monkeypatch.setattr(EpisodicNode, 'get_by_uuids', AsyncMock(return_value=[]))
     get_by_uuid = AsyncMock(side_effect=graphiti_module.NodeNotFoundError('episode-1'))
     monkeypatch.setattr(EpisodicNode, 'get_by_uuid', get_by_uuid)
-    monkeypatch.setattr(graphiti_module, 'extract_nodes', AsyncMock(return_value=([], {})))
+    nodes = [EntityNode(name=f'Entity {i}', group_id='g1', created_at=now) for i in range(node_count)]
+    communities = [CommunityNode(name=f'Community {i}', group_id='g1', created_at=now) for i in range(node_count)]
+    community_edges = [CommunityEdge(source_node_uuid=community.uuid, target_node_uuid=node.uuid,
+        group_id='g1', created_at=now) for community, node in zip(communities, nodes)]
+    updates = [([community], [edge]) for community, edge in zip(communities, community_edges)]
+    if node_count == 3:
+        updates[-1] = ([], [])  # An Entity without a community remains a valid result.
+    update = AsyncMock(side_effect=updates)
+    monkeypatch.setattr(graphiti_module, 'update_community', update)
+    monkeypatch.setattr(graphiti_module, 'extract_nodes', AsyncMock(return_value=(nodes, {})))
     monkeypatch.setattr(
         graphiti_module,
         'resolve_extracted_nodes',
-        AsyncMock(return_value=([], {}, [])),
+        AsyncMock(return_value=(nodes, {}, [])),
     )
     monkeypatch.setattr(
         graphiti_module,
         'extract_attributes_from_nodes',
-        AsyncMock(return_value=[]),
+        AsyncMock(return_value=nodes),
     )
     graphiti._extract_and_resolve_edges = AsyncMock(return_value=([], [], []))
 
@@ -370,13 +383,17 @@ async def test_add_episode_creates_a_new_episode_for_a_caller_supplied_uuid(monk
         source=EpisodeType.text,
         group_id='g1',
         uuid='episode-1',
-        update_communities=False,
+        update_communities=update_communities,
         previous_episode_uuids=[],
     )
 
     get_by_uuid.assert_awaited_once_with(driver, 'episode-1')
     assert processed['episode'].uuid == 'episode-1'
     assert result.episode.uuid == 'episode-1'
+    assert result.nodes == nodes
+    assert update.await_count == (node_count if update_communities else 0)
+    assert result.communities == ([community for batch, _ in updates for community in batch] if update_communities else [])
+    assert result.community_edges == ([edge for _, batch in updates for edge in batch] if update_communities else [])
 
 
 @pytest.mark.asyncio

@@ -76,6 +76,7 @@ describe('Card profile settings', () => {
     expect(api).toHaveBeenCalledWith('/api/config', 'PUT', expect.objectContaining({ config: expect.objectContaining({
       plugins: { enabled: ['existing', 'project-graph'], disabled: ['other'], entries: { 'project-graph': { settings: { recipient: 'knowgraph' }, mcp_allowlist: ['liquidaity'] } } },
       platform_toolsets: { cli: ['terminal'] },
+      tools: { tool_search: { enabled: 'off' } },
       agent: { disabled_toolsets: ['delegation', 'browser', 'web', 'project', 'catalog', 'desktop_ui'] },
       mcp_servers: { liquidaity: { timeout: 600, tools: { include: ['graphiti.get_know'], resources: false, prompts: false } } },
     }) }));
@@ -94,6 +95,7 @@ describe('Card profile settings', () => {
     const config = api.mock.calls.find(([url, method]) => url === '/api/config' && method === 'PUT')?.[2]?.config as any;
     expect(config).not.toHaveProperty('platform_toolsets');
     expect(config).not.toHaveProperty('agent');
+    expect(config).not.toHaveProperty('tools');
     expect(config.mcp_servers.liquidaity.tools).toEqual({ include: ['project_graph.read_map'] });
   });
   it('reads the actual saved profile tools and graph unchanged', async () => {

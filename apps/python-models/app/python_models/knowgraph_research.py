@@ -14,6 +14,7 @@ import asyncio
 from contextvars import ContextVar
 from copy import deepcopy
 import json
+import logging
 
 from graphiti_core.driver.graph_operations.graph_operations import GraphOperationsInterface
 from graphiti_core.knows import KnowCitation, KnowDirection, normalize_entity_name
@@ -137,6 +138,8 @@ async def add_research_know(module, arguments: dict) -> dict:
                      "know": {**module._know_result(know), "researchOrigins": [origin]}, "jev": jev,
                      "created": result.created, "entity_created": result.entity_created}
         except Exception as error:
+            logging.getLogger(__name__).exception("KnowGraph queued write failed; request=%s persisted=%s",
+                                                  scope["requestId"], persisted is not None)
             if persisted is not None:
                 value = {"status": "partial", "know": persisted, "error": str(error)}
             else:

@@ -607,6 +607,59 @@ def test_entity_know_dispatch_preserves_grounded_citation_and_typed_fields(
     assert "source_description" not in arguments
 
 
+@pytest.mark.parametrize("operation,status", [("get_know", "completed"), ("add_know", "completed"), ("add_know", "partial")])
+def test_research_provider_responses_match_the_native_output_schema(monkeypatch, operation, status):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from jsonschema import validate
+    import graphiti_mcp_server
+    from app.python_models import knowgraph_research
+
+    know = {"uuid": "know-one", "entity_uuid": "entity-one", "group_id": "liquidaity-project-one",
+            "content_hash": "a" * 64, "citation": {"evidence": "First line\nSecond line with literal \\n text"}}
+    client = SimpleNamespace(get_know=AsyncMock(return_value=SimpleNamespace(**know)),
+                             driver=SimpleNamespace(execute_query=AsyncMock(return_value=([], None, None))))
+    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE",
+                        SimpleNamespace(graphiti_client=client, _know_result=lambda _: know))
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: {"profile": "knowgraph"})
+    monkeypatch.setattr(knowgraph_research, "add_research_know", AsyncMock(return_value={
+        "status": status, "know": know, **({"error": "assessment_unavailable"} if status == "partial" else {}),
+    }))
+    result = asyncio.run(mcp_graphiti_provider.call_graphiti_tool(operation, {
+        "uuid": "know-one", "group_id": "liquidaity-project-one", "entity_name": "PL",
+    }))
+    tools = asyncio.run(graphiti_mcp_server.mcp.list_tools())
+    schema = next(tool for tool in tools if tool.name == operation).output_schema
+    assert isinstance(result, CallToolResult)
+    structured = result.structured_content
+    validate(structured, schema)
+    assert json.loads(result.content[0].text) == structured["result"]
+    assert structured["result"]["know"] == know
+    if operation == "add_know":
+        assert result.is_error is (status == "partial")
+        assert structured["result"]["status"] == status
+    else:
+        client.get_know.assert_awaited_once_with("know-one", group_id="liquidaity-project-one")
+
+
+@pytest.mark.parametrize("conflict", [True, False])
+def test_research_conflict_is_actionable_without_hiding_other_writer_failures(monkeypatch, conflict):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from app.application_tool_error import ApplicationToolError
+    from app.python_models import knowgraph_research
+
+    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE", SimpleNamespace())
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: {"profile": "knowgraph"})
+    error = "Know UUID is already used by a different episode" if conflict else "unexpected_writer_failure"
+    writer = AsyncMock(side_effect=ValueError(error))
+    monkeypatch.setattr(knowgraph_research, "add_research_know", writer)
+    with pytest.raises(ApplicationToolError if conflict else ValueError,
+                       match="know_content_conflict" if conflict else error):
+        asyncio.run(mcp_graphiti_provider.call_graphiti_tool("add_know", {"uuid": "know-one"}))
+    writer.assert_awaited_once()
+
+
 def test_exact_get_know_readback_is_correlated_to_the_authenticated_card_run(
     monkeypatch, clear_live_provider_operations,
 ):

@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Main Chat
- * Relationship: This file turns exact current Entity names in assistant messages into selectable text segments while leaving user text, code, URLs, and citations untouched.
+ * Relationship: This file presents exact current Entity names and record references as named graph links without changing stored messages, user text, URLs, or citations.
  * Entity: Project Knowledge Graph
  * Relationship: This file resolves each selectable chat Entity against current ThinkGraph and KnowGraph provider identities and refuses stale or mismatched graph evidence.
  * Entity: ThinkGraph
@@ -57,6 +57,7 @@ type TrieNode = {
   children: Map<string, TrieNode>;
   terminal?: boolean;
   target?: CanonicalEntityFocusTarget;
+  displayText?: string;
 };
 
 type EntityRecord = CanonicalEntityFocusMember & {
@@ -227,12 +228,17 @@ function buildTrie(
   targets: CanonicalEntityFocusTarget[],
   directory: CanonicalEntityDirectory,
   caseInsensitive = false,
+  recordLinks = new Map<string, CanonicalEntityTextSegment>(),
 ): TrieNode {
   const root: TrieNode = { children: new Map() };
   const targetsByName = new Map(targets.map(target => [target.canonicalName, target]));
-  for (const canonicalName of new Set(
-    directory.entities.map(entity => entity.canonicalName),
-  )) {
+  const entries = new Map(directory.entities.map(entity => [entity.canonicalName, {
+    text: entity.canonicalName, target: targetsByName.get(entity.canonicalName),
+  }]));
+  for (const [id, link] of recordLinks) {
+    if (!entries.has(id)) entries.set(id, { text: link.text, target: link.target });
+  }
+  for (const [canonicalName, link] of entries) {
     let node = root;
     for (let index = 0; index < canonicalName.length; index += 1) {
       const character = caseInsensitive ? canonicalName[index].toLowerCase() : canonicalName[index];
@@ -241,7 +247,8 @@ function buildTrie(
       node = child;
     }
     node.terminal = true;
-    node.target = targetsByName.get(canonicalName);
+    node.target = link.target;
+    node.displayText = link.text !== canonicalName ? link.text : undefined;
   }
   return root;
 }
@@ -260,6 +267,7 @@ function segmentText(
     start: number;
     end: number;
     target?: CanonicalEntityFocusTarget;
+    displayText?: string;
   }> = [];
   for (let start = 0; start < text.length; start += 1) {
     if (mask[start]) continue;
@@ -270,7 +278,7 @@ function segmentText(
       if (node.terminal
         && protectedPrefix[end + 1] === protectedPrefix[start]
         && hasWordBoundaries(text, start, end + 1, text.slice(start, end + 1))) {
-        candidates.push({ start, end: end + 1, target: node.target });
+        candidates.push({ start, end: end + 1, target: node.target, displayText: node.displayText });
       }
     }
   }
@@ -292,7 +300,7 @@ function segmentText(
   for (const match of selected) {
     if (match.start > cursor) segments.push({ text: text.slice(cursor, match.start) });
     segments.push({
-      text: text.slice(match.start, match.end),
+      text: match.target ? match.displayText || text.slice(match.start, match.end) : text.slice(match.start, match.end),
       ...(match.target ? { target: match.target } : {}),
     });
     cursor = match.end;
@@ -309,7 +317,32 @@ export function createCanonicalEntityMatcher(
   const records = exactEntityRecords(projections, directory);
   if (!records) return null;
   const targets = buildTargets(records, directory);
-  const trie = buildTrie(targets, directory);
+  const recordLinks = new Map<string, CanonicalEntityTextSegment>();
+  const addReference = (id: unknown, link: CanonicalEntityTextSegment) => {
+    if (typeof id !== 'string' || !id.trim()) return;
+    // Ambiguous references stay unlinked; never guess between provider records.
+    recordLinks.set(id, recordLinks.has(id) ? { text: id } : link);
+  };
+  for (const target of targets) {
+    for (const member of target.members) {
+      addReference(member.entityId, { text: target.canonicalName, target });
+    }
+    const record = records.find(item => item.authority === 'knowgraph'
+      && item.canonicalName === target.canonicalName);
+    const evidence = record?.node.properties?.evidence;
+    if (!Array.isArray(evidence)) continue;
+    for (const know of evidence) {
+      if (!know || typeof know !== 'object' || know.graphitiEntityId !== record!.entityId
+        || typeof know.graphitiEpisodeId !== 'string' || !know.graphitiEpisodeId) continue;
+      const link = {
+        text: typeof know.title === 'string' && know.title.trim() ? know.title : `Know about ${target.canonicalName}`,
+        target: { ...target, view: 'knowgraph' as const, graphitiEpisodeId: know.graphitiEpisodeId },
+      };
+      addReference(know.graphitiEpisodeId, link);
+      addReference(know.contentHash, link);
+    }
+  }
+  const trie = buildTrie(targets, directory, false, recordLinks);
   return {
     revisionKey: [
       directory.projectId,

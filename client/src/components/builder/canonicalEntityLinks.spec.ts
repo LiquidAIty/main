@@ -125,6 +125,36 @@ describe('canonical Entity chat links', () => {
       .toEqual(['Rocket Lab', 'Rocket']);
   });
 
+  it('presents exact Entity ids, Know ids and content hashes as named links without mutating the source', () => {
+    const current = projections();
+    const knowId = 'a363493b-25ae-5032-ac90-82e9fd9d0189';
+    const contentHash = 'c'.repeat(64);
+    current.knowgraph.nodes[0] = { ...current.knowgraph.nodes[0], properties: { evidence: [{
+      graphitiEntityId: 'know-rocket', graphitiEpisodeId: knowId,
+      title: 'Rocket Lab cash flow', contentHash,
+    }] } } as GraphProjectionV1['nodes'][number];
+    const matcher = createCanonicalEntityMatcher(current)!;
+    const text = `Entity: know-rocket. Know: ${knowId}. Hash: ${contentHash}.`;
+    const links = matcher.segmentMessage('assistant', text).filter(segment => segment.target);
+    expect(links.map(link => link.text)).toEqual(['Rocket Lab', 'Rocket Lab cash flow', 'Rocket Lab cash flow']);
+    expect(links[1].target).toMatchObject({ canonicalName: 'Rocket Lab', view: 'knowgraph', graphitiEpisodeId: knowId });
+    expect(matcher.segmentMessage('user', text)).toEqual([{ text }]);
+    expect(matcher.segmentMessage('assistant', `https://example.test/${knowId}`))
+      .toEqual([{ text: `https://example.test/${knowId}` }]);
+    expect(matcher.segmentMessage('assistant', 'unknown-record-id')).toEqual([{ text: 'unknown-record-id' }]);
+    expect(text).toContain(knowId);
+  });
+
+  it('does not link a Know to a mismatched Entity or stale provider', () => {
+    const current = projections();
+    current.knowgraph.nodes[0] = { ...current.knowgraph.nodes[0], properties: { evidence: [{
+      graphitiEntityId: 'foreign-entity', graphitiEpisodeId: 'wrong-know', title: 'Wrong finding',
+    }] } } as GraphProjectionV1['nodes'][number];
+    expect(linkedNames(createCanonicalEntityMatcher(current)!.segmentMessage('assistant', 'wrong-know'))).toEqual([]);
+    current.knowgraph.nodes[0].label = 'Changed name';
+    expect(linkedNames(createCanonicalEntityMatcher(current)!.segmentMessage('assistant', 'know-rocket'))).toEqual([]);
+  });
+
   it('rejects duplicate canonical names instead of guessing an identity', () => {
     const matcher = createCanonicalEntityMatcher(projections({
       entities: [

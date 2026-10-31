@@ -14,7 +14,7 @@
  * Entity: Agent Input
  * Relationship: Shows actual Hermes questions and approval choices beside the existing composer and sends only the user's explicit response.
  * Entity: Project Knowledge Graph
- * Relationship: This file turns exact current assistant-side Entity names into explicit focus actions for the shared Project graph without rewriting message text.
+ * Relationship: This file displays exact current assistant-side Entity and Know references as named graph focus actions without rewriting stored messages.
  */
 
 import {
@@ -250,9 +250,13 @@ function inlineChatMarkdown(
     if (text[cursor] === '`') {
       const close = text.indexOf('`', cursor + 1);
       if (close > cursor + 1) {
-        output.push(<code key={`${keyPrefix}:code:${token++}`}>
-          {text.slice(cursor + 1, close)}
-        </code>);
+        const value = text.slice(cursor + 1, close);
+        const reference = role === 'assistant' ? entityMatcher?.segmentMessage(role, value) : null;
+        if (reference?.length === 1 && reference[0].target && reference[0].text !== value) {
+          pushText(value);
+        } else {
+          output.push(<code key={`${keyPrefix}:code:${token++}`}>{value}</code>);
+        }
         cursor = close + 1;
         continue;
       }

@@ -234,8 +234,12 @@ def prepare_research(*, projectId: str, entityNames: list[str], thinkIds: list[s
             raise ValueError("research_entity_not_current")
         entity = by_name[name]
         if entity.get("graphitiEntityId"):
-            selected.append({"entityName": name, "knows": read_knowgraph_entity_knows(
-                projectId, entity["graphitiEntityId"], limit=2)})
+            knows = read_knowgraph_entity_knows(projectId, entity["graphitiEntityId"], limit=2)
+            # Prior assignments are not source evidence; exact Know reads retain that metadata.
+            selected.append({"entityName": name, "knows": [
+                {key: value for key, value in know.items()
+                 if key not in {"researchOrigins", "researchOriginCount"}}
+                for know in knows]})
     request = {**identity, "entityNames": list(dict.fromkeys(names)), "requestId": request_id,
                "ownerUserId": owner, "map": graph, "selectedContext": selected}
     from .data_anchor_contract import GRAPH_CONTEXT_BYTE_LIMIT

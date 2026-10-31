@@ -22,6 +22,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { VirtuosoMockContext } from 'react-virtuoso';
 
 import MainProjectChat from './MainProjectChat';
+import { createCanonicalEntityMatcher } from '../builder/canonicalEntityLinks';
 
 const colors = {
   primary: '#4fa2ad',
@@ -197,6 +198,47 @@ describe('MainProjectChat', () => {
     expect(second.textContent).toBe('Know 2');
     fireEvent.click(second);
     expect(onEvidenceFocus).toHaveBeenCalledExactlyOnceWith('know-two');
+  });
+
+  it('renders actual graph references as words and exact clickable targets, including backticked ids', async () => {
+    const onEntityFocus = vi.fn();
+    const entityId = 'entity-rklb';
+    const knowId = 'a363493b-25ae-5032-ac90-82e9fd9d0189';
+    const entityMatcher = createCanonicalEntityMatcher({
+      thinkgraph: {
+        schemaVersion: 'thinkgraph.engraphis.v1', projectId: 'project-1', nodes: [], edges: [],
+        canonicalEntityDirectory: {
+          schemaVersion: 'graph-entity-directory', projectId: 'project-1', complete: true,
+          entities: [{ authority: 'knowgraph', canonicalName: 'RKLB', graphitiEntityId: entityId }],
+          counts: { engraphis: 0, graphiti: 1, total: 1 }, revisions: { engraphis: 't1', graphiti: 'k1' },
+          sha256: 'a'.repeat(64), bytes: 100, estimatedTokens: 25, readDurationMs: 1,
+        },
+      },
+      knowgraph: {
+        schemaVersion: 'knowgraph.graphiti.v1', projectId: 'project-1', edges: [],
+        nodes: [{ id: entityId, label: 'RKLB', canonicalName: 'RKLB', projectId: 'project-1', properties: {
+          evidence: [{ graphitiEntityId: entityId, graphitiEpisodeId: knowId, title: 'RKLB cash-flow finding' }],
+        } }],
+      },
+    });
+    const message = { role: 'assistant', text: `Entity: ${entityId}. Saved Know: \`${knowId}\`. Code: \`RKLB\`.` };
+    render(<VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 96 }}>
+      <MainProjectChat messages={[message]} onSend={vi.fn()} knowledgeProjectId="project-1" colors={colors}
+        entityMatcher={entityMatcher} onEntityFocus={onEntityFocus} />
+    </VirtuosoMockContext.Provider>);
+    scrollVirtualViewportToBottom(1, 96, 300);
+    const know = await screen.findByRole('button', { name: 'Open RKLB cash-flow finding in graph' });
+    const frame = screen.getByTestId('main-chat-message-frame');
+    expect(frame.textContent).not.toContain(knowId);
+    expect(frame.textContent).not.toContain(entityId);
+    expect(frame.querySelector('code')?.textContent).toBe('RKLB');
+    fireEvent.click(know);
+    expect(onEntityFocus).toHaveBeenCalledWith(expect.objectContaining({ graphitiEpisodeId: knowId, view: 'knowgraph' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open RKLB in graph' }));
+    expect(onEntityFocus).toHaveBeenLastCalledWith(expect.objectContaining({ canonicalName: 'RKLB', members: [
+      { authority: 'knowgraph', entityId },
+    ] }));
+    expect(message.text).toContain(knowId);
   });
 
   it('keeps intraword underscores literal while retaining intentional underscore emphasis', async () => {

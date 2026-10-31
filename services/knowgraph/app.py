@@ -20,6 +20,7 @@ from fastapi import FastAPI, File, Form, UploadFile, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from graphiti_core.errors import NodeNotFoundError
+from graphiti_core.helpers import parse_db_date
 
 import graphiti_runtime
 import ingest as knowgraph_ingest
@@ -50,12 +51,21 @@ async def settle_research(payload: ResearchSettlementRequest, request: Request):
     import jev_fact_settlement
     _runtime, graphiti, _database = graphiti_runtime.create_graphiti_runtime()
     try:
-        know = await graphiti.get_know(payload.know_uuid, group_id=graphiti_project_group_id(payload.project_id))
-        edges, nodes = await jev_fact_settlement.read_episode_facts(graphiti, episode_id=know.uuid)
+        # Settlement reads the stored Know, not a newer Graphiti client method.
+        result = await graphiti.driver.execute_query(
+            "MATCH (k:Episodic:Know {uuid:$uuid,group_id:$group}) "
+            "RETURN k.content AS content,k.valid_at AS valid_at,k.citation_title AS title,"
+            "coalesce(k.citation_resolved_url,k.citation_url) AS source_url",
+            uuid=payload.know_uuid, group=graphiti_project_group_id(payload.project_id), routing_="r")
+        rows = graphiti_runtime.graphiti_records(result)
+        if len(rows) != 1:
+            raise HTTPException(404, "research_know_not_found")
+        know = rows[0]
+        edges, nodes = await jev_fact_settlement.read_episode_facts(graphiti, episode_id=payload.know_uuid)
         return await jev_fact_settlement.classify_episode_facts_with_jev(
-            graphiti, project_id=payload.project_id, edges=edges, nodes=nodes, episode_id=know.uuid,
-            source_name=know.citation.title, source_reference=know.citation.resolved_url or know.citation.url,
-            text=know.content, reference_time=know.valid_at, source_type="web_research",
+            graphiti, project_id=payload.project_id, edges=edges, nodes=nodes, episode_id=payload.know_uuid,
+            source_name=know["title"], source_reference=know["source_url"],
+            text=know["content"], reference_time=parse_db_date(know["valid_at"]), source_type="web_research",
             relationship_vocabulary=await jev_fact_settlement.read_project_relationship_vocabulary(payload.project_id))
     finally:
         await graphiti.driver.close()

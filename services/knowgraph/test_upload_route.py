@@ -4,7 +4,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
-# Relationship: This file contributes route-level proof of content-addressed PDF storage, Project-scoped ingestion and deletion, provider health, and secret-free failures to the KnowGraph feature.
+# Relationship: This file proves scoped research settlement, PDF storage, ingestion and deletion, provider health, and secret-free failures at the KnowGraph routes.
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ import sys
 import asyncio
 import hashlib
 import io
+from types import SimpleNamespace
+from datetime import datetime, timezone
 import httpx
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -45,6 +47,41 @@ async def _request(method: str, path: str, **kwargs: object) -> httpx.Response:
 
 
 class KnowGraphUploadRouteTests(unittest.TestCase):
+    def test_research_settlement_reads_one_scoped_know_without_custom_client_api(self) -> None:
+        import jev_fact_settlement
+        row = {"content": "Verified observation and interpretation", "title": "Source",
+               "source_url": "https://example.test/source", "valid_at": "2025-01-31T00:00:00+00:00"}
+        for present in (False, True):
+            with self.subTest(present=present):
+                driver = SimpleNamespace(execute_query=AsyncMock(return_value=([row] if present else [], None, None)),
+                                         close=AsyncMock())
+                classify = AsyncMock(return_value={"status": "current"})
+                with (
+                    patch.dict(app.os.environ, {"LIQUIDAITY_INTERNAL_MCP_SECRET": "s" * 32}),
+                    patch.object(graphiti_runtime, "create_graphiti_runtime", return_value=(None, SimpleNamespace(driver=driver), None)),
+                    patch.object(jev_fact_settlement, "read_episode_facts", AsyncMock(return_value=([], []))),
+                    patch.object(jev_fact_settlement, "read_project_relationship_vocabulary", AsyncMock(return_value={"labels": []})),
+                    patch.object(jev_fact_settlement, "classify_episode_facts_with_jev", classify),
+                ):
+                    args = {"json": {"project_id": "project-one", "know_uuid": "know-one"}}
+                    denied = asyncio.run(_request("POST", "/research/settle", **args))
+                    self.assertEqual(denied.status_code, 403)
+                    driver.execute_query.assert_not_awaited()
+                    response = asyncio.run(_request("POST", "/research/settle", **args,
+                        headers={"X-LiquidAIty-Internal-MCP-Secret": "s" * 32}))
+                self.assertEqual(response.status_code, 200 if present else 404)
+                query, = driver.execute_query.await_args.args
+                self.assertIn("Episodic:Know", query)
+                self.assertEqual(driver.execute_query.await_args.kwargs,
+                                 {"uuid": "know-one", "group": "liquidaity-project-one", "routing_": "r"})
+                driver.close.assert_awaited_once()
+                if present:
+                    self.assertEqual(classify.await_args.kwargs["text"], row["content"])
+                    self.assertEqual(classify.await_args.kwargs["source_reference"], row["source_url"])
+                    self.assertEqual(classify.await_args.kwargs["reference_time"], datetime(2025, 1, 31, tzinfo=timezone.utc))
+                else:
+                    classify.assert_not_awaited()
+
     def test_health_exposes_loaded_graphiti_versions(self) -> None:
         with patch.object(
             graphiti_runtime,
