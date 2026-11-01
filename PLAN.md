@@ -45,7 +45,7 @@ profile, or historical screenshot cannot establish one Project's current configu
 - The approved compact map is JSON of the Entity/Relationship view the user sees at that turn, with
   only the single displayed top Jev result, not a second candidate or hidden graph data. It is transient
   turn context, not a graph record or agent tool.
-  ThinkGraph's existing prepared delivery includes its map alongside its exact extraction input.
+  ThinkGraph preparation includes map context; no automatic delivery from Main's conversation save is connected.
   The custom map plugin and endpoint are removed. Ordinary per-turn view delivery through the existing
   application/Hermes input path is not yet proven in Preview; do not restore a plugin or tool to claim it.
   Graph agents use their existing granted Engraphis and Graphiti readers; the application publishes
@@ -87,11 +87,12 @@ Project ownership is enforced at the application boundary. The old schema-20 `db
 is preserved untouched. Old test conversations are not migrated, seeded, replayed or processed.
 Raw conversation events are not Thinks and do not become Entity nodes.
 
-The existing successful-save handoff invokes the saved ThinkGraph Card using `prompt.submit`, then
-uses the existing Think/Jev settlement writer. The rejected invocation-scope plugin and its callback
-and transport additions are removed from source. The handoff is back at the saved pre-plugin baseline;
-the 2026-10-29 Trading recovery and test 419 subsequently exercised real completed-pair writes and
-preview readback. No replacement plugin is implemented.
+The application-side save-triggered handoff is removed, including its Main-session connection,
+receipt-based pair search, automatic ThinkGraph delivery, and completion-wait/settlement wrapper.
+Conversation writes and reads retain their existing Engraphis storage implementation and do not
+invoke ThinkGraph. The graph's existing preparation, extraction, settlement and source readers remain;
+no replacement automatic delivery is connected. Historical tests do not prove a current automatic path.
+The rejected invocation-scope plugin and its callback and transport additions remain removed.
 
 The completed-pair prompt now distinguishes substantive Entity-specific reasoning from general strategy
 and incidental mentions. Each Think retains one primary native incidence. The existing Engraphis text

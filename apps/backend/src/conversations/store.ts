@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Main Chat
- * Relationship: This file transports full Project conversations to Engraphis and starts the bounded ThinkGraph handoff only after a new completed reply commits.
+ * Relationship: This file transports full Project conversations to Engraphis without invoking graph processing.
  * Entity: Projects
  * Relationship: This file resolves each conversation against the canonical Project identity and keeps message ordering isolated within that Project conversation.
  */
@@ -14,7 +14,6 @@
 // the sole owner of saved Card Runs and their IDFs.
 import { pool } from '../db/pool';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
-import { submitSavedThinkPair } from './thinkGraphHandoff';
 
 const PROJECTS_TABLE = 'ag_catalog.projects';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -101,15 +100,7 @@ export async function appendConversationReplyOnce(input: {
   conversationId: string;
   message: ConversationMessageWrite & { role: 'assistant'; providerMessageId: string };
 }): Promise<{ inserted: boolean; message: ConversationMessage }> {
-  const saved = await storage('reply', input) as { inserted: boolean; message: ConversationMessage };
-  if (saved.inserted && saved.message.status === 'complete'
-    && (input.message.status === undefined || input.message.status === 'complete')) {
-    void submitSavedThinkPair(saved.message).catch(error => {
-      console.error('[thinkgraph]', { messageId: saved.message.messageId,
-        error: error instanceof Error ? error.message : 'submission_failed' });
-    });
-  }
-  return saved;
+  return await storage('reply', input) as { inserted: boolean; message: ConversationMessage };
 }
 
 export async function settleConversationMessage(input: {

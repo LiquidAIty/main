@@ -8,16 +8,14 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ query: vi.fn(), request: vi.fn(), handoff: vi.fn() }));
+const mocks = vi.hoisted(() => ({ query: vi.fn(), request: vi.fn() }));
 vi.mock('../db/pool', () => ({ pool: { query: mocks.query } }));
 vi.mock('../services/pythonRailsClient', () => ({ requestPythonRailsJson: mocks.request }));
-vi.mock('./thinkGraphHandoff', () => ({ submitSavedThinkPair: mocks.handoff }));
 import { appendConversationTurn, appendConversationReplyOnce, getConversationMessages } from './store';
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.query.mockResolvedValue({ rows: [{ id: 'project-one' }] });
-  mocks.handoff.mockResolvedValue(undefined);
 });
 
 describe('Engraphis conversation storage transport', () => {
@@ -49,7 +47,7 @@ describe('Engraphis conversation storage transport', () => {
     expect(mocks.query).toHaveBeenCalledTimes(1);
   });
 
-  it('hands off exactly once and only after successful persistence', async () => {
+  it('returns the completed reply only after its storage operation resolves', async () => {
     let commit!: (result: unknown) => void;
     mocks.request.mockReturnValue(new Promise(resolve => { commit = resolve; }));
     const message = { role: 'assistant' as const, content: 'answer', providerMessageId: 'row-1',
@@ -57,39 +55,27 @@ describe('Engraphis conversation storage transport', () => {
     const saved = { messageId: 'saved-answer', role: 'assistant', content: 'saved answer', status: 'complete' };
     const pending = appendConversationReplyOnce({ projectId: 'trading', conversationId: 'chat', message });
     await vi.waitFor(() => expect(mocks.request).toHaveBeenCalledOnce());
-    expect(mocks.handoff).not.toHaveBeenCalled();
+    let resolved = false;
+    void pending.then(() => { resolved = true; });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
     commit({ inserted: true, message: saved });
     expect(await pending).toEqual({ inserted: true, message: saved });
-    expect(mocks.handoff).toHaveBeenCalledExactlyOnceWith(saved);
-    mocks.request.mockResolvedValue({ inserted: false, message: saved });
-    await appendConversationReplyOnce({ projectId: 'trading', conversationId: 'chat', message });
-    expect(mocks.handoff).toHaveBeenCalledTimes(1);
+    expect(mocks.request).toHaveBeenCalledExactlyOnceWith('/thinkgraph/operation', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'project-one', operation: 'conversation',
+        arguments: { action: 'reply', conversationId: 'chat', message } }),
+    });
   });
 
-  it('does not submit partial output or failed persistence', async () => {
+  it('forwards the supplied reply unchanged and propagates storage failure', async () => {
     const message = { role: 'assistant' as const, content: 'unfinished', providerMessageId: 'row-1',
       status: 'pending' as const, speaker: { kind: 'card' as const, label: 'Main' } };
     mocks.request.mockResolvedValue({ inserted: true, message: { status: 'complete' } });
     await appendConversationReplyOnce({ projectId: 'trading', conversationId: 'chat', message });
-    expect(mocks.handoff).not.toHaveBeenCalled();
+    expect(JSON.parse(mocks.request.mock.calls[0][1].body).arguments.message).toEqual(message);
     mocks.request.mockRejectedValue(new Error('storage failed'));
     await expect(appendConversationReplyOnce({ projectId: 'trading', conversationId: 'chat',
       message: { ...message, status: 'complete' } })).rejects.toThrow('storage failed');
-    expect(mocks.handoff).not.toHaveBeenCalled();
-  });
-
-  it('reports submission failure without rejecting the committed conversation', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const message = { role: 'assistant' as const, content: 'answer', providerMessageId: 'row-1',
-        speaker: { kind: 'card' as const, label: 'Main' } };
-      const saved = { inserted: true, message: { messageId: 'saved', status: 'complete' } };
-      mocks.request.mockResolvedValue(saved);
-      mocks.handoff.mockRejectedValue(new Error('submission refused'));
-      expect(await appendConversationReplyOnce({ projectId: 'trading', conversationId: 'chat', message })).toBe(saved);
-      await vi.waitFor(() => expect(log).toHaveBeenCalledWith('[thinkgraph]', {
-        messageId: 'saved', error: 'submission refused',
-      }));
-    } finally { log.mockRestore(); }
   });
 });

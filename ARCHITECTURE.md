@@ -362,8 +362,9 @@ record, and exclude the Recent record from those candidates. This is not proof t
 turns receive that full grounding packet. The approved map payload is JSON matching the Entity/Relationship
 view the user sees at that turn, including only the single displayed top Jev result. It is transient context
 supplied with the current message, not a new Engraphis/Graphiti record or retrieval tool. The custom map plugin and its
-endpoint are removed. The existing ThinkGraph prepared delivery includes the map alongside its extraction
-input without a plugin-specific transport wrapper. Ordinary per-turn view delivery remains unproven in
+endpoint are removed. ThinkGraph preparation includes map context. The save-triggered application
+handoff that connected to Main and inspected its Hermes completion details is removed, with no replacement.
+Ordinary per-turn view delivery remains unproven in
 Preview. No replacement plugin, polling loop, research registry, or tool is authorized. Deeper retrieval
 uses existing Engraphis/Graphiti tools. The retained Main Card-invocation packet is:
 
