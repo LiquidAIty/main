@@ -72,11 +72,9 @@ describe('shared knowledge inspector', () => {
   });
 
   it('shows retained research intent without claiming execution', () => {
-    render(<ThinkRecordCard item={{ id: 'think-one', summary: 'Reasoning.', research: {
-      question: 'What financing is committed?', why: 'It changes the dilution concern.',
-    } }} heading="Think" />);
-    expect(screen.getByText('Research question')).toBeTruthy();
-    expect(screen.getByText('Retained question · research has not been started.')).toBeTruthy();
+    render(<ThinkRecordCard item={{ id: 'think-one', summary: 'Reasoning.', researchRequested: true }} heading="Think" />);
+    expect(screen.getByText('Research requested')).toBeTruthy();
+    expect(screen.queryByText('Research question')).toBeNull();
   });
 
   it('uses only the exact attached Graphiti episode identity for a Know', () => {

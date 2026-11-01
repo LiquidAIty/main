@@ -301,7 +301,6 @@ def _settle_new_completed_pair(
             "pairReference": pair_reference_value,
             "thinkMemoryIds": [],
             "thinks": [],
-            "personalContextIds": [],
             "sourceIndex": source_index,
             "intakeOperation": "noop",
             "intakeOperations": [],
@@ -501,7 +500,6 @@ def _settle_new_completed_pair(
         "projectId": project,
         "pairReference": pair_reference_value,
         "thinkMemoryIds": memory_ids,
-        "personalContextIds": [],
         "sourceIndex": source_index,
         "thinks": [
             {

@@ -66,8 +66,6 @@ const BUILDER_TOOLS = [
 
 const MAIN_TOOLS = [
   'canvas.inspect',
-  'project_graph.list_entities',
-  'project_graph.read_entity_context',
   'worldview.set_capability',
 ];
 

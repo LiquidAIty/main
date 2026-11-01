@@ -267,7 +267,7 @@ def llm_structured_contract(
         "place your strongest research candidate first among them in facts; do not add a score "
         "or a separate question record. The indication means eligible, not dispatched or "
         "authorized: do not launch research or claim an answer. Unmarked Thinks remain valid. "
-        "Do not classify user preferences or emit separate personalContext records.\n"
+        "Return only Thinks in the facts array, with no separate user-profile records.\n"
         + ("SOURCE CHUNKS: TEXT contains all ordered chunks from one completed exchange. "
            "Read them together, respecting role and message order. Overlap repeats context, not "
            "another claim. Chunk boundaries do not force a Think boundary. Each Think "

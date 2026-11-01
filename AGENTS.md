@@ -12,8 +12,6 @@ Before doing anything else:
 2. Read the current operating rules in [DONT.md](./DONT.md); consult its historical removal record only
    for the affected boundary.
 3. Read [PLAN.md](./PLAN.md) completely.
-   Read root [nextturn.md](./nextturn.md), when present, for the previous turn's scratch handoff;
-   verify its claims against current source and the latest owner request before relying on them.
 4. Read only relevant reusable `skills/*.md` procedures; domain skills defer generic process control to
    `promptspec-receiver`.
 5. The Primary uses the Codebase Memory CLI for a bounded directional map, then direct-reads current
@@ -143,7 +141,7 @@ support agents total, normally:
 3. one fresh independent final reviewer.
 
 Scouts may propose ordered tasks with a Key Objective and Definition of Done, but they never edit.
-The final reviewer receives the frozen implementation, writes only repo-root `turn.md`, and returns a
+The final reviewer receives the frozen implementation and returns findings in the conversation with a
 minimal PASS/FAIL envelope plus the reviewed-snapshot checksum. The Primary does not patch after final
 review begins. A FAIL stops the run for the owner's save, wipe/revert, or clean-retry decision.
 
@@ -688,7 +686,7 @@ SPECIFY
 → documentation-coherence review
 → freeze exact implementation bytes
 → independent Agent 3 review
-→ Agent 3 writes turn.md + per-file hashes + REVIEW_SNAPSHOT_SHA256
+→ Agent 3 returns review findings in the conversation
 → STOP
 ```
 
@@ -766,34 +764,11 @@ skills/*.md
 repo-intake/*.md only when explicitly required
 ```
 
-The owner-approved scratch handoff is:
-
-```text
-nextturn.md
-```
-
-The Primary rewrites this single root file at the end of each repository work turn; do not append a
-running log or create dated continuation copies. Keep it short: current requested boundary, actual
-changes, evidence and its limits, unresolved blockers, and the next relevant considerations. Remove
-stale/completed advice and revalidate anything carried forward. Put durable implementation contracts
-in `ARCHITECTURE.md`, current status in `PLAN.md`, and product requirements in `RUNTIME.md` instead.
-
-`nextturn.md` is scratch context, not a task queue, frozen review, product prompt, architecture
-authority, or permission to act. Never load it into Card prompts or runtime context. The next turn's
-explicit owner request wins; a listed idea or blocker does not authorize unrelated work. This is the
-single handoff scratch file, not permission for additional continuation reports.
-
-The separate PromptSpec review artifact, when that review is explicitly required, is:
-
-```text
-turn.md
-```
-
-Agent 3 overwrites `turn.md` for each completed PromptSpec run or stage after the implementation is frozen.
-It records the exact reviewed-file SHA-256 manifest, combined `REVIEW_SNAPSHOT_SHA256`, task/Definition-of-Done
-review, proof tiers, documentation coherence, findings, and PASS/FAIL. It is not architecture authority,
-durable product memory, a task queue, or authority for a later run. The next turn may read it only under the
-owner's continuation or disposition instruction.
+Keep turn status, plans, review findings, and remaining work in the conversation. Do not create or
+maintain handoff, continuation, review, or progress files unless the owner explicitly requests that
+artifact. Notes and unfinished items do not authorize additional work or replace the current request.
+Durable implementation contracts belong in `ARCHITECTURE.md`, current status in `PLAN.md`, and product
+requirements in `RUNTIME.md`; changing those documents still requires task scope.
 
 Do not create:
 
@@ -805,7 +780,7 @@ progress or checkpoint docs
 handoff/evidence files
 raw diff dumps
 persistent prompt/task packets
-additional review reports beside turn.md
+unsolicited review reports
 parallel skill directories
 random architecture runbooks
 ```

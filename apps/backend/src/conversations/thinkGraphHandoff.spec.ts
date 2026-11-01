@@ -5,8 +5,6 @@
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: ThinkGraph
  * Relationship: Checks saved-pair correlation, the exact saved target and submission/settlement transport without claiming live model proof.
- * Entity: KnowGraph
- * Relationship: Checks that a settled pair produces at most one research delivery and that a disabled preparation produces none.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -72,30 +70,20 @@ beforeEach(() => {
 });
 
 describe('stored ThinkGraph prompt handoff', () => {
-  it.each([false, true])('admits at most one automatic investigation only when enabled=%s after commitment', async enabled => {
+  it('retains a research tag without dispatching KnowGraph', async () => {
     const authority = await mock.authority();
     mock.authority.mockResolvedValue({ ...authority, cards: [...authority.cards,
       { card: { id: 'card_knowgraph', enabled: true, runtime: { kind: 'hermes' } }, profile: 'knowgraph' }] });
     const rails = mock.rails.getMockImplementation()!;
-    let committed = false;
-    mock.rails.mockImplementation(async (route: string, init: any) => {
-      if (route === '/knowgraph/research/prepare') {
-        expect(committed).toBe(true);
-        expect(JSON.parse(init.body).thinkId).toBe('first-tagged');
-        return { enabled, requestId: 'stable-research-id', message: 'PROJECT_RESEARCH_REQUEST:stable-research-id' };
-      }
-      if (route.endsWith('/settle')) {
-        committed = true;
-        return { ok: true, status: 'completed', revisionChanged: true, intakeOperation: 'add', pairReference: 'pair-exact',
-          thinks: [{ engraphisMemoryId: 'first-tagged', researchRequested: true }, { engraphisMemoryId: 'second-tagged', researchRequested: true }] };
-      }
-      return rails(route, init);
-    });
+    mock.rails.mockImplementation(async (route: string, init: any) => route.endsWith('/settle')
+      ? { ok: true, status: 'completed', revisionChanged: true, intakeOperation: 'add',
+        thinks: [{ engraphisMemoryId: 'tagged-think', researchRequested: true }] }
+      : rails(route, init));
     await submitSavedThinkPair(answer);
-    const research = mock.request.mock.calls.filter(([method, params]) => method === 'bot_relay.deliver' && params.profile === 'knowgraph');
-    expect(research).toHaveLength(enabled ? 1 : 0);
-    if (enabled) expect(research[0][1]).toMatchObject({ id: 'stable-research-id', message: 'PROJECT_RESEARCH_REQUEST:stable-research-id' });
-    expect(mock.notify).toHaveBeenCalledExactlyOnceWith('project');
+    const deliveries = mock.request.mock.calls.filter(([method]) => method === 'bot_relay.deliver');
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0][1].profile).toBe('thinkgraph');
+    expect(mock.rails.mock.calls.some(([route]) => route.startsWith('/knowgraph/'))).toBe(false);
   });
   it('submits the exact stored pair once to a fresh invocation of the saved profile', async () => {
     await submitSavedThinkPair(answer);
@@ -107,7 +95,9 @@ describe('stored ThinkGraph prompt handoff', () => {
     expect(submissions[0][1]).toMatchObject({ profile: 'thinkgraph', session_id: 'fresh-think-session', id: 'pair-exact' });
     expect(submissions[0][1].message).toContain('Actual saved question.');
     expect(submissions[0][1].message).toContain('Actual saved answer.');
-    expect(JSON.parse(submissions[0][1].message).projectMapContext.projectId).toBe('project');
+    expect(submissions[0][1].message).toContain('supplied map');
+    expect(submissions[0][1].message).toContain('OUTPUT_SCHEMA:');
+    expect(submissions[0][1].message).not.toContain('projectMapContext');
     expect(mock.request).toHaveBeenCalledWith('session.resume', { title: 'Bot Chat' });
     const settlement = mock.rails.mock.calls.find(([route]) => route.endsWith('/settle'));
     expect(JSON.parse(settlement![1].body)).toMatchObject({ pairReference: 'pair-exact', structuredOutput: { facts: [] },

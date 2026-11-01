@@ -7,7 +7,7 @@
  * Relationship: This file renders the shared inspector for Think, Know, Code, source, relationship, probability, time, and removal details on one evidence surface.
  *
  * Entity: ThinkGraph
- * Relationship: Presents Think details and research intent, lazily opens cited source excerpts before the full exchange, and exposes private user-context inspection/correction without creating graph nodes.
+ * Relationship: Presents Think details and the research tag, lazily opens cited source excerpts before the full exchange, and searches retained conversation sources.
  *
  * Entity: KnowGraph
  * Relationship: This file presents bounded first-class Knows and safe HTTPS citation provenance for the exact selected Graphiti Entity without rendering citations as graph nodes.
@@ -200,7 +200,7 @@ export function ThinkRecordCard({
       : null;
   const relationships = thinkRelationships(item);
   const detail = item.detail ?? item.metadata?.structured_extraction?.think?.detail;
-  const research = item.research ?? item.metadata?.structured_extraction?.think?.research;
+  const researchRequested = item.researchRequested ?? item.metadata?.structured_extraction?.think?.researchRequested;
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
       <h4>{String(item.title || heading)}</h4>
@@ -217,11 +217,7 @@ export function ThinkRecordCard({
       <h5>Relationships</h5>
       <ul>{relationships.map(value => <li key={value}>{value}</li>)}</ul>
     </section> : null}
-    {research && typeof research.question === 'string' && typeof research.why === 'string' ? <details>
-      <summary>Research question</summary>
-      <p>{research.question}</p><p>{research.why}</p>
-      <small>Retained question · research has not been started.</small>
-    </details> : null}
+    {researchRequested === true ? <small>Research requested</small> : null}
     {projectId ? <ThinkSourceExchange key={`${projectId}:${item.id}`} projectId={projectId} memoryId={String(item.id)}
       chunkCount={item.metadata?.thinkgraph_origin?.source_chunks?.length ?? 0} /> : null}
     {onRemove ? <button type="button" aria-label="Delete record" disabled={removing}
@@ -295,37 +291,11 @@ function ThinkSourceExchange({ projectId, memoryId, chunkCount = 0 }: { projectI
   </details>;
 }
 
-export function PrivateContextControls({ projectId }: { projectId: string }) {
-  const [records, setRecords] = useState<Array<{ memoryId: string; projectId: string; content: string;
-    kind: string; scope: string; quote: string; supersedes: string[]; availableForContext: boolean }> | null>(null);
-  const [error, setError] = useState('');
-  const [editing, setEditing] = useState('');
-  const [draft, setDraft] = useState('');
-  const [saving, setSaving] = useState(false);
+export function SourceSearchControls({ projectId }: { projectId: string }) {
   const [query, setQuery] = useState('');
+  const [error, setError] = useState('');
   const [matches, setMatches] = useState<Array<{ memoryId: string; excerpt: string;
     source: { role: string; conversationId: string; messageId: string } }> | null>(null);
-  const load = async () => {
-    setError('');
-    try {
-      const response = await fetch(`/api/thinkgraph/personal-context?${new URLSearchParams({ projectId })}`);
-      const value = await response.json();
-      if (!response.ok || !Array.isArray(value.records)) throw new Error('Private context unavailable.');
-      setRecords(value.records);
-    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Private context unavailable.'); }
-  };
-  const correct = async (memoryId: string) => {
-    setSaving(true); setError('');
-    try {
-      const response = await fetch('/api/thinkgraph/personal-context/correct', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, memoryId, content: draft }),
-      });
-      if (!response.ok) throw new Error('Correction failed; the saved record was not replaced in this view.');
-      setEditing(''); await load();
-    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Correction failed.'); }
-    finally { setSaving(false); }
-  };
   const search = async () => {
     setError('');
     try {
@@ -335,25 +305,9 @@ export function PrivateContextControls({ projectId }: { projectId: string }) {
       setMatches(value.matches);
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Source search unavailable.'); }
   };
-  return <details className="graph-private-context" onToggle={event => {
-    if (event.target === event.currentTarget && event.currentTarget.open && records === null) void load();
-  }}>
-    <summary>Private memory &amp; source search</summary>
-    <p>Explicit user context · not Project graph nodes. Temporary context is retained for inspection, not applied as a standing preference.</p>
+  return <details>
+    <summary>Source search</summary>
     {error ? <p role="alert">{error}</p> : null}
-    {records?.length === 0 ? <p>No explicit user context recorded.</p> : records?.map(record => <section key={record.memoryId}>
-      <small>{record.kind} · {record.scope}{record.supersedes.length ? ' · corrected' : ''}</small>
-      {!record.availableForContext ? <p>Inspection only · not supplied as standing context.</p> : null}
-      <p>{record.content}</p>
-      <details><summary>Supporting user statement</summary><blockquote>{record.quote}</blockquote>
-        <ThinkSourceExchange projectId={record.projectId} memoryId={record.memoryId} />
-      </details>
-      {editing === record.memoryId ? <div>
-        <textarea aria-label="Correct private context" maxLength={4000} value={draft} onChange={event => setDraft(event.target.value)} />
-        <button type="button" disabled={saving || !draft.trim()} onClick={() => void correct(record.memoryId)}>Save correction</button>
-        <button type="button" disabled={saving} onClick={() => setEditing('')}>Cancel</button>
-      </div> : <button type="button" onClick={() => { setEditing(record.memoryId); setDraft(record.content); }}>Correct</button>}
-    </section>)}
     <label>Search original exchanges<input value={query} onChange={event => setQuery(event.target.value)} /></label>
     <button type="button" disabled={!query.trim()} onClick={() => void search()}>Search sources</button>
     {matches?.length === 0 ? <p>No matching indexed source excerpts.</p> : matches?.map(match => <section key={match.memoryId}>

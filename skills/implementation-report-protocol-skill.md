@@ -11,8 +11,8 @@ Use after bounded work to compare the frozen result with the active request. Rec
 
 Load the PromptSpec Receiver first. Primary assembles task outcomes, affected files, proof commands,
 baseline failures, assumptions, Preservation Set evidence and actual CBM coverage, then freezes the
-implementation. The independent final reviewer inspects that frozen snapshot and writes the sole
-repo-root `turn.md` report with:
+implementation. The independent final reviewer inspects that frozen snapshot and returns findings
+in the conversation with:
 
 - PASS or FAIL against every task's Key Objective and Definition of Done;
 - completed, incomplete and changed requirements;
@@ -22,7 +22,7 @@ repo-root `turn.md` report with:
 
 Primary must not patch implementation or documentation after final review begins. A FAIL stops the
 run for owner disposition; it is not permission for same-run repair. For staged PromptSpecs, each
-stage receives its own frozen review and `turn.md`, then stops for owner review, save and approval.
+stage receives its review findings in the conversation, then stops for owner review, save and approval.
 
 ## Non-PromptSpec fallback
 

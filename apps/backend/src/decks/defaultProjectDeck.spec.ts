@@ -54,8 +54,8 @@ const EXPECTED_PROMPT_CONTRACTS = [
     asset: 'main.md',
     templateId: 'prompt_main_chat',
     cardId: 'card_main_chat',
-    bytes: 6510,
-    sha256: '3ecfe88ac669e5719a0aba0201bab3d68d12efdae0f1866fbdc0c44f7edb7036',
+    bytes: 6382,
+    sha256: 'c43b70e7fcc557fdf01652ac1ed05868203f8544c8bbb53ce0e162ba219a02ee',
   },
   {
     asset: 'builder.md',
@@ -82,8 +82,8 @@ const EXPECTED_PROMPT_CONTRACTS = [
     asset: 'knowgraph.md',
     templateId: 'prompt_knowgraph',
     cardId: 'card_knowgraph',
-    bytes: 4980,
-    sha256: '8bda90b55303353c590d5b37f83cc7efbec118c23a6e81d1743411a583ba2a82',
+    bytes: 6859,
+    sha256: '744bb4ea4a5a53c8fc9702e79bae9d4ed9fecf74de0e297b47364352d16c6c2c',
   },
 ] as const;
 
@@ -157,8 +157,6 @@ describe('backend-owned default Project deck', () => {
       modelKey: 'gpt-5.6-sol',
       tools: [
         'canvas.inspect',
-        'project_graph.list_entities',
-        'project_graph.read_entity_context',
         'worldview.set_capability',
       ],
     });
@@ -166,7 +164,7 @@ describe('backend-owned default Project deck', () => {
       'Project Entity/Relationship map as the current shape',
     );
     expect(byId.get('card_main_chat')?.prompt).toContain(
-      'granted project_graph read operations',
+      'existing Engraphis or Graphiti readers',
     );
     expect(byId.get('card_main_chat')?.prompt).toContain(
       'do not paste raw source lists unless the user explicitly asks',

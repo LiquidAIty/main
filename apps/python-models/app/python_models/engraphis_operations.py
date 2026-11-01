@@ -307,14 +307,6 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict | l
     if operation == "index_sources":
         from .conversations import index_source_exchanges
         return index_source_exchanges(project, arguments.get("conversationId"))
-    if operation == "personal_context":
-        from .personal_context import read_personal_context
-        return read_personal_context(project, conversation=str(arguments.get("conversationId") or ""), inspect_all=True)
-    if operation == "correct_personal_context":
-        from .personal_context import correct_personal_context
-        if set(arguments) != {"memoryId", "content"}:
-            raise ValueError("personal_context_correction_invalid")
-        return correct_personal_context(project, str(arguments["memoryId"]), arguments["content"])
     if operation == "prepare_conversation_pair":
         from .conversations import read_pair
         from .thinkgraph_completed_pair_preparation import prepare_completed_pair

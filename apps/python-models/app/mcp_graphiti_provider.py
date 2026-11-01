@@ -4,7 +4,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
-# Relationship: This file owns Graphiti provider lifecycle and dispatch, installs the research write-validation extension, and projects research provenance on exact Know reads.
+# Relationship: This file owns Graphiti provider discovery, lazy Neo4j and model-service initialization, tool dispatch, and shutdown for KnowGraph.
 # Entity: MCP Host
 # Relationship: This file exposes Graphiti's tool catalog and calls through the application MCP host lifecycle.
 # Entity: Tool Catalog
@@ -17,12 +17,11 @@ from __future__ import annotations
 import asyncio
 import copy
 import inspect
-import json
 import os
 from importlib import metadata as importlib_metadata
 from typing import Any
 
-from mcp.types import CallToolResult, TextContent, Tool
+from mcp.types import Tool
 
 
 _GRAPHITI_MODULE: Any | None = None
@@ -193,8 +192,6 @@ async def ensure_graphiti_service() -> None:
             graphiti_module_ref.graphiti_client = (
                 await graphiti_module_ref.graphiti_service.get_client()
             )
-            from app.python_models.knowgraph_research import ResearchGraphOperations
-            graphiti_module_ref.graphiti_client.driver.graph_operations_interface = ResearchGraphOperations()
             graphiti_module_ref.semaphore = graphiti_module_ref.graphiti_service.semaphore
             await graphiti_module_ref.queue_service.initialize(
                 graphiti_module_ref.graphiti_client
@@ -243,50 +240,6 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
     graphiti_module_ref = _GRAPHITI_MODULE
     if graphiti_module_ref is None:
         raise RuntimeError("graphiti_not_initialized")
-    if name == "add_know":
-        from app import mcp_auth
-        from app.python_models.project_graph_invocation import CURRENT_GRAPH_INVOCATION
-        from app.python_models.knowgraph_research import add_research_know
-        principal = mcp_auth.internal_mcp_principal() or {}
-        if CURRENT_GRAPH_INVOCATION.get() is not None or principal.get("profile") == "knowgraph":
-            try:
-                value = await add_research_know(graphiti_module_ref, arguments)
-            except ValueError as error:
-                if str(error) != "Know UUID is already used by a different episode":
-                    raise
-                from app.application_tool_error import ApplicationToolError
-                raise ApplicationToolError(
-                    "know_content_conflict: This UUID already exists with different content. "
-                    "The saved Know was not changed. Read it and preserve its exact field values."
-                ) from error
-            know = value["know"]
-            receipt = {
-                "message": f"Know {know['uuid']} saved; settlement {value['status']}",
-                "know_uuid": know["uuid"], "content_hash": know["content_hash"],
-                "group_id": know["group_id"], "entity_name": arguments["entity_name"],
-                "entity_uuid": know["entity_uuid"], **value,
-            }
-            return CallToolResult(
-                content=[TextContent(type="text", text=json.dumps(receipt, ensure_ascii=False))],
-                structuredContent={"result": receipt}, isError=value["status"] != "completed",
-            )
-        # Existing explicitly granted non-research callers keep Graphiti's contract.
-        # A native KnowGraph turn can never escape its required research scope.
-    if name == "get_know":
-        from app.python_models.knowgraph_know_contract import know_from_properties
-        know = await graphiti_module_ref.graphiti_client.get_know(arguments["uuid"], group_id=arguments.get("group_id"))
-        rows, _, _ = await graphiti_module_ref.graphiti_client.driver.execute_query(
-            "MATCH (k:Episodic:Know {uuid:$id,group_id:$group}) RETURN properties(k) AS properties",
-            id=know.uuid, group=know.group_id, routing_="r")
-        projected = know_from_properties(dict(rows[0]["properties"])) if rows else None
-        origins = {key: projected[key] for key in ("researchOrigins", "researchOriginCount")
-                   if projected and key in projected}
-        payload = {"message": f"Found Know {know.uuid}",
-                   "know": {**graphiti_module_ref._know_result(know), **origins}}
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
-            structuredContent={"result": payload}, isError=False,
-        )
     return await graphiti_module_ref.mcp.call_tool(name, dict(arguments))
 
 

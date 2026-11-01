@@ -306,22 +306,19 @@ export default function useAgentBuilderKnowledgeGraphs({
     const query = new URLSearchParams({ projectId });
     const stream = new EventSource(`/api/thinkgraph/events?${query}`, { withCredentials: true });
     const refresh = () => { void refreshThinkGraph(); };
-    const refreshResearch = () => { void refreshKnowGraph(); };
     const disconnected = () => {
       setErrors(current => ({ ...current, thinkgraph: 'ThinkGraph live updates disconnected. Reconnecting.' }));
     };
     stream.addEventListener('ready', refresh);
     stream.addEventListener('changed', refresh);
-    stream.addEventListener('knowgraph_changed', refreshResearch);
     stream.addEventListener('error', disconnected);
     return () => {
       stream.removeEventListener('ready', refresh);
       stream.removeEventListener('changed', refresh);
-      stream.removeEventListener('knowgraph_changed', refreshResearch);
       stream.removeEventListener('error', disconnected);
       stream.close();
     };
-  }, [projectId, refreshThinkGraph, refreshKnowGraph]);
+  }, [projectId, refreshThinkGraph]);
 
   const loadCodeGraph = useCallback(async (): Promise<GraphProjectionV1 | null> => {
     const requestId = ++codeProjectionRequestRef.current;

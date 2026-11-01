@@ -4,11 +4,11 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: ThinkGraph
- * Relationship: Exposes owner-scoped graph/source reads, private-context correction, retirement and committed-graph notifications while Engraphis owns persistence and semantics.
+ * Relationship: Exposes owner-scoped graph/source reads, retirement and committed-graph notifications while Engraphis owns persistence and semantics.
  * Entity: Authentication
  * Relationship: This file requires ownership of the exact Project before forwarding any ThinkGraph read or retirement operation.
  * Entity: Project Knowledge Graph
- * Relationship: Supplies provider-owned ThinkGraph projections and neighborhoods and carries separate ThinkGraph and KnowGraph refresh notifications over one Project-scoped stream.
+ * Relationship: Supplies provider-owned ThinkGraph projections and neighborhoods with committed-change notifications over the Project-scoped stream.
  */
 
 import { Router, type Response } from 'express';
@@ -23,36 +23,6 @@ import { requireOwnedProject } from './projectAccess';
 const thinkGraphRoutes = Router();
 const graphStreams = new Map<Response, string>();
 
-thinkGraphRoutes.get('/personal-context', async (req, res) => {
-  const projectId = String(req.query.projectId || '').trim();
-  try {
-    const scope = await requireOwnedProject(req, res, projectId);
-    if (!scope) return undefined;
-    return res.json(await requestPythonRailsJson('/thinkgraph/operation', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: scope.projectId, operation: 'personal_context', arguments: {} }),
-    }));
-  } catch {
-    return res.status(502).json({ error: 'personal_context_unavailable' });
-  }
-});
-
-thinkGraphRoutes.post('/personal-context/correct', async (req, res) => {
-  const { projectId, memoryId, content } = req.body || {};
-  if (typeof projectId !== 'string' || typeof memoryId !== 'string' || typeof content !== 'string') {
-    return res.status(400).json({ error: 'personal_context_correction_invalid' });
-  }
-  try {
-    const scope = await requireOwnedProject(req, res, projectId);
-    if (!scope) return undefined;
-    return res.json(await requestPythonRailsJson('/thinkgraph/operation', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: scope.projectId, operation: 'correct_personal_context', arguments: { memoryId, content } }),
-    }));
-  } catch {
-    return res.status(409).json({ error: 'personal_context_correction_failed' });
-  }
-});
 
 thinkGraphRoutes.get('/sources', async (req, res) => {
   const projectId = String(req.query.projectId || '').trim();
@@ -90,11 +60,10 @@ thinkGraphRoutes.get('/source-search', async (req, res) => {
   }
 });
 
-export function notifyThinkGraphChanged(projectId: string, authority: 'thinkgraph' | 'knowgraph' = 'thinkgraph'): void {
+export function notifyThinkGraphChanged(projectId: string): void {
   for (const [response, project] of graphStreams) {
     if (project !== projectId || response.destroyed || response.writableEnded) continue;
-    const event = authority === 'thinkgraph' ? 'changed' : 'knowgraph_changed';
-    if (!response.write(`event: ${event}\ndata: ${JSON.stringify({ projectId })}\n\n`)) response.end();
+    if (!response.write(`event: changed\ndata: ${JSON.stringify({ projectId })}\n\n`)) response.end();
   }
 }
 

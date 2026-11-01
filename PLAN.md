@@ -3,8 +3,7 @@
 [Overview](README.md) · [Execution law](AGENTS.md) · [Known failures](DONT.md) · [Current architecture](ARCHITECTURE.md) · [Deferred work](FUTURE.md)
 
 This file records current status and the next approved boundary. It is not runtime input, a task
-ledger, a historical report, or authority to begin deferred work. Root [nextturn.md](nextturn.md) is
-the replace-each-turn scratch handoff; [ARCHITECTURE.md](ARCHITECTURE.md#bot-mode-application-boundary)
+ledger, a historical report, or authority to begin deferred work. [ARCHITECTURE.md](ARCHITECTURE.md#bot-mode-application-boundary)
 owns the durable Bot Mode implementation description.
 
 ## Product outcome
@@ -43,10 +42,14 @@ profile, or historical screenshot cannot establish one Project's current configu
   not persist a merged identity.
 - Exact Data Anchors resolve provider-owned IDs and bounded data before Python materializes the single
   IDF.
-- `project_graph.list_entities` returns the complete exact directory. The read-only
-  `project_graph.read_entity_context` requires exact directory references plus a current query. It uses
-  exact provider Entity reads followed by Jev relevance and defaults to one Relevant plus one distinct
-  Recent Think and Know.
+- The approved compact map is JSON of the Entity/Relationship view the user sees at that turn, with
+  only the single displayed top Jev result, not a second candidate or hidden graph data. It is transient
+  turn context, not a graph record or agent tool.
+  ThinkGraph's existing prepared delivery includes its map alongside its exact extraction input.
+  The custom map plugin and endpoint are removed. Ordinary per-turn view delivery through the existing
+  application/Hermes input path is not yet proven in Preview; do not restore a plugin or tool to claim it.
+  Graph agents use their existing granted Engraphis and Graphiti readers; the application publishes
+  no additional Project-graph read or research-preparation tools.
 - The joined graph may visually pair exact same-name provider members without becoming another graph.
 - Only Entities render as graph nodes. Thinks and Knows are attached properties; Graphiti episodes,
   citations, and supporting IDs remain evidence/provenance and never become visible Project nodes.
@@ -120,6 +123,11 @@ cutover is part of this Think allocation and mention repair.
 
 ### KnowGraph
 
+The approved entrance is ordinary Main-to-KnowGraph Hermes Bot Mode. A Think may retain the optional
+`researchRequested` boolean, but it does not dispatch research. There is no application research-ticket
+registry, generated personal-context extraction, or separate structured research-question record.
+New live Bot Mode acceptance after the current removal must be reported separately from older receipts.
+
 KnowGraph has Hermes Web plus its saved Graphiti read/write corridor. A deliberately supplied Think is
 framing, not evidence. Useful sourced findings enter Graphiti through Graphiti's queued `add_know`, which
 creates one first-class `Episodic:Know`, reuses an exact supplied or exact-name Entity when present and creates
@@ -136,6 +144,8 @@ queue. Python rails preserves Project scope and typed citation transport; it doe
 retrieval or citation ledger.
 The acceptance receipt supplies the deterministic Know UUID and content hash without claiming persistence;
 `get_know` provides the exact readback used to establish materialization.
+The application forwards the native queued result without a completion-wait helper or research-settlement
+wrapper. Existing graph reads and refresh behavior remain; no custom research-completion callback is retained.
 The source-default KnowGraph Card uses Sol; ThinkGraph remains Luna. Queue acceptance does not prove
 materialization.
 
@@ -203,7 +213,7 @@ per-turn application tool callback, transport selector, fake status/limit contro
 and their stale tests are absent from the live application path. The reserved saved-profile `liquidaity`
 connection instead uses one short-lived, exact active-Run internal principal against the official MCP host.
 
-The same loaded pass recorded the real Main/Bot/Builder terminal cases in `turn.md`. It did not prove
+That historical loaded pass covered the real Main/Bot/Builder terminal cases. It did not prove
 OAuth-backed tool execution, an enabled Card Script, Team, Magnetic, graph writes, external clients, or
 complete owner visual acceptance.
 
@@ -287,8 +297,8 @@ trade, credential change, or saved Card mutation was performed.
 Profile OAuth tool readback and Card Script success/failure recovery require their real external or saved
 prerequisites. A new model turn, Team, Magnetic, graph writes, external-client acceptance, and Jeremiah's final
 visual acceptance remain separate and must not be inferred from health, deterministic, or inspector proof.
-CodeGraph's authorized daemon recovery and canonical application reload completed successfully; the exact
-positive evidence is recorded in `turn.md`. No additional CBM lifecycle mutation is implied by that result.
+CodeGraph's historical authorized daemon recovery and canonical application reload completed successfully.
+No additional CBM lifecycle mutation is implied by that result.
 Any new CBM restart, repair, reindex, cache access, project mutation, or configuration change still requires
 a new exact owner instruction.
 

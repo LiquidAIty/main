@@ -24,8 +24,8 @@ PromptSpec remains the specification; do not create another spec/task file or co
 history into the handoff. The receiving Card materializes its IDF.
 
 Require an evidence-backed completion report to Primary and compare its claims with the assigned task.
-An accepted child is not a completed child. Agent 3's repo-root `turn.md` is the final report for a
-PromptSpec run. Preserve Hermes asynchronous completion where supported; do not create a second
+An accepted child is not a completed child. Return final findings in the coding conversation, not a
+separate handoff file. Preserve Hermes asynchronous completion where supported; do not create a second
 scheduler, retry a running job, or make Main wait for unrelated work.
 
 Prior user authorization persists; do not demand another generic Go. No automatic writes of

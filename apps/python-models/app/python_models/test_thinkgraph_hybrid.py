@@ -56,11 +56,11 @@ def engraphis_service(monkeypatch):
     service = MemoryService.create(
         ":memory:", extractor="none", graph_extractor="none"
     )
-    from app.python_models import conversations, engraphis_operations, personal_context
-    for module in (service_adapter, conversations, engraphis_operations, personal_context,
+    from app.python_models import conversations, engraphis_operations
+    for module in (service_adapter, conversations, engraphis_operations,
                    completed_pair_preparation, completed_pair_settlement, projection_adapter):
         monkeypatch.setattr(module, "get_service", lambda _project: service)
-    for module in (service_adapter, engraphis_operations, personal_context):
+    for module in (service_adapter, engraphis_operations):
         monkeypatch.setattr(module, "project_principal", lambda _project: {"id": "test-owner"})
     try:
         yield service

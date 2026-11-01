@@ -255,25 +255,11 @@ def read_source_exchanges(project: str, memory_id: str, *, include_exchange: boo
         origin = metadata.get("thinkgraph_origin") or {}
         source = origin.get("source_pair", {})
         cited = origin.get("source_chunks", [])
-        if "personal_context" in metadata:
-            source = metadata["personal_context"].get("source_pair", {})
-            cited = metadata["personal_context"].get("source_chunks", [])
-        elif "source_index" in metadata:
+        if "source_index" in metadata:
             source = {"sourceReferences": metadata["source_index"].get("sourceReferences", [])}
             cited = [{"id": metadata["source_index"]["key"],
                       "sha256": hashlib.sha256(memory.content.encode("utf-8")).hexdigest()}]
         references = source_references(project, source)
-        if "personal_context" in metadata:
-            for row in service.store.conn.execute(
-                "SELECT content FROM events WHERE workspace_id=? AND kind='personal_context_source' "
-                "AND EXISTS (SELECT 1 FROM json_each(events.content,'$.memoryIds') WHERE value=?)",
-                (workspace["id"], memory_id),
-            ).fetchall():
-                receipt = json.loads(row["content"])
-                references.extend(source_references(project, receipt["source_pair"]))
-                cited.extend(receipt.get("source_chunks", {}).get(memory_id, []))
-            references = list({json.dumps(ref, sort_keys=True): ref for ref in references}.values())
-            cited = list({item["id"]: item for item in cited}.values())
     sources = []
     for reference in references:
         try:

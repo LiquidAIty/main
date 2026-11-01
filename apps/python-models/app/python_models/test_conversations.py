@@ -17,7 +17,7 @@ import pytest
 from engraphis.service import MemoryService
 
 from app.python_models import conversations
-from app.python_models import engraphis, engraphis_operations, personal_context
+from app.python_models import engraphis, engraphis_operations
 from app.python_models import thinkgraph_completed_pair_settlement as settlement
 from app.python_models import thinkgraph_completed_pair_preparation as preparation
 
@@ -26,9 +26,9 @@ from app.python_models import thinkgraph_completed_pair_preparation as preparati
 def archive(tmp_path, monkeypatch):
     path = tmp_path / "engraphis.sqlite"
     service = MemoryService.create(str(path))
-    for module in (conversations, engraphis, engraphis_operations, personal_context, preparation, settlement):
+    for module in (conversations, engraphis, engraphis_operations, preparation, settlement):
         monkeypatch.setattr(module, "get_service", lambda _project: service)
-    for module in (engraphis, engraphis_operations, personal_context):
+    for module in (engraphis, engraphis_operations):
         monkeypatch.setattr(module, "project_principal", lambda _project: {"id": "owner-one"})
     yield service, path
     service.close()
@@ -191,31 +191,6 @@ def test_source_index_is_repeatable_and_preserves_canonical_messages(archive):
         conversations.read_source_exchanges("project-two", memory_id)
 
 
-def test_private_context_requires_user_quote_and_stays_out_of_entities(archive):
-    service, _ = archive
-    question = call("append", messages=[user("I like space stocks. For this Project, avoid short-dated calls.")])[0]
-    answer = call("reply", message=reply())["message"]
-    source = conversations.read_pair("project-one", "chat-one", [question["messageId"]], answer["messageId"])
-    pair = preparation.pair_reference(source)
-    entries = [{"subject": "space stocks", "kind": "interest", "scope": "personal",
-                "content": "Interested in space stocks", "quote": "I like space stocks."},
-               {"subject": "option duration", "kind": "instruction", "scope": "project",
-                "content": "Avoid short-dated calls for this Project", "quote": "For this Project, avoid short-dated calls."}]
-    ids = personal_context.save_personal_context(service, source, pair, entries)
-    assert personal_context.save_personal_context(service, source, pair, entries) == ids
-    assert len(service.store.list_entities()) == 0
-    records = personal_context.read_personal_context("project-one")["records"]
-    assert len(records) == 2
-    assert [r["scope"] for r in personal_context.read_personal_context("project-two")["records"]] == ["personal"]
-    assert conversations.read_source_exchanges("project-one", ids[0], include_exchange=True)["sources"][0]["messages"][0]["content"] == question["content"]
-    with pytest.raises(ValueError, match="exact_user_statement"):
-        personal_context.save_personal_context(service, source, "different-pair", [{**entries[0], "quote": "Exact answer."}])
-    personal_context.correct_personal_context("project-one", ids[0], "Interested in space infrastructure, not all space stocks")
-    current = personal_context.read_personal_context("project-one")["records"]
-    corrected = next(record for record in current if record["scope"] == "personal")
-    assert corrected["content"] == "Interested in space infrastructure, not all space stocks"
-    assert ids[0] in corrected["supersedes"]
-    assert len(service.store.list_entities()) == 0
 
 
 @pytest.mark.parametrize("index_failure", [False, True])
@@ -248,8 +223,7 @@ def test_research_indication_settles_with_chunks_without_private_classification_
         assert call("read") == [question, answer]
     first = settlement.settle_completed_pair(payload)
     assert len(first["thinkMemoryIds"]) == 1
-    assert first["personalContextIds"] == []
-    assert personal_context.read_personal_context("project-one")["records"] == []
+    assert service.store.conn.execute("SELECT count(*) FROM memories WHERE mtype='semantic'").fetchone()[0] == 0
     assert len(service.store.list_entities()) == 1
     memory = service.store.get_memory(first["thinkMemoryIds"][0])
     assert memory.metadata["structured_extraction"]["think"]["researchRequested"] is True

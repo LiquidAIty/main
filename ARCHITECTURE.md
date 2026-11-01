@@ -3,9 +3,8 @@
 This document records the owners and contracts present in the current source tree. It is not a
 runtime receipt. `PLAN.md` records the current proof boundary and next ordered work, `FUTURE.md`
 contains deferred candidates, `DONT.md` records known failure patterns, and `AGENTS.md` is execution
-law. [RUNTIME.md](RUNTIME.md) is the owner-approved Bot Mode product contract;
-[nextturn.md](nextturn.md) is a replace-each-turn scratch handoff, not durable architecture or
-authorization. Dated acceptance receipts remain evidence rather than implementation owners.
+law. [RUNTIME.md](RUNTIME.md) is the owner-approved Bot Mode product contract.
+Dated acceptance receipts remain evidence rather than implementation owners or authorization.
 
 LiquidAIty's abandoned ACP integration and application-owned AgentTerminal/CardRuntime control stack
 are deleted. Hermes' upstream ACP implementation remains part of the vendored project, but it is not
@@ -355,14 +354,18 @@ model edge writer, or whole-graph reclassification loop. This lifecycle does not
 
 ### Current graph context
 
-Model-facing graph context includes exact provider Data Anchors plus one automatically supplied,
-identity-and-Relationship-only canonical Entity map for Main, Builder, ThinkGraph, and KnowGraph. Python
-implements `project_graph.list_entities` and `project_graph.read_entity_context`. Main additionally receives
-ThinkGraph-only current-request grounding; Builder retains the wider ThinkGraph-and-KnowGraph construction
-packet. Those grounding paths use provider retrieval followed by one non-persisting Jev relevance distribution,
-select the highest-probability record, and exclude the Recent record from those candidates. Automatic
-ThinkGraph completed-pair extraction and KnowGraph research receive no prior Think/Know bodies: each uses the
-Entity/Relationship shape and deliberately reads deeper only for its actual task. Main's default packet is:
+The retained Card-invocation preparation path supplies exact provider Data Anchors and the canonical
+identity-and-Relationship-only Entity map for Main, Builder, ThinkGraph, and KnowGraph. Its Main grounding
+is ThinkGraph-only; Builder retains the wider ThinkGraph-and-KnowGraph construction packet. Those paths use
+provider retrieval followed by one non-persisting Jev relevance distribution, select the highest-probability
+record, and exclude the Recent record from those candidates. This is not proof that ordinary Hermes Bot
+turns receive that full grounding packet. The approved map payload is JSON matching the Entity/Relationship
+view the user sees at that turn, including only the single displayed top Jev result. It is transient context
+supplied with the current message, not a new Engraphis/Graphiti record or retrieval tool. The custom map plugin and its
+endpoint are removed. The existing ThinkGraph prepared delivery includes the map alongside its extraction
+input without a plugin-specific transport wrapper. Ordinary per-turn view delivery remains unproven in
+Preview. No replacement plugin, polling loop, research registry, or tool is authorized. Deeper retrieval
+uses existing Engraphis/Graphiti tools. The retained Main Card-invocation packet is:
 
 ```text
 current user request
@@ -380,7 +383,7 @@ never relabels recency as relevance.
 The exact Entity inspector does not perform that relevance-read flow. It shows at most two current
 provider-projected attached Thinks or Knows, with KnowGraph as the landing authority when an Entity has both;
 ThinkGraph remains the left tab and KnowGraph the right tab. Search/Results and a Relevant/Recent switch are
-not current UI. Main/Builder's automatic grounding remains a separate bounded contract.
+not current UI. Main/Builder's Card-invocation grounding remains a separate bounded contract.
 
 One current Know is one first-class `Episodic:Know` Graphiti object:
 

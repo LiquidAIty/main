@@ -152,9 +152,8 @@ extractor model without a saved Card Run; count actual provider requests, not on
 
 ## Report and stop
 
-For a PromptSpec run, return this evidence to the Primary for the frozen review packet; Agent 3's
-repo-root `turn.md` is the final reviewed report. Do not create a competing implementation report.
-For a non-PromptSpec diagnostic, keep the report in the coding conversation:
+Return evidence to the Primary in the coding conversation. Do not create an implementation report
+file unless the owner explicitly requests it. For either a PromptSpec or diagnostic, report:
 
 ```text
 Case / role / commit / Card and Run identities:

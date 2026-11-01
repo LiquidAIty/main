@@ -137,14 +137,11 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
             workspace_id=workspace_id,
             pair_reference=pair_reference_value,
         )
-        from .personal_context import pair_context_ids
-        personal_ids = pair_context_ids(service, workspace_id, pair_reference_value)
-        if existing or personal_ids:
+        if existing:
             return {
                 "ok": True,
                 "projectId": project,
                 "thinkMemoryIds": [memory.id for memory in existing],
-                "personalContextIds": personal_ids,
                 "pairReference": pair_reference_value,
                 "intakeOperation": "noop",
                 "structuredExtractionRequired": False,

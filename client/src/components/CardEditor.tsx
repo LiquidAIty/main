@@ -9,7 +9,7 @@
 // Entity: IDD
 // Relationship: This file loads the current Card-editor field and choice projection instead of maintaining a second runtime configuration dictionary.
 // Entity: Card Profiles
-// Relationship: Reads effective profile state, applies skill/toolset toggles and learning edits, and requests KnowGraph profile publication after the saved-Card write.
+// Relationship: Reads effective profile state and applies skill/toolset toggles and learning edits through the existing settings owner.
 // Entity: Tool Catalog
 // Relationship: Displays selected application capabilities from IDD, preserves unavailable saved selections, and edits the Card's explicit grants through checkboxes.
 // Entity: Card Scripts
@@ -663,7 +663,7 @@ export function CardEditor({
       });
     return () => controller.abort();
   // Card profile readback is identity-scoped and deliberately independent from
-  // unsaved Card drafts. KnowGraph publication follows a successful saved-Card write.
+  // unsaved Card drafts. Card save never mutates the bound profile.
   }, [isLocalConfigMode, projectId, deckId, cardId, acceptCardProfileReadback]);
 
 
@@ -860,15 +860,6 @@ export function CardEditor({
         if (!profileState || !projectId || !deckId || !cardId) throw new Error('Card profile unavailable.');
       }
       await runSaveConfig();
-      if (projectId && deckId && cardId && localConfig?.runtime.kind === 'hermes'
-          && localConfig.runtime.profile === 'knowgraph') {
-        try {
-          await applyCardProfileOperation({ projectId, deckId, cardId,
-            change: { method: 'profile.publish', params: {} } });
-        } catch (error) {
-          throw new Error(`Card saved; profile publication failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
       if (cardLearningDirtyRef.current) {
         let latestReadback = profileState;
         for (const [id, content] of learningEdits) {
@@ -883,7 +874,7 @@ export function CardEditor({
           if (latestReadback) acceptCardProfileReadback(latestReadback);
         }
       }
-  }, [runSaveConfig, projectId, deckId, cardId, localConfig, acceptCardProfileReadback]);
+  }, [runSaveConfig, projectId, deckId, cardId, acceptCardProfileReadback]);
 
   const saveLatestDraftRef = useRef(saveCurrentDraft);
   useLayoutEffect(() => {

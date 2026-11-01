@@ -96,7 +96,7 @@ import {
   KnowGraphKnow,
   KnowSourceList,
   ThinkRecordCard,
-  PrivateContextControls,
+  SourceSearchControls,
   compactProbability,
   graphEntryTime,
   knowEvidenceIdentity,
@@ -1502,7 +1502,7 @@ export function KnowledgeGraphProjectionSurface({
           top={48} right={12} bottom={12} zIndex={6}
         >
           {!inspectorOpen ? <div ref={panelBodyRef} className="knowledge-authority-controls">
-            {authority !== 'codegraph' && projection?.projectId ? <PrivateContextControls key={projection.projectId} projectId={projection.projectId} /> : null}
+            {authority !== 'codegraph' && projection?.projectId ? <SourceSearchControls key={projection.projectId} projectId={projection.projectId} /> : null}
             {authority === 'joined' && layerVisibility && onLayerVisibilityChange
               ? <fieldset className="graph-layer-controls" aria-label="Graph layers">
                 <legend>Layers</legend>

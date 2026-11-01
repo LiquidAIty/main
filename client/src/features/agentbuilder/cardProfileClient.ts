@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Card Profiles
- * Relationship: Loads one saved Card's profile and learning state and transports typed setting, learning, and profile-publication requests to the backend.
+ * Relationship: Loads one saved Card's profile and learning state and transports typed setting and learning requests to the backend.
  * Entity: Tool Catalog
  * Relationship: Carries profile toolset lists and toggle requests through the existing saved-Card settings owner.
  */
@@ -38,7 +38,6 @@ export type CardProfileView = {
 };
 
 export type CardProfileOperation =
-  | { method: 'profile.publish'; params: Record<string, never> }
   | { method: 'toolset.toggle' | 'skill.toggle'; params: { name: string; enabled: boolean } }
   | { method: 'learning.detail'; params: { id: string } }
   | { method: 'learning.edit'; params: { id: string; content: string } };

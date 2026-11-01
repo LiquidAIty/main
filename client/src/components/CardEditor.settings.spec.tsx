@@ -18,7 +18,7 @@ const view = () => ({ binding: { profile: 'trading', mode: 'delegate' }, profile
   learning: { graph: { nodes: [{ id: 'skill:research', label: 'Research skill' }], edges: [], memory: [], clusters: [], stats: {} } },
 } });
 const config = { runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'trading' },
-  tools: ['project_graph.list_entities'], toolsets: ['web'], skills: ['research'] };
+  tools: ['engraphis_get_memory'], toolsets: ['web'], skills: ['research'] };
 
 beforeEach(() => {
   vi.mocked(loadCardProfile).mockResolvedValue(view() as any);
@@ -42,7 +42,7 @@ describe('restored Card settings surfaces', () => {
     await waitFor(() => expect(applyCardProfileOperation).toHaveBeenCalledWith({ projectId: 'project', deckId: 'deck', cardId: 'trader',
       change: { method: 'toolset.toggle', params: { name: 'web', enabled: false } } }));
     await waitFor(() => expect(save).toHaveBeenCalled());
-    expect(save.mock.calls.at(-1)?.[0]).toMatchObject({ tools: ['project_graph.list_entities'], toolsets: [] });
+    expect(save.mock.calls.at(-1)?.[0]).toMatchObject({ tools: ['engraphis_get_memory'], toolsets: [] });
   });
 
   it('renders provider graph data, not an editable skill-ID textbox', async () => {

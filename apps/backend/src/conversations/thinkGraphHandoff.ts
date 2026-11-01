@@ -5,8 +5,6 @@
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: ThinkGraph
  * Relationship: Delivers one committed conversation pair to the saved ThinkGraph Bot Chat through Hermes bot_relay.deliver, outside Main's route.
- * Entity: KnowGraph
- * Relationship: Requests optional research preparation for one settled Think and forwards its returned mission to the saved KnowGraph profile through Hermes bot_relay.deliver.
  */
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -145,11 +143,9 @@ export async function submitSavedThinkPair(answer: ConversationMessage): Promise
     const submitted = await request('bot_relay.deliver', {
       id: prepared.preparation.pairReference.replace(/^pair_/, ''),
       profile: target.profile, session_id: sessionId,
-      message: JSON.stringify({
-        projectMapContext: prepared.projectMapContext,
-        input: ['EXTRACTION_PROMPT:', prepared.preparation.enrichmentPrompt,
-          'OUTPUT_SCHEMA:', JSON.stringify(prepared.preparation.enrichmentSchema)].join('\n'),
-      }),
+      message: ['EXTRACTION_PROMPT:', prepared.preparation.enrichmentPrompt,
+        'OUTPUT_SCHEMA:', JSON.stringify(prepared.preparation.enrichmentSchema),
+        prepared.projectMapContext.text].join('\n'),
     });
     admissionId = submitted.retry_admission_id || submitted.admission_id;
     if (!admissionId || submitted.session_id !== sessionId) throw new Error('thinkgraph_submission_not_admitted');
@@ -179,37 +175,6 @@ export async function submitSavedThinkPair(answer: ConversationMessage): Promise
     }) as Rpc;
     if (settled.ok === true && settled.status === 'completed' && settled.revisionChanged === true) {
       notifyThinkGraphChanged(answer.projectId);
-    }
-    const candidate = settled.intakeOperation === 'add'
-      ? settled.thinks?.find((think: Rpc) => think.researchRequested === true) : null;
-    const researcher = authority.cards.find(item => item.card.id === 'card_knowgraph' && item.profile === 'knowgraph'
-      && item.card.enabled !== false && item.card.runtime.kind === 'hermes');
-    if (candidate && researcher) {
-      let researchId = '';
-      let admissionAttempted = false;
-      try {
-        const research = await requestPythonRailsJson('/knowgraph/research/prepare', {
-          method: 'POST', headers: { 'Content-Type': 'application/json',
-            'X-LiquidAIty-Internal-MCP-Secret': process.env.LIQUIDAITY_INTERNAL_MCP_SECRET || '' }, body: JSON.stringify({
-            projectId: answer.projectId, pairReference: settled.pairReference, thinkId: candidate.engraphisMemoryId,
-          }),
-        }) as Rpc;
-        if (!research.enabled) return;
-        researchId = research.requestId;
-        detach(); client.close();
-        client = await connectProfile(researcher.profile, () => {}, () => {});
-        const chat = await request('session.resume', { title: 'Bot Chat' });
-        admissionAttempted = true;
-        const receipt = await request('bot_relay.deliver', { id: research.requestId, profile: researcher.profile,
-          session_id: chat.session_id, message: research.message });
-        if (!receipt.admission_id && !receipt.retry_admission_id) throw new Error('research_admission_unconfirmed');
-        console.info('[knowgraph-research]', { projectId: answer.projectId, requestId: researchId,
-          admissionId: receipt.admission_id, status: receipt.status });
-      } catch (error) {
-        // A lost acknowledgement is unknown, not proof that nothing was admitted.
-        console.error('[knowgraph-research]', { projectId: answer.projectId, requestId: researchId,
-          status: admissionAttempted ? 'admission_unknown' : 'not_submitted', error: String(error) });
-      }
     }
   } finally {
     detach();
