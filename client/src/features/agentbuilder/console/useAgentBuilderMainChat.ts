@@ -3,14 +3,12 @@
  * Entity names the feature; Relationship explains why this file belongs and what it contributes.
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
- * Entity: Main Chat
- * Relationship: Owns the Project conversation view and partial replies, refreshing persisted history from observed Hermes activity without overwriting an active foreground response.
  * Entity: Projects
  * Relationship: This file resets conversation, authority, voice, and active-stream state whenever the active Project changes.
  * Entity: Card Invocation
  * Relationship: Submits unchanged user text and image records through the existing chat client and retains partial text on failure or cancellation; it does not create saved Runs or IDFs.
  * Entity: Card Sessions
- * Relationship: Retains the responding Hermes conversation identity for Stop and aborts only this view's active request streams after interruption.
+ * Relationship: Opens the wired Cards with the Project, retains only Hermes-returned handles for transport, and submits without conversation discovery or transcript reads.
  * Entity: Voice
  * Relationship: Captures this browser's microphone, submits its Hermes transcript once, and plays the replying Card's Hermes speech without changing saved prompts.
  * Entity: Data Anchors
@@ -21,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { GraphProjectionV1 } from '../../../components/knowledge/knowledgeGraphProjection';
 import {
+  openProject,
   loadSessionHistory,
   type AddressableAgent,
   type GraphRecordIdentity,
@@ -47,12 +46,6 @@ type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
   deckId: string;
   deckRevision?: string | null;
-  mainCanonicalSession?: {
-    id: string;
-    resolvedId: string;
-    lastActive: number;
-    messageCount: number | null;
-  } | null;
   dataAnchors?: LoadedCardGraphReference['reference'][];
 };
 
@@ -87,7 +80,6 @@ export default function useAgentBuilderMainChat({
   canvasProjectId,
   deckId,
   dataAnchors = [],
-  mainCanonicalSession = null,
 }: UseAgentBuilderMainChatArgs) {
   const projectKey = `${canvasProjectId}:${deckId}`;
   const [technical, setTechnical] = useState<{ key: string; error: string | null }>({
@@ -119,24 +111,13 @@ export default function useAgentBuilderMainChat({
     key: string;
     requestKey: string;
   }>());
-  const sessionIdRef = useRef('');
+  const sessionsRef = useRef<Record<string, string>>({});
   const voiceControllerRef = useRef<AbortController | null>(null);
   const voiceRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
-  const historyWatermarkRef = useRef<{
-    key: string; lastActive: number; messageCount?: number | null;
-  }>({ key: '', lastActive: 0 });
   const historyRequestRef = useRef(0);
-  const activityHistoryControllerRef = useRef<AbortController | null>(null);
-  const latestCanonicalSessionRef = useRef(mainCanonicalSession);
-  latestCanonicalSessionRef.current = mainCanonicalSession;
-  const canonicalSessionId = mainCanonicalSession?.id;
-  const canonicalResolvedId = mainCanonicalSession?.resolvedId;
-  const canonicalLastActive = mainCanonicalSession?.lastActive;
-  const canonicalMessageCount = mainCanonicalSession?.messageCount;
 
   const acceptHistory = useCallback((history: MainSessionHistory) => {
-    sessionIdRef.current = history.sessionId;
     setTranscript({ key: projectKey, messages: history.messages });
     setAuthority({
       key: projectKey,
@@ -151,30 +132,17 @@ export default function useAgentBuilderMainChat({
 
   const refreshHistory = useCallback(async (signal?: AbortSignal) => {
     const request = ++historyRequestRef.current;
-    const requestedCanonical = latestCanonicalSessionRef.current;
     const history = await loadSessionHistory({
       projectId: canvasProjectId,
       deckId,
       signal,
     });
-    const currentCanonical = latestCanonicalSessionRef.current;
     if (
       signal?.aborted
       || request !== historyRequestRef.current
       || activeStreamsRef.current.size > 0
-      || (requestedCanonical && (
-        requestedCanonical.id !== currentCanonical?.id
-        || requestedCanonical.resolvedId !== currentCanonical?.resolvedId
-      ))
     ) return;
     acceptHistory(history);
-    if (requestedCanonical) {
-      historyWatermarkRef.current = {
-        key: `${projectKey}:${requestedCanonical.id}:${requestedCanonical.resolvedId}`,
-        lastActive: requestedCanonical.lastActive,
-        messageCount: requestedCanonical.messageCount,
-      };
-    }
   }, [acceptHistory, canvasProjectId, deckId, projectKey]);
 
   const messages = transcript.key === projectKey ? transcript.messages : [];
@@ -189,15 +157,12 @@ export default function useAgentBuilderMainChat({
       if (active.key !== projectKey) controller.abort();
     }
     activeStreamsRef.current.clear();
-    sessionIdRef.current = '';
+    sessionsRef.current = {};
     voiceControllerRef.current?.abort();
     voiceControllerRef.current = null;
     voiceAudioRef.current?.pause();
     voiceAudioRef.current = null;
     historyRequestRef.current += 1;
-    activityHistoryControllerRef.current?.abort();
-    activityHistoryControllerRef.current = null;
-    historyWatermarkRef.current = { key: '', lastActive: 0 };
     setTranscript({ key: projectKey, messages: [] });
     setAuthority({ key: projectKey, agents: [] });
     setTechnical({ key: projectKey, error: null });
@@ -211,15 +176,20 @@ export default function useAgentBuilderMainChat({
     const controller = new AbortController();
     let cancelled = false;
     setHistoryState({ key: projectKey, loading: true });
-    void refreshHistory(controller.signal)
+    void Promise.all([
+      refreshHistory(controller.signal),
+      openProject({ projectId: canvasProjectId, deckId, signal: controller.signal }).then(sessions => {
+        if (!cancelled && !controller.signal.aborted) sessionsRef.current = sessions;
+      }),
+    ])
       .then(() => {
         if (cancelled) return;
         setHistoryState({ key: projectKey, loading: false });
       })
-      .catch(() => {
+      .catch(error => {
         if (cancelled || controller.signal.aborted) return;
         setHistoryState({ key: projectKey, loading: false });
-        setTechnical({ key: projectKey, error: 'conversation_history_read_failed' });
+        setTechnical({ key: projectKey, error: error instanceof Error ? error.message : 'main_project_open_failed' });
       });
     return () => {
       cancelled = true;
@@ -227,39 +197,8 @@ export default function useAgentBuilderMainChat({
       voiceControllerRef.current?.abort();
       voiceAudioRef.current?.pause();
       historyRequestRef.current += 1;
-      activityHistoryControllerRef.current?.abort();
-      activityHistoryControllerRef.current = null;
     };
-  }, [canvasProjectId, projectKey, refreshHistory]);
-
-  useEffect(() => {
-    if (
-      !canvasProjectId || !canonicalSessionId || !canonicalResolvedId
-      || canonicalLastActive === undefined || sessionHistoryLoading
-    ) return;
-    const key = `${projectKey}:${canonicalSessionId}:${canonicalResolvedId}`;
-    const observed = historyWatermarkRef.current;
-    if (
-      (observed.key === key && canonicalLastActive <= observed.lastActive
-        && canonicalMessageCount === observed.messageCount)
-      || activeStreamsRef.current.size > 0
-    ) return;
-    const controller = new AbortController();
-    activityHistoryControllerRef.current?.abort();
-    activityHistoryControllerRef.current = controller;
-    void refreshHistory(controller.signal).catch(() => {
-      if (!controller.signal.aborted) {
-        setTechnical({ key: projectKey, error: 'conversation_history_read_failed' });
-      }
-    }).finally(() => {
-      if (activityHistoryControllerRef.current === controller) {
-        activityHistoryControllerRef.current = null;
-      }
-    });
-  }, [
-    canvasProjectId, canonicalSessionId, canonicalResolvedId, canonicalLastActive, canonicalMessageCount,
-    projectKey, refreshHistory, sessionHistoryLoading, sessionPending,
-  ]);
+  }, [canvasProjectId, deckId, projectKey, refreshHistory]);
 
   const requestMainText = useCallback(async (
     text: string,
@@ -267,6 +206,7 @@ export default function useAgentBuilderMainChat({
   ): Promise<{ text: string; cardId: string; speechText: string }> => {
     if (!text.trim()) throw new Error('main_prompt_empty');
     if (!canvasProjectId) throw new Error('main_project_required');
+    if (!Object.keys(sessionsRef.current).length) throw new Error('main_project_not_open');
     const requestKey = globalThis.crypto.randomUUID();
     const alreadyActive = activeStreamsRef.current.size > 0;
     setTranscript((current) => {
@@ -360,6 +300,7 @@ export default function useAgentBuilderMainChat({
       ({ finalText } = await streamSession({
         projectId: canvasProjectId,
         deckId,
+        sessions: sessionsRef.current,
         message: text,
         images,
         voiceTurn: runInput.voiceTurn,
@@ -374,7 +315,6 @@ export default function useAgentBuilderMainChat({
             || (event.deckId && event.deckId !== deckId)
           ) throw new Error('main_run_identity_mismatch');
           if (event.kind === 'session' && typeof event.sessionId === 'string') {
-            sessionIdRef.current = event.sessionId;
             cardId = event.cardId || '';
           }
           if (event.kind === 'done' && typeof event.speechText === 'string') speechText = event.speechText;
@@ -444,11 +384,6 @@ export default function useAgentBuilderMainChat({
         phase: activeStreamsRef.current.size ? 'active' : 'idle',
       });
     }
-    if (!controller.signal.aborted && activeStreamsRef.current.size === 0) {
-      await refreshHistory().catch(() => {
-        setTechnical({ key: projectKey, error: 'conversation_history_read_failed' });
-      });
-    }
     return { text: finalText, cardId, speechText };
   }, [
     addressableAgents,
@@ -456,7 +391,6 @@ export default function useAgentBuilderMainChat({
     dataAnchors,
     deckId,
     projectKey,
-    refreshHistory,
   ]);
 
   const handleSend = useCallback((text: string, runInput?: MainChatRunInput) => {
@@ -570,8 +504,7 @@ export default function useAgentBuilderMainChat({
 
   const stopMainTurn = useCallback(async () => {
     if (!sessionPending || !canvasProjectId) return;
-    if (!sessionIdRef.current) throw new Error('main_session_required');
-    await stopSession({ projectId: canvasProjectId, deckId, sessionId: sessionIdRef.current });
+    await stopSession({ projectId: canvasProjectId, deckId, sessions: sessionsRef.current });
     for (const [controller, active] of activeStreamsRef.current) {
       if (active.key !== projectKey) continue;
       controller.abort();

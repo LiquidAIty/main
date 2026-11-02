@@ -11,8 +11,6 @@
  * Relationship: Validates image type, filename, size, and count, then sends unchanged user text and image records through the conversation callback while allowing new drafts during active work.
  * Entity: Voice
  * Relationship: The existing microphone control carries the current draft and images into the same saved-agent conversation without changing layout.
- * Entity: Agent Input
- * Relationship: Shows actual Hermes questions and approval choices beside the existing composer and sends only the user's explicit response.
  * Entity: Project Knowledge Graph
  * Relationship: This file displays exact current assistant-side Entity and Know references as named graph focus actions without rewriting stored messages.
  */
@@ -30,7 +28,6 @@ import {
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 import type { DirectChatTarget } from "../../features/agentbuilder/console/mainSessionClient";
-import { respondToAgent, type AgentInputRequest } from "../../features/agentbuilder/console/mainSessionClient";
 import {
   MAX_MAIN_CHAT_IMAGES,
   type MainChatRunInput,
@@ -428,42 +425,9 @@ function MainProjectChatMessageBubble({
   );
 }
 
-function AgentInput({ request }: { request: AgentInputRequest }) {
-  const [answer, setAnswer] = useState('');
-  const [selected, setSelected] = useState<string[]>([]);
-  const [state, setState] = useState<'open' | 'sending' | 'answered'>('open');
-  const [error, setError] = useState<string | null>(null);
-  const sending = useRef(false);
-  const respond = async (value: string) => {
-    if (sending.current) return;
-    sending.current = true;
-    setState('sending');
-    setError(null);
-    try { await respondToAgent(request, value); setState('answered'); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : 'agent_input_response_failed'); setState('open'); }
-    finally { sending.current = false; }
-  };
-  if (state === 'answered') return null;
-  return <fieldset disabled={state === 'sending'} aria-label={`${request.address ? `@${request.address} ` : ''}${request.kind}`} style={{ marginBottom: 8 }}>
-    {request.address ? <legend>@{request.address}</legend> : null}
-    <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{request.question || request.description}</div>
-    {request.command ? <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{request.command}</pre> : null}
-    {request.choices.map(choice => request.kind === 'clarify' && request.multiSelect
-      ? <label key={choice}><input type="checkbox" checked={selected.includes(choice)} onChange={event => setSelected(current =>
-        event.target.checked ? [...current, choice] : current.filter(item => item !== choice))} />{choice}</label>
-      : <button type="button" key={choice} onClick={() => { void respond(choice); }}>{choice}</button>)}
-    {request.kind === 'clarify' ? <form onSubmit={event => { event.preventDefault(); void respond([...selected, answer].filter(Boolean).join('\n')); }}>
-      <input aria-label={request.address ? `Answer @${request.address}` : 'Answer'} value={answer} onChange={event => setAnswer(event.target.value)} />
-      <button type="submit" disabled={!answer.trim() && !selected.length}>Send answer</button>
-    </form> : null}
-    {error ? <div role="alert">{error}</div> : null}
-  </fieldset>;
-}
-
 export default function MainProjectChat({
   messages,
   directChatTargets = [],
-  inputRequests = [],
   onSend,
   knowledgeProjectId,
   colors,
@@ -483,7 +447,6 @@ export default function MainProjectChat({
 }: {
   messages: MainProjectChatMessage[];
   directChatTargets?: DirectChatTarget[];
-  inputRequests?: AgentInputRequest[];
   onSend: (t: string, runInput?: MainChatRunInput) => void | boolean;
   knowledgeProjectId: string;
   colors: MainProjectChatColors;
@@ -767,9 +730,6 @@ export default function MainProjectChat({
         ) : null}
       </div>
       <div className="px-4 pb-4">
-        {inputRequests.filter(request => request.projectId === knowledgeProjectId).map(request => (
-          <AgentInput key={`${request.projectId}:${request.cardId}:${request.sessionId}:${request.requestId}`} request={request} />
-        ))}
         {imageError || error || voiceError || voicePhase === 'requesting' ? (
           <div
             data-testid="main-chat-error"

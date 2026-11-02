@@ -502,9 +502,9 @@ export default function BuilderCanvas({
   onSelectCard,
   onSelectEdge,
   onDeleteSelectedEdge,
-  activeCardIds = [],
-  activeAgentCounts = {},
-  activeEdgeIds = [],
+  activeCardIds,
+  activeAgentCounts,
+  activeEdgeIds,
   inspectMode = false,
   focusZone = null,
 }: {
