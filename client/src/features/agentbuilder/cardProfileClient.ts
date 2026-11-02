@@ -25,8 +25,17 @@ export type CardLearningGraph = {
 export type CardProfileView = {
   profile: {
     name: string;
+    soul: { content: string; exists: boolean; matchesSavedPrompt: boolean };
     skills: Array<{ name: string; enabled: boolean }>;
     toolsets: Array<{ name: string; label?: string; description?: string; enabled: boolean; tools?: string[]; platform?: string; configured?: boolean }>;
+    applicationTools: {
+      server: string;
+      configured: boolean;
+      enabled: boolean;
+      selected: string[];
+      include: string[];
+      matchesSavedSelection: boolean;
+    };
     learning: {
       graph: CardLearningGraph;
     };
@@ -38,6 +47,7 @@ export type CardProfileView = {
 };
 
 export type CardProfileOperation =
+  | { method: 'configuration.publish'; params: Record<string, never> }
   | { method: 'toolset.toggle' | 'skill.toggle'; params: { name: string; enabled: boolean } }
   | { method: 'learning.detail'; params: { id: string } }
   | { method: 'learning.edit'; params: { id: string; content: string } };

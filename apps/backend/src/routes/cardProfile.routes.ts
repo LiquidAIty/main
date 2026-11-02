@@ -1,7 +1,7 @@
 /**
  * Graph + less = more: change the smallest existing path; never duplicate its authority.
  * Entity: Card Profiles
- * Relationship: Resolves an owner-authorized saved Card and forwards its settings to the same profile-scoped HTTP APIs used by Hermes Desktop.
+ * Relationship: Resolves an owner-authorized saved Card, publishes its prompt and application-tool selection, and forwards settings to the same profile-scoped HTTP APIs used by Hermes Desktop.
  * Entity: Tool Catalog
  * Relationship: Reads and toggles Hermes toolsets separately from application tool grants.
  * Entity: Skills
@@ -17,6 +17,122 @@ import { resolveRepoRoot } from '../services/workingDirectories';
 import { requireOwnedProject } from './projectAccess';
 
 type Json = Record<string, any>;
+type ProfileRequest = (pathname: string, method?: string, body?: Json) => Promise<any>;
+
+const APPLICATION_MCP_SERVER = 'liquidaity';
+const VISIBLE_PUBLICATION_ERRORS = new Set([
+  'card_application_mcp_ambiguous',
+  'card_application_mcp_missing',
+  'card_application_mcp_not_configurable',
+  'card_application_tools_readback_mismatch',
+  'card_profile_soul_readback_mismatch',
+]);
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .filter((item): item is string => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(Boolean))];
+}
+
+function sameStrings(left: string[], right: string[]): boolean {
+  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+}
+
+function savedApplicationTools(card: Json): string[] {
+  const options = card.runtimeOptions && typeof card.runtimeOptions === 'object'
+    ? card.runtimeOptions as Json
+    : {};
+  return stringList(options.tools);
+}
+
+async function readProfileState(api: ProfileRequest, card: Json, profile: string) {
+  const [skills, toolsets, graph, soul, mcp] = await Promise.all([
+    api('/api/skills'),
+    api('/api/tools/toolsets'),
+    api('/api/learning/graph'),
+    api(`/api/profiles/${encodeURIComponent(profile)}/soul`),
+    api('/api/mcp/servers'),
+  ]);
+  const selectedTools = savedApplicationTools(card);
+  const servers = Array.isArray(mcp?.servers) ? mcp.servers : [];
+  const applicationServers = servers.filter((server: Json) => server?.name === APPLICATION_MCP_SERVER);
+  if (applicationServers.length > 1) throw new Error('card_application_mcp_ambiguous');
+  const applicationServer = applicationServers[0] as Json | undefined;
+  const include = stringList(applicationServer?.tools?.include);
+  const soulContent = typeof soul?.content === 'string' ? soul.content : '';
+  const savedPrompt = String(card.prompt || '');
+  return {
+    binding: { profile, mode: card.runtime.mode },
+    profile: {
+      name: profile,
+      soul: {
+        content: soulContent,
+        exists: soul?.exists === true,
+        matchesSavedPrompt: soul?.exists === true && soulContent === savedPrompt,
+      },
+      skills,
+      toolsets,
+      applicationTools: {
+        server: APPLICATION_MCP_SERVER,
+        configured: Boolean(applicationServer),
+        enabled: applicationServer?.enabled === true,
+        selected: selectedTools,
+        include,
+        matchesSavedSelection: selectedTools.length === 0
+          ? !applicationServer || sameStrings(include, selectedTools)
+          : applicationServer?.enabled === true && sameStrings(include, selectedTools),
+      },
+      learning: { graph },
+    },
+  };
+}
+
+async function publishSavedCardConfiguration(api: ProfileRequest, card: Json, profile: string) {
+  const savedPrompt = String(card.prompt || '');
+  await api(`/api/profiles/${encodeURIComponent(profile)}/soul`, 'PUT', { content: savedPrompt });
+  const soul = await api(`/api/profiles/${encodeURIComponent(profile)}/soul`);
+  if (soul?.exists !== true || soul.content !== savedPrompt) {
+    throw new Error('card_profile_soul_readback_mismatch');
+  }
+
+  const selectedTools = savedApplicationTools(card);
+  const listed = await api('/api/mcp/servers');
+  const servers = Array.isArray(listed?.servers) ? listed.servers : [];
+  const applicationServers = servers.filter((server: Json) => server?.name === APPLICATION_MCP_SERVER);
+  if (applicationServers.length > 1) throw new Error('card_application_mcp_ambiguous');
+  if (!applicationServers.length) {
+    if (selectedTools.length) throw new Error('card_application_mcp_missing');
+    return;
+  }
+  if (applicationServers[0]?.source !== 'config') {
+    throw new Error('card_application_mcp_not_configurable');
+  }
+  await api('/api/config', 'PUT', {
+    config: {
+      mcp_servers: {
+        [APPLICATION_MCP_SERVER]: {
+          ...(selectedTools.length ? { enabled: true } : {}),
+          tools: { include: selectedTools },
+        },
+      },
+    },
+  });
+  const readback = await api('/api/mcp/servers');
+  const readbackServers = Array.isArray(readback?.servers) ? readback.servers : [];
+  const applicationReadback = readbackServers.filter(
+    (server: Json) => server?.name === APPLICATION_MCP_SERVER,
+  );
+  const include = stringList(applicationReadback[0]?.tools?.include);
+  if (
+    applicationReadback.length !== 1
+    || !sameStrings(include, selectedTools)
+    || (selectedTools.length > 0 && applicationReadback[0]?.enabled !== true)
+  ) {
+    throw new Error('card_application_tools_readback_mismatch');
+  }
+}
 
 // Settings transport only: discover the running provider; never ensure/start it,
 // open a chat, attach a model, or borrow Main's Bot Mode connection.
@@ -66,7 +182,10 @@ export function createCardProfileRouter(connect = profileApi) {
       let result: unknown;
       if (req.method === 'POST' && req.params.operation === 'operations') {
         const params = req.body.params || {};
-        if (req.body.method === 'toolset.toggle' || req.body.method === 'skill.toggle') {
+        if (req.body.method === 'configuration.publish') {
+          await publishSavedCardConfiguration(api, card, profile);
+          result = { published: true };
+        } else if (req.body.method === 'toolset.toggle' || req.body.method === 'skill.toggle') {
           if (typeof params.name !== 'string' || !params.name.trim() || typeof params.enabled !== 'boolean') {
             return res.status(400).json({ ok: false, error: 'card_profile_toggle_invalid' });
           }
@@ -85,15 +204,12 @@ export function createCardProfileRouter(connect = profileApi) {
       } else if (req.method !== 'GET' || req.params.operation) {
         return res.status(405).json({ ok: false, error: 'card_profile_method_unsupported' });
       }
-      const [skills, toolsets, graph] = await Promise.all([
-        api('/api/skills'), api('/api/tools/toolsets'), api('/api/learning/graph'),
-      ]);
-      return res.json({ ok: true, result,
-        binding: { profile, mode: card.runtime.mode },
-        profile: { name: profile, skills, toolsets, learning: { graph } },
-      });
-    } catch {
-      return res.status(503).json({ ok: false, error: 'card_profile_unavailable' });
+      return res.json({ ok: true, result, ...await readProfileState(api, card, profile) });
+    } catch (error) {
+      const code = error instanceof Error && VISIBLE_PUBLICATION_ERRORS.has(error.message)
+        ? error.message
+        : 'card_profile_unavailable';
+      return res.status(503).json({ ok: false, error: code });
     }
   });
   return router;

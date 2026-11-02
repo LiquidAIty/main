@@ -9,7 +9,7 @@
 // Entity: IDD
 // Relationship: This file loads the current Card-editor field and choice projection instead of maintaining a second runtime configuration dictionary.
 // Entity: Card Profiles
-// Relationship: Reads effective profile state and applies skill/toolset toggles and learning edits through the existing settings owner.
+// Relationship: Reads effective profile state, publishes the saved prompt and application-tool selection, and applies skill/toolset toggles and learning edits through the existing settings owner.
 // Entity: Tool Catalog
 // Relationship: Displays selected application capabilities from IDD, preserves unavailable saved selections, and edits the Card's explicit grants through checkboxes.
 // Entity: Card Scripts
@@ -412,6 +412,8 @@ export function CardEditor({
     limit: 100,
     hasMore: false,
   });
+  const [toolDictionaryQuery, setToolDictionaryQuery] = useState('');
+  const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(true);
   const [toolDictionaryBusy, setToolDictionaryBusy] = useState(true);
   const [toolOptionsError, setToolOptionsError] = useState(false);
   const [promptText, setPromptText] = useState('');
@@ -662,8 +664,8 @@ export function CardEditor({
         setCardProfileError(error instanceof Error ? error.message : 'Profile unavailable.');
       });
     return () => controller.abort();
-  // Card profile readback is identity-scoped and deliberately independent from
-  // unsaved Card drafts. Card save never mutates the bound profile.
+  // Initial profile readback is identity-scoped and independent from unsaved
+  // drafts. Publication happens only after the Card revision itself saves.
   }, [isLocalConfigMode, projectId, deckId, cardId, acceptCardProfileReadback]);
 
 
@@ -804,6 +806,21 @@ export function CardEditor({
     const revision = cardDraftRevisionRef.current;
     const payload = buildCurrentLocalPayload();
     await Promise.resolve(onSaveLocalConfig(payload));
+    if (localConfig.runtime.kind === 'hermes') {
+      const state = await applyCardProfileOperation({
+        projectId,
+        deckId,
+        cardId,
+        change: { method: 'configuration.publish', params: {} },
+      });
+      if (
+        state.profile.soul.matchesSavedPrompt !== true
+        || state.profile.applicationTools.matchesSavedSelection !== true
+      ) {
+        throw new Error('Card profile publication readback failed.');
+      }
+      acceptCardProfileReadback(state);
+    }
     if (cardDraftRevisionRef.current === revision) {
       draftDirtyRef.current = false;
     }
@@ -812,6 +829,10 @@ export function CardEditor({
     localConfig,
     onSaveLocalConfig,
     buildCurrentLocalPayload,
+    projectId,
+    deckId,
+    cardId,
+    acceptCardProfileReadback,
   ]);
 
   const openCardLearningNode = useCallback(async (nodeId: string) => {
@@ -942,6 +963,11 @@ export function CardEditor({
     toolDictionaryPage.selectedKnownReferences,
     toolDictionaryPage.unresolvedSelectedIds,
   );
+  const availableToolRows = showSelectedToolsOnly
+    ? []
+    : toolDictionaryPage.references.filter(
+        (reference) => !savedToolNames.includes(reference.canonicalId),
+      );
   const toggleTool = (name: string, checked: boolean) => {
     const next = checked
       ? savedToolNames.includes(name) ? savedToolNames : [...savedToolNames, name]
@@ -963,7 +989,7 @@ export function CardEditor({
             projectId,
             deckId,
             cardId,
-            query: '',
+            query: toolDictionaryQuery,
             offset: '0',
             limit: '200',
           });
@@ -1014,6 +1040,7 @@ export function CardEditor({
     deckId,
     cardId,
     savedToolNames.join('\u0000'),
+    toolDictionaryQuery,
   ]);
 
   const renderSectionBody = (sectionTab: string) => {
@@ -1550,6 +1577,22 @@ export function CardEditor({
               {autoToolsField?.label || 'Auto Tools'} with Jev · choose only from this Card's selected authorized tools
             </label>
           ) : null}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+            <input
+              value={toolDictionaryQuery}
+              onChange={(event) => setToolDictionaryQuery(event.target.value)}
+              placeholder="Search ID, name, namespace, or description"
+              aria-label="Search tools"
+            />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#91A9B8', fontSize: 11 }}>
+              <input
+                type="checkbox"
+                checked={showSelectedToolsOnly}
+                onChange={(event) => setShowSelectedToolsOnly(event.target.checked)}
+              />
+              Selected only
+            </label>
+          </div>
           {toolDictionaryBusy ? (
             <div style={{ color: '#80969F', fontSize: 11 }}>Loading selected tools…</div>
           ) : null}
@@ -1600,9 +1643,55 @@ export function CardEditor({
               ))}
             </div>
           ) : null}
-          {!selectedToolRows.length && !toolDictionaryBusy && !toolOptionsError ? (
+          {availableToolRows.length ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+                Available
+              </div>
+              {availableToolRows.map((tool) => (
+                <label
+                  key={tool.canonicalId}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '18px 1fr',
+                    gap: 8,
+                    alignItems: 'start',
+                    padding: '7px 8px',
+                    border: '1px solid #3A4A4F',
+                    borderRadius: 6,
+                    cursor: tool.available && tool.grantEligible ? 'pointer' : 'default',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={false}
+                    disabled={!tool.available || !tool.grantEligible}
+                    onChange={(event) => toggleTool(tool.canonicalId, event.target.checked)}
+                    aria-label={`Include ${tool.canonicalId}`}
+                  />
+                  <span>
+                    <span title={tool.shortDescription} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
+                      {tool.displayName || tool.canonicalId}
+                    </span>
+                    <code style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
+                      {tool.canonicalId}
+                    </code>
+                    {!tool.available ? (
+                      <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
+                        Currently unavailable
+                      </span>
+                    ) : !tool.grantEligible ? (
+                      <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
+                        Not grant eligible
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : !selectedToolRows.length && !toolDictionaryBusy && !toolOptionsError ? (
             <div style={{ color: '#91A9B8', fontSize: 11 }}>
-              No tools are selected for this Card.
+              {showSelectedToolsOnly ? 'No tools are selected for this Card.' : 'No tools match this search.'}
             </div>
           ) : null}
         </div>
