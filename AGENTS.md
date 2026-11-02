@@ -13,7 +13,8 @@ Before doing anything else:
    for the affected boundary.
 3. Read [PLAN.md](./PLAN.md) completely.
 4. Read only relevant reusable `skills/*.md` procedures; domain skills defer generic process control to
-   `promptspec-receiver`.
+   `promptspec-receiver`. For product behavior or architecture work, also read the owner-requested
+   [understand-project-design](.agents/skills/understand-project-design/SKILL.md) skill before proposing or changing the design.
 5. The Primary uses the Codebase Memory CLI for a bounded directional map, then direct-reads current
    source. Support scouts receive exact anchors and use direct source; they do not operate CBM.
 6. Establish the permitted working-tree state without violating a current no-Git instruction.

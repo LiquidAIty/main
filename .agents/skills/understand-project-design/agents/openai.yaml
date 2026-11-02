@@ -1,0 +1,4 @@
+interface:
+  display_name: "Understand LiquidAIty Design"
+  short_description: "Recover intent and preserve existing product owners"
+  default_prompt: "Use $understand-project-design to recover the requested LiquidAIty behavior, existing owners, and preservation set before proposing or making changes."
