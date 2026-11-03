@@ -136,6 +136,7 @@ def test_codegraph_exact_read_normalizes_provider_grouped_trace_json(
 
 def test_codegraph_projection_preserves_one_file_with_multiple_feature_memberships(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setattr(
         codegraph_reference_reads.saved_cards,
@@ -143,10 +144,17 @@ def test_codegraph_projection_preserves_one_file_with_multiple_feature_membershi
         lambda *_args: _saved_builder(tools=["cbm.search_graph", "cbm.search_code"]),
     )
     observed = {}
+    monkeypatch.setattr(codegraph_reference_reads, "_REPO_ROOT", tmp_path)
+    source_file = tmp_path / "client/src/example.ts"
+    source_file.parent.mkdir(parents=True)
+    source_file.write_text(
+        "/**\n * Entity: CodeGraph\n * Relationship: Renders exact CBM structure.\n *\n"
+        " * Entity: Graph Presentation\n * Relationship: Reuses the shared renderer.\n */",
+        encoding="utf-8",
+    )
 
     def reader(**kwargs):
         observed.update(kwargs)
-        empty_annotations = {"cols": ["file", "source"], "rows": []}
         file_page = {
                 "cols": ["name", "label", "lines", "in", "out"],
                 "groups": [{
@@ -157,40 +165,7 @@ def test_codegraph_projection_preserves_one_file_with_multiple_feature_membershi
                 "has_more": False,
                 "truncated": False,
             }
-        empty_file_page = {
-            "cols": ["name", "label", "lines", "in", "out"],
-            "groups": [],
-            "has_more": False,
-            "truncated": False,
-        }
-        return [
-            file_page,
-            empty_file_page,
-            empty_file_page,
-            {
-                "cols": ["file", "source"],
-                "rows": [[
-                    "client/src/example.ts",
-                    {
-                        "source_start": 1,
-                        "source": (
-                            "/**\n"
-                            " * Entity: CodeGraph\n"
-                            " * Relationship: Renders exact CBM structure.\n"
-                            " *\n"
-                            " * Entity: Graph Presentation\n"
-                            " * Relationship: Reuses the shared renderer.\n"
-                            " */"
-                        ),
-                    },
-                ]],
-                "has_more": False,
-                "truncated": False,
-            },
-            empty_annotations,
-            empty_annotations,
-            empty_annotations,
-        ]
+        return [file_page]
 
     monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", reader)
     result = read_codegraph_view({
@@ -212,6 +187,42 @@ def test_codegraph_projection_preserves_one_file_with_multiple_feature_membershi
     assert observed["card_id"] == "builder"
     assert observed["concurrent"] is True
     assert observed["deadline_seconds"] == 30
+    assert len(observed["calls"]) == 1
+    assert observed["calls"][0][1]["qn_pattern"].endswith(r"\.(apps|client|services|vite)\.")
+    assert all(name == "cbm.search_graph" for name, _ in observed["calls"])
+
+
+def test_projection_does_not_report_ready_when_source_headers_are_unreadable(monkeypatch, tmp_path):
+    monkeypatch.setattr(codegraph_reference_reads, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
+                        lambda *_args: _saved_builder(tools=["cbm.search_graph", "cbm.search_code"]))
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", lambda **_: [
+        {"cols": ["name", "label"], "groups": [{"qn_prefix": "repo", "file": "client/file.ts",
+                                                 "rows": [["file", "File"]]}]},
+    ])
+    result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder",
+                                 "cardId": "builder", "mode": "projection"})
+    assert result["status"] == "unavailable"
+    assert result["projection"]["metadata"]["classifiedFileCount"] == 0
+    assert result["errors"] == [{"purpose": "feature-annotations", "operation": "source-header",
+                                 "code": "codegraph_source_header_unavailable", "filePath": "client/file.ts"}]
+
+
+def test_header_reads_preserve_the_line_80_boundary_and_reject_outside_paths(monkeypatch, tmp_path):
+    root = tmp_path / "repo"
+    source_file = root / "client/edge.ts"
+    source_file.parent.mkdir(parents=True)
+    source_file.write_text("\n" * 79 + "// Entity: Boundary\n// Relationship: Last eligible pair.\n"
+                           "// Entity: Too late\n// Relationship: Must not enter the graph.\n", encoding="utf-8")
+    (tmp_path / "outside.py").write_text("# Entity: Private\n# Relationship: Not repository source.\n", encoding="utf-8")
+    monkeypatch.setattr(codegraph_reference_reads, "_REPO_ROOT", root)
+    contributions, errors = codegraph_reference_reads._feature_contributions([
+        "client/edge.ts", "../outside.py",
+    ])
+    assert [item["feature"] for item in contributions] == ["Boundary"]
+    assert contributions[0]["entityLine"] == 80
+    assert contributions[0]["relationshipLine"] == 81
+    assert errors[0]["filePath"] == "../outside.py"
 
 
 def test_codegraph_projection_honors_persisted_builder_grants(
@@ -332,3 +343,40 @@ def test_codegraph_source_read_is_explicit_and_includes_tests(
         "result_limit": codegraph_reference_reads.MAX_GRAPH_REFERENCE_RESULTS,
         "include_tests": True,
     }
+
+
+def test_file_source_uses_exact_cbm_file_identity_and_reports_clipping(monkeypatch):
+    monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
+                        lambda *_args: _saved_builder(tools=["cbm.get_code_snippet"]))
+    qualified = "C-Projects-LiquidAIty-main.client.src.example.ts.__file__"
+
+    def reader(**kwargs):
+        assert kwargs["calls"] == [("cbm.get_code_snippet", {
+            "project": "C-Projects-LiquidAIty-main", "qualified_name": qualified,
+            "include_neighbors": False, "source_mode": "full", "max_output_tokens": 64_000,
+            "format": "json",
+        })]
+        return [{"qualified_name": qualified, "label": "File", "source": "export const value = 1;",
+                 "file_path": "client/src/example.ts", "start_line": 1, "end_line": 1,
+                 "source_truncated": True}]
+
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", reader)
+    result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder",
+                                 "cardId": "builder", "mode": "source", "qualifiedName": qualified})
+    assert result["status"] == "partial"
+    assert result["selectedSymbol"]["recordKind"] == "file"
+    assert result["selectedSymbol"]["truncated"] is True
+    assert result["selectedSymbol"]["content"] == "export const value = 1;"
+
+
+def test_file_source_rejects_wrong_provider_identity(monkeypatch):
+    monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
+                        lambda *_args: _saved_builder(tools=["cbm.get_code_snippet"]))
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", lambda **_: [{
+        "qualified_name": "different.file", "label": "File", "source": "wrong content",
+    }])
+    result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder",
+                                 "cardId": "builder", "mode": "source",
+                                 "qualifiedName": "C-Projects-LiquidAIty-main.client.example.ts.__file__"})
+    assert result["status"] == "unavailable"
+    assert result["selectedSymbol"] is None

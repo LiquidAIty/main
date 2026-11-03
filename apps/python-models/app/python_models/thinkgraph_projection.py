@@ -63,7 +63,7 @@ def _projection_entity_directory(project: str) -> dict[str, Any] | None:
         return build_canonical_entity_directory(project)
     except DataAnchorError:
         # ThinkGraph remains independently readable when KnowGraph is unavailable.
-        # Joined then fails closed because it has no complete authority snapshot.
+        # Cross-authority Entity focus stays unavailable without a complete directory.
         return None
 
 

@@ -10,7 +10,7 @@
  * Entity: KnowGraph
  * Relationship: This file renders exact Graphiti Entities, relationships, atomic and historical Knows, sources, focus neighborhoods, and confirmed episode removal actions.
  * Entity: CodeGraph
- * Relationship: This file renders the Code layer category-first, expands a selected File, and loads exact source only after an explicit Symbol action.
+ * Relationship: This file renders the Code layer category-first, expands a selected File, loads exact source on request, and mounts CodeGraph review controls in its existing Inspector.
  * Entity: Jev Decisions
  * Relationship: This file presents validated relationship probabilities and bounded manual focus results as transient physics and navigation without writing graph meaning.
  */
@@ -39,8 +39,6 @@ import {
   DEFAULT_SOLARPUNK_COLORS,
   CODE_GRAPH_LAYER_COLOR,
   DEFAULT_GRAPH_LAYER_VISIBILITY,
-  codeGraphMaterialFields,
-  combinedCyberMaterialFields,
   composeVisibleGraphLayers,
   providerMemberKey,
   solarpunkMaterialFields,
@@ -59,6 +57,7 @@ import {
 } from './knowledgeGraphProjection';
 import {
   codeGraphCategoryProjection,
+  codeGraphFeatures,
   type CodeGraphSelectedSymbol,
 } from './codeGraphProjection';
 import {
@@ -104,6 +103,7 @@ import {
   type KnowInspectorRecord,
 } from './KnowledgeGraphInspector';
 import type { CanonicalEntityDirectory } from './canonicalEntityDirectory';
+import { CodeGraphChangeReview } from './CodeGraphChangeReview';
 import './knowledgeAuthorityGraphSurface.css';
 
 export function JoinedKnowledgeGraphSurface({
@@ -140,7 +140,7 @@ export function JoinedKnowledgeGraphSurface({
   const [layerVisibility, setLayerVisibility] = useState<GraphLayerVisibility>(() => ({
     ...DEFAULT_GRAPH_LAYER_VISIBILITY,
   }));
-  const [codeFeatureId, setCodeFeatureId] = useState<string | null>(null);
+  const [codeFeatureIds, setCodeFeatureIds] = useState<string[]>([]);
   const [codeFilePath, setCodeFilePath] = useState<string | null>(null);
   const codeLayer = codeGraph || {
     projection: {
@@ -157,13 +157,14 @@ export function JoinedKnowledgeGraphSurface({
     freshness: 'unverified',
   };
   useEffect(() => {
-    setCodeFeatureId(null);
+    setCodeFeatureIds([]);
     setCodeFilePath(null);
   }, [codeLayer.projection.projectId]);
   const visibleCodeProjection = useMemo(
-    () => codeGraphCategoryProjection(codeLayer.projection, codeFeatureId, codeFilePath),
-    [codeFeatureId, codeFilePath, codeLayer.projection],
+    () => codeGraphCategoryProjection(codeLayer.projection, codeFeatureIds, codeFilePath),
+    [codeFeatureIds, codeFilePath, codeLayer.projection],
   );
+  const codeFeatures = useMemo(() => codeGraphFeatures(codeLayer.projection), [codeLayer.projection]);
   const presentation = useMemo(
     () => composeVisibleGraphLayers(
       projections.thinkgraph,
@@ -215,10 +216,10 @@ export function JoinedKnowledgeGraphSurface({
   const setLayerVisible = (layer: keyof GraphLayerVisibility, visible: boolean) => {
     setLayerVisibility(current => ({ ...current, [layer]: visible }));
     if (layer === 'codegraph' && !visible) {
-      setCodeFeatureId(null);
+      setCodeFeatureIds([]);
       setCodeFilePath(null);
     }
-    if (layer === 'codegraph' && visible && codeLayer.status === 'idle' && onOpenCodeGraph) {
+    if (layer === 'codegraph' && visible && codeLayer.status !== 'loading' && onOpenCodeGraph) {
       void onOpenCodeGraph();
     }
   };
@@ -242,19 +243,26 @@ export function JoinedKnowledgeGraphSurface({
         return onReadCodeGraphFile(filePath);
       } : undefined}
       onReadCodeGraphSource={onReadCodeGraphSource}
-      codeNavigationActive={Boolean(codeFeatureId || codeFilePath)}
+      codeNavigationActive={Boolean(codeFeatureIds.length || codeFilePath)}
+      codeFeatures={codeFeatures}
+      selectedCodeFeatureIds={codeFeatureIds}
+      onToggleCodeGraphFeature={(featureId) => {
+        setCodeFeatureIds(current => current.includes(featureId)
+          ? current.filter(id => id !== featureId) : [...current, featureId]);
+        setCodeFilePath(null);
+      }}
       onSelectCodeGraphFeature={(featureId) => {
-        setCodeFeatureId(featureId);
+        setCodeFeatureIds(current => current.includes(featureId) ? current : [...current, featureId]);
         setCodeFilePath(null);
       }}
       onClearCodeGraphFeature={() => {
-        setCodeFeatureId(null);
+        setCodeFeatureIds([]);
         setCodeFilePath(null);
       }}
       layerVisibility={layerVisibility}
       onLayerVisibilityChange={setLayerVisible}
       onResetLayerVisibility={() => {
-        setCodeFeatureId(null);
+        setCodeFeatureIds([]);
         setCodeFilePath(null);
         setLayerVisibility({ ...DEFAULT_GRAPH_LAYER_VISIBILITY });
       }}
@@ -315,6 +323,9 @@ export function KnowledgeGraphProjectionSurface({
   onReadCodeGraphFile,
   onReadCodeGraphSource,
   codeNavigationActive,
+  codeFeatures,
+  selectedCodeFeatureIds,
+  onToggleCodeGraphFeature,
   onSelectCodeGraphFeature,
   onClearCodeGraphFeature,
   layerVisibility,
@@ -338,6 +349,9 @@ export function KnowledgeGraphProjectionSurface({
   onReadCodeGraphFile?: (filePath: string) => Promise<GraphProjectionV1 | null>;
   onReadCodeGraphSource?: (qualifiedName: string) => Promise<CodeGraphSelectedSymbol | null>;
   codeNavigationActive?: boolean;
+  codeFeatures?: GraphProjectionNode[];
+  selectedCodeFeatureIds?: string[];
+  onToggleCodeGraphFeature?: (featureId: string) => void;
   onSelectCodeGraphFeature?: (featureId: string) => void;
   onClearCodeGraphFeature?: () => void;
   layerVisibility?: GraphLayerVisibility;
@@ -1064,15 +1078,11 @@ export function KnowledgeGraphProjectionSurface({
           ? activeJoinedPresentation?.codeNodeVariants?.get(node.id)
           : null;
         if (codeNode) {
-          return {
-            ...withoutSolarpunkMaterial(node),
-            ...codeGraphMaterialFields(),
-          };
+          return withoutSolarpunkMaterial(node);
         }
         if (authority === 'codegraph' || style !== 'solarpunk') {
           return withoutSolarpunkMaterial(node);
         }
-        const combinedCyber = authority === 'joined';
         const variants = authority === 'joined'
           ? activeJoinedPresentation?.nodeVariants.get(node.id) || []
           : [{ authority, node }] as JoinedGraphNodeVariant[];
@@ -1087,13 +1097,7 @@ export function KnowledgeGraphProjectionSurface({
           : false;
         return {
           ...node,
-          ...(combinedCyber
-            ? combinedCyberMaterialFields(
-              sourceKind, thinkActive, knowActive, solarpunkColors,
-            )
-            : solarpunkMaterialFields(
-              sourceKind, thinkActive, knowActive, solarpunkColors,
-            )),
+          ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors),
         };
       }),
       links: sceneLinks.map(rawEdge => {
@@ -1110,11 +1114,7 @@ export function KnowledgeGraphProjectionSurface({
             : activeJoinedPresentation?.edgeVariants.get(String(semanticEdge.id))?.authority
           : authority === 'codegraph' ? 'codegraph' : authority;
         const materialEdge = edgeAuthority === 'codegraph'
-          ? {
-            ...withoutSolarpunkEdgeMaterial(semanticEdge),
-            material_kind: 'solarpunk' as const,
-            material_color: CODE_GRAPH_LAYER_COLOR,
-          }
+          ? withoutSolarpunkEdgeMaterial(semanticEdge)
           : style === 'solarpunk' && edgeAuthority
           ? { ...semanticEdge, ...solarpunkEdgeFields(edgeAuthority, solarpunkColors) }
           : withoutSolarpunkEdgeMaterial(semanticEdge);
@@ -1174,8 +1174,10 @@ export function KnowledgeGraphProjectionSurface({
   ]);
 
   useEffect(() => {
-    graphRef.current?.setHighlight(selectedId || successfulFocusedEntry?.centerId || null);
-  }, [selectedId, successfulFocusedEntry?.centerId]);
+    // Category selection already marks unrelated code as transparent context. A single-node
+    // hover highlight would incorrectly dim the other deliberately selected categories.
+    graphRef.current?.setHighlight(selectedCodeNode ? null : selectedId || successfulFocusedEntry?.centerId || null);
+  }, [selectedCodeNode, selectedId, successfulFocusedEntry?.centerId]);
 
   useEffect(() => {
     if (!entityFocusRequest
@@ -1501,6 +1503,29 @@ export function KnowledgeGraphProjectionSurface({
           storageKey={`liquidaity.drawer.${authority}.width`}
           top={48} right={12} bottom={12} zIndex={6}
         >
+          {projection?.projectId && (authority === 'codegraph' || inspectedAuthority === 'codegraph'
+            || (!inspectorOpen && layerVisibility?.codegraph)) ? <div className="knowledge-authority-controls">
+              <CodeGraphChangeReview key={projection.projectId} projectId={projection.projectId}
+                selectedNode={selectedCodeNode || null} />
+            </div> : null}
+          {layerVisibility?.codegraph && codeFeatures?.length && onToggleCodeGraphFeature ? (
+            <details className="knowledge-authority-controls codegraph-categories" open>
+              <summary>Code categories · {selectedCodeFeatureIds?.length || 0} / {codeFeatures.length} selected</summary>
+              <fieldset aria-label="CodeGraph categories">
+                <legend>Load connected files</legend>
+                {codeFeatures.map(feature => (
+                  <label key={feature.id}>
+                    <input type="checkbox" checked={selectedCodeFeatureIds?.includes(feature.id) || false}
+                      onChange={() => onToggleCodeGraphFeature(feature.id)} />
+                    {feature.label}
+                  </label>
+                ))}
+              </fieldset>
+              {codeNavigationActive ? <button type="button" onClick={onClearCodeGraphFeature}>
+                Clear category selection
+              </button> : null}
+            </details>
+          ) : null}
           {!inspectorOpen ? <div ref={panelBodyRef} className="knowledge-authority-controls">
             {authority !== 'codegraph' && projection?.projectId ? <SourceSearchControls key={projection.projectId} projectId={projection.projectId} /> : null}
             {authority === 'joined' && layerVisibility && onLayerVisibilityChange
@@ -1685,6 +1710,11 @@ export function KnowledgeGraphProjectionSurface({
           sourceLoading={codeSourceLoading}
           sourceError={codeSourceError}
           onLoadSource={onReadCodeGraphSource ? qualifiedName => { void loadCodeSource(qualifiedName); } : undefined}
+          onOpenFile={path => {
+            const file = inspectedProjection?.nodes.find(node => node.properties?.recordKind === 'file'
+              && node.properties?.filePath === path);
+            if (file) openNodeInspector(visualNodeIdForProvider(file.id));
+          }}
         /> : null}
         {visibleThinks.length ? <section className="graph-inspector-records" data-testid="knowledge-think-records">
           <h4>{visibleThinks.length > 1 ? 'Recent Thinks' : 'Recent Think'}</h4>
@@ -1764,6 +1794,8 @@ export function KnowledgeGraphProjectionSurface({
         </article> : null}
         {selectedEdge ? <dl className="graph-record-fields graph-edge-meaning">
           <div><dt>Direction</dt><dd>{providerNodeLabel(selectedEdge.source)} → {providerNodeLabel(selectedEdge.target)}</dd></div>
+          {selectedCodeEdge && typeof selectedCodeEdge.properties?.relationship === 'string'
+            ? <div><dt>Declared relationship</dt><dd>{selectedCodeEdge.properties.relationship}</dd></div> : null}
           {jevWinner ? <div><dt>Jev winner</dt><dd>{jevWinner}</dd></div> : null}
           {jevWinnerProbability ? <div><dt>Probability</dt><dd>{jevWinnerProbability}</dd></div> : null}
           {naturalRelationship ? <div><dt>Natural extracted relationship</dt><dd>{naturalRelationship}</dd></div> : null}

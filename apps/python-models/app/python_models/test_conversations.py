@@ -144,11 +144,6 @@ def test_stored_pair_reuses_preparation_without_tool_or_graph_write(archive, mon
     from app.python_models import thinkgraph_completed_pair_preparation as preparation
     service, _ = archive
     monkeypatch.setattr(preparation, "get_service", lambda _project: service)
-    from app.python_models import project_entity_map
-    monkeypatch.setattr(project_entity_map, "build_project_entity_map", lambda project: {
-        "projectId": project, "complete": True, "entities": [], "relationships": [],
-        "counts": {}, "sha256": "test-map", "readDurationMs": 0,
-    })
     question = call("append", messages=[user()])[0]
     answer = call("reply", message=reply())["message"]
     prepared = operations.private_operation("project-one", "prepare_conversation_pair", {
@@ -202,7 +197,7 @@ def test_research_indication_settles_with_chunks_without_private_classification_
     chunks = conversations.source_chunks("project-one", source["sourceReferences"], prepare=True)
     user_chunk = chunks[0]["id"]
     payload = {**source, "pairReference": preparation.pair_reference(source), "cardRun": {
-        "runId": "test-native-result", "cardId": "card_thinkgraph", "revisionId": "test-revision",
+        "runId": "test-saved-card-result", "cardId": "card_thinkgraph", "revisionId": "test-revision",
         "profile": "thinkgraph", "hermesSessionId": "session-one", "resolvedProvider": "test",
         "resolvedModel": "mechanics-only",
     }, "structuredOutput": {"facts": [{"content": "Funding is unresolved.", "title": "Funding",
@@ -242,7 +237,7 @@ def test_research_indication_settles_with_chunks_without_private_classification_
     assert service.store.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == before
 
 
-def test_native_chunks_preserve_coverage_occurrences_and_are_not_rechunked(archive, monkeypatch):
+def test_prepared_chunks_preserve_coverage_occurrences_and_are_not_rechunked(archive, monkeypatch):
     from engraphis.backends.extractor import ChunkingExtractor
     service, _ = archive
     sentences = [f"Item {index} retains its original causal condition and uncertainty in this source." for index in range(120)]

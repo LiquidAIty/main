@@ -39,15 +39,10 @@ export type GraphSurfaceAuthority = GraphAuthority | 'joined' | 'codegraph';
 const GRAPH_NODE_MATERIALS = {
   think: 'THINK_MATERIAL',
   know: 'KNOW_MATERIAL',
-  code: 'CODE_MATERIAL',
   paired: 'PAIRED_SOLARPUNK_MATERIAL',
 } as const;
 
-const COMBINED_CYBER_MATERIAL = 'PAIRED_CYBER_MATERIAL' as const;
-
-export type GraphNodeMaterialRole =
-  | typeof GRAPH_NODE_MATERIALS[keyof typeof GRAPH_NODE_MATERIALS]
-  | typeof COMBINED_CYBER_MATERIAL;
+export type GraphNodeMaterialRole = typeof GRAPH_NODE_MATERIALS[keyof typeof GRAPH_NODE_MATERIALS];
 
 export type SolarpunkColors = {
   think: string;
@@ -99,11 +94,11 @@ export type GraphProjectionNode = {
   system_anchor_id?: string;
   community_id?: string;
   scene_rank?: number;
-  material_kind?: 'solarpunk' | 'joined-cyber';
+  ghost?: boolean;
+  material_kind?: 'solarpunk';
   material_role?: GraphNodeMaterialRole;
   material_blue?: string;
   material_orange?: string;
-  material_green?: string;
   material_surface?: string;
   material_think_active?: boolean;
   material_know_active?: boolean;
@@ -131,7 +126,7 @@ export type GraphProjectionEdge = {
   rest_length?: number;
   visual_width?: number;
   layer?: string;
-  material_kind?: 'solarpunk' | 'joined-cyber';
+  material_kind?: 'solarpunk';
   material_authority?: GraphVisualLayer;
   material_color?: string;
 };
@@ -199,41 +194,6 @@ export function solarpunkMaterialFields(
     material_surface: GRAPH_THEME.surface.base,
     material_think_active: thinkActive,
     material_know_active: knowActive,
-  };
-}
-
-export function combinedCyberMaterialFields(
-  source: 'think' | 'know' | 'paired',
-  thinkActive = false,
-  knowActive = false,
-  colors: SolarpunkColors = DEFAULT_SOLARPUNK_COLORS,
-): Pick<GraphProjectionNode,
-  | 'material_kind'
-  | 'material_role'
-  | 'material_blue'
-  | 'material_orange'
-  | 'material_surface'
-  | 'material_think_active'
-  | 'material_know_active'> {
-  return {
-    ...solarpunkMaterialFields(source, thinkActive, knowActive, colors),
-    material_kind: 'joined-cyber',
-    material_role: source === 'paired' ? COMBINED_CYBER_MATERIAL : GRAPH_NODE_MATERIALS[source],
-  };
-}
-
-export function codeGraphMaterialFields(
-  color = CODE_GRAPH_LAYER_COLOR,
-): Pick<GraphProjectionNode,
-  | 'material_kind'
-  | 'material_role'
-  | 'material_green'
-  | 'material_surface'> {
-  return {
-    material_kind: 'joined-cyber',
-    material_role: GRAPH_NODE_MATERIALS.code,
-    material_green: color,
-    material_surface: GRAPH_THEME.surface.base,
   };
 }
 

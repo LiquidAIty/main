@@ -329,7 +329,7 @@ def _settle(
 
 def test_custom_schema_supports_at_most_one_episodic_think_per_entity() -> None:
     schema, prompt = completed_pair_extraction.llm_structured_contract(
-        "USER: x\nMAIN: y", {"project_entity_map": {}}
+        "USER: x\nMAIN: y", {}
     )
     facts = completed_pair_extraction.extract_saved_card_facts(
         _structured_output(),
@@ -488,14 +488,12 @@ def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
     assert prepared["preparation"] == {
         "status": "completed_without_graph_mutation"
     }
-    assert "projectEntityMap" not in prepared
     assert "projectGraphGrounding" not in prepared
     assert "enrichmentInput" not in prepared
     assert "think" in str(prepared["enrichmentSchema"])
     assert "THINKGRAPH ENTITY-SPECIFIC THINKS" in prepared["enrichmentPrompt"]
     assert prepared["enrichmentPrompt"].count(_completed()["userMessage"]) == 1
     assert prepared["enrichmentPrompt"].count(_completed()["mainResponse"]) == 1
-    assert '"schemaVersion": "project-entity-map"' not in prepared["enrichmentPrompt"]
     assert '"schemaVersion": "project-graph.grounding.v1"' not in prepared["enrichmentPrompt"]
     assert "project_graph_grounding" not in prepared["enrichmentPrompt"]
     assert "compare the new pair with prior Thinks" not in prepared["enrichmentPrompt"]

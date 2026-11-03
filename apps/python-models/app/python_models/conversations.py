@@ -1,4 +1,4 @@
-"""Canonical conversation events, prepared chunk snapshots, and native source indexing."""
+"""Canonical conversation events, prepared chunk snapshots, and Engraphis source indexing."""
 # Graph + less = more: less code that does the same work as more code is more useful.
 # Entity names the feature; Relationship explains why this file belongs and what it contributes.
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
@@ -6,7 +6,7 @@
 # Entity: Main Chat
 # Relationship: Preserves ordered message content and attribution in the existing Engraphis event ledger.
 # Entity: ThinkGraph
-# Relationship: Prepares immutable source chunks in the native event ledger, indexes those same chunks after extraction, and resolves exact citations without creating Thinks or Entity nodes.
+# Relationship: Prepares immutable source chunks in the Engraphis conversation ledger, indexes those same chunks after extraction, and resolves exact citations without creating Thinks or Entity nodes.
 
 from __future__ import annotations
 
@@ -195,7 +195,7 @@ def source_references(project: str, source: dict) -> list[dict]:
 
 
 def source_chunks(project: str, references: list[dict], *, prepare: bool = False) -> list[dict]:
-    """Prepare once in the native event ledger, then reuse exact chunks without embedding."""
+    """Prepare once in the Engraphis conversation ledger, then reuse exact chunks without embedding."""
     from engraphis.backends.extractor import ChunkingExtractor
 
     messages: dict[str, dict] = {}
@@ -319,7 +319,7 @@ def register_source_pair(project: str, pair: str, reference: dict) -> None:
 
 
 def index_source_chunks(project: str, chunks: list[dict]) -> dict:
-    """Embed the same chunks used for extraction through the existing native writer."""
+    """Embed the same chunks used for extraction through the existing Engraphis writer."""
     from engraphis.core.engine import MAX_FACTS_PER_BATCH
     from engraphis.core.interfaces import FactSpec, MemoryType, Scope
     from .engraphis import THINKGRAPH_INTAKE_LOCK
@@ -411,7 +411,7 @@ def index_source_exchanges(project: str, conversation: str) -> dict:
 
 
 def search_source_exchanges(project: str, query: str, limit: int = 5) -> dict:
-    """Native semantic recall returns derived chunks with canonical source pointers."""
+    """Engraphis semantic recall returns derived chunks with canonical source pointers."""
     if (not isinstance(query, str) or not query.strip() or len(query) > 16000
             or isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20):
         raise ValueError("source_search_invalid")

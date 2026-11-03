@@ -22,7 +22,7 @@ export type CodeGraphReadStatus = 'ready' | 'partial' | 'unavailable' | 'not_fou
 export type CodeGraphSelectedSymbol = {
   graphSystem: 'cbm';
   cbmQualifiedName: string;
-  recordKind: 'symbol';
+  recordKind: 'symbol' | 'file';
   type: string;
   title: string;
   content: string;
@@ -149,7 +149,7 @@ function readSelectedSymbol(value: unknown): CodeGraphSelectedSymbol | null {
   if (value === null || value === undefined) return null;
   if (!isRecord(value)
     || value.graphSystem !== 'cbm'
-    || value.recordKind !== 'symbol'
+    || !['symbol', 'file'].includes(String(value.recordKind))
     || typeof value.cbmQualifiedName !== 'string' || !value.cbmQualifiedName
     || typeof value.content !== 'string'
     || !isRecord(value.properties)
@@ -256,14 +256,12 @@ export function codeGraphFeatures(projection: GraphProjectionV1): GraphProjectio
 
 export function codeGraphCategoryProjection(
   projection: GraphProjectionV1,
-  featureId: string | null,
+  featureIds: readonly string[],
   selectedFilePath: string | null,
 ): GraphProjectionV1 {
   const features = codeGraphFeatures(projection);
-  const selectedFeature = featureId
-    ? features.find(node => node.id === featureId)
-    : undefined;
-  if (!selectedFeature) {
+  const selectedIds = new Set(features.filter(node => featureIds.includes(node.id)).map(node => node.id));
+  if (selectedIds.size === 0) {
     return {
       ...projection,
       counts: { nodes: features.length, edges: 0 },
@@ -273,7 +271,7 @@ export function codeGraphCategoryProjection(
   }
   const nodeById = new Map(projection.nodes.map(node => [node.id, node]));
   const memberships = projection.edges.filter(edge => (
-    edge.source === selectedFeature.id
+    selectedIds.has(edge.source)
     && edge.predicate === 'FEATURE_CONTRIBUTION'
     && nodeById.has(edge.target)
   ));
@@ -294,23 +292,24 @@ export function codeGraphCategoryProjection(
     ))
     : [];
   const nodeIds = new Set([
-    selectedFeature.id,
+    ...features.map(node => node.id),
     ...files.map(node => node.id),
     ...structuralEdges.flatMap(edge => [edge.source, edge.target]),
   ]);
-  const selectedFeatureWithRelationships: GraphProjectionNode = {
-    ...selectedFeature,
-    properties: {
-      ...(selectedFeature.properties || {}),
-      contributions: memberships.map(edge => ({
-        feature: String(edge.properties?.filePath || nodeById.get(edge.target)?.label || 'File'),
-        relationship: String(edge.properties?.relationship || ''),
-      })),
-    },
-  };
   const nodes = projection.nodes
     .filter(node => nodeIds.has(node.id))
-    .map(node => node.id === selectedFeature.id ? selectedFeatureWithRelationships : node);
+    .map(node => codeNodeKind(node) === 'feature' ? {
+      ...node,
+      // Engraphis already renders ghost nodes as transparent context; never persist this view field.
+      ghost: !selectedIds.has(node.id),
+      properties: {
+        ...(node.properties || {}),
+        contributions: memberships.filter(edge => edge.source === node.id).map(edge => ({
+          feature: String(edge.properties?.filePath || nodeById.get(edge.target)?.label || 'File'),
+          relationship: String(edge.properties?.relationship || ''),
+        })),
+      },
+    } : node);
   const edges = [...memberships, ...structuralEdges];
   return {
     ...projection,

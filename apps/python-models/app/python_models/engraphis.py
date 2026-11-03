@@ -246,7 +246,7 @@ def public_think_metadata(value: Any) -> dict[str, Any]:
 
 def think_mentions(store: Any, *, project: str, workspace_id: str,
                    memory_ids: list[str]) -> dict[str, list[dict[str, str]]]:
-    """Read native text mentions without promoting them to primary attachments."""
+    """Read Engraphis text mentions without promoting them to primary attachments."""
     primary = exact_think_entity_ids(store, workspace_id=workspace_id, memory_ids=memory_ids)
     result: dict[str, list[dict[str, str]]] = {}
     for row in store.list_memory_entities(
@@ -272,7 +272,7 @@ def think_mentions(store: Any, *, project: str, workspace_id: str,
 
 def entity_mention_references(store: Any, *, project: str, workspace_id: str,
                               entity_id: str) -> list[dict[str, str]]:
-    """Read incoming native mention links separately from this Entity's Thinks."""
+    """Read incoming Engraphis mention links separately from this Entity's Thinks."""
     rows = [row for row in store.list_memory_entities(
         SearchFilter(workspace_id=workspace_id), entity_ids=[entity_id],
     ) if row.get("source_kind") == "text_mention"]

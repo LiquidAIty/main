@@ -409,7 +409,7 @@ def _settle_new_completed_pair(
                     },
                 })
 
-        # Native text_mention incidences are references, not primary Think
+        # Engraphis text_mention incidences are references, not primary Think
         # attachments or Entity-to-Entity edges. Resolve after this batch's
         # Entities exist, within the same transaction; never backfill old Thinks.
         for output, memory in zip(outputs, memories, strict=True):

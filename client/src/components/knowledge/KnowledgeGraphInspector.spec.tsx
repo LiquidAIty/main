@@ -272,4 +272,20 @@ describe('shared knowledge inspector', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load source' }));
     expect(onLoadSource).toHaveBeenCalledWith('C-Projects-LiquidAIty-main.client.run');
   });
+
+  it('opens a contributing file and requests its actual File source', () => {
+    const onOpenFile = vi.fn();
+    const onLoadSource = vi.fn();
+    const props = { source: null, sourceLoading: false, sourceError: null, onOpenFile, onLoadSource };
+    const view = render(<CodeGraphNodeDetails {...props} node={{ id: 'feature:CodeGraph', label: 'CodeGraph',
+      properties: { recordKind: 'feature', memberFilePaths: ['client/src/run.ts'] } }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'client/src/run.ts' }));
+    expect(onOpenFile).toHaveBeenCalledWith('client/src/run.ts');
+    view.rerender(<CodeGraphNodeDetails {...props} node={{ id: 'file-id', label: 'run.ts', properties: {
+      recordKind: 'file', filePath: 'client/src/run.ts', qualifiedName: 'repo.client.run.ts.__file__',
+    } }} />);
+    expect(onLoadSource).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Open file' }));
+    expect(onLoadSource).toHaveBeenCalledWith('repo.client.run.ts.__file__');
+  });
 });

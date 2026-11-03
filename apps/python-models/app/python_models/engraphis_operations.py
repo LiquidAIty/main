@@ -190,7 +190,7 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
             nested["workspace"] = project
             arguments["arguments"] = nested
     from engraphis.service_context import bind_service
-    # Native request-local binding; never switch the standalone MCP singleton.
+    # Request-local binding; never switch the standalone MCP singleton.
     with bind_service(get_service(project), principal=project_principal(project)):
         response = await server.call_tool(name, arguments)
     content = response.content if hasattr(response, "content") else response[0] if isinstance(response, tuple) else response
@@ -310,28 +310,12 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict | l
     if operation == "prepare_conversation_pair":
         from .conversations import read_pair
         from .thinkgraph_completed_pair_preparation import prepare_completed_pair
-        from .project_entity_map import build_project_entity_map, append_project_entity_map
         source = read_pair(project, arguments.get("conversationId"),
                            arguments.get("userMessageIds"), arguments.get("assistantMessageId"))
         preparation = prepare_completed_pair(source)
         from .conversations import register_source_pair
         register_source_pair(project, preparation["pairReference"], source["sourceReferences"][0])
-        result = {"source": source, "preparation": preparation}
-        if preparation["structuredExtractionRequired"]:
-            entity_map = build_project_entity_map(project)
-            # Server-authorized invocation data, not an agent tool or credential.
-            # The native hook receives this snapshot with the exact Bot delivery.
-            result["projectMapContext"] = {
-                "ownerUserId": project_principal(project)["id"],
-                "projectId": project,
-                "conversationId": source["conversationId"],
-                "pairReference": preparation["pairReference"],
-                "text": append_project_entity_map("", entity_map),
-                "counts": entity_map["counts"],
-                "mapSha256": entity_map["sha256"],
-                "readDurationMs": entity_map["readDurationMs"],
-            }
-        return result
+        return {"source": source, "preparation": preparation}
     if operation == "retire":
         if set(arguments) != {"memoryId"}:
             raise ValueError("engraphis_memory_reference_invalid")

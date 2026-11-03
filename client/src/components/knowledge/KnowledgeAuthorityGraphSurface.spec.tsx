@@ -893,9 +893,9 @@ describe('knowledge authority graph surfaces', () => {
       Feature: '#63C79A', File: '#63C79A', Symbol: '#63C79A',
     });
     expect(graph.data.nodes.find((node: any) => node.etype === 'Feature')).toMatchObject({
-      material_kind: 'joined-cyber',
-      material_role: 'CODE_MATERIAL',
-      material_green: '#63C79A',
+      material_kind: 'solarpunk',
+      material_role: 'THINK_MATERIAL',
+      material_blue: '#63C79A',
     });
     act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.etype === 'Feature')));
     await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label)).toEqual([
@@ -906,10 +906,16 @@ describe('knowledge authority graph surfaces', () => {
     expect(graph.data.links.find((edge: any) => edge.layer === 'codegraph'))
       .toMatchObject({ material_kind: 'solarpunk', material_color: '#63C79A' });
 
+    act(() => graph.linkClick(graph.data.links.find((edge: any) => edge.layer === 'codegraph')));
+    expect(screen.getByText('Declared relationship')).toBeTruthy();
+    expect(screen.getByText('Renders the shared graph.')).toBeTruthy();
+
     act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.etype === 'File')));
     await waitFor(() => expect(readCodeFile).toHaveBeenCalledWith('client/src/surface.tsx'));
     expect(screen.getByTestId('codegraph-node-details').textContent)
       .toContain('client/src/surface.tsx');
+    fireEvent.click(screen.getByRole('button', { name: 'Open file' }));
+    await waitFor(() => expect(readCodeSource).toHaveBeenCalledWith('file:surface'));
     act(() => graph.backgroundClick());
     expect(screen.getByRole('group', { name: 'Graph layers' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Code layer' }).getAttribute('aria-pressed'))
@@ -929,6 +935,17 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.getByRole('button', { name: 'Code layer' }).getAttribute('aria-pressed'))
       .toBe('false');
     expect(openCode).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['error', 'ready'] as const)('reloads Code on an explicit layer-open from %s without reloading the app', async status => {
+    const onOpenCodeGraph = vi.fn(async () => null);
+    render(<JoinedKnowledgeGraphSurface projections={currentProjections(empty('thinkgraph'), empty('knowgraph'))}
+      statuses={{ thinkgraph: 'ready', knowgraph: 'ready' }} errors={{}}
+      codeGraph={{ projection: emptyCode(), status, error: status === 'error' ? 'read_timeout' : null, warning: null, freshness: 'unverified' }}
+      onOpenCodeGraph={onOpenCodeGraph} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Code layer' }));
+    await waitFor(() => expect(onOpenCodeGraph).toHaveBeenCalledTimes(1));
   });
 
   it('keeps the relationship word and probability hover-only on a ThinkGraph edge', () => {
@@ -1036,7 +1053,7 @@ describe('knowledge authority graph surfaces', () => {
     }));
   });
 
-  it('renders the mixed canvas with Cyberpunk material and authority-matched colors', async () => {
+  it('renders the mixed canvas with the original Solarpunk material and authority-matched colors', async () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
@@ -1067,14 +1084,14 @@ describe('knowledge authority graph surfaces', () => {
     expect(graph.setStyle).toHaveBeenCalledWith('cyber');
 
     expect(graph.data.nodes.find((node: any) => node.label === 'Shared')).toMatchObject({
-      material_kind: 'joined-cyber', material_role: 'PAIRED_CYBER_MATERIAL',
+      material_kind: 'solarpunk', material_role: 'PAIRED_SOLARPUNK_MATERIAL',
       material_blue: '#4FA2AD', material_orange: '#F2A64A', material_surface: '#0B0E12',
     });
     expect(graph.data.nodes.find((node: any) => node.label === 'Think only')).toMatchObject({
-      material_kind: 'joined-cyber', material_role: 'THINK_MATERIAL', material_blue: '#4FA2AD',
+      material_kind: 'solarpunk', material_role: 'THINK_MATERIAL', material_blue: '#4FA2AD',
     });
     expect(graph.data.nodes.find((node: any) => node.label === 'Know only')).toMatchObject({
-      material_kind: 'joined-cyber', material_role: 'KNOW_MATERIAL', material_orange: '#F2A64A',
+      material_kind: 'solarpunk', material_role: 'KNOW_MATERIAL', material_orange: '#F2A64A',
     });
     expect(graph.data.links.map((edge: any) => ({
       id: edge.id,

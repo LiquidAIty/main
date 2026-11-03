@@ -41,6 +41,20 @@
 .knowledge-authority-controls pre { max-height:160px; overflow:auto; color:#a9a9b8; font-size:10px; white-space:pre-wrap; }
 .knowledge-authority-controls .codegraph-source { display:grid; gap:8px; padding:10px 12px; border:1px solid rgba(34,224,255,.24); border-radius:10px; background:rgba(8,15,20,.78); }
 .knowledge-authority-controls .codegraph-source pre { max-height:360px; margin:0; padding:10px; border-radius:7px; background:#071014; color:#cce8e6; font-family:"JetBrains Mono",monospace; font-size:10px; line-height:1.45; }
+.codegraph-review { display:grid; gap:10px; margin-bottom:12px; }
+.codegraph-review small { display:block; color:#9dabb0; font-size:10px; line-height:1.4; }
+.codegraph-review ul { margin:6px 0; padding-left:14px; list-style:none; }
+.codegraph-review li, .codegraph-review strong { overflow-wrap:anywhere; font-size:12px; }
+.codegraph-review button { padding:5px 7px; border:1px solid #35454a; border-radius:6px; background:#101b20; text-align:left; overflow-wrap:anywhere; }
+.codegraph-review-editor, .codegraph-review article { display:grid; gap:7px; padding:10px 0; border-top:1px solid #35454a; }
+.codegraph-review-editor label { flex-wrap:wrap; }
+.codegraph-review textarea { width:100%; min-height:70px; box-sizing:border-box; padding:8px; color:#dce8e8; background:#101b20; border:1px solid #35454a; border-radius:6px; resize:vertical; font:inherit; }
+.codegraph-file-link { padding:0; border:0; background:transparent; color:#85d3ca !important; text-align:left; font:inherit; overflow-wrap:anywhere; text-decoration:underline; text-underline-offset:3px; }
+.codegraph-categories { flex-shrink:0; margin-bottom:12px; }
+.codegraph-categories fieldset { max-height:190px; overflow:auto; margin:0; padding:6px 10px; border:1px solid #35454a; border-radius:7px; }
+.codegraph-categories legend { font-size:11px; color:#9dabb0; }
+.codegraph-categories input { accent-color:#63C79A; }
+.codegraph-categories button { align-self:start; background:transparent; border:1px solid #35454a; border-radius:6px; padding:5px 7px; }
 .knowledge-authority-controls .graph-inspector-records ul { display:grid; gap:5px; margin:0; padding-left:18px; color:#b8c7cc; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
 .knowledge-authority-controls select { min-width:0; flex:1; padding:7px; background:#101b20; color:inherit; border:1px solid #35454a; border-radius:5px; }
 .knowledge-authority-controls article, .knowledge-authority-controls dl { min-width:0; }

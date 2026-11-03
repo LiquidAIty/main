@@ -795,7 +795,7 @@ def test_invocation_rejects_every_non_graph_context_field(
         ("card_knowgraph", "knowgraph", False),
     ],
 )
-def test_project_cards_receive_the_map_without_automatic_old_context(
+def test_only_main_and_builder_receive_current_request_grounding(
     monkeypatch: pytest.MonkeyPatch,
     card_id: str,
     profile: str,
@@ -806,50 +806,6 @@ def test_project_cards_receive_the_map_without_automatic_old_context(
     target["id"] = card_id
     target["runtime"]["profile"] = profile
     loaded["deck"]["edges"][0]["target"] = card_id
-    entity_map = {
-        "schemaVersion": "project-entity-map",
-        "projectId": loaded["projectId"],
-        "complete": True,
-        "entities": [{
-            "canonicalName": "Rocket Lab",
-            "authority": "both",
-            "engraphisEntityId": "think-rocket",
-            "graphitiEntityId": "know-rocket",
-        }],
-        "relationships": [{
-            "authority": "thinkgraph",
-            "engraphisRelationshipId": "relationship-one",
-            "sourceEngraphisEntityId": "think-rocket",
-            "sourceCanonicalName": "Rocket Lab",
-            "targetEngraphisEntityId": "think-electron",
-            "targetCanonicalName": "Electron",
-            "label": "OPERATES",
-            "state": {"labelConfidence": 0.9},
-        }],
-        "counts": {
-            "engraphis": 1,
-            "graphiti": 1,
-            "total": 1,
-            "thinkgraphRelationships": 1,
-            "knowgraphRelationships": 0,
-            "relationships": 1,
-        },
-        "revisions": {
-            "engraphis": "think-r1",
-            "graphiti": "know-r1",
-            "entities": "entity-r1",
-            "relationships": "relationship-r1",
-        },
-        "sha256": "a" * 64,
-        "bytes": 512,
-        "estimatedTokens": 128,
-        "readDurationMs": 1.0,
-    }
-    monkeypatch.setattr(
-        card_invocation_preparation,
-        "build_project_entity_map",
-        lambda _project: entity_map,
-    )
     grounding = {
         "schemaVersion": "project-graph.grounding.v1",
         "projectId": loaded["projectId"],
@@ -910,11 +866,7 @@ def test_project_cards_receive_the_map_without_automatic_old_context(
         _destination_payload(card_id)
     )
 
-    assert invocation["projectEntityMap"] == entity_map
     graph_text = invocation["idf"]["actualGraphData"]["modelText"]
-    assert "Current Project Entity Map" in graph_text
-    assert "Rocket Lab" in graph_text
-    assert "OPERATES" in graph_text
     if receives_old_context:
         expected_authorities = (
             ("thinkgraph",) if card_id == "card_main_chat"
@@ -944,8 +896,7 @@ def test_project_cards_receive_the_map_without_automatic_old_context(
         assert "Relevant compact Think." not in graph_text
         assert "Relevant cited For." not in graph_text
         assert "Relevant cited Against." not in graph_text
-    assert '"body":' not in json.dumps(entity_map)
-    assert invocation["inputSummary"]["estimatedGraphContextTokens"] > 0
+    assert invocation["inputSummary"]["estimatedGraphContextTokens"] >= 0
 
 def test_builder_input_is_independent_of_changed_or_missing_plan(monkeypatch):
     from pathlib import Path

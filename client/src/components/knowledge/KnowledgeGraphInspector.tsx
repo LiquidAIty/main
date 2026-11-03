@@ -462,12 +462,14 @@ export function CodeGraphNodeDetails({
   sourceLoading,
   sourceError,
   onLoadSource,
+  onOpenFile,
 }: {
   node: GraphProjectionNode;
   source: CodeGraphSelectedSymbol | null;
   sourceLoading: boolean;
   sourceError: string | null;
   onLoadSource?: (qualifiedName: string) => void;
+  onOpenFile?: (path: string) => void;
 }) {
   const properties = node.properties || {};
   const recordKind = String(properties.recordKind || 'record');
@@ -507,11 +509,13 @@ export function CodeGraphNodeDetails({
     </section> : null}
     {memberFiles.length ? <section className="graph-inspector-records">
       <h4>Contributing files</h4>
-      <ul>{memberFiles.map(path => <li key={path}>{path}</li>)}</ul>
+      <ul>{memberFiles.map(path => <li key={path}>{onOpenFile
+        ? <button type="button" className="codegraph-file-link" onClick={() => onOpenFile(path)}>{path}</button>
+        : path}</li>)}</ul>
     </section> : null}
-    {recordKind === 'symbol' && qualifiedName && onLoadSource ? <div className="knowledge-authority-actions">
+    {['symbol', 'file'].includes(recordKind) && qualifiedName && onLoadSource ? <div className="knowledge-authority-actions">
       <button type="button" disabled={sourceLoading} onClick={() => onLoadSource(qualifiedName)}>
-        {sourceLoading ? 'Loading source…' : source ? 'Reload source' : 'Load source'}
+        {sourceLoading ? 'Loading source…' : source ? 'Reload source' : recordKind === 'file' ? 'Open file' : 'Load source'}
       </button>
     </div> : null}
     {sourceError ? <p role="alert">{sourceError}</p> : null}
