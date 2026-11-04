@@ -107,6 +107,12 @@ describe('Engraphis graph renderer contracts', () => {
     expect(internals.semanticRelationshipWidth({
       relationship_strength: 0.82, visual_width: 1.6,
     }, 1)).toBeCloseTo(1.6);
+    expect(internals.semanticRelationshipWidth({
+      relationship_strength: 0.82, visual_width: 1.6,
+    }, 0.75)).toBeCloseTo(1.2);
+    expect(internals.semanticRelationshipWidth({
+      relationship_strength: 0.8, visual_width: 1.8,
+    }, 0.6)).toBeCloseTo(1.08);
     expect(internals.semanticRelationshipWidth({ weight: 9 }, 1)).toBeNull();
   });
 

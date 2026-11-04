@@ -6,17 +6,22 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
- * Relationship: This file verifies presentation material fields can change without mutating provider records.
+ * Relationship: This file verifies authority-scoped saved presentation and material fields without mutating provider records.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_SOLARPUNK_COLORS } from './knowledgeGraphProjection';
 import {
+  presentationStorageKey,
+  responsiveRepelForce,
+  safePresentationPreferences,
   solarpunkEdgeFields,
   withoutSolarpunkEdgeMaterial,
   withoutSolarpunkMaterial,
 } from './knowledgeGraphPresentationPreferences';
+
+afterEach(() => window.localStorage.clear());
 
 describe('knowledge graph presentation preferences', () => {
   it('adds and removes presentation material without mutating provider records', () => {
@@ -44,5 +49,44 @@ describe('knowledge graph presentation preferences', () => {
     });
     expect(node.material_kind).toBe('solarpunk');
     expect(edge.material_kind).toBe('solarpunk');
+  });
+
+  it('reads only valid layout, Jev profile, and force settings from the requested authority', () => {
+    window.localStorage.setItem(presentationStorageKey('thinkgraph'), JSON.stringify({
+      schemaVersion: 6,
+      layout: 'radial',
+      style: 'classic',
+      physicsProfile: 'open',
+      settings: {
+        repel: 80, link: 44, gravity: 20, linkw: 0.6,
+        size: 3, labels: false, unknown: 12,
+      },
+    }));
+    window.localStorage.setItem(presentationStorageKey('knowgraph'), JSON.stringify({
+      schemaVersion: 6, layout: 'galaxy', physicsProfile: 'contrast',
+    }));
+
+    expect(safePresentationPreferences('thinkgraph')).toEqual({
+      schemaVersion: 6,
+      layout: 'radial',
+      physicsProfile: 'open',
+      settings: { repel: 80, link: 44, gravity: 20, linkw: 0.6 },
+    });
+    expect(safePresentationPreferences('joined')).toEqual({});
+    expect(safePresentationPreferences('knowgraph')).toEqual({
+      schemaVersion: 6,
+      physicsProfile: 'contrast',
+    });
+  });
+
+  it('uses the baseline responsive repel from the saved base without compounding resize cycles', () => {
+    const baseRepel = 100;
+    const narrow = responsiveRepelForce(baseRepel, 440);
+    const wide = responsiveRepelForce(baseRepel, 1_200);
+    const narrowAgain = responsiveRepelForce(baseRepel, 440);
+
+    expect([narrow, wide, narrowAgain]).toEqual([62, 128, 62]);
+    expect(responsiveRepelForce(baseRepel, 200)).toBe(62);
+    expect(responsiveRepelForce(baseRepel, 2_000)).toBe(128);
   });
 });

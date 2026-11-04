@@ -1,0 +1,11 @@
+{
+  "extras": [
+    "all"
+  ],
+  "generation": "gen-dbba3bd93a104e1e9b01b82b6a33b5a7",
+  "groups": [
+    "dev",
+    "test"
+  ],
+  "inputs": "0ae080087e360a300c98afd920a5ccb80feeb7d100972dcec85132e0d9ae8f49"
+}

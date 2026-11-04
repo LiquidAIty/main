@@ -490,7 +490,10 @@ describe('knowledge authority graph surfaces', () => {
     expect(container.querySelector('[data-renderer="engraphis-1.7.1"]')).toBeTruthy();
     expect(graph.setPreset).toHaveBeenCalledWith('compact');
     expect(graph.setStyle).toHaveBeenCalledWith('cyber');
-    expect(graph.setSettings).toHaveBeenCalledWith({ size: 5, linkw: 1, labels: true });
+    expect(graph.setSettings).toHaveBeenCalledWith({
+      size: 5, font: 13, linkw: 1, labelDensity: 40,
+      repel: 120, link: 30, gravity: 14, labels: true,
+    });
     const paper = container.querySelector('[aria-hidden="true"]') as HTMLElement;
     expect(paper.style.backgroundSize.startsWith('24px 24px')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
@@ -507,7 +510,6 @@ describe('knowledge authority graph surfaces', () => {
     expect(graph.data.nodes).toEqual([]);
     expect(screen.queryByRole('button', { name: /Freeze|Resume|Reheat|Focus/ })).toBeNull();
     expect(graph.freeze).not.toHaveBeenCalled();
-    expect(graph.reheat).not.toHaveBeenCalled();
   });
 
   it.each(['thinkgraph', 'knowgraph'] as const)(
@@ -874,22 +876,44 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.queryByRole('slider')).toBeNull();
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reset to preset defaults' })).toBeNull();
-    expect(graph.setSettings).toHaveBeenLastCalledWith({ size: 5, labels: true, linkw: 1 });
+    expect(graph.setSettings).toHaveBeenCalledWith({
+      size: 5, font: 13, linkw: 1, labelDensity: 40,
+      repel: 120, link: 30, gravity: 14, labels: true,
+    });
     expect(graph.data.nodes).toEqual([]);
     expect(graph.data.links).toEqual([]);
   });
 
-  it('does not let a saved orbital preset override Project graph physics', () => {
+  it('restores the saved layout, Jev profile, force settings and line multiplier without exposing tuning', () => {
     const key = 'liquidaity.graph.thinkgraph.presentation.v1';
-    const stored = JSON.stringify({ schemaVersion: 6, layout: 'galaxy', style: 'classic',
-      physicsProfile: 'open', settings: { size: 3, labels: false } });
+    const stored = JSON.stringify({ schemaVersion: 6, layout: 'radial', style: 'classic',
+      physicsProfile: 'open', settings: {
+        repel: 80, link: 44, gravity: 20, linkw: 0.6, size: 3, labels: false,
+      } });
     window.localStorage.setItem(key, stored);
+    const projection = {
+      ...empty('thinkgraph'),
+      nodes: [{ id: 'a', label: 'Alpha' }, { id: 'b', label: 'Beta' }],
+      edges: [{ id: 'ab', source: 'a', target: 'b', predicate: 'PROVIDES', properties: {
+        jev: { status: 'success', winner: 'PROVIDES',
+          distribution: { PROVIDES: 0.8, ASSOCIATED_WITH: 0.2 } },
+      } }],
+    };
     const { container } = render(<KnowledgeGraphProjectionSurface authority="thinkgraph"
-      projection={empty('thinkgraph')} status="ready" error={null} />);
+      projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
-    expect(graph.setPreset).toHaveBeenCalledWith('compact');
-    expect(graph.setSettings).toHaveBeenLastCalledWith({ size: 5, labels: true, linkw: 1 });
-    expect(container.querySelector('[data-style="solarpunk"][data-physics-profile="galaxy"]')).toBeTruthy();
+    expect(graph.setPreset).toHaveBeenCalledWith('radial');
+    expect(graph.setSettings).toHaveBeenCalledWith({
+      size: 5, font: 13, linkw: 0.6, labelDensity: 40,
+      repel: 80, link: 44, gravity: 20, labels: true,
+    });
+    expect(container.querySelector('[data-style="solarpunk"][data-physics-profile="open"]')).toBeTruthy();
+    expect(graph.data.links[0].visual_width).toBeCloseTo(1.8);
+    expect(graph.data.links[0].spring_strength).toBeCloseTo(0.121);
+    expect(graph.data.links[0].rest_length).toBeCloseTo(24.4);
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByRole('slider')).toBeNull();
     expect(window.localStorage.getItem(key)).toBe(stored);
   });
 
@@ -995,7 +1019,10 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.queryByRole('slider')).toBeNull();
     expect(forceGraphMocks.instances.at(-1).setSettings)
-      .toHaveBeenLastCalledWith({ size: 5, labels: true, linkw: 1 });
+      .toHaveBeenCalledWith({
+        size: 5, font: 13, linkw: 1, labelDensity: 40,
+        repel: 120, link: 30, gravity: 14, labels: true,
+      });
   });
 
   it('displays the full union without inventing a join when no Entity directory is supplied', async () => {

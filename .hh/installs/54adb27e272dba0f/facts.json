@@ -1,0 +1,13 @@
+{
+  "packages": {
+    "venv": {
+      "environment": "C:\\Projects\\LiquidAIty\\main\\.hh\\installs\\54adb27e272dba0f\\environments\\9b4f2b8405d343f3ac92559943973da6\\venv",
+      "extras": [
+        "all"
+      ],
+      "resolved_lock": "C:\\Projects\\LiquidAIty\\main\\.hh\\installs\\54adb27e272dba0f\\environments\\9b4f2b8405d343f3ac92559943973da6\\workspace\\uv.lock",
+      "stamp": "89b5d588e9ca6338a0209a221f2ac67577d7d6e66b989b1b7ac52f7dd879b49c"
+    }
+  },
+  "schema": 1
+}

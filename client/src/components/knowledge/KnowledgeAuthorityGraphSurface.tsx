@@ -59,6 +59,8 @@ import {
   type CodeGraphFileSource,
 } from './codeGraphProjection';
 import {
+  responsiveRepelForce,
+  safePresentationPreferences,
   solarpunkEdgeFields,
   withoutSolarpunkEdgeMaterial,
   withoutSolarpunkMaterial,
@@ -350,12 +352,24 @@ export function KnowledgeGraphProjectionSurface({
   const [selectedKnowEpisodeId, setSelectedKnowEpisodeId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const savedPresentation = useMemo(
+    () => safePresentationPreferences(authority),
+    [authority],
+  );
+  const savedPresentationIsCurrent = savedPresentation.schemaVersion === 6;
   const codeOnly = authority === 'codegraph' || (authority === 'joined'
     && layerVisibility?.codegraph === true
     && !layerVisibility.thinkgraph && !layerVisibility.knowgraph);
-  const layout: RendererLayout = codeOnly ? 'communities' : 'compact';
+  const layout: RendererLayout = codeOnly ? 'communities' : savedPresentation.layout || 'compact';
   const style: PresentationStyle = codeOnly ? 'cyber' : 'solarpunk';
-  const physicsProfile: JevGraphPhysicsProfile = 'galaxy';
+  const physicsProfile: JevGraphPhysicsProfile = codeOnly
+    ? 'galaxy'
+    : savedPresentation.physicsProfile || 'galaxy';
+  const presentationKey = `${authority}:${layout}:${physicsProfile}:${codeOnly ? 'code' : 'knowledge'}`;
+  const [repelSource, setRepelSource] = useState<{
+    key: string;
+    base: number | null;
+  }>({ key: '', base: null });
   const solarpunkColors = DEFAULT_SOLARPUNK_COLORS;
   const inspectNodeRef = useRef<(id: string) => void>(() => undefined);
   const consumedEntityFocusRequestRef = useRef<number | null>(null);
@@ -526,9 +540,28 @@ export function KnowledgeGraphProjectionSurface({
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
-    graph.setPreset(layout);
-    graph.setSettings({ labels: true, size: 5, linkw: 1 });
-  }, [authority, layout]);
+    const defaults = graph.setPreset(layout);
+    if (codeOnly) {
+      graph.setSettings({ labels: true, size: 5, linkw: 1 });
+      setRepelSource({ key: presentationKey, base: null });
+      return;
+    }
+    const restoredSettings: Record<string, number | boolean | string> = {
+      ...defaults,
+      labels: true,
+      size: 5,
+      ...(savedPresentation.settings || {}),
+    };
+    if (!savedPresentationIsCurrent) {
+      restoredSettings.linkw = Math.max(1, Number(restoredSettings.linkw) || 1);
+    }
+    graph.setSettings(restoredSettings);
+    const baseRepel = Number(restoredSettings.repel);
+    setRepelSource({
+      key: presentationKey,
+      base: Number.isFinite(baseRepel) ? baseRepel : null,
+    });
+  }, [codeOnly, layout, presentationKey, savedPresentation, savedPresentationIsCurrent]);
 
   useEffect(() => {
     if (authority === 'codegraph') return;
@@ -548,9 +581,19 @@ export function KnowledgeGraphProjectionSurface({
     const graph = graphRef.current;
     if (!host || !graph || typeof ResizeObserver === 'undefined') return undefined;
     let frame = 0;
+    let lastApplied = -1;
     const apply = () => {
       frame = 0;
       graph.resize();
+      if (codeOnly || repelSource.key !== presentationKey || repelSource.base === null) return;
+      const effective = responsiveRepelForce(
+        repelSource.base,
+        host.getBoundingClientRect().width,
+      );
+      if (effective === lastApplied) return;
+      lastApplied = effective;
+      graph.setSettings({ repel: effective });
+      graph.reheat();
     };
     const schedule = () => {
       if (frame) cancelAnimationFrame(frame);
@@ -563,7 +606,7 @@ export function KnowledgeGraphProjectionSurface({
       observer.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [codeOnly, presentationKey, repelSource]);
 
   useEffect(() => {
     if (!controlsOpen) return;
