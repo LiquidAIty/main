@@ -8,13 +8,12 @@ cleanup.
 
 - Project: `NousResearch/hermes-agent`
 - Remote: `https://github.com/NousResearch/hermes-agent.git`
-- Release tag: `v2026.9.24`
-- Package version: `0.21.5`
-- Release date: `2026.9.24`
-- Annotated tag object: `e3dd27ee2d8b011737a4eea8e3eb3d711ab78690`
-- Source commit: `f97608f178d1ffeca59860195ab7da295f7c8e5f`
-- Imported into the application repository by commit:
-  `68b2014e7dbdf502d176e36fc4817a857ae1ce2c`
+- Release tag: `v0.22.7`
+- Package version: `0.22.7`
+- Release date: `2026.11.3`
+- Annotated tag object: `592aa804d6ed135a18d6a01fb0824bfdbb0279d7`
+- Source commit: `b200f5bc60e31588ba2cb60e288029c4a54ba5fa`
+- Imported into the application working tree on `2026.11.4`; not staged or committed.
 
 Git history is the comparison source. Production uses only `HermesLatest/`; no second Hermes source tree
 or fallback checkout is retained.
