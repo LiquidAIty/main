@@ -61,6 +61,24 @@ afterEach(() => {
 });
 
 describe('CodeGraph read transport', () => {
+  it('accepts a File source path but refuses browser symbol selection', async () => {
+    mocks.fetchCodeGraphRead.mockResolvedValue({ schemaVersion: 'codegraph.read.v1', status: 'ready', mode: 'source' });
+    const { server, url } = await createServer();
+    try {
+      const file = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'project-1', mode: 'source', filePath: 'client/src/example.ts' }) });
+      expect(file.status).toBe(200);
+      expect(mocks.fetchCodeGraphRead).toHaveBeenCalledWith(expect.objectContaining({
+        mode: 'source', filePath: 'client/src/example.ts',
+      }));
+      mocks.fetchCodeGraphRead.mockClear();
+      const symbol = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'project-1', mode: 'source', qualifiedName: 'repo.example.run' }) });
+      expect(symbol.status).toBe(400);
+      expect(mocks.fetchCodeGraphRead).not.toHaveBeenCalled();
+    } finally { await closeServer(server); }
+  });
+
   it('injects canonical Project and Builder scope', async () => {
     mocks.fetchCodeGraphRead.mockResolvedValue({
       schemaVersion: 'codegraph.read.v1', status: 'ready', mode: 'file',
@@ -71,7 +89,7 @@ describe('CodeGraph read transport', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          projectId: 'project-alias', mode: 'file', filePath: 'client/src/example.ts',
+          projectId: 'project-alias', mode: 'file', filePaths: ['client/src/example.ts', 'client/src/other.ts'],
         }),
       });
       expect(response.status).toBe(200);
@@ -83,7 +101,7 @@ describe('CodeGraph read transport', () => {
         deckId: 'deck_builder',
         cardId: 'builder',
         mode: 'file',
-        filePath: 'client/src/example.ts',
+        filePaths: ['client/src/example.ts', 'client/src/other.ts'],
       });
     } finally {
       await closeServer(server);

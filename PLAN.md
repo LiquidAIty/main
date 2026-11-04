@@ -55,24 +55,40 @@ profile, or historical screenshot cannot establish one Project's current configu
   citations, and supporting IDs remain evidence/provenance and never become visible Project nodes.
 - The Entity inspector defaults to KnowGraph when both authorities exist and shows at most two current
   provider-projected attached Thinks or Knows. Search/Results and a Relevant/Recent switch are not current UI.
-- Main, Builder, ThinkGraph, and KnowGraph receive the current Entity/Relationship map and a non-persisting
-  default packet containing one most Relevant and one distinct most Recent record from each authority.
-  Engraphis and Graphiti produce provider candidates; Jev alone ranks them. Relevant is presented first and
-  outweighs recency, preventing the last exchange from becoming a repeating context loop.
+- Automatic Jev relevance ranking and the default Relevant/Recent packet are removed from Card preparation.
+  Explicit provider selections and existing graph readers remain; the separate map-delivery proof gap above
+  is unchanged. No replacement ranking filter or retrieval loop is introduced.
 - One unified canvas shows **Think** in blue and **Know** in orange by default. The detailed graph-design
   inspector owns the small color-key visibility controls plus the deliberate default reset; an empty-canvas
   click clears selection and returns to that combined visible-layer view without changing visibility.
-- Entity radius scales linearly from least to most attached Think-and-Know words. Jev relationship
-  probability remains movement/centrality input and is not replaced by word count.
-- The existing Graphs workspace now has an opt-in green **Code** visual layer on the same joined Think/Know
-  canvas. Code remains hidden by default and loads only after its inspector control is enabled. It reuses the
-  same Engraphis renderer and Inspector and is labeled Repository-scoped until real open-Project filtering is
-  proven. Structural File/Symbol identities and edges come only from the official CBM provider through the
-  persisted Builder Card's actual grants;
-  Feature membership and each file's Relationship statement come from bounded CBM reads of the inline
-  source comments. The browser cannot submit a tool, raw query, provider, MCP URL, Card or deck override.
-  File selection requests a bounded structural expansion and Symbol source loads only after an explicit
-  action. Provider failure remains an unavailable/error state with no cached or empty-success fallback.
+- Entity radius derives from distinct incoming connected Entities in the visible relationship view.
+  Repeated relationships from one source do not multiply its contribution; word counts do not affect size.
+  Jev relationship probability governs spring strength, distance and edge width, independently of radius.
+- The existing Graphs workspace has an opt-in violet Code source on the same 2D canvas.
+  Current source annotations own category selection and file-specific relationship prose; they load
+  independently of CBM and agent startup. The inspector exposes category checkboxes and All/None,
+  preserving the selection when Code is hidden. Opening Code does not select every category; All is explicit.
+  Each selected file set is read through CBM set queries for incoming/outgoing Calls/Imports, not a browser
+  per-file loop or Python per-symbol traversal. Category records and membership edges remain selector
+  data, not rendered hubs or spokes. Only Files and actual directed CBM Calls/Imports render for Code,
+  including cross-category neighbors. Saved grants still govern structural reads.
+- Think/Know may share an Entity; Code Files never merge into it or add a third inspector tab.
+  Exact annotation-name matches supply transient category-centre attraction and a violet presence rim.
+  Code radius derives from distinct incoming Files across real Calls/Imports, at a smaller file-node scale;
+  the inspector's caller count remains Calls-only. Structural springs retain real directions,
+  and local category connectivity supplies a soft non-radial grouping influence. Knowledge retains
+  its Jev `galaxy` transfer curve in the ordinary force simulation, not whole-canvas orbital mode.
+  Code uses no Jev probabilities. Code-only uses the Communities preset; mixed/knowledge uses Compact
+  with Code category attraction. The existing renderer owns all movement. Tuning controls are internal;
+  normal users retain source/category visibility, inspection and navigation.
+  Code has local damping, solid call arrows and thinner dashed import arrows, with no new legend.
+- Manual Jev Focus/collapse, its black-hole view replacement, and its dedicated HTTP/Python route are
+  removed. Ordinary selection, source navigation, pan/zoom, saved review flags and Think/Know evidence
+  inspection remain. Upstream renderer options are not a second application Focus path.
+- Loaded proof currently includes an actual CBM read of trading_forecast.py returning four Files and
+  three directed cross-file Calls. Preview renders real file nodes and arrows, but larger file reads
+  still report timeouts. Full category structure, the reduced node scale, and a real populated
+  Think/Know/Code association still require acceptance; no graph records were seeded for proof.
 
 ### ThinkGraph
 

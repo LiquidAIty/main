@@ -1,20 +1,28 @@
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Main Chat
- * Relationship: Forwards Hermes input and replies, then stores the completed pair through the existing store after delivering the reply.
+ * Relationship: Streams admitted Hermes replies into Main Chat and persists actual provider rows through the existing Project conversation store.
  * Entity: Agent Messaging
- * Relationship: Uses saved Card profiles and wired rosters; Hermes owns Bot delivery and execution.
+ * Relationship: Projects saved enabled wires into profile rosters and routes an explicit @Name to that saved Card; Hermes performs inference and message_agent delivery.
  * Entity: Card Sessions
- * Relationship: Opens Hermes Bot Chats on Project opening and accepts only the receiving Card's returned handle on Send.
- * Entity: Card Terminals
- * Relationship: Preserves the existing Card CLI's open and identity-check exports.
+ * Relationship: Reuses Desktop's Gateway client to find, create when absent, and resume each profile's canonical Bot Chat, and forwards Stop to that conversation.
+ * Entity: Card Activity
+ * Relationship: Reads Hermes live-session counts and Main's canonical activity summary without querying application Runs or inferring subagent totals.
  * Entity: Voice
- * Relationship: Forwards audio to the saved profile's Hermes transcription and speech endpoints.
+ * Relationship: Forwards browser audio and completed speech text to the addressed saved profile's Hermes audio endpoints.
+ * Entity: Agent Input
+ * Relationship: Projects Hermes-owned pending questions and approvals and returns explicit user responses to their original session and request.
+ * Entity: Card Terminals
+ * Relationship: Resolves the saved non-Main Card, refreshes its scoped profile access, and opens its canonical Bot Chat for the CLI viewer.
  */
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Router, type Request, type Response } from 'express';
 import { tsImport } from 'tsx/esm/api';
-import { appendConversationTurn, getConversationMessages } from '../conversations/store';
+import { appendConversationReplyOnce, appendConversationTurn, getConversationMessages } from '../conversations/store';
 import { createInternalMcpBearer } from '../services/mcp/internalMcpAuth';
 import { exactStrings, objectRecord, projectCardAuthority, type ProjectCardBinding } from '../services/projectCardAuthority';
 import { assertCardProfileOwner } from '../services/projectStore';
@@ -28,21 +36,22 @@ let connected: ReturnType<typeof connectGateway> | undefined;
 async function connectGateway() {
   const root = path.join(resolveRepoRoot(), 'HermesLatest');
   const home = path.join(root, '.hermes');
-  const python = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+  const executable = (name: string) => path.join(root, '.venv', process.platform === 'win32' ? `Scripts/${name}.exe` : `bin/${name}`);
   const load = (file: string) => tsImport(pathToFileURL(path.join(root, file)).href, pathToFileURL(__filename).href);
   const [api, local, tickets] = await Promise.all([
     load('apps/desktop/src/api/client.ts'), load('apps/desktop/electron/local-gateway.ts'),
     load('apps/desktop/electron/local-gateway-python.ts'),
   ]);
-  const backend = { command: python, args: ['-m', 'hermes_cli.main', 'gateway', 'ensure', '--json'], shell: false, env: { PYTHONPATH: root } };
+  const backend = { command: executable('python'), args: ['-m', 'hermes_cli.main', 'gateway', 'ensure', '--json'], shell: false, env: { PYTHONPATH: root } };
   const descriptor = await local.ensureLocalGateway(() => local.runGatewayEnsure(backend, root, home));
   const resolveTicket = tickets.createGatewayTicketResolver(
-    async () => ({ command: python, args: [], kind: 'python', shell: false, env: { PYTHONPATH: root } }), () => root,
+    async () => ({ command: executable('python'), args: [], kind: 'python', shell: false, env: { PYTHONPATH: root } }), () => root,
   );
   local.configurePythonGatewayTicketClient(resolveTicket);
   const client = new api.HermesGateway();
-  await client.connect(local.createLocalGatewayDials().prepare(descriptor.baseUrl, await resolveTicket(descriptor.gatewayEndpoint, 'interactive'), 0));
-  const audio = async (profile: string, operation: string, body: Rpc, signal: AbortSignal) => {
+  const ticket = await resolveTicket(descriptor.gatewayEndpoint, 'interactive');
+  await client.connect(local.createLocalGatewayDials().prepare(descriptor.baseUrl, ticket, 0));
+  const audio = async (profile: string, operation: 'transcribe' | 'speak', body: Rpc, signal: AbortSignal) => {
     const url = `${descriptor.baseUrl}/api/audio/${operation}?profile=${encodeURIComponent(profile)}`;
     const headers = await local.nativeGatewayHttpHeaders(descriptor, url, home, 'POST', body);
     const response = await fetch(url, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
@@ -73,8 +82,14 @@ async function gateway() {
 }
 
 async function requestForBot(profile: string, method: string, params: Rpc = {}) {
-  const current = await gateway();
-  return current.client.request(method, { ...params, profile }, method === 'prompt.submit' ? current.submit : current.startup);
+  const started = performance.now();
+  try {
+    const current = await gateway();
+    return await current.client.request(method, { ...params, profile }, method === 'prompt.submit' ? current.submit : current.startup);
+  } finally {
+    const elapsedMs = Math.round(performance.now() - started);
+    if (elapsedMs >= 1000) console.info('[card-rpc-timing]', { profile, method, elapsedMs });
+  }
 }
 
 async function context(req: Request, res: Response, input = req.method === 'GET' ? req.query : req.body) {
@@ -129,6 +144,26 @@ export async function findExistingCanonicalChat(profile: string): Promise<string
   return rows.length ? String(rows[0].resolved_id || rows[0].id) : null;
 }
 
+async function createCanonicalChat(profile: string): Promise<string> {
+  const created = await requestForBot(profile, 'session.create', {
+    title: 'Bot Chat', hidden: true, follow_profile_config: true,
+  });
+  await requestForBot(profile, 'session.title', { session_id: created.session_id, title: 'Bot Chat' });
+  return String(created.stored_session_id);
+}
+
+async function openStoredBotChat(profile: string, sessionId: string): Promise<string> {
+  const opened = await requestForBot(profile, 'session.resume', { session_id: sessionId, defer_history: true, omit_messages: true });
+  return String(opened.session_id);
+}
+
+async function openBotCanonicalChat(profile: string): Promise<string> {
+  // The exact native title lookup already resolves this profile's canonical Chat.
+  // Enumerating every installed profile before each open adds no authority.
+  const sessionId = await findExistingCanonicalChat(profile) ?? await createCanonicalChat(profile);
+  return openStoredBotChat(profile, sessionId);
+}
+
 export async function prepareTerminalConversation(req: Request, res: Response) {
   const scope = await context(req, res, req.params);
   if (!scope) return null;
@@ -137,8 +172,8 @@ export async function prepareTerminalConversation(req: Request, res: Response) {
     res.status(400).json({ error: 'card_cli_unavailable' }); return null;
   }
   await prepareProfiles(scope, card);
-  const opened = await requestForBot(card.profile, 'session.create', { title: 'Bot Chat', hidden: true, follow_profile_config: true });
-  return { projectId: scope.projectId, deckId: scope.deckId, cardId: card.card.id, profile: card.profile, sessionId: opened.session_id };
+  return { projectId: scope.projectId, deckId: scope.deckId, cardId: card.card.id,
+    profile: card.profile, sessionId: await openBotCanonicalChat(card.profile) };
 }
 
 function failure(res: Response, error: unknown) {
@@ -149,26 +184,95 @@ function failure(res: Response, error: unknown) {
   }
 }
 
-router.post('/open', async (req, res) => {
+function projectInputRequests(scope: Context, card: ProjectCardBinding, snapshot: Rpc) {
+  return (snapshot.prompts || []).filter((prompt: Rpc) => ['approval', 'clarify'].includes(prompt.kind)).map((prompt: Rpc) => ({
+    projectId: scope.projectId, deckId: scope.deckId, cardId: card.card.id,
+    address: card === scope.authority.main ? '' : card.address || card.title,
+    sessionId: snapshot.session_id, requestId: prompt.prompt_id, kind: prompt.kind,
+    question: prompt.question, command: prompt.command, description: prompt.description,
+    choices: prompt.choices, multiSelect: prompt.multi_select === true,
+  }));
+}
+
+router.post('/activity', async (req, res) => {
   try {
     const scope = await context(req, res);
     if (!scope) return;
-    await prepareProfiles(scope, scope.authority.main);
+    const profiles = await requestForBot(scope.authority.main.profile, 'profiles.list');
+    const summary = profiles.profiles.find((row: Rpc) => row.name === scope.authority.main.profile)?.canonical_session;
     const cards = [scope.authority.main, ...scope.roster];
-    const sessions = await Promise.all(cards.map(async card => {
-      const opened = await requestForBot(card.profile, 'session.create', { title: 'Bot Chat', hidden: true, follow_profile_config: true });
-      return [card.card.id, opened.session_id];
+    const observed = await Promise.allSettled(cards.map(async card => {
+      await assertCardProfileOwner(card.profile, scope.ownerUserId);
+      const live = await requestForBot(card.profile, 'session.active_list');
+      const working = live.sessions.filter((row: Rpc) => ['working', 'streaming'].includes(row.status));
+      const inputRequests = (await Promise.all(live.sessions.filter((row: Rpc) => row.title === 'Bot Chat'
+        && ['working', 'streaming', 'waiting'].includes(row.status)).map(async (row: Rpc) => {
+        const snapshot = await requestForBot(card.profile, 'session.resume', { session_id: row.id, defer_history: true, omit_messages: true });
+        return projectInputRequests(scope, card, snapshot);
+      }))).flat();
+      return { cardId: card.card.id, state: working.length ? 'running' : 'idle', activeCount: working.length, inputRequests };
     }));
-    res.json({ sessions: Object.fromEntries(sessions) });
+    res.json({ ok: true, results: observed.flatMap(row => row.status === 'fulfilled' ? [row.value] : []),
+      failedCardIds: observed.flatMap((row, index) => row.status === 'rejected' ? [cards[index].card.id] : []),
+      mainCanonicalSession: summary ? { id: summary.id, resolvedId: summary.resolved_id || summary.id,
+        lastActive: summary.last_active, messageCount: summary.message_count } : null });
   } catch (error) { failure(res, error); }
 });
+
+router.post('/respond', async (req, res) => {
+  try {
+    const scope = await context(req, res);
+    if (!scope) return;
+    const { cardId, sessionId, requestId, kind, answer } = req.body;
+    const card = [scope.authority.main, ...scope.roster].find(item => item.card.id === cardId);
+    if (!card || !['approval', 'clarify'].includes(kind) || typeof requestId !== 'string' || typeof answer !== 'string') {
+      res.status(400).json({ error: 'agent_input_response_invalid' }); return;
+    }
+    await assertCardProfileOwner(card.profile, scope.ownerUserId);
+    if (await findExistingCanonicalChat(card.profile) !== sessionId) {
+      res.status(409).json({ error: 'main_session_changed' }); return;
+    }
+    const snapshot = await requestForBot(card.profile, 'session.resume', { session_id: sessionId, defer_history: true, omit_messages: true });
+    const prompt = snapshot.prompts?.find((item: Rpc) => item.prompt_id === requestId && item.kind === kind);
+    if (!prompt) { res.status(409).json({ error: 'agent_input_expired' }); return; }
+    if (kind === 'approval' && !prompt.choices.includes(answer)) {
+      res.status(400).json({ error: 'agent_input_choice_invalid' }); return;
+    }
+    const result = await requestForBot(card.profile, `${kind}.respond`, {
+      session_id: sessionId, request_id: requestId, [kind === 'approval' ? 'choice' : 'answer']: answer,
+    });
+    res.json({ ok: true, result });
+  } catch (error) { failure(res, error); }
+});
+
+async function refreshOpenBotChat(scope: Context, card: ProjectCardBinding, sessionId: string, after: number) {
+  const history = await requestForBot(card.profile, 'session.history', { session_id: sessionId });
+  for (const row of history.messages) {
+    const text = row.display_content === undefined ? row.text : row.display_content;
+    if (row.role !== 'assistant' || ['hidden', 'failed_turn'].includes(row.display_kind) || row.display_metadata?.model_only
+      || typeof text !== 'string' || !text.trim() || !Number.isSafeInteger(row.row_id) || row.row_id <= after) continue;
+    await appendConversationReplyOnce({ projectId: scope.projectId, conversationId: scope.projectId, message: {
+      role: 'assistant', content: text, speaker: speaker(card), providerContinuationRef: sessionId,
+      providerMessageId: `hermes:${card.profile}:row:${row.row_id}`,
+    } });
+  }
+}
 
 router.get('/history', async (req, res) => {
   try {
     const scope = await context(req, res);
     if (!scope) return;
     const { projectId, authority, roster } = scope;
-    const stored = await getConversationMessages(projectId, projectId);
+    let stored = await getConversationMessages(projectId, projectId);
+    const prefix = `hermes:${authority.main.profile}:row:`;
+    const previous = stored.filter(row => row.providerMessageId?.startsWith(prefix)).pop();
+    if (previous) {
+      await assertCardProfileOwner(authority.main.profile, scope.ownerUserId);
+      const sessionId = await findExistingCanonicalChat(authority.main.profile);
+      if (!sessionId) throw new Error('main_conversation_unavailable');
+      await refreshOpenBotChat(scope, authority.main, sessionId, Number(previous.providerMessageId!.slice(prefix.length)));
+      stored = await getConversationMessages(projectId, projectId);
+    }
     res.json({ sessionId: stored[stored.length - 1]?.providerContinuationRef || '',
       addressableAgents: roster.map(card => ({ cardId: card.card.id, title: card.title, address: card.address })),
       messages: stored.map(row => {
@@ -191,9 +295,10 @@ router.post('/chat', async (req, res) => {
     const scope = await context(req, res);
     if (!scope) return;
     const card = addressedCard(scope, message);
-    await assertCardProfileOwner(card.profile, scope.ownerUserId);
-    const sessionId = objectRecord(req.body.sessions)[card.card.id];
-    if (typeof sessionId !== 'string' || !sessionId) throw new Error('main_project_not_open');
+    await prepareProfiles(scope, card);
+    const sessionId = await openBotCanonicalChat(card.profile);
+    const history = await requestForBot(card.profile, 'session.history', { session_id: sessionId });
+    const before = history.messages.reduce((id: number, row: Rpc) => Number.isSafeInteger(row.row_id) ? Math.max(id, row.row_id) : id, 0);
     const attachments = [];
     for (const image of req.body.images || []) {
       const attached = await requestForBot(card.profile, 'image.attach_bytes', { session_id: sessionId, content_base64: image.dataUrl, filename: image.name });
@@ -204,32 +309,26 @@ router.post('/chat', async (req, res) => {
     const send = (kind: string, data: Rpc) => res.write(`event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`);
     send('session', { projectId: scope.projectId, deckId: scope.deckId, cardId: card.card.id, sessionId });
     const prefix = card === scope.authority.main ? '' : `@${card.address} `;
-    let started = false, completed = false;
+    let started = false;
     let submission: Promise<Rpc>;
     const { client } = await gateway();
     const offEvent = client.onEvent((event: Rpc) => {
       if (event.profile !== card.profile || event.session_id !== sessionId) return;
-      void submission.then(receipt => {
-        if (completed || res.writableEnded || res.destroyed) return;
+      void submission.then(async receipt => {
+        if (res.writableEnded || res.destroyed) return;
         const payload = event.payload || {};
         if (event.type === 'session.info' && payload.pending?.some((row: Rpc) => row.admission_id === receipt.admission_id && row.steering)) {
-          completed = true; send('done', { fullText: '' }); res.end(); return;
+          send('done', { fullText: '' }); res.end(); return;
         }
         if (event.admission_id !== receipt.admission_id) return;
         if (event.type === 'message.delta' && typeof payload.text === 'string' && payload.text) {
           send('text', { text: (started ? '' : prefix) + payload.text }); started = true;
         }
         if (event.type !== 'message.complete') return;
-        completed = true;
         if (payload.error || payload.status === 'error') throw new Error(String(payload.error || payload.failure_reason || 'card_turn_failed'));
         const text = typeof payload.text === 'string' ? payload.text : '';
+        await refreshOpenBotChat(scope, card, sessionId, before);
         send('done', { fullText: text ? prefix + text : '', speechText: text }); res.end();
-        if (text.trim()) void appendConversationTurn({ projectId: scope.projectId, conversationId: scope.projectId, messages: [
-          { messageId: submissionId, role: 'user', content: message, speaker: { kind: 'user', label: 'You' },
-            target: speaker(card), providerContinuationRef: sessionId, providerMessageId: `hermes:${card.profile}:admission:${receipt.admission_id}` },
-          { role: 'assistant', content: text, speaker: speaker(card), providerContinuationRef: sessionId },
-        ],
-        }).catch(error => console.error('[main-chat-storage] Completed pair was not saved', error));
       }).catch(error => failure(res, error));
     });
     const offState = client.onState((state: string) => {
@@ -238,26 +337,17 @@ router.post('/chat', async (req, res) => {
     detach = () => { offEvent(); offState(); };
     submission = requestForBot(card.profile, 'prompt.submit', { session_id: sessionId, text: message,
       ...(req.body.voiceTurn === true ? { voice_turn: true } : {}),
-      submission_id: submissionId, ...(attachments.length ? { attachments } : {}) });
+      submission_id: submissionId, ...(attachments.length ? { attachments } : {}) }).then(async receipt => {
+      if (receipt.admission_id) await appendConversationTurn({ projectId: scope.projectId, conversationId: scope.projectId, messages: [{
+        messageId: submissionId, role: 'user', content: message, speaker: { kind: 'user', label: 'You' }, target: speaker(card),
+        providerContinuationRef: sessionId, providerMessageId: `hermes:${card.profile}:admission:${receipt.admission_id}` }] });
+      return receipt;
+    });
     const receipt = await submission;
     if (receipt.voice_stopped || (receipt.status === 'terminal' && ['steering', 'steered'].includes(receipt.outcome))) {
-      completed = true; send('done', { fullText: '' }); res.end();
+      send('done', { fullText: '' }); res.end();
     }
   } catch (error) { detach(); failure(res, error); }
-});
-
-router.post('/stop', async (req, res) => {
-  try {
-    const scope = await context(req, res);
-    if (!scope) return;
-    const results = await Promise.all([scope.authority.main, ...scope.roster].map(async card => {
-      await assertCardProfileOwner(card.profile, scope.ownerUserId);
-      const sessionId = objectRecord(req.body.sessions)[card.card.id];
-      if (typeof sessionId !== 'string' || !sessionId) throw new Error('main_project_not_open');
-      return requestForBot(card.profile, 'session.interrupt', { session_id: sessionId });
-    }));
-    res.json({ ok: true, results });
-  } catch (error) { failure(res, error); }
 });
 
 for (const operation of ['transcribe', 'speak'] as const) {
@@ -272,11 +362,26 @@ for (const operation of ['transcribe', 'speak'] as const) {
         : addressedCard(scope, typeof req.body.message === 'string' ? req.body.message : '');
       if (!card) { res.status(403).json({ error: 'main_agent_address_unavailable' }); return; }
       await assertCardProfileOwner(card.profile, scope.ownerUserId);
-      const body = operation === 'transcribe' ? { data_url: req.body.dataUrl, mime_type: req.body.mimeType } : { text: req.body.text };
+      const body = operation === 'transcribe'
+        ? { data_url: req.body.dataUrl, mime_type: req.body.mimeType }
+        : { text: req.body.text };
       const result = await (await gateway()).audio(card.profile, operation, body, controller.signal);
       if (!res.destroyed) res.json(result);
     } catch (error) { if (!controller.signal.aborted) failure(res, error); }
   });
 }
+
+router.post('/stop', async (req, res) => {
+  try {
+    const scope = await context(req, res);
+    if (!scope) return;
+    for (const card of [scope.authority.main, ...scope.roster]) {
+      if (await findExistingCanonicalChat(card.profile) !== req.body.sessionId) continue;
+      await assertCardProfileOwner(card.profile, scope.ownerUserId);
+      res.json({ ok: true, result: await requestForBot(card.profile, 'session.interrupt', { session_id: req.body.sessionId }) }); return;
+    }
+    res.status(409).json({ error: 'main_session_changed' });
+  } catch (error) { failure(res, error); }
+});
 
 export default router;

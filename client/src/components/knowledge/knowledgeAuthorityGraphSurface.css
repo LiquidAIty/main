@@ -53,8 +53,10 @@
 .codegraph-categories { flex-shrink:0; margin-bottom:12px; }
 .codegraph-categories fieldset { max-height:190px; overflow:auto; margin:0; padding:6px 10px; border:1px solid #35454a; border-radius:7px; }
 .codegraph-categories legend { font-size:11px; color:#9dabb0; }
-.codegraph-categories input { accent-color:#63C79A; }
+.codegraph-categories input { accent-color:#8d61ff; }
 .codegraph-categories button { align-self:start; background:transparent; border:1px solid #35454a; border-radius:6px; padding:5px 7px; }
+.codegraph-category-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.codegraph-category-row button { align-self:center; font-size:10px; }
 .knowledge-authority-controls .graph-inspector-records ul { display:grid; gap:5px; margin:0; padding-left:18px; color:#b8c7cc; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
 .knowledge-authority-controls select { min-width:0; flex:1; padding:7px; background:#101b20; color:inherit; border:1px solid #35454a; border-radius:5px; }
 .knowledge-authority-controls article, .knowledge-authority-controls dl { min-width:0; }

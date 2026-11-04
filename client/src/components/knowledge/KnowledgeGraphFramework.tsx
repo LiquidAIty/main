@@ -6,11 +6,11 @@
  * Entity: Project Knowledge Graph
  * Relationship: This file keeps joined Think/Know and opt-in Code views inside one lazy shared renderer workspace while preserving independent status and read actions.
  * Entity: ThinkGraph
- * Relationship: This file presents the Engraphis projection and its exact focus-neighborhood and removal actions through the shared graph surface.
+ * Relationship: This file presents the Engraphis projection and its exact removal actions through the shared graph surface.
  * Entity: KnowGraph
- * Relationship: This file presents the Graphiti projection and its exact focus-neighborhood and removal actions through the shared graph surface.
+ * Relationship: This file presents the Graphiti projection and its exact removal actions through the shared graph surface.
  * Entity: CodeGraph
- * Relationship: This file opens CodeGraph only on explicit tab selection and passes bounded File expansion and Symbol source reads into the same renderer and Inspector.
+ * Relationship: This file opens CodeGraph only when enabled and passes File connection and source reads into the same renderer and Inspector.
  */
 
 import { Suspense, lazy } from 'react';
@@ -20,9 +20,8 @@ import type { KnowledgeGraphKind } from '../../types/agentgraph';
 import type { CanonicalEntityFocusRequest } from '../builder/canonicalEntityLinks';
 import type {
   GraphProjectionV1,
-  ReadProviderFocusNeighborhood,
 } from './knowledgeGraphProjection';
-import type { CodeGraphSelectedSymbol } from './codeGraphProjection';
+import type { CodeGraphFileSource } from './codeGraphProjection';
 
 const JoinedKnowledgeGraphSurface = lazy(async () => {
   const mod = await import('./KnowledgeAuthorityGraphSurface');
@@ -35,7 +34,6 @@ type Props = {
   projections: Record<KnowledgeGraphKind, GraphProjectionV1>;
   errors: Partial<Record<KnowledgeGraphKind, string>>;
   statuses?: Partial<Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>>;
-  onReadFocusNeighborhood?: ReadProviderFocusNeighborhood;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
   onRemoveKnowGraphEvidence?: (episodeId: string) => Promise<void>;
   entityFocusRequest?: CanonicalEntityFocusRequest | null;
@@ -47,8 +45,8 @@ type Props = {
     freshness: string;
   };
   onOpenCodeGraph: () => Promise<GraphProjectionV1 | null>;
-  onReadCodeGraphFile: (filePath: string) => Promise<GraphProjectionV1 | null>;
-  onReadCodeGraphSource: (qualifiedName: string) => Promise<CodeGraphSelectedSymbol | null>;
+  onReadCodeGraphFiles: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;
+  onReadCodeGraphSource: (filePath: string) => Promise<CodeGraphFileSource | null>;
 };
 
 export default function KnowledgeGraphFramework({
@@ -57,13 +55,12 @@ export default function KnowledgeGraphFramework({
   projections,
   errors,
   statuses,
-  onReadFocusNeighborhood,
   onRemoveThinkGraphEvidence,
   onRemoveKnowGraphEvidence,
   entityFocusRequest,
   codeGraph,
   onOpenCodeGraph,
-  onReadCodeGraphFile,
+  onReadCodeGraphFiles,
   onReadCodeGraphSource,
 }: Props) {
   return (
@@ -101,13 +98,12 @@ export default function KnowledgeGraphFramework({
               ...(errors.thinkgraph ? { thinkgraph: errors.thinkgraph } : {}),
               ...(errors.knowgraph ? { knowgraph: errors.knowgraph } : {}),
             }}
-            onReadProviderFocusNeighborhood={onReadFocusNeighborhood}
             onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
             onRemoveKnowGraphEvidence={onRemoveKnowGraphEvidence}
             entityFocusRequest={entityFocusRequest}
             codeGraph={codeGraph}
             onOpenCodeGraph={onOpenCodeGraph}
-            onReadCodeGraphFile={onReadCodeGraphFile}
+            onReadCodeGraphFiles={onReadCodeGraphFiles}
             onReadCodeGraphSource={onReadCodeGraphSource}
           />
       </Suspense>

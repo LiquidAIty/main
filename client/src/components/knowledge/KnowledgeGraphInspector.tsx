@@ -13,11 +13,11 @@
  * Relationship: This file presents bounded first-class Knows and safe HTTPS citation provenance for the exact selected Graphiti Entity without rendering citations as graph nodes.
  *
  * Entity: CodeGraph
- * Relationship: This file presents exact CBM File/Symbol identity, source-owned Feature contributions, bounded structural neighbors, and explicitly loaded source without creating another Inspector.
+ * Relationship: This file presents File identity, source-owned category contributions, directed structural file neighbors, and explicitly loaded source without creating another Inspector.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { CodeGraphSelectedSymbol } from './codeGraphProjection';
+import type { CodeGraphFileSource } from './codeGraphProjection';
 import type { GraphProjectionNode } from './knowledgeGraphProjection';
 
 export function knowEvidenceIdentity(item: Record<string, unknown>): string | null {
@@ -447,15 +447,6 @@ function stringValues(value: unknown): string[] {
     : [];
 }
 
-function relationshipNames(value: unknown): string[] {
-  return Array.isArray(value) ? value.flatMap((item): string[] => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
-    const record = item as Record<string, unknown>;
-    const qualifiedName = String(record.qualified_name || record.qualifiedName || record.name || '').trim();
-    return qualifiedName ? [qualifiedName] : [];
-  }) : [];
-}
-
 export function CodeGraphNodeDetails({
   node,
   source,
@@ -463,34 +454,35 @@ export function CodeGraphNodeDetails({
   sourceError,
   onLoadSource,
   onOpenFile,
+  connections = [],
+  connectionLoading,
+  connectionError,
+  onLoadConnections,
 }: {
   node: GraphProjectionNode;
-  source: CodeGraphSelectedSymbol | null;
+  source: CodeGraphFileSource | null;
   sourceLoading: boolean;
   sourceError: string | null;
-  onLoadSource?: (qualifiedName: string) => void;
+  onLoadSource?: (filePath: string) => void;
   onOpenFile?: (path: string) => void;
+  connections?: Array<{ filePath: string; direction: 'incoming' | 'outgoing'; kind: string }>;
+  connectionLoading?: boolean;
+  connectionError?: string | null;
+  onLoadConnections?: () => void;
 }) {
   const properties = node.properties || {};
   const recordKind = String(properties.recordKind || 'record');
   const filePath = String(properties.filePath || '');
-  const qualifiedName = String(properties.qualifiedName || '');
-  const featureName = String(properties.featureName || '');
   const features = stringValues(properties.features);
-  const memberFiles = stringValues(properties.memberFilePaths);
   const contributions = Array.isArray(properties.contributions)
     ? properties.contributions.filter((item): item is Record<string, unknown> => (
       Boolean(item) && typeof item === 'object' && !Array.isArray(item)
     ))
     : [];
-  const callers = relationshipNames(source?.relationshipEvidence?.callers);
-  const callees = relationshipNames(source?.relationshipEvidence?.callees);
   return <div data-testid="codegraph-node-details" data-provider-id={node.id}>
     <dl className="graph-record-fields graph-edge-meaning">
-      <div><dt>Kind</dt><dd>{recordKind === 'symbol' ? String(properties.symbolKind || node.type || 'Symbol') : recordKind}</dd></div>
-      {featureName ? <div><dt>Feature</dt><dd>{featureName}</dd></div> : null}
+      <div><dt>Kind</dt><dd>{recordKind}</dd></div>
       {filePath ? <div><dt>Path</dt><dd>{filePath}</dd></div> : null}
-      {qualifiedName ? <div><dt>Qualified identity</dt><dd>{qualifiedName}</dd></div> : null}
       {Number.isFinite(Number(properties.startLine)) ? <div><dt>Lines</dt><dd>
         {String(properties.startLine)}{Number.isFinite(Number(properties.endLine))
           ? `–${String(properties.endLine)}` : ''}
@@ -507,25 +499,35 @@ export function CodeGraphNodeDetails({
         {' — '}{String(contribution.relationship || '')}
       </li>)}</ul>
     </section> : null}
-    {memberFiles.length ? <section className="graph-inspector-records">
-      <h4>Contributing files</h4>
-      <ul>{memberFiles.map(path => <li key={path}>{onOpenFile
-        ? <button type="button" className="codegraph-file-link" onClick={() => onOpenFile(path)}>{path}</button>
-        : path}</li>)}</ul>
+    {recordKind === 'file' ? <section className="graph-inspector-records">
+      <h4>File connections</h4>
+      <p>{properties.structuralLoaded
+        ? properties.structuralComplete ? 'Selected file read complete.' : 'Selected file read incomplete.'
+        : 'Selected file not yet read.'} Counts describe the loaded CBM neighborhood.</p>
+      <dl className="graph-record-fields">
+        <div><dt>Known caller files</dt><dd>{String(properties.callerFileCount ?? 'Not read')}</dd></div>
+        <div><dt>Known called files</dt><dd>{String(properties.calledFileCount ?? 'Not read')}</dd></div>
+      </dl>
+      {onLoadConnections ? <button type="button" disabled={connectionLoading}
+        onClick={onLoadConnections}>{connectionLoading ? 'Reading connections…' : 'Read connections'}</button> : null}
+      {connectionError ? <p role="alert">{connectionError}</p> : null}
+      <ul>{connections.map(connection => <li key={`${connection.kind}:${connection.direction}:${connection.filePath}`}>
+        {connection.direction === 'incoming' ? '← ' : '→ '}{connection.kind}{' '}
+        <button type="button" className="codegraph-file-link"
+          onClick={() => onOpenFile?.(connection.filePath)}>{connection.filePath}</button>
+      </li>)}</ul>
     </section> : null}
-    {['symbol', 'file'].includes(recordKind) && qualifiedName && onLoadSource ? <div className="knowledge-authority-actions">
-      <button type="button" disabled={sourceLoading} onClick={() => onLoadSource(qualifiedName)}>
-        {sourceLoading ? 'Loading source…' : source ? 'Reload source' : recordKind === 'file' ? 'Open file' : 'Load source'}
+    {recordKind === 'file' && filePath && onLoadSource ? <div className="knowledge-authority-actions">
+      <button type="button" disabled={sourceLoading} onClick={() => onLoadSource(filePath)}>
+        {sourceLoading ? 'Loading source…' : source ? 'Reload source' : 'Open file'}
       </button>
     </div> : null}
     {sourceError ? <p role="alert">{sourceError}</p> : null}
     {source ? <details open className="codegraph-source">
-      <summary>Current source · {source.properties.file}
+      <summary>Repository source · {source.properties.file}
         {source.properties.startLine ? `:${source.properties.startLine}` : ''}</summary>
       <pre>{source.content}</pre>
-      {callers.length ? <section><h4>Callers</h4><ul>{callers.map(value => <li key={value}>{value}</li>)}</ul></section> : null}
-      {callees.length ? <section><h4>Callees</h4><ul>{callees.map(value => <li key={value}>{value}</li>)}</ul></section> : null}
-      {source.truncated ? <p>Provider result truncated.</p> : null}
+      {source.truncated ? <p>Source or connection result truncated.</p> : null}
     </details> : null}
   </div>;
 }

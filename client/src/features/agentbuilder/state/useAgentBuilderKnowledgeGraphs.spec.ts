@@ -19,7 +19,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GraphProjectionV1 } from '../../../components/knowledge/knowledgeGraphProjection';
-import type { CodeGraphSelectedSymbol } from '../../../components/knowledge/codeGraphProjection';
+import type { CodeGraphFileSource } from '../../../components/knowledge/codeGraphProjection';
 import useAgentBuilderKnowledgeGraphs from './useAgentBuilderKnowledgeGraphs';
 
 function projection(): GraphProjectionV1 {
@@ -214,7 +214,7 @@ describe('KnowGraph route contracts', () => {
     expect(calls.filter(url => url.startsWith('/api/knowgraph/graph?'))).toHaveLength(1);
   });
 
-  it('loads CodeGraph on demand, replaces File structure, and reads source explicitly', async () => {
+  it('loads CodeGraph on demand, accumulates file connections, and reads source explicitly', async () => {
     const codeBodies: Record<string, unknown>[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -244,12 +244,13 @@ describe('KnowGraph route contracts', () => {
                 },
               }], edges: [],
             },
-            selectedSymbol: null, freshness: { status: 'unverified', coverage: null },
+            fileSource: null, freshness: { status: 'unverified', coverage: null },
             truncated: false, errors: [],
           }), { status: 200 });
         }
         if (mode === 'file') {
-          const filePath = String(body.filePath);
+          expect(Array.isArray(body.filePaths)).toBe(true);
+          const filePath = String((body.filePaths as string[])[0]);
           const second = filePath === 'client/two.ts';
           return new Response(JSON.stringify({
             schemaVersion: 'codegraph.read.v1', status: 'ready', mode, scope,
@@ -257,23 +258,23 @@ describe('KnowGraph route contracts', () => {
               schemaVersion: 'codegraph.projection.v1', authority: 'codegraph',
               projectId: 'project-one', nodes: [
                 { id: second ? 'file:two' : 'file:one', label: second ? 'two.ts' : 'one.ts', authority: 'codegraph', type: 'File', etype: 'File', properties: { recordKind: 'file', filePath, qualifiedName: second ? 'file:two' : 'file:one' } },
-                { id: second ? 'symbol:stop' : 'symbol:run', label: second ? 'stop' : 'run', authority: 'codegraph', type: 'Function', etype: 'Symbol', properties: { recordKind: 'symbol', filePath, qualifiedName: second ? 'symbol:stop' : 'symbol:run' } },
+                { id: second ? 'file:stop' : 'file:run', label: second ? 'stop.ts' : 'run.ts', authority: 'codegraph', type: 'File', etype: 'File', properties: { recordKind: 'file', filePath: second ? 'client/stop.ts' : 'client/run.ts', qualifiedName: second ? 'file:stop' : 'file:run' } },
               ],
-              edges: [{ id: second ? 'defines-stop' : 'defines-run', source: second ? 'file:two' : 'file:one', target: second ? 'symbol:stop' : 'symbol:run', predicate: 'DEFINES' }],
+              edges: [{ id: second ? 'calls-stop' : 'calls-run', source: second ? 'file:two' : 'file:one', target: second ? 'file:stop' : 'file:run', predicate: 'CALLS', properties: { structuralAuthority: 'cbm' } }],
             },
-            selectedSymbol: null, freshness: { status: 'current', coverage: {} },
+            fileSource: null, freshness: { status: 'current', coverage: {} },
             truncated: false, errors: [],
           }), { status: 200 });
         }
         return new Response(JSON.stringify({
           schemaVersion: 'codegraph.read.v1', status: 'ready', mode, scope,
           projection: null,
-          selectedSymbol: {
-            graphSystem: 'cbm', cbmQualifiedName: 'symbol:run', recordKind: 'symbol',
-            type: 'Function', title: 'run', content: 'export function run() {}',
-            properties: { project: 'C-Projects-LiquidAIty-main', file: 'client/one.ts' },
+          fileSource: {
+            graphSystem: 'repository', sourceReference: 'source-file:client/one.ts', recordKind: 'file',
+            type: 'File', title: 'one.ts', content: 'export function run() {}',
+            properties: { project: 'C-Projects-LiquidAIty-main', file: 'client/one.ts', startLine: 1, endLine: 1 },
             provenance: {}, asOf: '2026-10-17T00:00:00Z',
-            readOperation: 'cbm.get_code_snippet', truncated: false,
+            readOperation: 'repository-file', truncated: false,
           },
           freshness: { status: 'unverified', coverage: null },
           truncated: false, errors: [],
@@ -291,26 +292,26 @@ describe('KnowGraph route contracts', () => {
     expect(result.current.codeGraph.status).toBe('ready');
     expect(codeBodies).toEqual([{ projectId: 'project-one', mode: 'projection' }]);
 
-    await act(async () => { await result.current.readCodeGraphFile('client/one.ts'); });
+    await act(async () => { await result.current.readCodeGraphFiles(['client/one.ts']); });
     expect(result.current.codeGraph.projection.nodes.map(node => node.id))
-      .toEqual(['file:one', 'symbol:run']);
-    expect(result.current.codeGraph.projection.edges[0].predicate).toBe('DEFINES');
+      .toEqual(['file:one', 'file:run']);
+    expect(result.current.codeGraph.projection.edges[0].predicate).toBe('CALLS');
 
-    await act(async () => { await result.current.readCodeGraphFile('client/two.ts'); });
+    await act(async () => { await result.current.readCodeGraphFiles(['client/two.ts']); });
     expect(result.current.codeGraph.projection.nodes.map(node => node.id))
-      .toEqual(['file:one', 'file:two', 'symbol:stop']);
-    expect(result.current.codeGraph.projection.nodes.some(node => node.id === 'symbol:run'))
-      .toBe(false);
+      .toEqual(['file:one', 'file:run', 'file:two', 'file:stop']);
+    expect(result.current.codeGraph.projection.edges.map(edge => edge.id))
+      .toEqual(['calls-run', 'calls-stop']);
 
-    let source: CodeGraphSelectedSymbol | null = null;
+    let source: CodeGraphFileSource | null = null;
     await act(async () => {
-      source = await result.current.readCodeGraphSource('symbol:run');
+      source = await result.current.readCodeGraphSource('client/one.ts');
     });
     expect(source).toMatchObject({
-      cbmQualifiedName: 'symbol:run', content: 'export function run() {}',
+      sourceReference: 'source-file:client/one.ts', content: 'export function run() {}',
     });
     expect(codeBodies.at(-1)).toEqual({
-      projectId: 'project-one', mode: 'source', qualifiedName: 'symbol:run',
+      projectId: 'project-one', mode: 'source', filePath: 'client/one.ts',
     });
   });
 });

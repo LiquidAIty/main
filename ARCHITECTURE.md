@@ -153,13 +153,14 @@ mounted separately from browser authentication. The current route index does not
 | `/api/idd` | `builderIdd.routes.ts` owns Builder/editor-only IDD fields, deterministic live-catalog tool projection, and Script-header projection |
 | `/api/mcp` | `mcpInternal.routes.ts` owns process-authenticated Project/profile context, persisted Card grant readback, optional active-Run validation when a Run ID is supplied, and Card-editor projection |
 | `/api/thinkgraph` and `/api/knowgraph` | Engraphis and Graphiti projections/operations without merging authority |
-| `/api/codegraph/read` | One fixed-purpose authenticated request for Repository-scoped CodeGraph projection/file/source reads; the server injects `deck_builder`/`builder`, Python reloads that persisted Card revision, and the official MCP host enforces its live read-only CBM grants |
+| `/api/codegraph/read` | One Project-authenticated route: annotation projection and repository-file text read current source directly; separate explicit CBM structural reads reload the fixed saved Builder context and use its read-only grants |
 | `/api/projects` | Project and deck transport |
 
-CodeGraph remains reached through the saved Card's granted CBM operations in the canonical tool catalog.
-The browser's one fixed-purpose read route does not expose a generic MCP caller, provider operation,
-raw Cypher, alternate catalog, cache, or graph owner; it enters the same short-lived materializer-read
-principal for the persisted Builder Card and returns honest unavailable/partial outcomes.
+The CodeGraph annotation view derives category membership and file-specific prose from current source
+comments, with repository-path File references. It has no dependency on a CBM query or agent opening.
+Explicit structural CBM reads retain the saved Card's granted operations in the canonical tool catalog.
+The browser's fixed-purpose route exposes no generic MCP caller or raw query; structural reads use the
+existing materializer-read principal and retain honest unavailable/partial outcomes.
 
 Route names are transport addresses, not agent identities or separate runtimes. The retired generic
 Card-runtime and loopback Hermes Card-tools routes remain absent.
@@ -354,37 +355,33 @@ model edge writer, or whole-graph reclassification loop. This lifecycle does not
 
 ### Current graph context
 
-The retained Card-invocation preparation path supplies exact provider Data Anchors and the canonical
-identity-and-Relationship-only Entity map for Main, Builder, ThinkGraph, and KnowGraph. Its Main grounding
-is ThinkGraph-only; Builder retains the wider ThinkGraph-and-KnowGraph construction packet. Those paths use
-provider retrieval followed by one non-persisting Jev relevance distribution, select the highest-probability
-record, and exclude the Recent record from those candidates. This is not proof that ordinary Hermes Bot
-turns receive that full grounding packet. The approved map payload is JSON matching the Entity/Relationship
+Card-invocation preparation resolves deliberately selected provider Data Anchors for the canonical IDF.
+The automatic provider-search/Jev-ranking pass and default Relevant/Recent packet are removed; preparation
+does not add that network work before inference. Optional saved AutoTools/AutoModel decisions are separate
+unchanged settings, not graph relevance filters. The approved map payload is JSON matching the Entity/Relationship
 view the user sees at that turn, including only the single displayed top Jev result. It is transient context
 supplied with the current message, not a new Engraphis/Graphiti record or retrieval tool. The custom map plugin and its
 endpoint are removed. ThinkGraph preparation includes map context. The save-triggered application
 handoff that connected to Main and inspected its Hermes completion details is removed, with no replacement.
 Ordinary per-turn view delivery remains unproven in
 Preview. No replacement plugin, polling loop, research registry, or tool is authorized. Deeper retrieval
-uses existing Engraphis/Graphiti tools. The retained Main Card-invocation packet is:
+uses existing Engraphis/Graphiti tools. Current Card materialization preserves:
 
 ```text
 current user request
-+ complete exact Entity/Relationship map
-+ one most Relevant Think + one distinct most Recent Think
++ deliberately selected exact provider records and provenance
 ```
 
-Thinks are selected for the strongest faithful optimistic steelman of the user's current idea. Each current
+Each current
 Know is one verified sourced observation with a separate bounded interpretation and may support, challenge,
 or contextualize an explicit proposition. Balance is a property of research coverage and synthesis, not a
-fixed ratio implied by equal record counts. Missing provider records shrink the packet honestly; Jev never
-creates graph content, truth, authority, or write permission. Jev failure leaves relevance unavailable and
-never relabels recency as relevance.
+fixed ratio implied by equal record counts. Missing selected records are reported honestly; selection does not
+create graph content, truth, authority, or write permission.
 
 The exact Entity inspector does not perform that relevance-read flow. It shows at most two current
 provider-projected attached Thinks or Knows, with KnowGraph as the landing authority when an Entity has both;
 ThinkGraph remains the left tab and KnowGraph the right tab. Search/Results and a Relevant/Recent switch are
-not current UI. Main/Builder's Card-invocation grounding remains a separate bounded contract.
+not current UI. Graph retrieval remains separate from ordinary Main/session transport.
 
 One current Know is one first-class `Episodic:Know` Graphiti object:
 
@@ -411,17 +408,22 @@ content hash. The completed conversation stores those episode IDs in `linkedEvid
 control opens the exact episode ahead of the inspector's ordinary two-record recency window without copying
 Know content or changing layer visibility.
 
-The unified canvas shows the blue **Think** and orange **Know** visual layers by default. The green **Code**
+The unified canvas shows the blue **Think** and orange **Know** visual layers by default. The violet **Code**
 layer is hidden and unloaded until explicitly enabled from the graph-design inspector, where it remains marked
 Repository-scoped until real open-Project filtering is proven. Each color-key control changes only its own
 visual layer, and the explicit layer reset restores Think on, Know on, and Code off. Clicking renderer
 background clears the selected node or edge and returns the inspector to the combined currently visible layers
 without changing their visibility. ThinkGraph, KnowGraph, and CBM retain separate identities, relationships,
-and writers; the shared canvas creates no cross-authority relationship. Know defaults to Graphiti evidence
-and Think retains the existing Engraphis Focus behavior, while the detailed graph-design inspector retains the
-provider renderer's layout choices. Entity radius linearly normalizes the complete
-attached Think-and-Know word count from least to most. That transient visual metric never changes Jev edge
-probability, gravity mass, retrieval, or stored graph meaning.
+and writers; the shared canvas creates no cross-authority relationship. Know defaults to Graphiti evidence;
+shared Entities retain Think/Know tabs even when one side has no attached records. Code Files remain separate.
+Manual Focus/Expand is removed. Layout, size and material tuning are internal; source/category visibility,
+selection, source links and pan/zoom remain available. Entity radius derives from distinct incoming connected
+Entities in the visible view, never attached word counts. Code uses distinct incoming Files across real
+Calls/Imports at a smaller scale, while its inspector caller count remains Calls-only. Jev governs knowledge
+spring strength, distance and edge width independently of size. The ordinary force simulation uses Compact
+for knowledge/mixed views and Communities for Code-only, with transient category-centre attraction toward
+exact matching knowledge names. The Jev `galaxy` transfer curve does not enable whole-canvas orbital mode.
+These presentation values do not change provider identities, retrieval or stored graph meaning.
 
 KnowGraph may use selected Thinks only as research framing. Sourced Knows remain Graphiti evidence.
 Its dedicated `add_know` intake path reuses the exact supplied UUID/name Entity, reuses an exact-name Entity
@@ -579,7 +581,7 @@ The installed Engraphis runtime and the separately retained browser-renderer for
 | Same Engraphis baseline | `EngraphisLatest/engraphis/mcp_server.py::resolve_capability`; `apps/python-models/app/python_models/engraphis_operations.py::_invoke_tool` | Promote the existing capability-ID/schema-digest resolver to a public function so the authenticated Project adapter can inspect the exact discovered Smart action schema and inject `workspace` only when that action declares it. The resolver body, TTL/HMAC validation, availability gate, LRU refresh, action selection and execution remain unchanged. | Required proof is the focused Engraphis Smart discovery/execute suite plus the application operation/catalog contract. Fork cost is one identifier/API promotion suitable for an upstream PR. Remove the application dependency when upstream exposes an equivalent public capability-inspection API; never copy or reimplement its capability index. |
 | Same Engraphis baseline | `EngraphisLatest/engraphis/mcp_server.py::smart_tool_catalog`; `EngraphisLatest/engraphis/backends/extractor.py::StructuredLLMExtractor.extraction_contract`; `apps/python-models/app/python_models/engraphis_operations.py`; `apps/python-models/app/python_models/thinkgraph_completed_pair_extraction.py` | Expose two read-only integration contracts that Engraphis already owns: the exact registered Smart MCP Tool models for synchronous host composition, and the exact structured-extraction prompt/schema for a saved Card that performs the model call. The application no longer reads MCPServer's private `_tool_manager` or extractor-private prompt/schema helpers, and it does not copy either contract. | Focused Smart MCP and extractor tests require each public result to equal the actually served/generated contract; application ThinkGraph and operation tests cover the consumers. Fork cost is two additive public methods suitable for upstream submission. Retire either method when upstream exposes an equivalent supported API. |
 | Same Engraphis baseline | `EngraphisLatest/engraphis/core/engine.py::remember_entities`; `engraphis/service.py::remember_entities`; `engraphis/mcp_server.py::engraphis_remember_entities`; generated MCP contracts, bundled integrations, docs, and tests | Add one exact Entity-memory batch operation. Each Fact has exactly one caller-declared Entity incidence; an existing explicit ID/name mismatch fails, new exact Entities and their memories/incidences settle atomically, and automatic text-derived incidence is disabled for this path. Existing generic remember, extraction, graph, and Smart discovery behavior is unchanged. | Engine rollback and incidence tests, Smart/classic inventory and dispatch tests, generated-contract checks, bundled integration tests, and application settlement tests cover the path. Fork cost is one additive service/Smart/Classic operation suitable for an upstream PR. Rollback removes that operation and returns ThinkGraph to no exact Entity attachment; existing Engraphis data needs no migration. |
-| Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: existing semantic physics/material/click helpers plus `explicitVisualSizeWeight`, `linearVisualNodeRadius`, the `CODE_MATERIAL` joined-cyber palette branch, and their render call sites | Preserve Jev relationship width/spring/distance and gravity/centrality while accepting one optional transient normalized size weight. Entity radius then scales linearly from least to most attached Think-and-Know words without rewriting `gravity_mass`, relationship probability, storage, or retrieval. The additive Code material makes the Repository-scoped visual layer green in the shared canvas without changing CBM identity, edges, or graph authority. Existing styles—including the work-in-progress Solarpunk material—presets, palettes, graph scene, inspectors, Galaxy Focus physics, controls, and layout engine remain unchanged. | `EngraphisRenderer.spec.ts` exercises real renderer relationship physics, exact linear sizing, and the isolated green Code palette; focused projection/surface tests prove all-history word aggregation, combined sums, visual-layer isolation, and the attached-record inspector. Fork cost is two pure radius helpers plus two small render branches. Rollback removes the optional field handling and Code palette branch, restoring provider degree/mass sizing and generic cyber colors without changing graph data. |
+| Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: `sanitizeEvidenceMetrics`, `graphNodeRadius`, `codeCategoryForce`, `materialRecipe`, `solarpunkMaterialRecipe`, material cache keys and `paintMaterialDirect`; existing spring/material/click helpers | Reuse public projected-radius and spring fields: knowledge size counts distinct incoming Entities; Code size counts distinct incoming caller/importer Files. Preserve Jev edge math and ordinary upstream mass-based sizing for untagged Engraphis nodes. Code retains shipped Cyberpunk colors; Think is sea-blue, Know orange, mixed Think/Know uses the recovered `joined-cyber` iridescent treatment with the owner's blue/orange substitutions, and observed heat is light purple. A cached violet `material_code_present` rim associates an exact matching annotation category without merging Code Files or asserting a semantic edge. No public category-force hook exists; the bounded `codeCategoryForce` adds transient category-centre attraction, reciprocal same-name docking and Code damping to the existing D3 simulation. Imports retain the existing dashed-edge accessor. Whole-canvas orbital mode cannot preserve this force; application presets are internal Compact for knowledge/mixed and Communities for Code-only. No visible category hub, membership spoke, new query, dependency, runtime, writer, storage path or telemetry source is added. | Existing renderer tests exercise real recipes, cached association paint, purple heat, projected sizing, preserved upstream mass sizing and the shipped Code palette. Projection/surface tests cover directional deduplication, separate Files, real provider tabs, source/category controls and removed Focus/tuning UI. Loaded mixed-source visual acceptance and fresh automatic Think/Know production remain separate proof. Fork cost is the named bounded renderer seams; rollback restores only these renderer/projection/configuration hunks together, without changing Main, Cards or graph data. |
 
 ## Current proof limits
 

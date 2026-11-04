@@ -12,7 +12,7 @@
 # Entity: CodeGraph
 # Relationship: This file exposes the fixed saved-Builder CodeGraph read route and forwards validation failures without raw provider access.
 # Entity: Jev Decisions
-# Relationship: This file exposes bounded focus and shared relationship-vocabulary operations and returns explicit unavailable decisions without a success-shaped fallback.
+# Relationship: This file exposes shared relationship-vocabulary operations and returns explicit unavailable decisions without a success-shaped fallback.
 
 from fastapi import APIRouter, HTTPException
 from typing import Any
@@ -142,31 +142,6 @@ async def graph_relationship_vocabulary_read(payload: dict[str, Any]):
         )
     except (ThinkGraphIntakeError, RuntimeError, ValueError) as err:
         raise HTTPException(status_code=502, detail=str(err)) from err
-
-
-@graph_settlement_router.post("/graph/jev-focus")
-async def graph_jev_focus(payload: dict[str, Any]):
-    """Rerank one bounded client-supplied provider-entity neighborhood."""
-    from app.python_models.jev_graph_focus import JevGraphError, decide_graph_focus
-    import asyncio
-
-    source_revision = (
-        payload.get("sourceRevision")
-        if isinstance(payload, dict) and isinstance(payload.get("sourceRevision"), str)
-        else ""
-    )
-    try:
-        return await asyncio.to_thread(decide_graph_focus, payload)
-    except JevGraphError as err:
-        return {
-            "schemaVersion": "jev-focus.v1",
-            "sourceRevision": source_revision,
-            "status": err.status,
-            "decisionId": None,
-            "errorCode": err.error_code,
-            "distribution": {},
-            "candidates": [],
-        }
 
 
 @graph_settlement_router.post("/thinkgraph/operation")

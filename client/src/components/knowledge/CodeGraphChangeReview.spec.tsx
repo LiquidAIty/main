@@ -40,9 +40,15 @@ it('flags the inspected whole file for removal without a request and restores it
   expect(JSON.parse(localStorage.getItem('codegraph.review.project-one')!)).toEqual([]);
 });
 
-it('preserves the exact Feature member paths in a feature-level flag', () => {
-  render(<CodeGraphChangeReview projectId="project-one" selectedNode={feature} />);
+it('keeps existing category flags readable after category canvas nodes are removed', () => {
+  localStorage.setItem('codegraph.review.project-one', JSON.stringify([{
+    id: feature.id, paths: [path], label: feature.label, intent: 'review',
+    note: 'Retained category note.', at: '2026-11-02T12:00:00Z',
+  }]));
+  render(<CodeGraphChangeReview projectId="project-one" />);
   openReview();
+  fireEvent.click(screen.getByRole('button', { name: 'CodeGraph' }));
+  expect(screen.getByLabelText('Review note')).toHaveProperty('value', 'Retained category note.');
   fireEvent.click(screen.getByRole('button', { name: 'Save flag' }));
   expect(JSON.parse(localStorage.getItem('codegraph.review.project-one')!)[0]).toMatchObject({
     id: 'feature:CodeGraph', paths: [path], label: 'CodeGraph',
@@ -61,7 +67,7 @@ it('does not read another Project flags', () => {
 
 it('never overwrites unreadable existing flags', async () => {
   localStorage.setItem('codegraph.review.project-one', 'not-json');
-  render(<CodeGraphChangeReview projectId="project-one" selectedNode={feature} />);
+  render(<CodeGraphChangeReview projectId="project-one" selectedNode={file} />);
   openReview();
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Saved flags could not be read. Existing browser storage has not been replaced.');
   expect(screen.getByRole('button', { name: 'Save flag' })).toHaveProperty('disabled', true);
@@ -69,7 +75,7 @@ it('never overwrites unreadable existing flags', async () => {
 });
 
 it('reports failed flag persistence and retains the note in its editor', async () => {
-  render(<CodeGraphChangeReview projectId="project-one" selectedNode={feature} />);
+  render(<CodeGraphChangeReview projectId="project-one" selectedNode={file} />);
   openReview();
   vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
   fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'Keep this note.' } });

@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
- * Relationship: This file maps validated relationship evidence into bounded transient edge and node physics for the Project graph presentation without mutating provider data.
+ * Relationship: This file sizes knowledge Entities by distinct live incoming neighbors and maps validated Jev relationships into transient springs and edge widths without mutating provider data.
  * Entity: Jev Decisions
  * Relationship: This file consumes only validated live Jev winner probabilities and preserves historical, superseded, malformed, and non-Jev relationships unchanged.
  */
@@ -94,17 +94,17 @@ function record(value: unknown): Record<string, any> {
 }
 
 /**
- * The one profile transfer seam. Profiles never change w or m; they only map
- * those authoritative values into transient renderer fields.
+ * The one profile transfer seam. Jev edge probability and incoming connection count
+ * stay separate; the profile maps them into transient renderer fields only.
  */
 export function mapJevGraphPhysics(
   profile: JevGraphPhysicsProfile,
   winnerProbability: number,
-  semanticMass: number,
+  incomingConnections: number,
 ) {
   const curve = TRANSFER_CURVES[profile];
   const w = clamp(winnerProbability, 0, 1);
-  const m = Math.max(0, Number.isFinite(semanticMass) ? semanticMass : 0);
+  const count = Math.max(0, Number.isFinite(incomingConnections) ? incomingConnections : 0);
   return {
     edgeWidth: curve.edgeWidthBase
       + curve.edgeWidthScale * Math.pow(w, curve.edgeWidthExponent),
@@ -116,7 +116,7 @@ export function mapJevGraphPhysics(
       40,
     ),
     nodeRadius: clamp(
-      curve.nodeRadiusBase + curve.nodeRadiusScale * Math.log1p(m),
+      curve.nodeRadiusBase + curve.nodeRadiusScale * Math.log1p(count),
       DURABLE_NODE_RADIUS_MIN,
       DURABLE_NODE_RADIUS_MAX,
     ),
@@ -167,21 +167,23 @@ function isCurrentLiveEdge(edge: GraphProjectionEdge | Record<string, any>): boo
     && !properties.expiredAt && !properties.expired_at;
 }
 
-function currentLiveJevWinnerProbability(
-  edge: GraphProjectionEdge | Record<string, any>,
-): number | null {
-  return isCurrentLiveEdge(edge) ? jevWinnerProbability(edge) : null;
-}
-
 function applyToRecords(
   nodes: GraphProjectionNode[],
   edges: GraphProjectionEdge[],
   profile: JevGraphPhysicsProfile,
 ): { nodes: GraphProjectionNode[]; edges: GraphProjectionEdge[] } {
   const incidentMass = new Map(nodes.map((node) => [node.id, 0]));
+  const incoming = new Map(nodes.map(node => [node.id, new Set<string>()]));
+  let hasJevEdges = false;
   const mappedEdges = edges.map((edge) => {
-    const weight = currentLiveJevWinnerProbability(edge);
+    if (edge.layer === 'codegraph' || edge.properties?.structuralAuthority === 'cbm') return edge;
+    const live = isCurrentLiveEdge(edge);
+    if (live && edge.source !== edge.target && incoming.has(edge.source)) {
+      incoming.get(edge.target)?.add(edge.source);
+    }
+    const weight = live ? jevWinnerProbability(edge) : null;
     if (weight === null) return edge;
+    hasJevEdges = true;
     const {
       relationship_strength: _oldWeight,
       label_confidence: _oldConfidence,
@@ -209,17 +211,26 @@ function applyToRecords(
     };
   });
   const mappedNodes = nodes.map((node) => {
+    // CodeGraph has structural connectivity, not Jev evidence or semantic mass.
+    if (node.authority === 'codegraph') return node;
     const semanticMass = incidentMass.get(node.id) || 0;
+    const incomingCount = incoming.get(node.id)!.size;
     const nodeProperties = record(node.properties);
     return {
       ...node,
-      semantic_mass: semanticMass,
-      gravity_mass: 1 + (4 * Math.log1p(semanticMass)),
-      visual_radius: mapJevGraphPhysics(profile, 0, semanticMass).nodeRadius,
+      ...(hasJevEdges ? {
+        semantic_mass: semanticMass,
+        gravity_mass: 1 + (4 * Math.log1p(semanticMass)),
+      } : {}),
+      visual_radius: mapJevGraphPhysics(profile, 0, incomingCount).nodeRadius,
       properties: {
         ...nodeProperties,
-        semantic_mass: semanticMass,
-        incident_relationship_weight: semanticMass,
+        incomingConnectionCount: incomingCount,
+        connectionCountScope: 'visible-relationships',
+        ...(hasJevEdges ? {
+          semantic_mass: semanticMass,
+          incident_relationship_weight: semanticMass,
+        } : {}),
       },
     };
   });
@@ -238,12 +249,6 @@ export function applyJevGraphPhysics(
   const sceneEdges = scene && (Array.isArray(scene.edges)
     ? scene.edges
     : Array.isArray(scene.links) ? scene.links : []);
-  if (!value.edges.some(edge => currentLiveJevWinnerProbability(edge) !== null)
-    && !(sceneEdges || []).some(
-      (edge: GraphProjectionEdge) => currentLiveJevWinnerProbability(edge) !== null,
-    )) {
-    return value;
-  }
   const mapped = applyToRecords(value.nodes, value.edges, profile);
   if (!scene) return { ...value, ...mapped };
 

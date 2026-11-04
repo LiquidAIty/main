@@ -7,14 +7,11 @@
 # Entity: ThinkGraph
 # Relationship: This file exercises Project scoping, Smart operations, retirement, deletion isolation, and bounded Entity projection against a disposable real Engraphis store.
 #
-# Entity: Jev Decisions
-# Relationship: This file verifies graph-focus request validation, exact probability handling, ranking, and typed unavailable or timeout outcomes through a controlled provider transport.
-#
 # Entity: Tool Catalog
 # Relationship: This file verifies published Engraphis operations match the installed Smart interface and preserve explicit effect metadata and Project injection.
 #
 # Entity: Project Knowledge Graph
-# Relationship: This file verifies bounded ThinkGraph projections and focus decisions preserve real provider identities without claiming loaded product acceptance.
+# Relationship: This file verifies bounded ThinkGraph projections preserve real provider identities without claiming loaded product acceptance.
 
 import asyncio
 import time
@@ -22,20 +19,25 @@ import pytest
 
 from app.python_models import engraphis as service_adapter
 from app.python_models import engraphis_operations as operations
-from app.python_models import jev_graph_focus as graph_focus
 from app.python_models import thinkgraph_projection as projection_adapter
 
 
 @pytest.fixture(scope="module")
 def engraphis_adapter(tmp_path_factory):
-    original = service_adapter.DATABASE
-    service_adapter.DATABASE = tmp_path_factory.mktemp("engraphis") / "memory.sqlite"
-    started = time.perf_counter()
-    service_adapter.get_service()
-    print(f"\nEngraphis cold initialization: {time.perf_counter() - started:.3f}s")
-    yield service_adapter
-    service_adapter.close_engine()
-    service_adapter.DATABASE = original
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(service_adapter, "DATABASE_ROOT", tmp_path_factory.mktemp("engraphis"))
+        patch.setattr(service_adapter, "_services", {})
+        patch.setattr(service_adapter, "project_principal", lambda project: {
+            "id": "fixture-user", "email": "fixture@example.test", "role": "member",
+        })
+        patch.setattr(operations, "project_principal", service_adapter.project_principal)
+        started = time.perf_counter()
+        service_adapter.get_service("project-one")
+        print(f"\nEngraphis cold initialization: {time.perf_counter() - started:.3f}s")
+        try:
+            yield service_adapter
+        finally:
+            service_adapter.close_engine()
 
 
 def call(engraphis_adapter, name, **arguments):
@@ -44,11 +46,11 @@ def call(engraphis_adapter, name, **arguments):
 
 def test_service_keeps_engraphis_with_automatic_llm_extraction_disabled(engraphis_adapter):
     from engraphis.service import MemoryService
-    service = engraphis_adapter.get_service()
+    service = engraphis_adapter.get_service("project-one")
     assert type(service) is MemoryService
     assert service.engine.extractor is None
     assert service.engine.graph_extractor is None
-    assert engraphis_adapter.get_service() is service
+    assert engraphis_adapter.get_service("project-one") is service
 
 
 def test_private_workspace_deletion_requires_confirmation_and_preserves_other_workspace(engraphis_adapter):
@@ -130,7 +132,7 @@ def test_operation_definitions_can_initialize_inside_an_active_event_loop():
 
 def test_recall_paraphrase_scope_and_truthful_receipt_effect(engraphis_adapter):
     saved = call(engraphis_adapter, "engraphis_remember", content="I enjoy learning how satellites are built and who supplies their components.", title="Satellite suppliers")
-    service = engraphis_adapter.get_service()
+    service = engraphis_adapter.get_service("project-one")
     before = int(service.store.conn.execute(
         "SELECT COUNT(*) AS n FROM operation_receipts"
     ).fetchone()["n"])
@@ -148,7 +150,7 @@ def test_recall_paraphrase_scope_and_truthful_receipt_effect(engraphis_adapter):
 
 
 def test_stats_result_is_engine_output(engraphis_adapter):
-    expected = engraphis_adapter.get_service().stats(workspace="project-one")
+    expected = engraphis_adapter.get_service("project-one").stats(workspace="project-one")
     discovered = call(
         engraphis_adapter,
         "engraphis_discover_actions",
@@ -188,7 +190,7 @@ def test_inspector_removal_retires_only_selected_memory(engraphis_adapter):
 def test_inspector_removal_retires_only_selected_relationship(engraphis_adapter):
     from engraphis.core.interfaces import Edge, Node
 
-    service = engraphis_adapter.get_service()
+    service = engraphis_adapter.get_service("project-one")
     workspace_id = service.store.get_or_create_workspace("project-edge-remove")
     source = service.store.upsert_entity(Node(
         id="", name="Source", ntype="person_or_concept", workspace_id=workspace_id,
@@ -224,245 +226,10 @@ def test_discovered_read_uses_engine_schema_and_project_binding(engraphis_adapte
     action = next(item for item in discovered["actions"] if item["canonical_action"] == "stats")
     arguments = {"capability_id": action["capability_id"], "schema_digest": action["schema_digest"], "arguments": {}}
     actual = call(engraphis_adapter, "engraphis_execute_read", **arguments)
-    expected = engraphis_adapter.get_service().stats(workspace="project-one")
+    expected = engraphis_adapter.get_service("project-one").stats(workspace="project-one")
     assert actual["result"] == expected
     with pytest.raises(ValueError, match="scope_is_owned_by_project"):
         call(engraphis_adapter, "engraphis_execute_read", **{**arguments, "arguments": {"workspace": "project-two"}})
-
-
-def _focus_request(candidate_count: int = 10) -> dict:
-    center_members = [
-        {
-            "authority": "ThinkGraph",
-            "entityId": "center-think",
-            "title": "Shared center",
-            "description": "The stored Think description.",
-        },
-        {
-            "authority": "KnowGraph",
-            "entityId": "center-know",
-            "title": "Shared center",
-            "description": None,
-        },
-    ]
-    candidates = []
-    for index in range(candidate_count):
-        authority = "ThinkGraph" if index % 2 == 0 else "KnowGraph"
-        center_entity_id = "center-think" if authority == "ThinkGraph" else "center-know"
-        visual_id = "visual-paired" if index < 2 else f"visual-{index}"
-        entity_id = f"entity-{index}"
-        candidates.append({
-            "visualId": visual_id,
-            "authority": authority,
-            "entityId": entity_id,
-            "title": f"Entity {index}",
-            "description": None if index == 1 else f"Stored engraphis_adapter description {index}.",
-            "incidentRelationships": [{
-                "edgeId": f"visual-edge-{index}",
-                "relationshipId": f"engraphis_adapter-edge-{index}",
-                "sourceVisualId": "visual-center",
-                "sourceId": center_entity_id,
-                "sourceTitle": "Shared center",
-                "targetVisualId": visual_id,
-                "targetId": entity_id,
-                "targetTitle": f"Entity {index}",
-                "predicate": "EXPLAINS",
-                "direction": "outgoing",
-                "relationshipWeight": 0.31 + index / 100,
-            }],
-        })
-    return {
-        "schemaVersion": "jev-focus.request.v1",
-        "sourceRevision": "combined-projection:17",
-        "projectId": "project-one",
-        "center": {
-            "visualId": "visual-center",
-            "title": "Shared center",
-            "providerMembers": center_members,
-        },
-        "candidates": candidates,
-    }
-
-
-def test_focus_jev_makes_one_entity_choice_and_selects_eight_visual_bundles(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    payload = _focus_request()
-    choice_ids = [
-        graph_focus._focus_choice_id(candidate["authority"], candidate["entityId"])
-        for candidate in payload["candidates"]
-    ]
-    values = [0.24, 0.01, 0.18, 0.15, 0.12, 0.10, 0.075, 0.075, 0.04, 0.01]
-    distribution = dict(zip(choice_ids, values, strict=True))
-    calls = []
-
-    class Response:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "id": "focus-decision-one",
-                "provider": "OpenRouter",
-                "model": graph_focus.JEV_MODEL,
-                "answers": {
-                    "focus": {
-                        "type": "choice",
-                        "choice": choice_ids[0],
-                        "confidence": 0.61,
-                        "probabilities": distribution,
-                    },
-                },
-            }
-
-    class Client:
-        def __init__(self, **options):
-            assert options == {"timeout": 45.0, "follow_redirects": False}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def post(self, endpoint, **kwargs):
-            calls.append((endpoint, kwargs))
-            return Response()
-
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setattr(graph_focus.httpx, "Client", Client)
-
-    decision = graph_focus.decide_graph_focus(payload)
-
-    assert len(calls) == 1
-    assert calls[0][0] == graph_focus.JEV_ENDPOINT
-    body = calls[0][1]["json"]
-    assert list(body["questions"]) == ["focus"]
-    assert set(body["questions"]["focus"]["criteria"]) == set(choice_ids)
-    assert len(body["state"]["connected_entity_options"]) == 10
-    assert all(
-        "relationshipWeight" not in relationship
-        for option in body["state"]["connected_entity_options"]
-        for relationship in option["incident_relationships"]
-    )
-    assert decision["sourceRevision"] == "combined-projection:17"
-    assert decision["decisionId"] == "focus-decision-one"
-    assert decision["confidence"] == pytest.approx(0.61)
-    assert decision["distribution"] == distribution
-    assert len(decision["candidates"]) == len(payload["candidates"])
-    assert {candidate["rank"] for candidate in decision["candidates"]} == set(range(1, 11))
-    assert decision["candidates"][0]["selected"] is True
-    assert decision["candidates"][1]["selected"] is True
-    assert decision["candidates"][9]["selected"] is False
-    assert decision["candidates"][7]["rank"] < decision["candidates"][6]["rank"]
-    assert len({
-        candidate["visualId"]
-        for candidate in decision["candidates"] if candidate["selected"]
-    }) == 8
-    assert decision["candidates"][0]["incidentRelationships"][0][
-        "relationshipWeight"
-    ] == pytest.approx(0.31)
-
-
-def test_focus_jev_rejects_incomplete_or_non_exact_distribution():
-    choice_ids = ("focus-one", "focus-two")
-    for probabilities in (
-        {"focus-one": 1.0},
-        {"focus-one": 0.8, "focus-two": 0.3},
-    ):
-        with pytest.raises(graph_focus.JevGraphError) as failure:
-            graph_focus._validate_jev_focus_response(
-                {
-                    "id": "focus-decision",
-                    "answers": {
-                        "focus": {
-                            "type": "choice",
-                            "choice": "focus-one",
-                            "confidence": 0.5,
-                            "probabilities": probabilities,
-                        },
-                    },
-                },
-                choice_ids,
-            )
-        assert failure.value.status == "invalid"
-        assert failure.value.error_code == "jev_focus_response_invalid"
-
-    with pytest.raises(graph_focus.JevGraphError) as missing_id:
-        graph_focus._validate_jev_focus_response(
-            {
-                "answers": {
-                    "focus": {
-                        "type": "choice",
-                        "choice": "focus-one",
-                        "confidence": 0.5,
-                        "probabilities": {"focus-one": 0.6, "focus-two": 0.4},
-                    },
-                },
-            },
-            choice_ids,
-        )
-    assert missing_id.value.error_code == "jev_focus_response_invalid"
-
-    with pytest.raises(graph_focus.JevGraphError) as null_id:
-        graph_focus._validate_jev_focus_response(
-            {
-                "id": None,
-                "answers": {
-                    "focus": {
-                        "type": "choice",
-                        "choice": "focus-one",
-                        "confidence": 0.5,
-                        "probabilities": {"focus-one": 0.6, "focus-two": 0.4},
-                    },
-                },
-            },
-            choice_ids,
-        )
-    assert null_id.value.error_code == "jev_focus_response_invalid"
-
-
-def test_focus_jev_reports_unavailable_and_timeout_without_fake_output(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    payload = _focus_request(1)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(graph_focus.JevGraphError) as unavailable:
-        graph_focus.decide_graph_focus(payload)
-    assert unavailable.value.status == "unavailable"
-    assert unavailable.value.error_code == "jev_focus_openrouter_key_unavailable"
-
-    class Client:
-        def __init__(self, **_options):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def post(self, *_args, **_kwargs):
-            raise graph_focus.httpx.ReadTimeout("slow focus decision")
-
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setattr(graph_focus.httpx, "Client", Client)
-    with pytest.raises(graph_focus.JevGraphError) as timeout:
-        graph_focus.decide_graph_focus(payload)
-    assert timeout.value.status == "timeout"
-    assert timeout.value.error_code == "jev_focus_timeout"
-
-
-def test_focus_request_rejects_center_candidates_and_nonincident_records():
-    payload = _focus_request(1)
-    payload["candidates"][0]["entityId"] = "center-think"
-    with pytest.raises(graph_focus.JevGraphError, match="jev_focus_request_invalid"):
-        graph_focus._validated_focus_request(payload)
-
-    payload = _focus_request(1)
-    payload["candidates"][0]["incidentRelationships"][0]["sourceVisualId"] = "other"
-    with pytest.raises(graph_focus.JevGraphError, match="jev_focus_request_invalid"):
-        graph_focus._validated_focus_request(payload)
 
 
 def test_entity_id_projection_uses_only_bounded_direct_neighborhood(
@@ -472,6 +239,10 @@ def test_entity_id_projection_uses_only_bounded_direct_neighborhood(
         @staticmethod
         def fetchone():
             return {"id": "workspace-one"}
+
+        @staticmethod
+        def fetchall():
+            return []
 
     class Connection:
         @staticmethod
@@ -535,7 +306,7 @@ def test_entity_id_projection_uses_only_bounded_direct_neighborhood(
             "valid_to": None,
         }
 
-    monkeypatch.setattr(projection_adapter, "get_service", lambda: Service())
+    monkeypatch.setattr(projection_adapter, "get_service", lambda _project: Service())
     monkeypatch.setattr(projection_adapter, "bounded_graph_snapshot", bounded)
     monkeypatch.setattr(
         projection_adapter,

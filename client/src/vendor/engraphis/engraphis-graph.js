@@ -788,6 +788,14 @@
      discs. Material style must not change geometry; it only changes the painted surface. */
   function graphNodeRadius(node, base, metric) {
     const size = Number.isFinite(+base) && +base > 0 ? +base : 3;
+    if (node && ['joined', 'engraphis', 'graphiti', 'thinkgraph', 'knowgraph', 'codegraph'].includes(node.authority)
+      && typeof node.visual_radius === 'number' && Number.isFinite(node.visual_radius)
+      && node.visual_radius > 0) {
+      return (size / 5) * Math.min(64, node.visual_radius);
+    }
+    if (node && node.authority === 'codegraph' && node.properties?.recordKind === 'file') {
+      return (size / 5) * (1.4 + 0.7 * Math.log1p(Math.max(0, Number(node.properties.callerFileCount) || 0)));
+    }
     if (node && node.cluster) {
       const members = Math.max(1, Number(node.members) || 1);
       const radius = size * 0.45 * (1.4 + Math.min(3, Math.sqrt(members) * 0.7));
@@ -797,6 +805,67 @@
     const radius = size * 0.45 * (0.55 + Math.min(1.6, normalized * 1.9));
     return Math.max(0.8, Math.min(size * 1.1, radius));
   }
+  // Annotation categories influence layout only. No category bodies or synthetic links enter
+  // the graph. Moving the category centre toward a real Entity translates its files together;
+  // local CBM connectivity, rather than equal spokes, supplies the weaker inward preference.
+  function codeCategoryForce(nodes) {
+    const byId = new Map(nodes.map(node => [node.id, node]));
+    const codeFiles = nodes.filter(node => node.authority === 'codegraph' && node.properties?.recordKind === 'file');
+    const categories = new Map();
+    nodes.forEach(node => {
+      if (node.authority !== 'codegraph' || node.properties?.recordKind !== 'file') return;
+      const names = Array.isArray(node.properties.features) ? [...new Set(node.properties.features)] : [];
+      names.forEach(name => {
+        if (typeof name !== 'string') return;
+        if (!categories.has(name)) categories.set(name, []);
+        categories.get(name).push({ node, shares: names.length });
+      });
+    });
+    if (!codeFiles.length) return null;
+    return alpha => {
+      categories.forEach((entries, name) => {
+        const members = entries.filter(({ node }) => Number.isFinite(node.x) && Number.isFinite(node.y));
+        if (!members.length) return;
+        const cx = members.reduce((sum, { node }) => sum + node.x, 0) / members.length;
+        const cy = members.reduce((sum, { node }) => sum + node.y, 0) / members.length;
+        const spread = Math.sqrt(members.reduce((sum, { node }) =>
+          sum + (node.x - cx) ** 2 + (node.y - cy) ** 2, 0) / members.length);
+        const spacing = members.reduce((sum, { node }) => sum + (node.radius || 4), 0) / members.length;
+        const targetId = members[0].node.properties.categoryTargets?.[name];
+        const target = targetId ? byId.get(targetId) : null;
+        let moveX = 0, moveY = 0;
+        if (target && Number.isFinite(target.x) && Number.isFinite(target.y)) {
+          const dx = target.x - cx, dy = target.y - cy;
+          const distance = Math.hypot(dx, dy);
+          const rest = (target.radius || 4) + spread + spacing * 2 + 24;
+          if (distance > 1e-6) {
+            const pull = (distance - rest) * 0.008 * alpha / distance;
+            moveX = dx * pull; moveY = dy * pull;
+            if (target.fx == null && target.fy == null) {
+              target.vx = (target.vx || 0) - moveX;
+              target.vy = (target.vy || 0) - moveY;
+            }
+          }
+        }
+        members.forEach(({ node, shares }) => {
+          if (node.fx != null || node.fy != null) return;
+          const degree = Math.max(0, Number(node.properties.categoryConnections?.[name]) || 0);
+          const dx = cx - node.x, dy = cy - node.y, distance = Math.hypot(dx, dy);
+          const rest = (node.radius || 4) + spacing + spread / (1 + Math.log1p(degree));
+          const pull = degree && distance > rest
+            ? (distance - rest) / distance * 0.012 * alpha : 0;
+          node.vx = (node.vx || 0) + (moveX + dx * pull) / shares;
+          node.vy = (node.vy || 0) + (moveY + dy * pull) / shares;
+        });
+      });
+      codeFiles.forEach(node => {
+        if (node.fx != null || node.fy != null) return;
+        node.vx = (node.vx || 0) * 0.82;
+        node.vy = (node.vy || 0) * 0.82;
+      });
+    };
+  }
+
   function finitePositive(value, fallback, ceiling) {
     const number = Number(value);
     if (!Number.isFinite(number) || number <= 0) return fallback;
@@ -819,10 +888,8 @@
     return BASE_NODE_RADIUS_SCALE
       * (1.5 + 2 * Math.pow(finitePositive(mass, 1, 1000), 2 / 3));
   }
-  /* Scene evidence is the authority in Galaxy mode. Compatibility payloads without mass use
-     one deterministic degree fallback; malformed values never inject NaN/Infinity. Radius is
-     always derived from the sanitized mass, making visual scale and gravitational pull one
-     contract and preventing a bad sibling radius from flattening every later node. */
+  /* Project projections supply their own bounded display radius. Ordinary Engraphis scenes
+     retain the mass-derived radius; malformed values never inject NaN/Infinity. */
   function sanitizeEvidenceMetrics(nodes, maxDegree) {
     const values = Array.isArray(nodes) ? nodes : [];
     values.forEach(node => {
@@ -834,9 +901,12 @@
       node.gravity_mass = finitePositive(
         node.gravity_mass, fallbackGravityMass(node.degree, maxDegree), 1000
       );
-      /* Radius is a view of mass, never an independent sibling input. Trusting a stale or
-         flattened visual_radius made every star identical even when its evidence differed. */
-      node.visual_radius = Math.min(64, radiusFromGravityMass(node.gravity_mass));
+      const projectedRadius = ['joined', 'engraphis', 'graphiti', 'thinkgraph', 'knowgraph', 'codegraph'].includes(node.authority)
+        && typeof node.visual_radius === 'number' && Number.isFinite(node.visual_radius)
+        && node.visual_radius > 0;
+      node.visual_radius = projectedRadius
+        ? Math.min(64, node.visual_radius)
+        : Math.min(64, radiusFromGravityMass(node.gravity_mass));
     });
     return values;
   }
@@ -6799,7 +6869,9 @@
     const substrate = mixColours(surface, '#02050a', style === 'classic' ? 0.68 : 0.78);
     const base = {
       styleName: style, paletteName, substrate, identity: rgbString(identity),
-      identityKey: colourKey(identity), substrateKey: colourKey(substrate)
+      identityKey: colourKey(identity), substrateKey: colourKey(substrate),
+      codePresent: materialNode?.material_code_present === true,
+      codeColour: rgbString('#8d61ff')
     };
     if (style === 'cyber') {
       let fixedPalette = {
@@ -6810,16 +6882,12 @@
       if (materialNode && materialNode.material_kind === 'joined-cyber') {
         const think = materialNode.material_blue || themeColors.material_blue || '#3979e8';
         const know = materialNode.material_orange || themeColors.material_orange || '#f2a64a';
-        const code = materialNode.material_green || '#63c79a';
         if (materialNode.material_role === 'THINK_MATERIAL') {
           fixedPalette = { cyan: think, blue: think, violet: think, magenta: think, teal: think };
           materialIdentity = think;
         } else if (materialNode.material_role === 'KNOW_MATERIAL') {
           fixedPalette = { cyan: know, blue: know, violet: know, magenta: know, teal: know };
           materialIdentity = know;
-        } else if (materialNode.material_role === 'CODE_MATERIAL') {
-          fixedPalette = { cyan: code, blue: code, violet: code, magenta: code, teal: code };
-          materialIdentity = code;
         } else if (materialNode.material_role === 'PAIRED_CYBER_MATERIAL') {
           fixedPalette = {
             cyan: think, blue: think, violet: mixColours(think, know, 0.5),
@@ -6921,6 +6989,7 @@
         ? 'split-bicolor-gloss' : 'unified-gloss',
       splitSurface: modality === 'paired', dualBloom: modality === 'paired',
       materialBlue: blue, materialOrange: orange, materialSurface: surface,
+      codePresent: node.material_code_present === true, codeColour: rgbString('#8d61ff'),
       thinkSecondary, knowSecondary, neutralEmphasis, activityEmphasis,
       secondaryAccent: modality === 'think' ? thinkSecondary
         : modality === 'know' ? knowSecondary : surface,
@@ -6952,6 +7021,7 @@
     ctx.fillStyle = right; ctx.fillRect(x, y - r, r, r * 2);
     ctx.restore();
   }
+
   function gradient(ctx, kind, args, stops) {
     const maker = ctx[kind];
     if (typeof maker !== 'function') return stops[Math.floor(stops.length / 2)][1];
@@ -7269,6 +7339,9 @@
     else if (recipe.family === 'anodized-alloy') paintGalaxyMaterial(ctx, x, y, r, recipe, detail);
     else if (recipe.family === 'brushed-copper') paintSolarMaterial(ctx, x, y, r, recipe, detail);
     else paintClassicMaterial(ctx, x, y, r, recipe, detail);
+    if (recipe.codePresent) {
+      strokeCircle(ctx, x, y, r * 1.05, alpha(recipe.codeColour, 0.88), Math.max(0.5, r * 0.035));
+    }
   }
 
   function solarpunkLinkColour(link, active, focus) {
@@ -7325,12 +7398,12 @@
       return [
         recipe.family, recipe.materialRole, recipe.modality,
         recipe.blueKey, recipe.orangeKey, recipe.surfaceKey, recipe.activeKey,
-        tier, normalDpr(dpr)
+        tier, normalDpr(dpr), recipe.codePresent ? 1 : 0
       ].join('|');
     }
     return [
       recipe.styleName, recipe.substrateKey, recipe.identityKey,
-      tier, normalDpr(dpr)
+      tier, normalDpr(dpr), recipe.codePresent ? 1 : 0
     ].join('|');
   }
   function createMaterialSprite(recipe, tier, dpr) {
@@ -8215,6 +8288,7 @@
       return colors[Math.min(colors.length - 1, Math.floor(t * colors.length))];
     }
     function nodeColor(node) {
+      if (node.authority === 'codegraph' && node.properties?.recordKind === 'file') return '#8d61ff';
       if (state.colorBy === 'community') { const p = commPal(); return p[(node.community || 0) % p.length]; }
       if (state.colorBy === 'connections') return heatColor(node);
       return etypeColor(node.etype);
@@ -8361,7 +8435,7 @@
 
     function disableD3GalaxyIntegration() {
       ['charge', 'link', 'center', 'x', 'y', 'radial', 'galaxy', 'galaxyCenter',
-        'galaxyRelations', 'communityBridges', 'collide', 'velocityGuard']
+        'galaxyRelations', 'communityBridges', 'codeCategories', 'collide', 'velocityGuard']
         .forEach(name => fg.d3Force(name, null));
       setSimulationBudget(false, true);
     }
@@ -8388,6 +8462,7 @@
         fg.d3Force('radial', null);
         fg.d3Force('collide', null);
         fg.d3Force('velocityGuard', null);
+        fg.d3Force('codeCategories', null);
         return;
       }
       const s = state.settings, mode = s.mode || 'compact';
@@ -8552,6 +8627,7 @@
          per node on every tick, and a large store pays that on the initial layout and on every
          reheat, which is exactly where it is least affordable. */
       if (d3.forceCollide) fg.d3Force('collide', d3.forceCollide(n => n.radius + 1.5).iterations(large ? 1 : 2));
+      fg.d3Force('codeCategories', codeCategoryForce(layoutNodes));
       /* D3 applies forces in insertion order. Register the guard after every motion force so
          it is the final velocity boundary. A drag then removes it with every other global force. */
       installVelocityGuard();
@@ -8801,10 +8877,10 @@
         ctx.save();
         ctx.globalAlpha *= currentTurnHeat;
         ctx.lineWidth = 1.7 / scale;
-        ctx.strokeStyle = alpha(nodeMaterial.activityEmphasis, 0.92);
+        ctx.strokeStyle = alpha('#b8a6ff', 0.92);
         ctx.beginPath(); ctx.arc(node.x, node.y, r + 3.4 / scale, 0, 6.2832); ctx.stroke();
         ctx.lineWidth = 0.75 / scale;
-        ctx.strokeStyle = alpha(nodeMaterial.activityEmphasis, 0.48);
+        ctx.strokeStyle = alpha('#b8a6ff', 0.48);
         ctx.beginPath(); ctx.arc(node.x, node.y, r + 5.8 / scale, 0, 6.2832); ctx.stroke();
         ctx.restore();
       }
@@ -10240,7 +10316,8 @@
         if (!focus && orbitalRole === 'radial') return alpha(base, 0.16);
         return active ? alpha(base, focus ? 0.85 : 0.4) : alpha(base, 0.06);
       })
-      .linkLineDash(l => l.suggested ? [2, 2] : (l.ghost ? [1, 3] : null))
+      .linkLineDash(l => l.suggested ? [2, 2] : (l.ghost ? [1, 3]
+        : l.layer === 'codegraph' && l.predicate === 'IMPORTS' ? [4, 3] : null))
       .linkWidth(l => {
         const w = state.settings.linkw || 1;
         const focus = hoverSet && hoverSet.size > 1;
@@ -11247,7 +11324,7 @@
     _internals: {
       esc, hexRgb, alpha, contrastOn, communities, betweenness, findBridges, maxOf,
       createNodeClickArbiter,
-      graphNodeRadius, evidenceNodeRadius, sanitizeEvidenceMetrics, fallbackGravityMass,
+      graphNodeRadius, codeCategoryForce, evidenceNodeRadius, sanitizeEvidenceMetrics, fallbackGravityMass,
       radiusFromGravityMass, galaxyGravityConstant, galaxyGravityMaximum: GALAXY_GRAVITY_MAXIMUM,
       galaxyGravityStrengthMultiplier,
       galaxyBlackHoleGravityConstant, galaxyBlackHoleGravitySetting,

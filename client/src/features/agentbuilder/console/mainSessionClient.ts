@@ -8,9 +8,11 @@
  * Entity: Card Invocation
  * Relationship: Sends unchanged user text and attached image records with a unique submission identity to the authenticated Project chat route.
  * Entity: Card Sessions
- * Relationship: Opens the saved wired Cards through Hermes with the Project and transports their returned handles on Send and Stop.
+ * Relationship: Sends the observed Hermes conversation identity to the Stop route and preserves transport and server failures.
  * Entity: Voice
  * Relationship: Sends browser recordings and reply text through authenticated, Project-scoped Hermes transcription and speech routes.
+ * Entity: Agent Input
+ * Relationship: Returns explicit user answers with the original Project, Card, session, and Hermes prompt identity.
  * Entity: Data Anchors
  * Relationship: Retains typed selected-reference transport fields; the current Bot Mode route rejects nonempty selections rather than materializing graph input.
  */
@@ -22,6 +24,31 @@ export type AddressableAgent = {
 };
 
 export type DirectChatTarget = AddressableAgent;
+
+export type AgentInputRequest = {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  address: string;
+  sessionId: string;
+  requestId: string;
+  kind: 'approval' | 'clarify';
+  question?: string;
+  command?: string;
+  description?: string;
+  choices: string[];
+  multiSelect: boolean;
+};
+
+export async function respondToAgent(request: AgentInputRequest, answer: string): Promise<void> {
+  const response = await fetch(`${BASE}/respond`, { method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      projectId: request.projectId, deckId: request.deckId, cardId: request.cardId,
+      sessionId: request.sessionId, requestId: request.requestId, kind: request.kind, answer,
+    }) });
+  const result = await response.json();
+  if (!response.ok || result.ok !== true) throw new Error(result.error || 'agent_input_response_failed');
+}
 
 export type MainConversationMessage = {
   role: string;
@@ -97,23 +124,6 @@ export class SessionStreamError extends Error {
 
 const BASE = '/api/main/session';
 
-export async function openProject(args: {
-  projectId: string;
-  deckId: string;
-  signal: AbortSignal;
-}): Promise<Record<string, string>> {
-  const response = await fetch(`${BASE}/open`, {
-    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectId: args.projectId, deckId: args.deckId }), signal: args.signal,
-  });
-  const payload = await response.json();
-  if (!response.ok || !payload.sessions || typeof payload.sessions !== 'object' || Array.isArray(payload.sessions)
-    || !Object.keys(payload.sessions).length || Object.values(payload.sessions).some(value => typeof value !== 'string' || !value)) {
-    throw new Error(payload.error || 'main_project_open_failed');
-  }
-  return payload.sessions;
-}
-
 function clientMessageId(): string {
   if (typeof globalThis.crypto?.randomUUID !== 'function') {
     throw new Error('main_message_identity_unavailable');
@@ -149,7 +159,6 @@ function parseSseFrames(
 export async function streamSession(args: {
   projectId: string;
   deckId?: string;
-  sessions: Record<string, string>;
   message: string;
   images?: MainRunImage[];
   voiceTurn?: boolean;
@@ -166,7 +175,6 @@ export async function streamSession(args: {
       body: JSON.stringify({
         projectId: args.projectId,
         deckId: args.deckId,
-        sessions: args.sessions,
         message: args.message,
         clientMessageId: clientMessageId(),
         dataAnchors: args.dataAnchors || [],
@@ -259,7 +267,7 @@ export async function streamSession(args: {
 export async function stopSession(args: {
   projectId: string;
   deckId?: string;
-  sessions: Record<string, string>;
+  sessionId: string;
 }): Promise<void> {
   const response = await fetch(`${BASE}/stop`, {
     method: 'POST',

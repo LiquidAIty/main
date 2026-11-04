@@ -19,28 +19,17 @@ import type {
 export type CodeGraphReadMode = 'projection' | 'file' | 'source';
 export type CodeGraphReadStatus = 'ready' | 'partial' | 'unavailable' | 'not_found';
 
-export type CodeGraphSelectedSymbol = {
-  graphSystem: 'cbm';
-  cbmQualifiedName: string;
-  recordKind: 'symbol' | 'file';
-  type: string;
+export type CodeGraphFileSource = {
+  graphSystem: 'repository';
+  sourceReference: string;
+  recordKind: 'file';
+  type: 'File';
   title: string;
   content: string;
-  properties: {
-    project: string;
-    file: string;
-    startLine?: number | null;
-    endLine?: number | null;
-    signature?: string | null;
-    fingerprint?: string | null;
-  };
-  relationshipEvidence?: {
-    callers?: Record<string, unknown>[];
-    callees?: Record<string, unknown>[];
-  };
+  properties: { project: string; file: string; startLine: number; endLine: number };
   provenance: Record<string, unknown>;
   asOf: string;
-  readOperation: 'cbm.get_code_snippet';
+  readOperation: 'repository-file';
   truncated: boolean;
 };
 
@@ -58,7 +47,7 @@ export type CodeGraphReadEnvelope = {
     cbmProject: string;
   };
   projection: GraphProjectionV1 | null;
-  selectedSymbol: CodeGraphSelectedSymbol | null;
+  fileSource: CodeGraphFileSource | null;
   freshness: { status: string; coverage: unknown };
   truncated: boolean;
   errors: Array<{ purpose: string; operation: string; code: string }>;
@@ -90,19 +79,17 @@ function validCodeNode(node: unknown): node is GraphProjectionNode {
     || node.authority !== 'codegraph'
     || !isRecord(node.properties)) return false;
   const recordKind = String(node.properties.recordKind || '');
-  if (!['feature', 'file', 'symbol'].includes(recordKind)) return false;
+  if (!['feature', 'file'].includes(recordKind)) return false;
   if (recordKind === 'feature') {
     return typeof node.properties.featureName === 'string'
       && Boolean(node.properties.featureName.trim());
   }
   if (typeof node.properties.filePath !== 'string'
     || !node.properties.filePath.trim()) return false;
-  if (recordKind === 'symbol') {
-    return typeof node.properties.qualifiedName === 'string'
-      && Boolean(node.properties.qualifiedName.trim());
-  }
-  return typeof node.properties.qualifiedName === 'string'
-    && Boolean(node.properties.qualifiedName.trim());
+  return (node.properties.sourceAuthority === 'repository-file'
+      && node.properties.sourceReference === node.id)
+    || (typeof node.properties.qualifiedName === 'string'
+      && Boolean(node.properties.qualifiedName.trim()));
 }
 
 function validCodeEdge(edge: unknown): edge is GraphProjectionEdge {
@@ -145,21 +132,15 @@ export function validateCodeGraphProjection(
   };
 }
 
-function readSelectedSymbol(value: unknown): CodeGraphSelectedSymbol | null {
+function readFileSource(value: unknown): CodeGraphFileSource | null {
   if (value === null || value === undefined) return null;
-  if (!isRecord(value)
-    || value.graphSystem !== 'cbm'
-    || !['symbol', 'file'].includes(String(value.recordKind))
-    || typeof value.cbmQualifiedName !== 'string' || !value.cbmQualifiedName
-    || typeof value.content !== 'string'
-    || !isRecord(value.properties)
-    || typeof value.properties.file !== 'string'
-    || !isRecord(value.provenance)
-    || value.readOperation !== 'cbm.get_code_snippet'
-    || typeof value.truncated !== 'boolean') {
-    throw new Error('invalid_codegraph_source');
-  }
-  return value as unknown as CodeGraphSelectedSymbol;
+  if (!isRecord(value) || value.graphSystem !== 'repository' || value.recordKind !== 'file'
+    || value.readOperation !== 'repository-file'
+    || !isRecord(value.properties) || typeof value.properties.file !== 'string'
+    || value.sourceReference !== 'source-file:' + value.properties.file
+    || typeof value.content !== 'string' || !isRecord(value.provenance)
+    || typeof value.truncated !== 'boolean') throw new Error('invalid_codegraph_source');
+  return value as unknown as CodeGraphFileSource;
 }
 
 export function validateCodeGraphReadEnvelope(
@@ -184,10 +165,10 @@ export function validateCodeGraphReadEnvelope(
   const projection = value.projection === null || value.projection === undefined
     ? null
     : validateCodeGraphProjection(value.projection, expected.projectId);
-  const selectedSymbol = readSelectedSymbol(value.selectedSymbol);
+  const fileSource = readFileSource(value.fileSource);
   if ((expected.mode === 'source' && ['ready', 'partial'].includes(String(value.status))
-      && !selectedSymbol)
-    || (expected.mode !== 'source' && selectedSymbol)
+      && !fileSource)
+    || (expected.mode !== 'source' && fileSource)
     || (['ready', 'partial'].includes(String(value.status))
       && expected.mode !== 'source' && !projection)) {
     throw new Error('invalid_codegraph_read');
@@ -195,7 +176,7 @@ export function validateCodeGraphReadEnvelope(
   return {
     ...(value as unknown as CodeGraphReadEnvelope),
     projection,
-    selectedSymbol,
+    fileSource,
   };
 }
 
@@ -207,6 +188,12 @@ export function mergeCodeGraphProjections(
     || base.projectId !== expansion.projectId) {
     throw new Error('codegraph_projection_merge_scope_mismatch');
   }
+  const expansionMetadata = (expansion as GraphProjectionV1 & {
+    metadata?: Record<string, unknown>;
+  }).metadata || {};
+  const selectedFilePaths = new Set(Array.isArray(expansionMetadata.selectedFilePaths)
+    ? expansionMetadata.selectedFilePaths.filter((path): path is string => typeof path === 'string')
+    : []);
   const nodes = new Map(base.nodes.map(node => [node.id, node]));
   for (const node of expansion.nodes) {
     const current = nodes.get(node.id);
@@ -216,16 +203,16 @@ export function mergeCodeGraphProjections(
       properties: { ...(current.properties || {}), ...(node.properties || {}) },
     } : node);
   }
-  const edges = new Map(base.edges.map(edge => [edge.id, edge]));
+  const refreshedFiles = new Set(expansion.nodes.filter(node => typeof node.properties?.filePath === 'string'
+    && selectedFilePaths.has(node.properties.filePath)
+    && node.properties?.structuralComplete === true).map(node => node.id));
+  const edges = new Map(base.edges
+    .filter(edge => !(edge.properties?.recordKind === 'structural-relationship'
+      && (refreshedFiles.has(edge.source) || refreshedFiles.has(edge.target))))
+    .map(edge => [edge.id, edge]));
   expansion.edges.forEach(edge => edges.set(edge.id, edge));
-  const expansionMetadata = (expansion as GraphProjectionV1 & {
-    metadata?: Record<string, unknown>;
-  }).metadata || {};
-  const selectedFilePath = typeof expansionMetadata.selectedFilePath === 'string'
-    ? expansionMetadata.selectedFilePath
-    : '';
   const mergedNodes = [...nodes.values()].map(node => (
-    selectedFilePath && node.properties?.filePath === selectedFilePath
+    typeof node.properties?.filePath === 'string' && selectedFilePaths.has(node.properties.filePath)
       ? {
         ...node,
         properties: { ...(node.properties || {}), structuralLoaded: true },
@@ -244,6 +231,7 @@ export function mergeCodeGraphProjections(
     metadata: {
       ...((base as GraphProjectionV1 & { metadata?: Record<string, unknown> }).metadata || {}),
       ...expansionMetadata,
+
     },
   } as GraphProjectionV1;
 }
@@ -257,64 +245,82 @@ export function codeGraphFeatures(projection: GraphProjectionV1): GraphProjectio
 export function codeGraphCategoryProjection(
   projection: GraphProjectionV1,
   featureIds: readonly string[],
-  selectedFilePath: string | null,
 ): GraphProjectionV1 {
-  const features = codeGraphFeatures(projection);
-  const selectedIds = new Set(features.filter(node => featureIds.includes(node.id)).map(node => node.id));
-  if (selectedIds.size === 0) {
-    return {
-      ...projection,
-      counts: { nodes: features.length, edges: 0 },
-      nodes: features,
-      edges: [],
-    };
+  const selectedIds = new Set(featureIds);
+  const files = new Map(projection.nodes
+    .filter(node => codeNodeKind(node) === 'file').map(node => [node.id, node]));
+  const selectedFiles = new Set(projection.edges
+    .filter(edge => edge.predicate === 'FEATURE_CONTRIBUTION'
+      && selectedIds.has(edge.source) && files.has(edge.target))
+    .map(edge => edge.target));
+  // Membership is a selector, never a visible hub or a caller edge.
+  // Include actual one-hop neighbors across category boundaries, without a count cap.
+  const structuralEdges = projection.edges.filter(edge =>
+    ['CALLS', 'IMPORTS'].includes(edge.predicate)
+    && edge.properties?.structuralAuthority === 'cbm'
+    && files.has(edge.source) && files.has(edge.target)
+    && edge.source !== edge.target);
+  const neighbors = structuralEdges.filter(edge => selectedFiles.has(edge.source) || selectedFiles.has(edge.target));
+  const visibleIds = new Set([...selectedFiles, ...neighbors.flatMap(edge => [edge.source, edge.target])]);
+  const edges = structuralEdges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target));
+  const nodes = [...files.values()].filter(node => visibleIds.has(node.id));
+  return { ...projection, scene: undefined,
+    counts: { nodes: nodes.length, edges: edges.length }, nodes, edges };
+}
+
+/** Display-only metrics of the returned CBM file graph, never semantic importance. */
+export function applyCodeGraphPhysics(projection: GraphProjectionV1): GraphProjectionV1 {
+  const files = new Map(projection.nodes
+    .filter(node => node.authority === 'codegraph' && codeNodeKind(node) === 'file')
+    .map(node => [node.id, node]));
+  if (!files.size) return projection;
+  const callers = new Map([...files.keys()].map(id => [id, new Set<string>()]));
+  const incoming = new Map([...files.keys()].map(id => [id, new Set<string>()]));
+  const outgoing = new Map([...files.keys()].map(id => [id, new Set<string>()]));
+  const neighbors = new Map([...files.keys()].map(id => [id, new Set<string>()]));
+  for (const edge of projection.edges) {
+    if (edge.source === edge.target || !files.has(edge.source) || !files.has(edge.target)
+      || !['CALLS', 'IMPORTS'].includes(edge.predicate)
+      || edge.properties?.structuralAuthority !== 'cbm') continue;
+    neighbors.get(edge.source)!.add(edge.target);
+    neighbors.get(edge.target)!.add(edge.source);
+    incoming.get(edge.target)!.add(edge.source);
+    if (edge.predicate === 'CALLS') {
+      callers.get(edge.target)!.add(edge.source);
+      outgoing.get(edge.source)!.add(edge.target);
+    }
   }
-  const nodeById = new Map(projection.nodes.map(node => [node.id, node]));
-  const memberships = projection.edges.filter(edge => (
-    selectedIds.has(edge.source)
-    && edge.predicate === 'FEATURE_CONTRIBUTION'
-    && nodeById.has(edge.target)
-  ));
-  const files = memberships.flatMap((edge): GraphProjectionNode[] => {
-    const node = nodeById.get(edge.target);
-    return node && codeNodeKind(node) === 'file' ? [node] : [];
+  const nodes = projection.nodes.map(node => {
+    if (!files.has(node.id)) return node;
+    const incomingCount = incoming.get(node.id)!.size;
+    const adjacent = neighbors.get(node.id)!;
+    const categories = Array.isArray(node.properties?.features)
+      ? node.properties.features.filter((name): name is string => typeof name === 'string') : [];
+    const categoryConnections = Object.fromEntries(categories.map(name => [name,
+      [...adjacent].filter(id => {
+        const memberships = files.get(id)?.properties?.features;
+        return Array.isArray(memberships) && memberships.includes(name);
+      }).length]));
+    return { ...node, degree: adjacent.size,
+      visual_radius: 1.4 + 0.7 * Math.log1p(incomingCount),
+      gravity_mass: 1 + Math.log1p(adjacent.size),
+      properties: { ...node.properties,
+        incomingConnectionCount: incomingCount,
+        callerFileCount: callers.get(node.id)!.size, calledFileCount: outgoing.get(node.id)!.size,
+        connectedFileCount: adjacent.size, connectionCountScope: 'loaded-cbm-neighborhood',
+        categoryConnections },
+    };
   });
-  const filePaths = new Set(files.map(node => String(node.properties?.filePath || '')));
-  const activeFile = selectedFilePath && filePaths.has(selectedFilePath)
-    ? selectedFilePath
-    : null;
-  const structuralEdges = activeFile
-    ? projection.edges.filter(edge => (
-      edge.properties?.recordKind === 'structural-relationship'
-      && edge.properties?.selectedFilePath === activeFile
-      && nodeById.has(edge.source)
-      && nodeById.has(edge.target)
-    ))
-    : [];
-  const nodeIds = new Set([
-    ...features.map(node => node.id),
-    ...files.map(node => node.id),
-    ...structuralEdges.flatMap(edge => [edge.source, edge.target]),
-  ]);
-  const nodes = projection.nodes
-    .filter(node => nodeIds.has(node.id))
-    .map(node => codeNodeKind(node) === 'feature' ? {
-      ...node,
-      // Engraphis already renders ghost nodes as transparent context; never persist this view field.
-      ghost: !selectedIds.has(node.id),
-      properties: {
-        ...(node.properties || {}),
-        contributions: memberships.filter(edge => edge.source === node.id).map(edge => ({
-          feature: String(edge.properties?.filePath || nodeById.get(edge.target)?.label || 'File'),
-          relationship: String(edge.properties?.relationship || ''),
-        })),
-      },
-    } : node);
-  const edges = [...memberships, ...structuralEdges];
-  return {
-    ...projection,
-    counts: { nodes: nodes.length, edges: edges.length },
-    nodes,
-    edges,
-  };
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  const edges = projection.edges.map(edge => {
+    if (!files.has(edge.source) || !files.has(edge.target)
+      || edge.properties?.structuralAuthority !== 'cbm') return edge;
+    const source = byId.get(edge.source)!, target = byId.get(edge.target)!;
+    return { ...edge,
+      spring_strength: 0.18 / Math.sqrt(Math.max(1, Math.min(source.degree!, target.degree!))),
+      rest_length: 42 + (source.visual_radius || 4) + (target.visual_radius || 4),
+      visual_width: edge.predicate === 'CALLS' ? 1 : 0.65,
+    };
+  });
+  return { ...projection, nodes, edges };
 }

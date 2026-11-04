@@ -5,7 +5,7 @@
 // Entity: Card Topology
 // Relationship: This file embeds the shared Card-and-connection canvas in large or companion workspace shells and forwards topology selection and persistence actions.
 // Entity: Saved Cards
-// Relationship: This file supplies the current deck, selected identity, and document updater to the one canvas implementation.
+// Relationship: This file supplies the current deck, Card activity, selected identity, and document updater to the one canvas implementation.
 
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
 
@@ -21,6 +21,8 @@ type AgentCanvasPaneProps = {
     reason: string,
     detail?: Record<string, unknown>,
   ) => void;
+  activeCardIds: string[];
+  activeAgentCounts?: Record<string, number>;
   activeEdgeIds: string[];
   selectedCardId: string | null;
   selectedEdgeId: string | null;
@@ -37,6 +39,8 @@ export default function AgentCanvasPane({
   document,
   setDocument,
   onPersistGraphMutation,
+  activeCardIds,
+  activeAgentCounts,
   activeEdgeIds,
   selectedCardId,
   selectedEdgeId,
@@ -55,6 +59,8 @@ export default function AgentCanvasPane({
         document={document}
         setDocument={setDocument}
         onPersistGraphMutation={onPersistGraphMutation}
+        activeCardIds={activeCardIds}
+        activeAgentCounts={activeAgentCounts}
         activeEdgeIds={activeEdgeIds}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}

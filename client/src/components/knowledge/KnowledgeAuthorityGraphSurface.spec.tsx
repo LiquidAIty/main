@@ -6,7 +6,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
- * Relationship: This file verifies one joined renderer, provider-status isolation, focus lifecycle, settings, selection, and shared Inspector without inventing graph identity or mutation.
+ * Relationship: This file verifies one joined renderer, provider-status isolation, settings, selection, and shared Inspector without inventing graph identity or mutation.
  * Entity: ThinkGraph
  * Relationship: This file verifies exact Think records, relationships, Jev fields, provider IDs, positions, and confirmed removal remain intact in the shared surface.
  * Entity: KnowGraph
@@ -14,7 +14,7 @@
  * Entity: CodeGraph
  * Relationship: This file verifies CodeGraph remains opt-in, reuses the same renderer and Inspector, expands only the selected File, and exposes no iframe or Feature sorter.
  * Entity: Jev Decisions
- * Relationship: This file verifies bounded focus reads, probability-driven transient presentation, unavailable-focus fallback, and manual setting preservation without another graph write.
+ * Relationship: This file verifies probability-driven knowledge presentation, Code isolation from Jev, and manual setting preservation without another graph write.
  */
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -149,7 +149,7 @@ describe('knowledge authority graph surfaces', () => {
       freshness: 'current',
     },
     onOpenCodeGraph: vi.fn(async () => projection),
-    onReadCodeGraphFile: vi.fn(async () => null),
+    onReadCodeGraphFiles: vi.fn(async () => null),
     onReadCodeGraphSource: vi.fn(async () => null),
   });
 
@@ -448,188 +448,22 @@ describe('knowledge authority graph surfaces', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('resolves a real double-click, expands, and exits Focus through empty canvas without recomputation', async () => {
-    const think = {
-      ...empty('thinkgraph'),
-      nodes: [
-        { id: 'think-center', canonicalId: 'shared-center', label: 'Shared center', properties: {
-          evidence: [{ id: 'memory-center', content: 'Think center.' }],
-        } },
-        { id: 'think-neighbor', label: 'Think neighbor', properties: { summary: 'Think neighbor.' } },
-      ],
-      edges: [{
-        id: 'think-edge', source: 'think-center', target: 'think-neighbor',
-        predicate: 'THINKS_WITH', relationship_strength: 0.62, properties: {},
-      }],
-    };
-    const know = {
-      ...empty('knowgraph'),
-      nodes: [
-        { id: 'know-center', canonicalId: 'shared-center', label: 'Shared center', properties: { summary: 'Know center.' } },
-        { id: 'know-neighbor', label: 'Know neighbor', properties: { summary: 'Know neighbor.' } },
-      ],
-      edges: [{
-        id: 'know-edge', source: 'know-center', target: 'know-neighbor',
-        predicate: 'KNOWS_WITH', relationship_strength: 0.54, properties: {
-          graphitiFactUuid: 'know-edge', fact: 'Know center.',
-        },
-      }],
-    };
-    const focusProjections = currentProjections(think, know);
-    const onReadProviderFocusNeighborhood = vi.fn(async (authority: string) => (
-      authority === 'thinkgraph' ? focusProjections.thinkgraph : focusProjections.knowgraph
-    ));
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
-      const request = JSON.parse(String(init?.body)) as any;
-      expect(request.center).toEqual(expect.objectContaining({
-        providerMembers: expect.arrayContaining([
-          expect.objectContaining({ authority: 'ThinkGraph', entityId: 'think-center' }),
-          expect.objectContaining({ authority: 'KnowGraph', entityId: 'know-center' }),
-        ]),
-      }));
-      expect(request.candidates.map((candidate: any) => [candidate.authority, candidate.entityId]))
-        .toEqual([
-          ['KnowGraph', 'know-neighbor'],
-          ['ThinkGraph', 'think-neighbor'],
-        ]);
-      expect(request.candidates.every((candidate: any) => (
-        candidate.incidentRelationships.every((relationship: any) => (
-          typeof relationship.relationshipId === 'string'
-        ))
-      ))).toBe(true);
-      return {
-        ok: true,
-        json: async () => ({
-          schemaVersion: 'jev-focus.v1',
-          sourceRevision: request.sourceRevision,
-          status: 'success',
-          decisionId: 'focus-decision-1',
-          errorCode: null,
-          distribution: { know: 0.4, think: 0.6 },
-          candidates: [
-            { authority: 'ThinkGraph', entityId: 'think-neighbor', choiceId: 'think', probability: 0.6, selected: true, rank: 1 },
-            { authority: 'KnowGraph', entityId: 'know-neighbor', choiceId: 'know', probability: 0.4, selected: true, rank: 2 },
-          ],
-        }),
-      } as Response;
-    });
-    render(<JoinedKnowledgeGraphSurface
-      projections={currentProjections(think, know)}
-      onReadProviderFocusNeighborhood={onReadProviderFocusNeighborhood}
-    />);
+  it('selects without a Focus control, collapse, Jev request, or view replacement', () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    const think = { ...empty('thinkgraph'), nodes: [
+      { id: 'center', label: 'Center', properties: {} },
+      { id: 'neighbor', label: 'Neighbor', properties: {} },
+    ], edges: [{ id: 'edge', source: 'center', target: 'neighbor', predicate: 'RELATES_TO' }] };
+    render(<JoinedKnowledgeGraphSurface projections={{ thinkgraph: think, knowgraph: empty('knowgraph') }} />);
     const graph = forceGraphMocks.instances.at(-1);
-    const rendererCount = forceGraphMocks.instances.length;
-    const center = graph.data.nodes.find((node: any) => node.label === 'Shared center');
-    center.x = 18;
-    center.y = -7;
-
-    act(() => graph.nodeClick(center));
-    expect(screen.getByRole('button', { name: 'Focus' })).toBeTruthy();
-    expect(onReadProviderFocusNeighborhood).not.toHaveBeenCalled();
+    const ids = graph.data.nodes.map((node: any) => node.id);
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+    expect(screen.queryByRole('button', { name: 'Focus' })).toBeNull();
+    expect(screen.queryByTestId('jev-focus-toolbar')).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
-
-    act(() => graph.nodeDoubleClick(center));
-    await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')
-      .getAttribute('data-focus-phase')).toBe('manual_blackhole_focus'));
-    expect(onReadProviderFocusNeighborhood.mock.calls.map(call => call.slice(0, 2))).toEqual([
-      ['thinkgraph', 'think-center'],
-      ['knowgraph', 'know-center'],
-    ]);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(forceGraphMocks.instances).toHaveLength(rendererCount);
-    await waitFor(() => {
-      expect(graph.focus).toHaveBeenCalledWith(center.id);
-      expect(graph.setSettings).toHaveBeenCalledWith({ repel: 25, gravity: 48, damping: 6 });
-    });
-    const focusedNodeIds = graph.data.nodes.map((node: any) => node.id);
-    const focusedEdgeIds = graph.data.links.map((edge: any) => edge.id);
-    expect(focusedNodeIds).toHaveLength(3);
-    expect(focusedEdgeIds).toHaveLength(2);
-    expect(graph.data.nodes.find((node: any) => node.id === center.id)).toMatchObject({
-      x: 18,
-      y: -7,
-      gravity_mass: 7,
-    });
-    expect(screen.getByRole('button', { name: 'Expand' })).toBeTruthy();
-    const focusedWeights = graph.data.links.map((edge: any) => ({
-      id: edge.id,
-      predicate: edge.predicate,
-      relationship_strength: edge.relationship_strength,
-      label_confidence: edge.label_confidence,
-      jev: edge.properties?.jev,
-    }));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
-    await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')
-      .getAttribute('data-focus-phase')).not.toBe('manual_blackhole_focus'));
-    expect(forceGraphMocks.instances).toHaveLength(rendererCount);
-    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(focusedNodeIds);
-    expect(graph.data.links.map((edge: any) => edge.id)).toEqual(focusedEdgeIds);
-    expect(graph.data.links.map((edge: any) => ({
-      id: edge.id,
-      predicate: edge.predicate,
-      relationship_strength: edge.relationship_strength,
-      label_confidence: edge.label_confidence,
-      jev: edge.properties?.jev,
-    }))).toEqual(focusedWeights);
-    expect(onReadProviderFocusNeighborhood).toHaveBeenCalledTimes(2);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    act(() => graph.nodeDoubleClick(center));
-    await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')
-      .getAttribute('data-focus-phase')).toBe('manual_blackhole_focus'));
-    expect(onReadProviderFocusNeighborhood).toHaveBeenCalledTimes(4);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const emptyCanvasExitWeights = graph.data.links.map((edge: any) => ({
-      id: edge.id,
-      predicate: edge.predicate,
-      relationship_strength: edge.relationship_strength,
-      label_confidence: edge.label_confidence,
-      jev: edge.properties?.jev,
-    }));
-
+    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(ids);
     act(() => graph.backgroundClick());
-    await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')
-      .getAttribute('data-focus-phase')).not.toBe('manual_blackhole_focus'));
-    expect(graph.data.links.map((edge: any) => ({
-      id: edge.id,
-      predicate: edge.predicate,
-      relationship_strength: edge.relationship_strength,
-      label_confidence: edge.label_confidence,
-      jev: edge.properties?.jev,
-    }))).toEqual(emptyCanvasExitWeights);
-    expect(onReadProviderFocusNeighborhood).toHaveBeenCalledTimes(4);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('keeps the local canvas unchanged when provider Focus preparation is unavailable', async () => {
-    const think = {
-      ...empty('thinkgraph'),
-      nodes: [
-        { id: 'center', label: 'Center', properties: {
-          evidence: [{ id: 'memory-center', content: 'Center.' }],
-        } },
-        { id: 'neighbor', label: 'Neighbor', properties: {} },
-      ],
-      edges: [{ id: 'edge', source: 'center', target: 'neighbor', predicate: 'RELATES_TO', properties: {} }],
-    };
-    const onReadProviderFocusNeighborhood = vi.fn().mockRejectedValue(new Error('offline'));
-    render(<JoinedKnowledgeGraphSurface
-      projections={{ thinkgraph: think, knowgraph: empty('knowgraph') }}
-      onReadProviderFocusNeighborhood={onReadProviderFocusNeighborhood}
-    />);
-    const graph = forceGraphMocks.instances.at(-1);
-    const nodeIds = graph.data.nodes.map((node: any) => node.id);
-    const edgeIds = graph.data.links.map((edge: any) => edge.id);
-    const center = graph.data.nodes.find((node: any) => node.label === 'Center');
-
-    act(() => graph.nodeDoubleClick(center));
-    await waitFor(() => expect(screen.getByText('Focus unavailable · local view kept')).toBeTruthy());
-    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(nodeIds);
-    expect(graph.data.links.map((edge: any) => edge.id)).toEqual(edgeIds);
-    expect(graph.focus).not.toHaveBeenCalled();
-    expect(graph.setPreset).not.toHaveBeenCalledWith('galaxy');
-    expect(screen.getByRole('button', { name: 'Focus' })).toBeTruthy();
+    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(ids);
   });
 
   it('keeps a healthy authority visible while truthfully reporting the other authority failure', () => {
@@ -649,23 +483,14 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.queryByText(/Graph failed/)).toBeNull();
   });
 
-  it.each(['knowgraph'] as const)('uses the selected Engraphis preset for %s with zoom and shared paper', (authority) => {
+  it.each(['knowgraph'] as const)('uses internal Engraphis layout for %s with zoom and shared paper', (authority) => {
     const { container } = render(<KnowledgeGraphProjectionSurface authority={authority}
       projection={empty(authority)} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     expect(container.querySelector('[data-renderer="engraphis-1.7.1"]')).toBeTruthy();
     expect(graph.setPreset).toHaveBeenCalledWith('compact');
     expect(graph.setStyle).toHaveBeenCalledWith('cyber');
-    expect(graph.setSettings).toHaveBeenCalledWith({
-      size: 5,
-      font: 13,
-      linkw: 1,
-      labelDensity: 40,
-      repel: 120,
-      link: 30,
-      gravity: 14,
-      labels: true,
-    });
+    expect(graph.setSettings).toHaveBeenCalledWith({ size: 5, linkw: 1, labels: true });
     const paper = container.querySelector('[aria-hidden="true"]') as HTMLElement;
     expect(paper.style.backgroundSize.startsWith('24px 24px')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
@@ -676,20 +501,17 @@ describe('knowledge authority graph surfaces', () => {
     expect(graph.fit).toHaveBeenCalledOnce();
     expect(paper.style.backgroundSize.startsWith('24px 24px')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.getByRole('combobox', { name: 'Layout' }).getAttribute('aria-label')).toBe('Layout');
+    expect(screen.queryByRole('combobox', { name: 'Layout' })).toBeNull();
+    expect(screen.queryByRole('slider')).toBeNull();
     expect(graph.setCollapse).toHaveBeenCalledWith(false);
-    for (const value of ['original', 'communities', 'radial', 'galaxy', 'compact']) {
-      fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), { target: { value } });
-      expect(graph.setPreset).toHaveBeenLastCalledWith(value);
-      expect(graph.data.nodes).toEqual([]);
-    }
+    expect(graph.data.nodes).toEqual([]);
     expect(screen.queryByRole('button', { name: /Freeze|Resume|Reheat|Focus/ })).toBeNull();
     expect(graph.freeze).not.toHaveBeenCalled();
     expect(graph.reheat).not.toHaveBeenCalled();
   });
 
   it.each(['thinkgraph', 'knowgraph'] as const)(
-    'switches %s physics profiles locally without mutating graph data or calling Jev',
+    'applies the internal Jev profile to %s without user tuning, graph mutation or another Jev call',
     authority => {
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
@@ -718,18 +540,9 @@ describe('knowledge authority graph surfaces', () => {
         rest_length: 22.639999999999997,
       });
       fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-      expect((screen.getByRole('combobox', { name: 'Physics profile' }) as HTMLSelectElement).value)
-        .toBe('galaxy');
-      fireEvent.change(screen.getByRole('combobox', { name: 'Physics profile' }), {
-        target: { value: 'open' },
-      });
-      expect(container.querySelector(`[data-physics-profile="open"]`)).toBeTruthy();
-      expect(graph.data.links[0]).toMatchObject({
-        relationship_strength: 0.8,
-        spring_strength: 0.121,
-        rest_length: 24.4,
-      });
-      expect(graph.data.links[0].visual_width).toBeCloseTo(1.8);
+      expect(screen.queryByRole('combobox', { name: 'Physics profile' })).toBeNull();
+      expect(container.querySelector('[data-physics-profile="galaxy"]')).toBeTruthy();
+      expect(graph.data.links[0].visual_width).toBeCloseTo(2.35);
       act(() => graph.nodeClick(graph.data.nodes[1]));
       for (const implementationField of ['Semantic mass', 'Physics profile', 'Source graph', 'Provider ID']) {
         expect(screen.queryByText(implementationField)).toBeNull();
@@ -739,7 +552,7 @@ describe('knowledge authority graph surfaces', () => {
     },
   );
 
-  it('passes the complete Engraphis scene unchanged, including layout metadata', () => {
+  it('preserves Engraphis scene metadata and source records while applying incoming size', () => {
     window.localStorage.setItem('liquidaity.graph.knowgraph.presentation.v1', JSON.stringify({
       schemaVersion: 6,
       style: 'cyber',
@@ -762,10 +575,12 @@ describe('knowledge authority graph surfaces', () => {
       communities: [],
     });
     expect(graph.data.nodes[0]).toMatchObject({
-      semantic_mass: 0.82, gravity_mass: 9.4, visual_radius: 7.2,
+      semantic_mass: 0.82, gravity_mass: 9.4, visual_radius: 2.5,
     });
-    expect(graph.data.nodes[0].material_kind).toBeUndefined();
-    expect(graph.setThemeColors).toHaveBeenLastCalledWith({});
+    expect(scene.nodes[0].visual_radius).toBe(7.2);
+    expect(graph.data.nodes[0].material_kind).toBe('solarpunk');
+    expect(graph.setThemeColors).toHaveBeenLastCalledWith(expect.objectContaining({
+      material_blue: '#4FA2AD', material_orange: '#F2A64A' }));
     expect(graph.data.links[0]).toMatchObject({
       relation: 'QUALIFIES', relationship_strength: 0.82,
       spring_strength: 0.1744, rest_length: 16.16,
@@ -815,10 +630,10 @@ describe('knowledge authority graph surfaces', () => {
     const codeProjection: GraphProjectionV1 = {
       ...emptyCode(),
       nodes: [
-        { id: 'feature:CodeGraph', label: 'CodeGraph', authority: 'codegraph', type: 'Feature', etype: 'Feature', properties: { recordKind: 'feature', featureName: 'CodeGraph' } },
-        { id: 'file:surface', label: 'surface.tsx', authority: 'codegraph', type: 'File', etype: 'File', properties: { recordKind: 'file', filePath: 'client/src/surface.tsx', qualifiedName: 'file:surface', features: ['CodeGraph'] } },
+        { id: 'feature:CodeGraph', label: 'CodeGraph', authority: 'codegraph', type: 'Feature', etype: 'Feature', properties: { recordKind: 'feature', featureName: 'CodeGraph', memberFilePaths: ['client/src/surface.tsx'] } },
+        { id: 'source-file:client/src/surface.tsx', label: 'surface.tsx', authority: 'codegraph', type: 'File', etype: 'File', properties: { recordKind: 'file', filePath: 'client/src/surface.tsx', sourceReference: 'source-file:client/src/surface.tsx', sourceAuthority: 'repository-file', features: ['CodeGraph'], contributions: [{ feature: 'CodeGraph', relationship: 'Renders the shared graph.' }] } },
       ],
-      edges: [{ id: 'feature-file', source: 'feature:CodeGraph', target: 'file:surface', predicate: 'FEATURE_CONTRIBUTION', properties: { filePath: 'client/src/surface.tsx', relationship: 'Renders the shared graph.' } }],
+      edges: [{ id: 'feature-file', source: 'feature:CodeGraph', target: 'source-file:client/src/surface.tsx', predicate: 'FEATURE_CONTRIBUTION', properties: { filePath: 'client/src/surface.tsx', relationship: 'Renders the shared graph.' } }],
     };
     const openCode = vi.fn();
     const readCodeFile = vi.fn(async () => null);
@@ -846,7 +661,7 @@ describe('knowledge authority graph surfaces', () => {
           });
           return codeProjection;
         }}
-        onReadCodeGraphFile={readCodeFile}
+        onReadCodeGraphFiles={readCodeFile}
         onReadCodeGraphSource={readCodeSource}
       />;
     }
@@ -866,9 +681,9 @@ describe('knowledge authority graph surfaces', () => {
       .toEqual(['Think one', 'Know one']));
     expect(openCode).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    const thinkLayer = screen.getByRole('button', { name: 'Think layer' });
-    const knowLayer = screen.getByRole('button', { name: 'Know layer' });
-    const codeLayer = screen.getByRole('button', { name: 'Code layer' });
+    const thinkLayer = screen.getByRole('button', { name: 'Think source' });
+    const knowLayer = screen.getByRole('button', { name: 'Know source' });
+    const codeLayer = screen.getByRole('button', { name: 'Code source' });
     expect(thinkLayer.getAttribute('aria-pressed')).toBe('true');
     expect(knowLayer.getAttribute('aria-pressed')).toBe('true');
     expect(codeLayer.getAttribute('aria-pressed')).toBe('false');
@@ -886,55 +701,125 @@ describe('knowledge authority graph surfaces', () => {
 
     fireEvent.click(codeLayer);
     await waitFor(() => expect(openCode).toHaveBeenCalledTimes(1));
+    expect(readCodeFile).not.toHaveBeenCalled();
+    expect(graph.data.nodes.map((node: any) => node.label)).toEqual(['Think one', 'Know one']);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'CodeGraph' }));
     await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label)).toEqual([
-      'Think one', 'Know one', 'CodeGraph',
+      'surface.tsx', 'Think one', 'Know one',
     ]));
-    expect(graph.setTypeColors).toHaveBeenCalledWith({
-      Feature: '#63C79A', File: '#63C79A', Symbol: '#63C79A',
-    });
-    expect(graph.data.nodes.find((node: any) => node.etype === 'Feature')).toMatchObject({
-      material_kind: 'solarpunk',
-      material_role: 'THINK_MATERIAL',
-      material_blue: '#63C79A',
-    });
-    act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.etype === 'Feature')));
-    await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label)).toEqual([
-      'Think one', 'Know one', 'CodeGraph', 'surface.tsx',
-    ]));
-    expect(screen.getByTestId('codegraph-node-details').textContent)
-      .toContain('Renders the shared graph.');
-    expect(graph.data.links.find((edge: any) => edge.layer === 'codegraph'))
-      .toMatchObject({ material_kind: 'solarpunk', material_color: '#63C79A' });
-
-    act(() => graph.linkClick(graph.data.links.find((edge: any) => edge.layer === 'codegraph')));
-    expect(screen.getByText('Declared relationship')).toBeTruthy();
-    expect(screen.getByText('Renders the shared graph.')).toBeTruthy();
-
+    expect(graph.setTypeColors).not.toHaveBeenCalled();
+    expect(graph.data.nodes.find((node: any) => node.etype === 'File')).not.toHaveProperty('material_kind');
+    expect(graph.data.nodes.some((node: any) => node.etype === 'Feature')).toBe(false);
+    expect(graph.data.links).toEqual([]);
+    expect(graph.setStyle).toHaveBeenCalledWith('cyber');
     act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.etype === 'File')));
-    await waitFor(() => expect(readCodeFile).toHaveBeenCalledWith('client/src/surface.tsx'));
+    await waitFor(() => expect(readCodeFile).toHaveBeenCalledWith(['client/src/surface.tsx']));
     expect(screen.getByTestId('codegraph-node-details').textContent)
       .toContain('client/src/surface.tsx');
     fireEvent.click(screen.getByRole('button', { name: 'Open file' }));
-    await waitFor(() => expect(readCodeSource).toHaveBeenCalledWith('file:surface'));
+    await waitFor(() => expect(readCodeSource).toHaveBeenCalledWith('client/src/surface.tsx'));
     act(() => graph.backgroundClick());
-    expect(screen.getByRole('group', { name: 'Graph layers' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Code layer' }).getAttribute('aria-pressed'))
+    expect(screen.getByRole('group', { name: 'Graph sources' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Code source' }).getAttribute('aria-pressed'))
       .toBe('true');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Think layer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Think source' }));
     await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label)).toEqual([
-      'Know one', 'CodeGraph', 'surface.tsx',
+      'surface.tsx', 'Know one',
     ]));
-    fireEvent.click(screen.getByRole('button', { name: 'Reset graph layers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset graph sources' }));
     await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label))
       .toEqual(['Think one', 'Know one']));
-    expect(screen.getByRole('button', { name: 'Think layer' }).getAttribute('aria-pressed'))
+    expect(screen.getByRole('button', { name: 'Think source' }).getAttribute('aria-pressed'))
       .toBe('true');
-    expect(screen.getByRole('button', { name: 'Know layer' }).getAttribute('aria-pressed'))
+    expect(screen.getByRole('button', { name: 'Know source' }).getAttribute('aria-pressed'))
       .toBe('true');
-    expect(screen.getByRole('button', { name: 'Code layer' }).getAttribute('aria-pressed'))
+    expect(screen.getByRole('button', { name: 'Code source' }).getAttribute('aria-pressed'))
       .toBe('false');
     expect(openCode).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps Think/Know tabs and a violet association rim while code files have their own inspector', async () => {
+    const projections = currentProjections(
+      { ...empty('thinkgraph'), nodes: [{ id: 'think-shared', label: 'Shared', properties: {} }] },
+      { ...empty('knowgraph'), nodes: [{ id: 'know-shared', label: 'Shared', properties: {} }] },
+    );
+    const code: GraphProjectionV1 = { ...emptyCode(), nodes: [
+      { id: 'feature:shared', label: 'Shared', authority: 'codegraph', etype: 'Feature', properties: {
+        recordKind: 'feature', featureName: 'Shared', memberFilePaths: ['client/shared.ts'],
+      } },
+      { id: 'file:shared', label: 'shared.ts', authority: 'codegraph', etype: 'File', properties: {
+        recordKind: 'file', filePath: 'client/shared.ts', qualifiedName: 'file:shared', features: ['Shared'], contributions: [{ feature: 'Shared', relationship: 'Implements the Shared feature.' }],
+      } },
+    ], edges: [{ id: 'shared-file', source: 'feature:shared', target: 'file:shared', predicate: 'FEATURE_CONTRIBUTION',
+      properties: { relationship: 'Implements the Shared feature.', filePath: 'client/shared.ts' } }] };
+    render(<JoinedKnowledgeGraphSurface projections={projections}
+      codeGraph={{ projection: code, status: 'ready', error: null, warning: null, freshness: 'current' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Code source' }));
+    const graph = forceGraphMocks.instances.at(-1);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Shared' }));
+    await waitFor(() => expect(graph.data.nodes).toHaveLength(2));
+    const shared = graph.data.nodes.find((node: any) => node.label === 'Shared');
+    expect(shared).toMatchObject({ material_kind: 'joined-cyber', material_role: 'PAIRED_CYBER_MATERIAL',
+      material_code_present: true });
+    act(() => graph.nodeClick(shared));
+    expect(screen.getByRole('tab', { name: 'Think' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Know' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'Code' })).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Think' }));
+    expect(screen.getByTestId('thinkgraph-node-inspector').getAttribute('data-provider-id')).toBe('think-shared');
+    fireEvent.click(screen.getByRole('tab', { name: 'Know' }));
+    expect(screen.getByTestId('knowgraph-node-inspector').getAttribute('data-provider-id')).toBe('know-shared');
+    expect(graph.data.nodes.filter((node: any) => node.label === 'Shared')).toHaveLength(1);
+    expect(graph.data.nodes.find((node: any) => node.label === 'Shared').material_code_present).toBe(true);
+    act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.etype === 'File')));
+    expect(screen.getByTestId('codegraph-node-inspector').getAttribute('data-provider-id')).toBe('file:shared');
+    expect(screen.getByTestId('codegraph-node-details').textContent).toContain('Implements the Shared feature.');
+    expect(screen.queryByRole('tab', { name: 'Know' })).toBeNull();
+  });
+
+  it('lets the inspector select multiple source categories without fetching the full structural graph', async () => {
+    const onReadCodeGraphFiles = vi.fn(async () => null);
+    const codeProjection: GraphProjectionV1 = {
+      ...emptyCode(),
+      nodes: [
+        ...['CodeGraph', 'Source headers', 'Other'].map(label => ({ id: `feature:${label}`, label,
+          authority: 'codegraph', etype: 'Feature', properties: { recordKind: 'feature', featureName: label, memberFilePaths: label === 'Other' ? ['client/other.ts'] : ['client/shared.ts'] } })),
+        { id: 'file:shared', label: 'shared.ts', authority: 'codegraph', etype: 'File', properties: {
+          recordKind: 'file', filePath: 'client/shared.ts', qualifiedName: 'file:shared',
+        } },
+        { id: 'file:other', label: 'other.ts', authority: 'codegraph', etype: 'File', properties: {
+          recordKind: 'file', filePath: 'client/other.ts', qualifiedName: 'file:other',
+        } },
+      ],
+      edges: ['CodeGraph', 'Source headers', 'Other'].map(label => ({ id: `${label}-file`, source: `feature:${label}`,
+        target: label === 'Other' ? 'file:other' : 'file:shared', predicate: 'FEATURE_CONTRIBUTION', properties: { relationship: `${label} contribution.` } })),
+    };
+    render(<JoinedKnowledgeGraphSurface projections={currentProjections(empty('thinkgraph'), empty('knowgraph'))}
+      codeGraph={{ projection: codeProjection, status: 'ready', error: null, warning: null, freshness: 'current' }}
+      onReadCodeGraphFiles={onReadCodeGraphFiles} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Code source' }));
+    const graph = forceGraphMocks.instances.at(-1);
+    expect(screen.getByRole('group', { name: 'CodeGraph categories' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'CodeGraph' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Source headers' }));
+    await waitFor(() => expect(graph.data.nodes).toHaveLength(1));
+    expect(graph.data.links).toEqual([]);
+    expect(graph.data.nodes.filter((node: any) => node.etype === 'File')).toHaveLength(1);
+    expect(graph.data.nodes.some((node: any) => node.label === 'Other')).toBe(false);
+    expect(graph.data.nodes.some((node: any) => node.label === 'CodeGraph')).toBe(false);
+    expect(graph.data.nodes.some((node: any) => node.label === 'Source headers')).toBe(false);
+    await waitFor(() => expect(onReadCodeGraphFiles).toHaveBeenCalledWith(['client/shared.ts']));
+    expect(onReadCodeGraphFiles).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Other' }));
+    await waitFor(() => expect(onReadCodeGraphFiles).toHaveBeenLastCalledWith(['client/other.ts', 'client/shared.ts']));
+    expect(onReadCodeGraphFiles).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear category selection' }));
+    await waitFor(() => expect(graph.data.nodes).toHaveLength(0));
+    expect(graph.data.links).toHaveLength(0);
+    expect(graph.data.nodes.every((node: any) => !node.ghost)).toBe(true);
   });
 
   it.each(['error', 'ready'] as const)('reloads Code on an explicit layer-open from %s without reloading the app', async status => {
@@ -944,7 +829,7 @@ describe('knowledge authority graph surfaces', () => {
       codeGraph={{ projection: emptyCode(), status, error: status === 'error' ? 'read_timeout' : null, warning: null, freshness: 'unverified' }}
       onOpenCodeGraph={onOpenCodeGraph} />);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Code layer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Code source' }));
     await waitFor(() => expect(onOpenCodeGraph).toHaveBeenCalledTimes(1));
   });
 
@@ -973,84 +858,52 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.getByTestId('thinkgraph-edge-inspector').textContent).toContain('Recorded relationship.');
   });
 
-  it('renders the joined provider surface in the existing canvas and binds the pull tab to Engraphis settings', async () => {
+  it('keeps the shared canvas and source controls without exposing renderer tuning', async () => {
     const { container } = render(<KnowledgeGraphFramework
       projections={{ thinkgraph: empty('thinkgraph'), knowgraph: empty('knowgraph') }}
       errors={{}} {...codeProps()} />);
     await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')).toBeTruthy());
     expect(container.querySelector('iframe')).toBeNull();
     expect(screen.getByText('No knowledge yet.')).toBeTruthy();
-    await waitFor(() => expect(forceGraphMocks.instances.at(-1)?.data.nodes).toEqual([]));
     const graph = forceGraphMocks.instances.at(-1);
-    expect(graph.data.nodes).toEqual([]);
     expect(graph.setPreset).toHaveBeenCalledWith('compact');
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '7' } });
-    expect(graph.setSettings).toHaveBeenLastCalledWith({ size: 7 });
+    for (const source of ['Think source', 'Know source', 'Code source']) {
+      expect(screen.getByRole('button', { name: source })).toBeTruthy();
+    }
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reset to preset defaults' })).toBeNull();
+    expect(graph.setSettings).toHaveBeenLastCalledWith({ size: 5, labels: true, linkw: 1 });
     expect(graph.data.nodes).toEqual([]);
     expect(graph.data.links).toEqual([]);
-    fireEvent.click(screen.getByRole('button', { name: 'Reset to preset defaults' }));
-    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
-    expect(screen.getByRole('button', { name: 'Reset to preset defaults' }).textContent)
-      .toBe('Preset defaults applied · node size 5');
-    expect(graph.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({
-      size: 5, labels: true, linkw: 1,
-    }));
-    expect(screen.queryByRole('button', { name: /^Freeze$/ })).toBeNull();
   });
 
-  it('preserves a valid saved node size on load and visibly applies the current preset default on request', async () => {
+  it('does not let a saved orbital preset override Project graph physics', () => {
     const key = 'liquidaity.graph.thinkgraph.presentation.v1';
-    window.localStorage.setItem(key, JSON.stringify({
-      schemaVersion: 6,
-      layout: 'compact',
-      style: 'solarpunk',
-      physicsProfile: 'galaxy',
-      settings: { size: 3, labels: true },
-    }));
-    render(<KnowledgeGraphProjectionSurface authority="thinkgraph"
+    const stored = JSON.stringify({ schemaVersion: 6, layout: 'galaxy', style: 'classic',
+      physicsProfile: 'open', settings: { size: 3, labels: false } });
+    window.localStorage.setItem(key, stored);
+    const { container } = render(<KnowledgeGraphProjectionSurface authority="thinkgraph"
       projection={empty('thinkgraph')} status="ready" error={null} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-
-    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('3');
-    expect(JSON.parse(window.localStorage.getItem(key) || '{}').settings.size).toBe(3);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Reset to preset defaults' }));
-    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
-    expect(screen.getByRole('button', { name: 'Reset to preset defaults' }).textContent)
-      .toBe('Preset defaults applied · node size 5');
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(key) || '{}').settings.size).toBe(5));
+    const graph = forceGraphMocks.instances.at(-1);
+    expect(graph.setPreset).toHaveBeenCalledWith('compact');
+    expect(graph.setSettings).toHaveBeenLastCalledWith({ size: 5, labels: true, linkw: 1 });
+    expect(container.querySelector('[data-style="solarpunk"][data-physics-profile="galaxy"]')).toBeTruthy();
+    expect(window.localStorage.getItem(key)).toBe(stored);
   });
 
-  it('migrates the superseded Cyberpunk size-3 presentation to the Solarpunk size-5 baseline once', async () => {
+  it('keeps canonical colors without rewriting legacy presentation data', () => {
     const key = 'liquidaity.graph.joined.presentation.v1';
-    window.localStorage.setItem(key, JSON.stringify({
-      schemaVersion: 3,
-      layout: 'compact',
-      style: 'cyber',
-      physicsProfile: 'galaxy',
-      settings: { size: 3, labels: true, linkw: 0.4 },
-      solarpunkColors: {
-        think: '#6e5fae', know: '#f2a64a', relationship: '#123456',
-      },
-    }));
+    const stored = JSON.stringify({ schemaVersion: 3, style: 'cyber',
+      settings: { size: 3 }, solarpunkColors: { think: '#6e5fae', know: '#ffffff' } });
+    window.localStorage.setItem(key, stored);
     render(<JoinedKnowledgeGraphSurface
-      projections={currentProjections(empty('thinkgraph'), empty('knowgraph'))}
-    />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-
-    expect((screen.getByLabelText('Style') as HTMLSelectElement).value).toBe('solarpunk');
-    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
-    expect(screen.getByRole('slider', { name: 'Line width' }).getAttribute('value')).toBe('1');
-    expect((screen.getByLabelText('Think nodes') as HTMLInputElement).value).toBe('#4fa2ad');
-    expect((screen.getByLabelText('Know nodes') as HTMLInputElement).value).toBe('#f2a64a');
-    expect((screen.getByLabelText('Think edges') as HTMLInputElement).value).toBe('#4fa2ad');
-    expect((screen.getByLabelText('Know edges') as HTMLInputElement).value).toBe('#f2a64a');
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(key) || '{}')).toMatchObject({
-      schemaVersion: 6,
-      style: 'solarpunk',
-      settings: { size: 5, linkw: 1 },
-    }));
+      projections={currentProjections(empty('thinkgraph'), empty('knowgraph'))} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    expect(graph.setThemeColors).toHaveBeenLastCalledWith(expect.objectContaining({
+      material_blue: '#4FA2AD', material_orange: '#F2A64A' }));
+    expect(window.localStorage.getItem(key)).toBe(stored);
   });
 
   it('renders the mixed canvas with the original Solarpunk material and authority-matched colors', async () => {
@@ -1084,14 +937,14 @@ describe('knowledge authority graph surfaces', () => {
     expect(graph.setStyle).toHaveBeenCalledWith('cyber');
 
     expect(graph.data.nodes.find((node: any) => node.label === 'Shared')).toMatchObject({
-      material_kind: 'solarpunk', material_role: 'PAIRED_SOLARPUNK_MATERIAL',
+      material_kind: 'joined-cyber', material_role: 'PAIRED_CYBER_MATERIAL',
       material_blue: '#4FA2AD', material_orange: '#F2A64A', material_surface: '#0B0E12',
     });
     expect(graph.data.nodes.find((node: any) => node.label === 'Think only')).toMatchObject({
-      material_kind: 'solarpunk', material_role: 'THINK_MATERIAL', material_blue: '#4FA2AD',
+      material_kind: 'joined-cyber', material_role: 'THINK_MATERIAL', material_blue: '#4FA2AD',
     });
     expect(graph.data.nodes.find((node: any) => node.label === 'Know only')).toMatchObject({
-      material_kind: 'solarpunk', material_role: 'KNOW_MATERIAL', material_orange: '#F2A64A',
+      material_kind: 'joined-cyber', material_role: 'KNOW_MATERIAL', material_orange: '#F2A64A',
     });
     expect(graph.data.links.map((edge: any) => ({
       id: edge.id,
@@ -1113,78 +966,36 @@ describe('knowledge authority graph surfaces', () => {
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    fireEvent.change(screen.getByLabelText('Think nodes'), { target: { value: '#123456' } });
-    fireEvent.change(screen.getByLabelText('Know nodes'), { target: { value: '#abcdef' } });
-    fireEvent.change(screen.getByLabelText('Think edges'), { target: { value: '#2468ac' } });
-    fireEvent.change(screen.getByLabelText('Know edges'), { target: { value: '#ac6824' } });
-    await waitFor(() => expect(graph.data.nodes.find((node: any) => node.label === 'Shared'))
-      .toMatchObject({ material_blue: '#123456', material_orange: '#abcdef' }));
-    expect(graph.data.nodes.find((node: any) => node.label === 'Think only').material_blue)
-      .toBe('#123456');
-    expect(graph.data.nodes.find((node: any) => node.label === 'Know only').material_orange)
-      .toBe('#abcdef');
-    expect(graph.data.links.map((edge: any) => edge.material_color))
-      .toEqual(['#2468ac', '#ac6824']);
-    expect(screen.getByRole('group', { name: 'Solarpunk colors' })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Style'), { target: { value: 'classic' } });
-    await waitFor(() => expect(graph.data.nodes.every((node: any) => !node.material_kind)).toBe(true));
-    expect(graph.data.links.every((edge: any) => !edge.material_kind && !edge.material_color)).toBe(true);
-    expect(graph.setThemeColors).toHaveBeenLastCalledWith({});
     expect(screen.queryByRole('group', { name: 'Solarpunk colors' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Style' })).toBeNull();
   });
 
-  it('validates and reloads per-authority preferences without reading or changing the old combined key', async () => {
-    const oldKey = 'liquidaity.graph.combined.presentation.v1';
+  it('keeps internal presentation stable on remount and leaves old saved keys untouched', () => {
     const key = 'liquidaity.graph.thinkgraph.presentation.v1';
+    const oldKey = 'liquidaity.graph.combined.presentation.v1';
+    window.localStorage.setItem(key, 'old-size-and-style');
     window.localStorage.setItem(oldKey, 'leave-this-untouched');
-    const projection = {
-      ...empty('thinkgraph'),
-      nodes: [{ id: 'subject', label: 'Subject', properties: {} }],
-    };
-    const first = render(<KnowledgeGraphProjectionSurface
-      authority="thinkgraph" projection={projection} status="ready" error={null}
-    />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '7' } });
-    fireEvent.change(screen.getByLabelText('Think nodes'), { target: { value: '#123456' } });
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(key) || '{}')).toMatchObject({
-      style: 'solarpunk', settings: { size: 7 }, solarpunkColors: { think: '#123456' },
-    }));
+    const first = render(<KnowledgeGraphProjectionSurface authority="thinkgraph"
+      projection={empty('thinkgraph')} status="ready" error={null} />);
     first.unmount();
-
-    render(<KnowledgeGraphProjectionSurface
-      authority="thinkgraph" projection={projection} status="ready" error={null}
-    />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect((screen.getByLabelText('Style') as HTMLSelectElement).value).toBe('solarpunk');
-    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('7');
-    expect((screen.getByLabelText('Think nodes') as HTMLInputElement).value).toBe('#123456');
+    render(<KnowledgeGraphProjectionSurface authority="thinkgraph"
+      projection={empty('thinkgraph')} status="ready" error={null} />);
+    expect(forceGraphMocks.instances.at(-1).setPreset).toHaveBeenCalledWith('compact');
+    expect(window.localStorage.getItem(key)).toBe('old-size-and-style');
     expect(window.localStorage.getItem(oldKey)).toBe('leave-this-untouched');
   });
 
-  it('rejects invalid persisted presentation values and keeps bounded defaults', () => {
-    window.localStorage.setItem('liquidaity.graph.knowgraph.presentation.v1', JSON.stringify({
-      style: 'unknown', layout: 'everything', physicsProfile: 'unsafe',
-      settings: { size: 99, font: 0, linkw: -1, labelDensity: 101, repel: -2,
-        link: 1000, gravity: Infinity, labels: 'yes', arbitrary: 'kept' },
-      solarpunkColors: {
-        think: 'red', know: '#12345g',
-        thinkRelationship: '#12345678', knowRelationship: 'orange',
-      },
-    }));
-    render(<KnowledgeGraphProjectionSurface
-      authority="knowgraph" projection={empty('knowgraph')} status="ready" error={null}
-    />);
+  it('ignores malformed legacy tuning and exposes no physics controls', () => {
+    const key = 'liquidaity.graph.knowgraph.presentation.v1';
+    window.localStorage.setItem(key, JSON.stringify({ style: 'unknown', layout: 'everything',
+      physicsProfile: 'unsafe', settings: { size: 99, gravity: Infinity } }));
+    render(<KnowledgeGraphProjectionSurface authority="knowgraph"
+      projection={empty('knowgraph')} status="ready" error={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-
-    expect((screen.getByLabelText('Style') as HTMLSelectElement).value).toBe('solarpunk');
-    expect((screen.getByLabelText('Layout') as HTMLSelectElement).value).toBe('compact');
-    expect((screen.getByLabelText('Physics profile') as HTMLSelectElement).value).toBe('galaxy');
-    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
-    expect((screen.getByLabelText('Think nodes') as HTMLInputElement).value).toBe('#4fa2ad');
-    expect((screen.getByLabelText('Know nodes') as HTMLInputElement).value).toBe('#f2a64a');
-    expect((screen.getByLabelText('Think edges') as HTMLInputElement).value).toBe('#4fa2ad');
-    expect((screen.getByLabelText('Know edges') as HTMLInputElement).value).toBe('#f2a64a');
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(forceGraphMocks.instances.at(-1).setSettings)
+      .toHaveBeenLastCalledWith({ size: 5, labels: true, linkw: 1 });
   });
 
   it('displays the full union without inventing a join when no Entity directory is supplied', async () => {
@@ -1526,7 +1337,6 @@ describe('knowledge authority graph surfaces', () => {
     const { container } = render(<KnowledgeGraphProjectionSurface authority={authority} projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '5' } });
     act(() => graph.nodeClick(graph.data.nodes[0]));
     const panel = screen.getByRole('complementary');
     expect(panel.style.width).toBe('340px');
@@ -1570,18 +1380,12 @@ describe('knowledge authority graph surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
     act(() => graph.backgroundClick());
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
+    expect(screen.queryByRole('slider', { name: 'Node size' })).toBeNull();
     expect(screen.getByRole('complementary').style.width).toBe('340px');
-    const styleSelect = screen.getByRole('combobox', { name: 'Style' }) as HTMLSelectElement;
-    expect(styleSelect.value).toBe('solarpunk');
-    expect([...styleSelect.options].map(option => option.textContent)).toContain('Solarpunk');
+    expect(screen.queryByRole('combobox', { name: 'Style' })).toBeNull();
     expect(graph.data.nodes[0].material_kind).toBe('solarpunk');
-    expect(screen.getByRole('group', { name: 'Solarpunk colors' })).toBeTruthy();
-    expect(graph.setStyle).toHaveBeenLastCalledWith('cyber');
-    fireEvent.change(styleSelect, { target: { value: 'cyber' } });
-    await waitFor(() => expect(graph.data.nodes[0].material_kind).toBeUndefined());
     expect(screen.queryByRole('group', { name: 'Solarpunk colors' })).toBeNull();
-    expect(graph.setThemeColors).toHaveBeenLastCalledWith({});
+    expect(graph.setStyle).toHaveBeenLastCalledWith('cyber');
     expect(container.querySelector('.thinkgraph-entry')).toBeNull();
     expect(graph.setPreset).toHaveBeenCalledTimes(1);
     expect(graph.setPreset).toHaveBeenCalledWith('compact');
@@ -1594,7 +1398,7 @@ describe('knowledge authority graph surfaces', () => {
     act(() => graph.backgroundClick());
     expect(screen.getByRole('complementary', { hidden: true }).getAttribute('data-open')).toBe('false');
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'Layout' })).toBeNull();
     expect(screen.getByRole('complementary').style.width).toBe('340px');
   });
 });

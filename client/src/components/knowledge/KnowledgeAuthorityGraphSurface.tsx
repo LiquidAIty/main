@@ -4,15 +4,15 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
- * Relationship: This file owns the single renderer lifecycle, camera, settings, selection, focus, and Inspector shared by the Project graph views.
+ * Relationship: This file owns the single renderer lifecycle, camera, settings, selection and Inspector shared by the Project graph views.
  * Entity: ThinkGraph
- * Relationship: This file renders exact Engraphis nodes, relationships, Think records, native mention references, Jev provenance, focus neighborhoods, and confirmed removal actions.
+ * Relationship: This file renders exact Engraphis nodes, relationships, Think records, native mention references, Jev provenance, and confirmed removal actions.
  * Entity: KnowGraph
- * Relationship: This file renders exact Graphiti Entities, relationships, atomic and historical Knows, sources, focus neighborhoods, and confirmed episode removal actions.
+ * Relationship: This file renders exact Graphiti Entities, relationships, atomic and historical Knows, sources, and confirmed episode removal actions.
  * Entity: CodeGraph
- * Relationship: This file renders the Code layer category-first, expands a selected File, loads exact source on request, and mounts CodeGraph review controls in its existing Inspector.
+ * Relationship: This file renders category-selected Code Files, loads directed CBM connections, loads exact source on request, and mounts CodeGraph review controls in its existing Inspector.
  * Entity: Jev Decisions
- * Relationship: This file presents validated relationship probabilities and bounded manual focus results as transient physics and navigation without writing graph meaning.
+ * Relationship: This file presents validated relationship probabilities as transient physics without writing graph meaning.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -25,8 +25,6 @@ import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCan
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
 import {
   applyJevGraphPhysics,
-  JEV_GRAPH_PHYSICS_PROFILE_LABELS,
-  JEV_GRAPH_PHYSICS_PROFILES,
   type JevGraphPhysicsProfile,
 } from './jevGraphPhysics';
 import {
@@ -42,6 +40,7 @@ import {
   composeVisibleGraphLayers,
   providerMemberKey,
   solarpunkMaterialFields,
+  combinedCyberMaterialFields,
   visualSourceKind,
   type GraphAuthority,
   type GraphLayerVisibility,
@@ -52,39 +51,17 @@ import {
   type JoinedGraphEdgeVariant,
   type JoinedGraphNodeVariant,
   type JoinedGraphPresentation,
-  type ReadProviderFocusNeighborhood,
-  type SolarpunkColors,
 } from './knowledgeGraphProjection';
 import {
+  applyCodeGraphPhysics,
   codeGraphCategoryProjection,
   codeGraphFeatures,
-  type CodeGraphSelectedSymbol,
+  type CodeGraphFileSource,
 } from './codeGraphProjection';
 import {
-  CALM_FOCUS_GALAXY_SETTINGS,
-  FOCUS_RELEASE_MILLISECONDS,
-  MAX_JEV_FOCUS_CANDIDATES,
-  buildJevFocusCandidates,
-  composeExpandedFocusPresentation,
-  composeFocusNeighborhoodPresentation,
-  composeFocusReleasePresentation,
-  composeManualFocusPresentation,
-  focusCenterMembers,
-  requestJevFocus,
-  selectedFocusCandidates,
-  type FocusReleaseView,
-  type JevFocusDecisionView,
-  type ManualFocusEntry,
-} from './knowledgeGraphFocus';
-import {
-  SOLARPUNK_HEX,
-  presentationStorageKey,
-  rendererStyle,
-  safePresentationPreferences,
   solarpunkEdgeFields,
   withoutSolarpunkEdgeMaterial,
   withoutSolarpunkMaterial,
-  type GraphPresentationPreferences,
   type PresentationStyle,
   type RendererLayout,
   type RendererStyle,
@@ -111,12 +88,11 @@ export function JoinedKnowledgeGraphSurface({
   statuses,
   errors,
   codeGraph,
-  onReadProviderFocusNeighborhood,
   onRemoveThinkGraphEvidence,
   onRemoveKnowGraphEvidence,
   entityFocusRequest,
   onOpenCodeGraph,
-  onReadCodeGraphFile,
+  onReadCodeGraphFiles,
   onReadCodeGraphSource,
 }: {
   projections: Record<GraphAuthority, GraphProjectionV1>;
@@ -129,19 +105,18 @@ export function JoinedKnowledgeGraphSurface({
     warning: string | null;
     freshness: string;
   };
-  onReadProviderFocusNeighborhood?: ReadProviderFocusNeighborhood;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
   onRemoveKnowGraphEvidence?: (episodeId: string) => Promise<void>;
   entityFocusRequest?: CanonicalEntityFocusRequest | null;
   onOpenCodeGraph?: () => Promise<GraphProjectionV1 | null>;
-  onReadCodeGraphFile?: (filePath: string) => Promise<GraphProjectionV1 | null>;
-  onReadCodeGraphSource?: (qualifiedName: string) => Promise<CodeGraphSelectedSymbol | null>;
+  onReadCodeGraphFiles?: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;
+  onReadCodeGraphSource?: (filePath: string) => Promise<CodeGraphFileSource | null>;
 }) {
   const [layerVisibility, setLayerVisibility] = useState<GraphLayerVisibility>(() => ({
     ...DEFAULT_GRAPH_LAYER_VISIBILITY,
   }));
   const [codeFeatureIds, setCodeFeatureIds] = useState<string[]>([]);
-  const [codeFilePath, setCodeFilePath] = useState<string | null>(null);
+  const [codeConnections, setCodeConnections] = useState('');
   const codeLayer = codeGraph || {
     projection: {
       schemaVersion: 'codegraph.projection.v1',
@@ -158,13 +133,35 @@ export function JoinedKnowledgeGraphSurface({
   };
   useEffect(() => {
     setCodeFeatureIds([]);
-    setCodeFilePath(null);
   }, [codeLayer.projection.projectId]);
   const visibleCodeProjection = useMemo(
-    () => codeGraphCategoryProjection(codeLayer.projection, codeFeatureIds, codeFilePath),
-    [codeFeatureIds, codeFilePath, codeLayer.projection],
+    () => codeGraphCategoryProjection(codeLayer.projection, codeFeatureIds),
+    [codeFeatureIds, codeLayer.projection],
   );
   const codeFeatures = useMemo(() => codeGraphFeatures(codeLayer.projection), [codeLayer.projection]);
+  const selectedPathsKey = JSON.stringify([...new Set(codeFeatures
+    .filter(feature => codeFeatureIds.includes(feature.id))
+    .flatMap(feature => Array.isArray(feature.properties?.memberFilePaths)
+      ? feature.properties.memberFilePaths.filter((path): path is string => typeof path === 'string') : []))].sort());
+  useEffect(() => {
+    let cancelled = false;
+    const paths: string[] = JSON.parse(selectedPathsKey);
+    if (!layerVisibility.codegraph || !onReadCodeGraphFiles || !paths.length) {
+      setCodeConnections('');
+      return;
+    }
+    setCodeConnections(`Reading connections · ${paths.length} selected files`);
+    void onReadCodeGraphFiles(paths).then(result => {
+      if (cancelled) return;
+      const complete = result?.nodes.filter(node => node.properties?.structuralComplete === true).length;
+      setCodeConnections(complete === paths.length
+        ? `Connections read · ${paths.length} files`
+        : 'Connections incomplete. Select a file to inspect or retry.');
+    }).catch(error => {
+      if (!cancelled) setCodeConnections(error instanceof Error ? error.message : String(error));
+    });
+    return () => { cancelled = true; };
+  }, [layerVisibility.codegraph, selectedPathsKey, onReadCodeGraphFiles, codeLayer.projection.projectId]);
   const presentation = useMemo(
     () => composeVisibleGraphLayers(
       projections.thinkgraph,
@@ -215,10 +212,6 @@ export function JoinedKnowledgeGraphSurface({
     : null;
   const setLayerVisible = (layer: keyof GraphLayerVisibility, visible: boolean) => {
     setLayerVisibility(current => ({ ...current, [layer]: visible }));
-    if (layer === 'codegraph' && !visible) {
-      setCodeFeatureIds([]);
-      setCodeFilePath(null);
-    }
     if (layer === 'codegraph' && visible && codeLayer.status !== 'loading' && onOpenCodeGraph) {
       void onOpenCodeGraph();
     }
@@ -232,38 +225,25 @@ export function JoinedKnowledgeGraphSurface({
       entityFocusRequest={entityFocusRequest}
       projection={presentation.projection}
       joinedPresentation={presentation}
-      onReadProviderFocusNeighborhood={onReadProviderFocusNeighborhood}
       status={status}
       error={error}
       warning={warning}
       onRemoveEvidence={onRemoveThinkGraphEvidence}
       onRemoveKnowEvidence={onRemoveKnowGraphEvidence}
-      onReadCodeGraphFile={onReadCodeGraphFile ? async (filePath) => {
-        setCodeFilePath(filePath);
-        return onReadCodeGraphFile(filePath);
-      } : undefined}
+      onReadCodeGraphFiles={onReadCodeGraphFiles}
       onReadCodeGraphSource={onReadCodeGraphSource}
-      codeNavigationActive={Boolean(codeFeatureIds.length || codeFilePath)}
       codeFeatures={codeFeatures}
       selectedCodeFeatureIds={codeFeatureIds}
       onToggleCodeGraphFeature={(featureId) => {
         setCodeFeatureIds(current => current.includes(featureId)
           ? current.filter(id => id !== featureId) : [...current, featureId]);
-        setCodeFilePath(null);
       }}
-      onSelectCodeGraphFeature={(featureId) => {
-        setCodeFeatureIds(current => current.includes(featureId) ? current : [...current, featureId]);
-        setCodeFilePath(null);
-      }}
-      onClearCodeGraphFeature={() => {
-        setCodeFeatureIds([]);
-        setCodeFilePath(null);
-      }}
+      onClearCodeGraphFeature={() => setCodeFeatureIds([])}
+      onSelectAllCodeGraphFeatures={() => setCodeFeatureIds(codeFeatures.map(feature => feature.id))}
       layerVisibility={layerVisibility}
       onLayerVisibilityChange={setLayerVisible}
       onResetLayerVisibility={() => {
         setCodeFeatureIds([]);
-        setCodeFilePath(null);
         setLayerVisibility({ ...DEFAULT_GRAPH_LAYER_VISIBILITY });
       }}
       layerCounts={{
@@ -273,6 +253,7 @@ export function JoinedKnowledgeGraphSurface({
       }}
       codeLayerStatus={codeLayer.status}
       codeLayerFreshness={codeLayer.freshness}
+      codeConnections={codeConnections}
     />
   );
 }
@@ -289,8 +270,6 @@ type EngraphisRenderer = {
   graphToScreen: (x: number, y: number) => { x: number; y: number };
   fit: () => void;
   resize: () => void;
-  focus: (id: string) => boolean;
-  clearFocus: () => void;
   freeze: (on: boolean) => void;
   reheat: () => void;
   setCollapse: (mode: boolean | 'auto') => void;
@@ -315,25 +294,24 @@ export function KnowledgeGraphProjectionSurface({
   warning,
   authority = 'knowgraph',
   joinedPresentation,
-  onReadProviderFocusNeighborhood,
   onRemoveEvidence,
   onRemoveKnowEvidence,
   canonicalEntityDirectory,
   entityFocusRequest,
-  onReadCodeGraphFile,
+  onReadCodeGraphFiles,
   onReadCodeGraphSource,
-  codeNavigationActive,
   codeFeatures,
   selectedCodeFeatureIds,
   onToggleCodeGraphFeature,
-  onSelectCodeGraphFeature,
   onClearCodeGraphFeature,
+  onSelectAllCodeGraphFeatures,
   layerVisibility,
   onLayerVisibilityChange,
   onResetLayerVisibility,
   layerCounts,
   codeLayerStatus,
   codeLayerFreshness,
+  codeConnections,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -341,19 +319,17 @@ export function KnowledgeGraphProjectionSurface({
   warning?: string | null;
   authority?: GraphSurfaceAuthority;
   joinedPresentation?: JoinedGraphPresentation;
-  onReadProviderFocusNeighborhood?: ReadProviderFocusNeighborhood;
   onRemoveEvidence?: (memoryId: string) => Promise<void>;
   onRemoveKnowEvidence?: (episodeId: string) => Promise<void>;
   canonicalEntityDirectory?: CanonicalEntityDirectory | null;
   entityFocusRequest?: CanonicalEntityFocusRequest | null;
-  onReadCodeGraphFile?: (filePath: string) => Promise<GraphProjectionV1 | null>;
-  onReadCodeGraphSource?: (qualifiedName: string) => Promise<CodeGraphSelectedSymbol | null>;
-  codeNavigationActive?: boolean;
+  onReadCodeGraphFiles?: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;
+  onReadCodeGraphSource?: (filePath: string) => Promise<CodeGraphFileSource | null>;
   codeFeatures?: GraphProjectionNode[];
   selectedCodeFeatureIds?: string[];
   onToggleCodeGraphFeature?: (featureId: string) => void;
-  onSelectCodeGraphFeature?: (featureId: string) => void;
   onClearCodeGraphFeature?: () => void;
+  onSelectAllCodeGraphFeatures?: () => void;
   layerVisibility?: GraphLayerVisibility;
   onLayerVisibilityChange?: (
     layer: keyof GraphLayerVisibility,
@@ -363,155 +339,49 @@ export function KnowledgeGraphProjectionSurface({
   layerCounts?: Record<keyof GraphLayerVisibility, number>;
   codeLayerStatus?: 'idle' | 'loading' | 'ready' | 'error';
   codeLayerFreshness?: string;
+  codeConnections?: string;
 }) {
-  const savedPresentationRef = useRef(safePresentationPreferences(authority));
-  const savedPresentation = savedPresentationRef.current;
-  const savedPresentationIsCurrent = savedPresentation.schemaVersion === 6;
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<EngraphisRenderer | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [selectedAuthority, setSelectedAuthority] = useState<GraphAuthority | null>(null);
+  const [selectedAuthority, setSelectedAuthority] = useState<GraphAuthority | 'codegraph' | null>(null);
   const [selectedMemberKey, setSelectedMemberKey] = useState<string | null>(null);
   const [selectedKnowEpisodeId, setSelectedKnowEpisodeId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
-  const [settings, setSettings] = useState<Record<string, number | boolean | string>>(
-    savedPresentationIsCurrent
-      ? savedPresentation.settings || {}
-      : { ...(savedPresentation.settings || {}), size: 5 },
-  );
-  const [layout, setLayout] = useState<RendererLayout>(savedPresentation.layout || 'compact');
-  const [style, setStyle] = useState<PresentationStyle>(
-    authority === 'codegraph'
-      ? savedPresentation.style || 'cyber'
-      : savedPresentationIsCurrent ? savedPresentation.style || 'solarpunk' : 'solarpunk',
-  );
-  const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(
-    savedPresentation.physicsProfile || 'galaxy',
-  );
-  const [solarpunkColors, setSolarpunkColors] = useState<SolarpunkColors>(
-    savedPresentationIsCurrent
-      ? savedPresentation.solarpunkColors || DEFAULT_SOLARPUNK_COLORS
-      : DEFAULT_SOLARPUNK_COLORS,
-  );
-  const [appliedPresetNodeSize, setAppliedPresetNodeSize] = useState<number | null>(null);
-  const [focusTrail, setFocusTrail] = useState<ManualFocusEntry[]>([]);
-  const [expandedFocusResult, setExpandedFocusResult] = useState<ManualFocusEntry | null>(null);
-  const [focusRelease, setFocusRelease] = useState<FocusReleaseView | null>(null);
-  const focusRequestControllersRef = useRef(new Map<number, AbortController>());
-  const focusRequestIdentityRef = useRef(0);
-  const focusProjectionKeyRef = useRef('');
-  const focusReleaseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const focusActionRef = useRef<(id: string) => void>(() => undefined);
-  const exitFocusRef = useRef<() => void>(() => undefined);
+  const codeOnly = authority === 'codegraph' || (authority === 'joined'
+    && layerVisibility?.codegraph === true
+    && !layerVisibility.thinkgraph && !layerVisibility.knowgraph);
+  const layout: RendererLayout = codeOnly ? 'communities' : 'compact';
+  const style: PresentationStyle = codeOnly ? 'cyber' : 'solarpunk';
+  const physicsProfile: JevGraphPhysicsProfile = 'galaxy';
+  const solarpunkColors = DEFAULT_SOLARPUNK_COLORS;
   const inspectNodeRef = useRef<(id: string) => void>(() => undefined);
   const consumedEntityFocusRequestRef = useRef<number | null>(null);
-  const presentationStateRef = useRef<{
-    layout: RendererLayout;
-    style: PresentationStyle;
-    physicsProfile: JevGraphPhysicsProfile;
-    settings: Record<string, number | boolean | string>;
-  }>({ layout: 'compact', style: 'cyber', physicsProfile: 'galaxy', settings: {} });
-  const automaticPresentationRef = useRef<{
-    renderer: EngraphisRenderer | null;
-    snapshot: typeof presentationStateRef.current;
-    manualLayout: boolean;
-    manualStyle: boolean;
-    manualPhysics: boolean;
-    manualSettings: Set<string>;
-    manualAllSettings: boolean;
-  } | null>(null);
   const panelBodyRef = useRef<HTMLDivElement>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
-  const [codeSource, setCodeSource] = useState<CodeGraphSelectedSymbol | null>(null);
+  const [codeSource, setCodeSource] = useState<CodeGraphFileSource | null>(null);
   const [codeSourceLoading, setCodeSourceLoading] = useState(false);
   const [codeSourceError, setCodeSourceError] = useState<string | null>(null);
+  const [codeFileLoading, setCodeFileLoading] = useState(false);
+  const [codeFileError, setCodeFileError] = useState<string | null>(null);
   const codeSourceSelectionRef = useRef(0);
   const [paperViewport, setPaperViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef<{ x: number; y: number; scale: number } | null>(null);
-  presentationStateRef.current = { layout, style, physicsProfile, settings };
-  const focusedEntry = focusTrail.length ? focusTrail[focusTrail.length - 1] : null;
-  const successfulFocusedEntry = focusedEntry?.status === 'success'
-    && focusedEntry.decision?.status === 'success'
-    ? focusedEntry
-    : null;
-  const focusRequestPending = focusedEntry?.status === 'reading' || focusedEntry?.status === 'loading';
-  const activeJoinedPresentation = successfulFocusedEntry?.presentation
-    || expandedFocusResult?.presentation
-    || joinedPresentation;
-  const localDisplayProjection = useMemo(
-    () => projection
-      ? authority === 'codegraph' ? projection : applyJevGraphPhysics(projection, physicsProfile)
-      : null,
-    [authority, physicsProfile, projection],
-  );
-  const manualProjectionSource = useMemo(
-    () => authority === 'joined' && activeJoinedPresentation
-      ? applyJevGraphPhysics(activeJoinedPresentation.projection, physicsProfile)
-      : localDisplayProjection,
-    [activeJoinedPresentation, authority, localDisplayProjection, physicsProfile],
-  );
-  const focusProjectionKey = useMemo(() => {
-    if (authority !== 'joined' || !joinedPresentation) return '';
-    const projectionIdentity = (value: GraphProjectionV1) => {
-      const material = JSON.stringify({
-        authority: value.authority,
-        projectId: value.projectId,
-        revision: value.revision || '',
-        nodes: value.nodes.map(node => [node.id, node.canonicalId || '', node.label]).sort(),
-        edges: value.edges.map(edge => [
-          edge.id, edge.source, edge.target, edge.predicate || '',
-        ]).sort(),
-      });
-      let fingerprint = 2166136261;
-      for (let index = 0; index < material.length; index += 1) {
-        fingerprint ^= material.charCodeAt(index);
-        fingerprint = Math.imul(fingerprint, 16777619);
-      }
-      return `${value.authority}:${value.nodes.length}:${value.edges.length}:${(fingerprint >>> 0).toString(16)}`;
-    };
-    return [
-      joinedPresentation.projection.projectId,
-      projectionIdentity(joinedPresentation.providerProjections.thinkgraph),
-      projectionIdentity(joinedPresentation.providerProjections.knowgraph),
-    ].join('|');
-  }, [authority, joinedPresentation]);
-  focusProjectionKeyRef.current = focusProjectionKey;
-  const manualNavigationActive = focusedEntry !== null || expandedFocusResult !== null;
-  const blackholePresentationActive = successfulFocusedEntry !== null;
-  const manualFocusPresentation = useMemo(
-    () => manualProjectionSource && successfulFocusedEntry
-      ? composeManualFocusPresentation(manualProjectionSource, successfulFocusedEntry)
-      : null,
-    [manualProjectionSource, successfulFocusedEntry],
-  );
-  const expandedFocusPresentation = useMemo(
-    () => manualProjectionSource
-      ? composeExpandedFocusPresentation(manualProjectionSource, expandedFocusResult)
-      : null,
-    [expandedFocusResult, manualProjectionSource],
-  );
-  const displayProjection = useMemo(
-    () => manualFocusPresentation?.projection
-      || (expandedFocusPresentation || localDisplayProjection
-        ? composeFocusReleasePresentation(
-          expandedFocusPresentation || localDisplayProjection!,
-          focusRelease,
-        )
-        : null),
-    [expandedFocusPresentation, focusRelease, localDisplayProjection, manualFocusPresentation],
-  );
+  const activeJoinedPresentation = joinedPresentation;
+  const displayProjection = useMemo(() => projection
+    ? applyCodeGraphPhysics(authority === 'codegraph' ? projection : applyJevGraphPhysics(projection, physicsProfile))
+    : null, [authority, physicsProfile, projection]);
   const selectedVisual = displayProjection?.nodes.find(node => node.id === selectedId);
-  const selectedCodeNode = authority === 'codegraph'
+  const availableCodeNode = authority === 'codegraph'
     ? selectedVisual
     : selectedVisual && authority === 'joined'
       ? activeJoinedPresentation?.codeNodeVariants?.get(selectedVisual.id)
       : undefined;
   const selectedNodeVariants: JoinedGraphNodeVariant[] = selectedVisual
-    && !selectedCodeNode
     && authority !== 'codegraph'
     ? activeJoinedPresentation?.nodeVariants.get(selectedVisual.id)
       || (authority !== 'joined' ? [{ authority, node: selectedVisual }] : [])
@@ -522,27 +392,13 @@ export function KnowledgeGraphProjectionSurface({
   const directKnowAvailable = selectedNodeVariants.some(
     variant => variant.authority === 'knowgraph',
   );
-  const directThinkEvidenceAvailable = selectedNodeVariants.some(variant => (
-    variant.authority === 'thinkgraph'
-    && Array.isArray(variant.node.properties?.evidence)
-    && variant.node.properties.evidence.some((item: unknown) => (
-      item !== null && typeof item === 'object' && !Array.isArray(item)
-    ))
-  ));
-  const directKnowEvidenceAvailable = selectedNodeVariants.some(variant => (
-    variant.authority === 'knowgraph'
-    && Array.isArray(variant.node.properties?.evidence)
-    && variant.node.properties.evidence.some((item: unknown) => (
-      item !== null && typeof item === 'object' && !Array.isArray(item)
-      && knowEvidenceIdentity(item as Record<string, unknown>) !== null
-    ))
-  ));
   const defaultSelectedAuthority = directKnowAvailable
     ? 'knowgraph'
-    : directThinkAvailable ? 'thinkgraph' : null;
+    : directThinkAvailable ? 'thinkgraph' : availableCodeNode ? 'codegraph' : null;
   const inspectedNodeAuthority = selectedAuthority
     && ((selectedAuthority === 'thinkgraph' && directThinkAvailable)
-      || (selectedAuthority === 'knowgraph' && directKnowAvailable))
+      || (selectedAuthority === 'knowgraph' && directKnowAvailable)
+      || (selectedAuthority === 'codegraph' && availableCodeNode))
     ? selectedAuthority
     : defaultSelectedAuthority;
   const selectedAuthorityVariants = selectedNodeVariants.filter(
@@ -551,6 +407,9 @@ export function KnowledgeGraphProjectionSurface({
   const selectedNodeVariant = selectedAuthorityVariants.find(
     variant => providerMemberKey(variant.authority, variant.node.id) === selectedMemberKey,
   ) || selectedAuthorityVariants[0];
+  const selectedCodeNode = inspectedNodeAuthority === 'codegraph' && availableCodeNode
+    ? { ...availableCodeNode, properties: { ...availableCodeNode.properties, ...selectedVisual?.properties } }
+    : undefined;
   const selected = selectedCodeNode || selectedNodeVariant?.node;
   const selectedEdgeVisual = displayProjection?.edges.find(edge => edge.id === selectedEdgeId);
   const selectedCodeEdge = authority === 'codegraph'
@@ -579,6 +438,7 @@ export function KnowledgeGraphProjectionSurface({
     setCodeSource(null);
     setCodeSourceLoading(false);
     setCodeSourceError(null);
+    setCodeFileError(null);
   }, [selectedEdgeId, selectedId]);
   const openNodeInspector = (visualNodeId: string) => {
     setControlsOpen(false);
@@ -590,23 +450,6 @@ export function KnowledgeGraphProjectionSurface({
     setInspectorOpen(true);
     setCodeSource(null);
     setCodeSourceError(null);
-    const codeNode = authority === 'codegraph'
-      ? displayProjection?.nodes.find(node => node.id === visualNodeId)
-      : authority === 'joined'
-        ? activeJoinedPresentation?.codeNodeVariants?.get(visualNodeId)
-        : null;
-    if (codeNode?.properties?.recordKind === 'feature' && onSelectCodeGraphFeature) {
-      onSelectCodeGraphFeature(codeNode.id);
-    }
-    const filePath = codeNode?.properties?.recordKind === 'file'
-      && typeof codeNode.properties.filePath === 'string'
-      ? codeNode.properties.filePath
-      : '';
-    if (filePath && codeNode?.properties?.structuralLoaded !== true && onReadCodeGraphFile) {
-      void onReadCodeGraphFile(filePath).catch(failure => {
-        setCodeSourceError(failure instanceof Error ? failure.message : String(failure));
-      });
-    }
   };
   inspectNodeRef.current = openNodeInspector;
   const mentionVisualId = (target: CanonicalEntityFocusTarget) => displayProjection
@@ -644,191 +487,6 @@ export function KnowledgeGraphProjectionSurface({
       deltaY: key === '+' ? -120 : 120 }));
   };
 
-  const beginFocusRelease = (entry: ManualFocusEntry | null) => {
-    if (!entry || !manualProjectionSource) {
-      setFocusRelease(null);
-      return;
-    }
-    const focused = composeManualFocusPresentation(manualProjectionSource, entry);
-    setFocusRelease({
-      nodeIds: focused.nodeIds,
-      edgeIds: focused.edgeIds,
-    });
-    if (focusReleaseTimeoutRef.current) clearTimeout(focusReleaseTimeoutRef.current);
-    const reducedMotion = typeof window.matchMedia === 'function'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reducedMotion) {
-      setFocusRelease(null);
-      return;
-    }
-    focusReleaseTimeoutRef.current = setTimeout(() => {
-      focusReleaseTimeoutRef.current = null;
-      setFocusRelease(null);
-    }, FOCUS_RELEASE_MILLISECONDS);
-  };
-
-  const exitManualFocus = () => {
-    const current = focusTrail.length ? focusTrail[focusTrail.length - 1] : null;
-    if (!current && !focusRelease) return;
-    for (const controller of focusRequestControllersRef.current.values()) controller.abort();
-    focusRequestControllersRef.current.clear();
-    focusRequestIdentityRef.current += 1;
-    if (current?.status === 'success' && current.decision?.status === 'success') {
-      setExpandedFocusResult(current);
-      beginFocusRelease(current);
-    } else {
-      setFocusRelease(null);
-    }
-    const automatic = automaticPresentationRef.current;
-    if (automatic) {
-      automatic.snapshot.layout = 'compact';
-      automatic.snapshot.physicsProfile = 'galaxy';
-    }
-    setFocusTrail([]);
-  };
-
-  const enterManualFocus = (centerId: string) => {
-    if (authority !== 'joined' || !activeJoinedPresentation || !manualProjectionSource) return;
-    const center = manualProjectionSource.nodes.find(node => node.id === centerId);
-    if (!center || (focusedEntry?.centerId === centerId
-      && ['reading', 'loading', 'success'].includes(focusedEntry.status))) return;
-    const sourcePresentation = activeJoinedPresentation;
-    const centerProviderMembers = focusCenterMembers(sourcePresentation, centerId);
-    if (!centerProviderMembers.length) return;
-    if (focusReleaseTimeoutRef.current) {
-      clearTimeout(focusReleaseTimeoutRef.current);
-      focusReleaseTimeoutRef.current = null;
-    }
-    for (const pending of focusRequestControllersRef.current.values()) pending.abort();
-    focusRequestControllersRef.current.clear();
-    setFocusRelease(null);
-    const requestIdentity = focusRequestIdentityRef.current + 1;
-    focusRequestIdentityRef.current = requestIdentity;
-    const entry: ManualFocusEntry = {
-      centerId,
-      centerTitle: center.label || center.title || center.id,
-      status: 'reading',
-      decision: null,
-      requestIdentity,
-      projectionKey: focusProjectionKey,
-      presentation: sourcePresentation,
-      readWarning: null,
-    };
-    setFocusTrail([entry]);
-    const controller = new AbortController();
-    focusRequestControllersRef.current.set(requestIdentity, controller);
-    const stale = () => controller.signal.aborted
-      || focusProjectionKeyRef.current !== entry.projectionKey;
-    const failedDecision = (
-      status: Exclude<JevFocusDecisionView['status'], 'success'>,
-      errorCode: string,
-    ): JevFocusDecisionView => ({
-      status, errorCode, candidates: [],
-    });
-    void (async () => {
-      if (!onReadProviderFocusNeighborhood) {
-        if (stale()) return;
-        const decision = failedDecision('unavailable', 'jev_focus_provider_reader_unavailable');
-        setFocusTrail(history => history.map(item => item.requestIdentity === requestIdentity
-          ? { ...item, status: decision.status, decision }
-          : item));
-        return;
-      }
-      const settled = await Promise.allSettled(centerProviderMembers.map(async member => ({
-        authority: member.authority === 'ThinkGraph' ? 'thinkgraph' as const : 'knowgraph' as const,
-        projection: await onReadProviderFocusNeighborhood(
-          member.authority === 'ThinkGraph' ? 'thinkgraph' : 'knowgraph',
-          member.entityId,
-          controller.signal,
-        ),
-      })));
-      if (stale()) return;
-      const reads: Partial<Record<GraphAuthority, GraphProjectionV1[]>> = {};
-      const failures: string[] = [];
-      for (let index = 0; index < settled.length; index += 1) {
-        const result = settled[index];
-        if (result.status === 'fulfilled') {
-          const list = reads[result.value.authority] || [];
-          list.push(result.value.projection);
-          reads[result.value.authority] = list;
-        } else {
-          const member = centerProviderMembers[index];
-          failures.push(`${member.authority} ${member.entityId}`);
-        }
-      }
-      if (!Object.values(reads).some(values => values?.length)) {
-        const decision = failedDecision('unavailable', 'jev_focus_provider_read_unavailable');
-        setFocusTrail(history => history.map(item => item.requestIdentity === requestIdentity
-          ? { ...item, status: decision.status, decision, readWarning: failures.join(' · ') }
-          : item));
-        return;
-      }
-      const focusPresentation = composeFocusNeighborhoodPresentation(
-        sourcePresentation,
-        centerId,
-        reads,
-      );
-      const candidates = buildJevFocusCandidates(
-        focusPresentation.projection,
-        focusPresentation,
-        centerId,
-      );
-      const readWarning = failures.length
-        ? `Provider neighborhood partial: ${failures.join(' · ')}`
-        : null;
-      if (failures.length || candidates.length > MAX_JEV_FOCUS_CANDIDATES) {
-        const decision = failedDecision(
-          'unavailable',
-          failures.length
-            ? 'jev_focus_provider_read_partial'
-            : 'jev_focus_candidate_limit',
-        );
-        setFocusTrail(history => history.map(item => item.requestIdentity === requestIdentity
-          ? {
-            ...item,
-            presentation: focusPresentation,
-            status: decision.status,
-            decision,
-            readWarning: readWarning || (
-              `Provider neighborhood has ${candidates.length} Entities; `
-              + `JevFocus accepts at most ${MAX_JEV_FOCUS_CANDIDATES}.`
-            ),
-          }
-          : item));
-        return;
-      }
-      setFocusTrail(history => history.map(item => item.requestIdentity === requestIdentity
-        ? { ...item, presentation: focusPresentation, status: 'loading', readWarning }
-        : item));
-      const decision = await requestJevFocus({
-        projectId: focusPresentation.projection.projectId,
-        centerId,
-        centerTitle: entry.centerTitle,
-        centerProviderMembers: focusCenterMembers(focusPresentation, centerId),
-        sourceRevision: entry.projectionKey,
-        candidates,
-        signal: controller.signal,
-      });
-      if (stale()) return;
-      setFocusTrail(history => history.map(item => item.requestIdentity === requestIdentity
-        ? { ...item, status: decision.status, decision }
-        : item));
-    })().catch((failure: unknown) => {
-      if (stale()) return;
-      const decision = failedDecision(
-        'error',
-        failure instanceof Error ? failure.message : 'jev_focus_request_failed',
-      );
-      setFocusTrail(history => history.map(item => item.requestIdentity === requestIdentity
-        ? { ...item, status: 'error', decision }
-        : item));
-    }).finally(() => {
-      focusRequestControllersRef.current.delete(requestIdentity);
-    });
-  };
-  focusActionRef.current = enterManualFocus;
-  exitFocusRef.current = exitManualFocus;
-
   useEffect(() => {
     if (!hostRef.current) return;
     try {
@@ -837,12 +495,6 @@ export function KnowledgeGraphProjectionSurface({
       };
       const graph = window.EngraphisGraph.create(hostRef.current, {
         onNodeClick: inspectNode,
-        ...(authority === 'joined' ? {
-          onNodeDoubleClick: (node: { id: string }) => {
-            inspectNode(node);
-            focusActionRef.current(node.id);
-          },
-        } : {}),
         onLinkClick: link => {
           setControlsOpen(false);
           setRemoveError(null);
@@ -853,7 +505,6 @@ export function KnowledgeGraphProjectionSurface({
           setInspectorOpen(true);
         },
         onBackgroundClick: () => {
-          exitFocusRef.current();
           setSelectedMemberKey(null);
           setSelectedKnowEpisodeId(null);
           setSelectedId(null);
@@ -862,70 +513,25 @@ export function KnowledgeGraphProjectionSurface({
           setControlsOpen(authority === 'joined');
         },
       });
-      const restoredLayout = savedPresentation.layout || 'compact';
-      const restoredStyle = authority === 'codegraph'
-        ? savedPresentation.style || 'cyber'
-        : savedPresentationIsCurrent
-          ? savedPresentation.style || 'solarpunk'
-          : 'solarpunk';
-      const restoredPhysics = savedPresentation.physicsProfile || 'galaxy';
-      const defaults = graph.setPreset(restoredLayout);
-      const savedSettings = savedPresentationIsCurrent
-        ? savedPresentation.settings || {}
-        : { ...(savedPresentation.settings || {}), size: 5 };
-      const upgradingLegacyPresentation = !savedPresentationIsCurrent;
-      const restoredSettings: Record<string, number | boolean | string> = {
-        ...defaults,
-        labels: true,
-        ...savedSettings,
-      };
-      if (upgradingLegacyPresentation) {
-        restoredSettings.linkw = Math.max(1, Number(restoredSettings.linkw) || 1);
-      }
       graph.setCollapse(false);
-      setLayout(restoredLayout); setStyle(restoredStyle); setPhysicsProfile(restoredPhysics);
-      graph.setStyle(rendererStyle(restoredStyle));
-      if (authority === 'codegraph') {
-        graph.setColorBy('type');
-        graph.setTypeColors({
-          Feature: '#b789ff',
-          File: '#22e0ff',
-          Symbol: '#fff1a8',
-        });
-      } else if (authority === 'joined') {
-        graph.setColorBy('type');
-        graph.setTypeColors({
-          Feature: CODE_GRAPH_LAYER_COLOR,
-          File: CODE_GRAPH_LAYER_COLOR,
-          Symbol: CODE_GRAPH_LAYER_COLOR,
-        });
-      }
-      graph.setSettings(restoredSettings);
-      setSettings(restoredSettings);
+      graph.setStyle('cyber');
       graphRef.current = graph;
       return () => { graph.destroy(); graphRef.current = null; };
     } catch (failure) {
       setRenderError(failure instanceof Error ? failure.message : String(failure));
       return undefined;
     }
-  }, [authority, savedPresentationIsCurrent]);
+  }, [authority]);
 
   useEffect(() => {
-    if (authority === 'codegraph') {
-      graphRef.current?.setColorBy('type');
-      graphRef.current?.setTypeColors({
-        Feature: '#b789ff', File: '#22e0ff', Symbol: '#fff1a8',
-      });
-      return;
-    }
-    if (authority === 'joined') {
-      graphRef.current?.setColorBy('type');
-      graphRef.current?.setTypeColors({
-        Feature: CODE_GRAPH_LAYER_COLOR,
-        File: CODE_GRAPH_LAYER_COLOR,
-        Symbol: CODE_GRAPH_LAYER_COLOR,
-      });
-    }
+    const graph = graphRef.current;
+    if (!graph) return;
+    graph.setPreset(layout);
+    graph.setSettings({ labels: true, size: 5, linkw: 1 });
+  }, [authority, layout]);
+
+  useEffect(() => {
+    if (authority === 'codegraph') return;
     graphRef.current?.setThemeColors(style === 'solarpunk' ? {
       material_blue: solarpunkColors.think,
       material_orange: solarpunkColors.know,
@@ -936,16 +542,6 @@ export function KnowledgeGraphProjectionSurface({
       label: GRAPH_THEME.surface.text,
     } : {});
   }, [authority, solarpunkColors, style]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(presentationStorageKey(authority), JSON.stringify({
-        schemaVersion: 6, layout, style, physicsProfile, settings, solarpunkColors,
-      } satisfies GraphPresentationPreferences));
-    } catch {
-      // Presentation preferences are optional; graph rendering remains authoritative.
-    }
-  }, [authority, layout, physicsProfile, settings, solarpunkColors, style]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -975,90 +571,6 @@ export function KnowledgeGraphProjectionSurface({
     if (scrollHost) scrollHost.scrollTop = 0;
   }, [controlsOpen]);
 
-  useEffect(() => () => {
-    for (const controller of focusRequestControllersRef.current.values()) controller.abort();
-    focusRequestControllersRef.current.clear();
-    if (focusReleaseTimeoutRef.current) clearTimeout(focusReleaseTimeoutRef.current);
-  }, []);
-
-  useEffect(() => {
-    for (const controller of focusRequestControllersRef.current.values()) controller.abort();
-    focusRequestControllersRef.current.clear();
-    focusRequestIdentityRef.current += 1;
-    if (focusReleaseTimeoutRef.current) {
-      clearTimeout(focusReleaseTimeoutRef.current);
-      focusReleaseTimeoutRef.current = null;
-    }
-    setFocusRelease(null);
-    setExpandedFocusResult(null);
-    setFocusTrail(history => history.length ? [] : history);
-  }, [focusProjectionKey]);
-
-  useEffect(() => {
-    const graph = graphRef.current;
-    if (!graph) return;
-    if (blackholePresentationActive) {
-      let automatic = automaticPresentationRef.current;
-      if (!automatic) {
-        automatic = {
-          renderer: null,
-          snapshot: {
-            ...presentationStateRef.current,
-            settings: { ...presentationStateRef.current.settings },
-          },
-          manualLayout: false,
-          manualStyle: false,
-          manualPhysics: false,
-          manualSettings: new Set<string>(),
-          manualAllSettings: false,
-        };
-        automaticPresentationRef.current = automatic;
-      }
-      if (automatic.renderer !== graph) {
-        graph.setPreset('galaxy');
-        graph.setStyle('cyber');
-        graph.setSettings(CALM_FOCUS_GALAXY_SETTINGS);
-        automatic.renderer = graph;
-      }
-      return;
-    }
-
-    const automatic = automaticPresentationRef.current;
-    if (!automatic) return;
-    const current = presentationStateRef.current;
-    if (!automatic.manualLayout) {
-      graph.setPreset(automatic.snapshot.layout);
-      setLayout(automatic.snapshot.layout);
-    }
-    const restoredSettings = automatic.manualLayout || automatic.manualAllSettings
-      ? { ...current.settings }
-      : { ...automatic.snapshot.settings };
-    for (const key of automatic.manualSettings) {
-      if (current.settings[key] !== undefined) restoredSettings[key] = current.settings[key];
-    }
-    graph.setSettings(restoredSettings);
-    setSettings(restoredSettings);
-    if (!automatic.manualStyle) {
-      graph.setStyle(rendererStyle(automatic.snapshot.style));
-      setStyle(automatic.snapshot.style);
-    }
-    if (!automatic.manualPhysics) setPhysicsProfile(automatic.snapshot.physicsProfile);
-    automaticPresentationRef.current = null;
-  }, [blackholePresentationActive]);
-
-  const recordManualPresentationChange = (
-    field: 'layout' | 'style' | 'physics' | 'all-settings' | 'setting',
-    settingKey?: string,
-  ) => {
-    const automatic = automaticPresentationRef.current;
-    if (!automatic || !blackholePresentationActive) return;
-    if (field === 'layout') automatic.manualLayout = true;
-    else if (field === 'style') automatic.manualStyle = true;
-    else if (field === 'physics') automatic.manualPhysics = true;
-    else if (field === 'all-settings') automatic.manualAllSettings = true;
-    else if (settingKey) automatic.manualSettings.add(settingKey);
-  };
-
   useEffect(() => {
     // Engraphis scenes retain all engine-owned layout and evidence fields.
     // Graphiti uses the renderer's supported field aliases; no graph is inferred here.
@@ -1077,7 +589,7 @@ export function KnowledgeGraphProjectionSurface({
         const codeNode = authority === 'joined'
           ? activeJoinedPresentation?.codeNodeVariants?.get(node.id)
           : null;
-        if (codeNode) {
+        if (codeNode && !activeJoinedPresentation?.nodeVariants.get(node.id)?.length) {
           return withoutSolarpunkMaterial(node);
         }
         if (authority === 'codegraph' || style !== 'solarpunk') {
@@ -1097,7 +609,11 @@ export function KnowledgeGraphProjectionSurface({
           : false;
         return {
           ...node,
-          ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors),
+          authority: node.authority || authority,
+          ...(authority === 'joined'
+            ? combinedCyberMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors)
+            : solarpunkMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors)),
+          material_code_present: node.material_code_present === true,
         };
       }),
       links: sceneLinks.map(rawEdge => {
@@ -1162,22 +678,17 @@ export function KnowledgeGraphProjectionSurface({
     };
     const graph = graphRef.current;
     graph?.setData(data);
-    if (successfulFocusedEntry) graph?.focus(successfulFocusedEntry.centerId);
-    else graph?.clearFocus();
   }, [
     activeJoinedPresentation,
     authority,
     displayProjection,
     solarpunkColors,
     style,
-    successfulFocusedEntry,
   ]);
 
   useEffect(() => {
-    // Category selection already marks unrelated code as transparent context. A single-node
-    // hover highlight would incorrectly dim the other deliberately selected categories.
-    graphRef.current?.setHighlight(selectedCodeNode ? null : selectedId || successfulFocusedEntry?.centerId || null);
-  }, [selectedCodeNode, selectedId, successfulFocusedEntry?.centerId]);
+    graphRef.current?.setHighlight(selectedId);
+  }, [selectedId]);
 
   useEffect(() => {
     if (!entityFocusRequest
@@ -1194,7 +705,6 @@ export function KnowledgeGraphProjectionSurface({
     });
     if (!visualNodeId) return;
     if (!displayProjection.nodes.some(node => node.id === visualNodeId)) {
-      if (manualNavigationActive) exitFocusRef.current();
       return;
     }
     consumedEntityFocusRequestRef.current = entityFocusRequest.requestId;
@@ -1214,7 +724,6 @@ export function KnowledgeGraphProjectionSurface({
     canonicalEntityDirectory,
     displayProjection,
     joinedPresentation,
-    manualNavigationActive,
     projection,
     entityFocusRequest,
   ]);
@@ -1235,7 +744,8 @@ export function KnowledgeGraphProjectionSurface({
   useEffect(() => {
     if (inspectorOpen || controlsOpen) {
       if (inspectorOpen && panelBodyRef.current) panelBodyRef.current.scrollTop = 0;
-      panelBodyRef.current?.querySelector<HTMLElement>('[tabindex="-1"], select')?.focus();
+      const panel = panelBodyRef.current;
+      (panel?.querySelector<HTMLElement>('[tabindex="-1"], .graph-layer-legend button') || panel)?.focus();
     }
   }, [controlsOpen, inspectorOpen, selectedAuthority, selectedEdgeId, selectedId, selectedMemberKey]);
 
@@ -1264,15 +774,15 @@ export function KnowledgeGraphProjectionSurface({
       setRemovingId(null);
     }
   };
-  const loadCodeSource = async (qualifiedName: string) => {
+  const loadCodeSource = async (filePath: string) => {
     if (!onReadCodeGraphSource) return;
     const requestId = ++codeSourceSelectionRef.current;
     setCodeSourceLoading(true);
     setCodeSourceError(null);
     try {
-      const source = await onReadCodeGraphSource(qualifiedName);
+      const source = await onReadCodeGraphSource(filePath);
       if (requestId !== codeSourceSelectionRef.current) return;
-      if (!source || source.cbmQualifiedName !== qualifiedName) {
+      if (!source || source.properties.file !== filePath) {
         throw new Error('codegraph_source_identity_mismatch');
       }
       setCodeSource(source);
@@ -1284,7 +794,6 @@ export function KnowledgeGraphProjectionSurface({
       if (requestId === codeSourceSelectionRef.current) setCodeSourceLoading(false);
     }
   };
-
   const allNodes = displayProjection?.nodes.length ?? 0;
   const noVisibleLayers = authority === 'joined'
     && layerVisibility
@@ -1381,8 +890,8 @@ export function KnowledgeGraphProjectionSurface({
   );
   const availableNodeAuthorities = (['thinkgraph', 'knowgraph'] as const)
     .filter(candidate => candidate === 'thinkgraph'
-      ? directThinkEvidenceAvailable
-      : directKnowEvidenceAvailable);
+      ? directThinkAvailable
+      : directKnowAvailable);
   const visualNodeIdForProvider = (providerId: string) => inspectedAuthority === 'codegraph'
     ? authority === 'joined'
       ? activeJoinedPresentation?.visualNodeIdByCodeProviderMember?.get(providerId) || providerId
@@ -1393,14 +902,10 @@ export function KnowledgeGraphProjectionSurface({
     ) || providerId
     : providerId;
   return (
-    <div data-testid={`knowledge-${authority}-surface`} className="knowledge-authority-graph" data-layout={layout} data-style={style} data-physics-profile={physicsProfile} data-focus-phase={successfulFocusedEntry ? 'manual_blackhole_focus' : focusRequestPending ? 'focus_preparing' : focusRelease ? 'focus_release' : 'local_relational'} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}
+    <div data-testid={`knowledge-${authority}-surface`} className="knowledge-authority-graph" data-layout={layout} data-style={style} data-physics-profile={physicsProfile} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}
       onKeyDown={event => {
         if (event.key !== 'Escape') return;
-        if (focusedEntry) {
-          event.stopPropagation();
-          exitManualFocus();
-          closePanel();
-        } else if (inspectorOpen || controlsOpen) {
+        if (inspectorOpen || controlsOpen) {
           event.stopPropagation();
           closePanel();
         }
@@ -1425,38 +930,6 @@ export function KnowledgeGraphProjectionSurface({
             graphRef.current?.fit();
           }}
         />
-        {focusedEntry ? (
-          <div
-            data-testid="jev-focus-toolbar"
-            role="status"
-            style={{
-              position: 'absolute', left: 16, top: 16, zIndex: 5,
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: 8, borderRadius: 12,
-              background: 'rgba(11, 14, 18, 0.88)',
-              border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
-              color: GRAPH_THEME.surface.text,
-            }}
-          >
-            <span title={focusedEntry.readWarning || focusedEntry.decision?.errorCode || undefined}>
-              {focusedEntry.status === 'reading'
-                ? 'Focus · reading neighborhood…'
-                : focusedEntry.status === 'loading'
-                  ? 'Focus · reranking…'
-                : focusedEntry.status === 'success'
-                  ? `Focus · ${new Set(selectedFocusCandidates(focusedEntry).map(candidate => candidate.visualId)).size} neighbors`
-                  : 'Focus unavailable · local view kept'}
-            </span>
-          </div>
-        ) : focusRelease ? (
-          <div
-            data-testid="focus-release-status"
-            role="status"
-            style={{ position: 'absolute', left: 16, top: 16, zIndex: 5, color: GRAPH_THEME.surface.mutedText }}
-          >
-            Focus release
-          </div>
-        ) : null}
         {status === 'error' || renderError ? <div className="knowledge-authority-empty">Graph failed: {renderError || error}</div> : null}
         {status !== 'error' && !renderError && warning ? (
           <div
@@ -1471,19 +944,9 @@ export function KnowledgeGraphProjectionSurface({
             {warning}
           </div>
         ) : null}
-        {layerVisibility?.codegraph && codeNavigationActive && onClearCodeGraphFeature ? (
-          <button
-            type="button"
-            data-testid="codegraph-back-to-features"
-            onClick={onClearCodeGraphFeature}
-            style={{ position: 'absolute', top: 12, left: 12, zIndex: 5 }}
-          >
-            ← All code features
-          </button>
-        ) : null}
         {status === 'ready' && allNodes === 0 ? <div className="knowledge-authority-empty">
           {noVisibleLayers
-            ? 'No graph layers visible.'
+            ? 'No graph sources enabled.'
             : authority === 'codegraph' ? 'No CodeGraph data available.' : 'No knowledge yet.'}
         </div> : null}
       </div>
@@ -1508,29 +971,31 @@ export function KnowledgeGraphProjectionSurface({
               <CodeGraphChangeReview key={projection.projectId} projectId={projection.projectId}
                 selectedNode={selectedCodeNode || null} />
             </div> : null}
-          {layerVisibility?.codegraph && codeFeatures?.length && onToggleCodeGraphFeature ? (
+          {layerVisibility?.codegraph && Boolean(codeFeatures?.length) && onToggleCodeGraphFeature ? (
             <details className="knowledge-authority-controls codegraph-categories" open>
-              <summary>Code categories · {selectedCodeFeatureIds?.length || 0} / {codeFeatures.length} selected</summary>
+              <summary>Code categories · {selectedCodeFeatureIds?.length || 0} / {codeFeatures?.length} selected</summary>
+              {codeConnections ? <p role="status">{codeConnections}</p> : null}
               <fieldset aria-label="CodeGraph categories">
                 <legend>Load connected files</legend>
-                {codeFeatures.map(feature => (
-                  <label key={feature.id}>
+                {codeFeatures?.map(feature => (
+                  <div key={feature.id} className="codegraph-category-row"><label>
                     <input type="checkbox" checked={selectedCodeFeatureIds?.includes(feature.id) || false}
                       onChange={() => onToggleCodeGraphFeature(feature.id)} />
                     {feature.label}
-                  </label>
+                  </label></div>
                 ))}
               </fieldset>
-              {codeNavigationActive ? <button type="button" onClick={onClearCodeGraphFeature}>
-                Clear category selection
-              </button> : null}
+              <div className="knowledge-authority-actions">
+                <button type="button" onClick={onSelectAllCodeGraphFeatures} aria-label="Select all code categories">All</button>
+                <button type="button" onClick={onClearCodeGraphFeature} aria-label="Clear category selection">None</button>
+              </div>
             </details>
           ) : null}
-          {!inspectorOpen ? <div ref={panelBodyRef} className="knowledge-authority-controls">
+          {!inspectorOpen ? <div ref={panelBodyRef} className="knowledge-authority-controls" tabIndex={-1}>
             {authority !== 'codegraph' && projection?.projectId ? <SourceSearchControls key={projection.projectId} projectId={projection.projectId} /> : null}
             {authority === 'joined' && layerVisibility && onLayerVisibilityChange
-              ? <fieldset className="graph-layer-controls" aria-label="Graph layers">
-                <legend>Layers</legend>
+              ? <fieldset className="graph-layer-controls" aria-label="Graph sources">
+                <legend>Sources</legend>
                 <div className="graph-layer-legend">
                   {([
                     ['thinkgraph', 'Think', solarpunkColors.think],
@@ -1540,7 +1005,7 @@ export function KnowledgeGraphProjectionSurface({
                     <button
                       key={layer}
                       type="button"
-                      aria-label={`${label} layer`}
+                      aria-label={`${label} source`}
                       aria-pressed={layerVisibility[layer]}
                       data-layer={layer}
                       onClick={() => onLayerVisibilityChange(layer, !layerVisibility[layer])}
@@ -1559,114 +1024,16 @@ export function KnowledgeGraphProjectionSurface({
                 </small>
                 {onResetLayerVisibility ? <button
                   type="button"
-                  aria-label="Reset graph layers"
+                  aria-label="Reset graph sources"
                   onClick={onResetLayerVisibility}
                 >
-                  Reset layers
+                  Reset sources
                 </button> : null}
               </fieldset>
               : null}
-            {authority !== 'codegraph' ? <label>Physics profile<select aria-label="Physics profile" value={physicsProfile} onChange={event => {
-              recordManualPresentationChange('physics');
-              setPhysicsProfile(event.target.value as JevGraphPhysicsProfile);
-            }}>
-              {JEV_GRAPH_PHYSICS_PROFILES.map(profile => <option key={profile} value={profile}>
-                {JEV_GRAPH_PHYSICS_PROFILE_LABELS[profile]}
-              </option>)}
-            </select></label> : null}
-            <label>Layout<select aria-label="Layout" value={layout} onChange={event => {
-              recordManualPresentationChange('layout');
-              setAppliedPresetNodeSize(null);
-              const next = event.target.value as RendererLayout;
-              const preset = graphRef.current?.setPreset(next);
-              const defaults = preset
-                ? { ...preset, linkw: Math.max(1, Number(preset.linkw) || 1) }
-                : preset;
-              setLayout(next); setSettings(current => ({ ...current, ...defaults }));
-            }}>
-              <option value="compact">Compact</option><option value="original">Original</option>
-              <option value="communities">Communities</option><option value="radial">Radial</option>
-              <option value="galaxy">Galaxy gravity</option>
-            </select></label>
-            <label>Style<select aria-label="Style" value={style} onChange={event => {
-              recordManualPresentationChange('style');
-              const next = event.target.value as PresentationStyle;
-              graphRef.current?.setStyle(rendererStyle(next)); setStyle(next);
-            }}>
-              <option value="classic">Classic</option><option value="cyber">Cyberpunk</option>
-              {authority !== 'codegraph' ? <option value="solarpunk">Solarpunk</option> : null}<option value="galaxy">Galaxy</option>
-              <option value="solar">Solar</option>
-            </select></label>
-            {style === 'solarpunk'
-              ? <fieldset aria-label="Solarpunk colors" style={{ display: 'grid', gap: 6 }}>
-              <legend>Solarpunk colors</legend>
-              {([['Think nodes', 'think'], ['Know nodes', 'know'],
-                ['Think edges', 'thinkRelationship'],
-                ['Know edges', 'knowRelationship']] as const)
-                .map(([label, key]) => <label key={key}>
-                  <span>{label}</span>
-                  <input type="color" aria-label={label} value={solarpunkColors[key]}
-                    onChange={event => {
-                      const value = event.target.value;
-                      if (!SOLARPUNK_HEX.test(value)) return;
-                      setSolarpunkColors(current => ({ ...current, [key]: value }));
-                    }} />
-                  </label>)}
-            </fieldset> : null}
-            <label><input type="checkbox" checked={settings.labels === true} onChange={event => {
-              recordManualPresentationChange('setting', 'labels');
-              setAppliedPresetNodeSize(null);
-              const patch = { labels: event.target.checked };
-              graphRef.current?.setSettings(patch);
-              setSettings(current => ({ ...current, ...patch }));
-            }} />{authority === 'codegraph' ? 'Code labels' : 'Entity labels'}</label>
-            {([
-              ['Node size', 'size', 1, 12, 1], ['Text size', 'font', 6, 24, 1],
-              ['Line width', 'linkw', 0.1, 2, 0.01], ['Label density', 'labelDensity', 1, 100, 1],
-              ['Repel force', 'repel', 0, 400, 1], ['Link distance', 'link', 4, 80, 1],
-              ['Center gravity', 'gravity', 0, 400, 1],
-            ] as const).map(([label, key, min, max, step]) => <label key={key}>
-              <span>{label}</span>
-              <input aria-label={label} type="range" min={min} max={max} step={step}
-                value={Number(settings[key] ?? min)} onChange={event => {
-                  recordManualPresentationChange('setting', key);
-                  setAppliedPresetNodeSize(null);
-                  const patch = { [key]: Number(event.target.value) };
-                  graphRef.current?.setSettings(patch);
-                  setSettings(current => ({ ...current, ...patch }));
-                }} />
-              <output>{settings[key]}</output>
-            </label>)}
-            <button type="button" aria-label="Reset to preset defaults" onClick={() => {
-              recordManualPresentationChange('all-settings');
-              const defaults = graphRef.current?.setPreset(layout);
-              const nextSettings = {
-                ...defaults,
-                labels: true,
-                linkw: Math.max(1, Number(defaults?.linkw) || 1),
-              };
-              graphRef.current?.setSettings(nextSettings);
-              setSettings(nextSettings);
-              setAppliedPresetNodeSize(typeof defaults?.size === 'number' ? defaults.size : null);
-            }}>{appliedPresetNodeSize === null
-                ? 'Reset to preset defaults'
-                : `Preset defaults applied · node size ${appliedPresetNodeSize}`}</button>
           </div> : (selected || selectedEdge) ? <div ref={panelBodyRef} className="knowledge-authority-controls" role="region" aria-label={`${entryTitle} details`}>
-        {authority === 'joined' && selectedVisual ? (
-          <div className="knowledge-authority-actions">
-            <button
-              type="button"
-              disabled={focusRequestPending}
-              onClick={() => {
-                if (successfulFocusedEntry) exitFocusRef.current();
-                else focusActionRef.current(selectedVisual.id);
-              }}
-            >
-              {successfulFocusedEntry ? 'Expand' : 'Focus'}
-            </button>
-          </div>
-        ) : null}
-        {authority === 'joined' && selected && availableNodeAuthorities.length ? (
+        {authority === 'joined' && selected && availableNodeAuthorities.length > 0
+          && (availableNodeAuthorities.length > 1 || visibleThinks.length > 0 || visibleKnowItems.length > 0) ? (
           <div role="tablist" aria-label={`${selected.label} graph evidence`} style={{ display: 'flex', gap: 6 }}>
             {availableNodeAuthorities.map(candidate => (
               <button
@@ -1709,7 +1076,25 @@ export function KnowledgeGraphProjectionSurface({
           source={codeSource}
           sourceLoading={codeSourceLoading}
           sourceError={codeSourceError}
-          onLoadSource={onReadCodeGraphSource ? qualifiedName => { void loadCodeSource(qualifiedName); } : undefined}
+          onLoadSource={onReadCodeGraphSource ? filePath => { void loadCodeSource(filePath); } : undefined}
+          connectionLoading={codeFileLoading}
+          connectionError={codeFileError}
+          onLoadConnections={onReadCodeGraphFiles ? async () => {
+            setCodeFileLoading(true);
+            setCodeFileError(null);
+            try { await onReadCodeGraphFiles([String(selected.properties?.filePath || '')]); }
+            catch (failure) { setCodeFileError(failure instanceof Error ? failure.message : String(failure)); }
+            finally { setCodeFileLoading(false); }
+          } : undefined}
+          connections={inspectedProjection?.edges.flatMap(edge => {
+            if (!['CALLS', 'IMPORTS'].includes(edge.predicate)) return [];
+            const direction = edge.target === selected.id ? 'incoming' as const
+              : edge.source === selected.id ? 'outgoing' as const : null;
+            const neighborId = direction === 'incoming' ? edge.source : edge.target;
+            const file = inspectedProjection.nodes.find(node => node.id === neighborId);
+            return direction && file?.properties?.recordKind === 'file'
+              ? [{ filePath: String(file.properties.filePath), direction, kind: edge.predicate }] : [];
+          })}
           onOpenFile={path => {
             const file = inspectedProjection?.nodes.find(node => node.properties?.recordKind === 'file'
               && node.properties?.filePath === path);
@@ -1768,6 +1153,9 @@ export function KnowledgeGraphProjectionSurface({
               : undefined}
           />)}
         </section> : null}
+        {inspectedAuthority === 'knowgraph' && selected && !selectedEdge && !visibleKnowItems.length
+          ? <p>No Know is attached yet.</p>
+          : null}
         {inspectedAuthority === 'knowgraph' && selected && !selectedEdge
           ? <KnowSourceList records={directKnowItems} />
           : null}
@@ -1796,6 +1184,8 @@ export function KnowledgeGraphProjectionSurface({
           <div><dt>Direction</dt><dd>{providerNodeLabel(selectedEdge.source)} → {providerNodeLabel(selectedEdge.target)}</dd></div>
           {selectedCodeEdge && typeof selectedCodeEdge.properties?.relationship === 'string'
             ? <div><dt>Declared relationship</dt><dd>{selectedCodeEdge.properties.relationship}</dd></div> : null}
+          {selectedCodeEdge && typeof selectedCodeEdge.properties?.evidence === 'string'
+            ? <div><dt>Relationship source</dt><dd>{selectedCodeEdge.properties.evidence}</dd></div> : null}
           {jevWinner ? <div><dt>Jev winner</dt><dd>{jevWinner}</dd></div> : null}
           {jevWinnerProbability ? <div><dt>Probability</dt><dd>{jevWinnerProbability}</dd></div> : null}
           {naturalRelationship ? <div><dt>Natural extracted relationship</dt><dd>{naturalRelationship}</dd></div> : null}

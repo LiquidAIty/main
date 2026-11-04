@@ -4,13 +4,13 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
- * Relationship: This file owns the Project graph workspace's independent provider load, error, refresh, neighborhood, removal, and opt-in Code state.
+ * Relationship: This file owns the Project graph workspace's independent provider load, error, refresh, removal, and opt-in Code state.
  * Entity: ThinkGraph
- * Relationship: This file reads Engraphis projections and neighborhoods and subscribes to Project graph commits independently of Main chat.
+ * Relationship: This file reads Engraphis projections and subscribes to Project graph commits independently of Main chat.
  * Entity: KnowGraph
- * Relationship: Validates Entity-only Graphiti projections, bounds read retries, reads exact neighborhoods, and refreshes on KnowGraph change notifications or confirmed Know removal.
+ * Relationship: Validates Entity-only Graphiti projections, bounds read retries, and refreshes on KnowGraph change notifications or confirmed Know removal.
  * Entity: CodeGraph
- * Relationship: This file opens CodeGraph only on demand, validates its read envelopes, replaces the active File structure, and loads Symbol source only by explicit action.
+ * Relationship: This file loads CodeGraph on demand, validates and accumulates File connections, and opens repository File text only by explicit action.
  * Entity: Jev Decisions
  * Relationship: This file applies validated Jev relationship physics locally to the KnowGraph presentation without modifying provider data.
  */
@@ -22,7 +22,7 @@ import {
   emptyCodeGraphProjection,
   mergeCodeGraphProjections,
   validateCodeGraphReadEnvelope,
-  type CodeGraphSelectedSymbol,
+  type CodeGraphFileSource,
 } from '../../../components/knowledge/codeGraphProjection';
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 import type { KnowledgeGraphKind } from '../../../types/agentgraph';
@@ -31,11 +31,6 @@ type KnowledgeGraphState = {
   projections: Record<KnowledgeGraphKind, GraphProjectionV1>;
   errors: Partial<Record<KnowledgeGraphKind, string>>;
   statuses: Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>;
-  readProviderNeighborhood: (
-    graph: KnowledgeGraphKind,
-    providerId: string,
-    signal?: AbortSignal,
-  ) => Promise<GraphProjectionV1>;
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
   removeKnowGraphEvidence: (episodeId: string) => Promise<void>;
   refreshThinkGraph: () => Promise<void>;
@@ -47,8 +42,8 @@ type KnowledgeGraphState = {
     freshness: string;
   };
   loadCodeGraph: () => Promise<GraphProjectionV1 | null>;
-  readCodeGraphFile: (filePath: string) => Promise<GraphProjectionV1 | null>;
-  readCodeGraphSource: (qualifiedName: string) => Promise<CodeGraphSelectedSymbol | null>;
+  readCodeGraphFiles: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;
+  readCodeGraphSource: (filePath: string) => Promise<CodeGraphFileSource | null>;
 };
 
 const KNOWGRAPH_STARTUP_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
@@ -74,7 +69,9 @@ function codeGraphMessage(value: {
   status: string;
   errors: Array<{ code: string }>;
 }, fallback: string): string {
-  return value.errors.map(error => error.code).filter(Boolean).join(' · ')
+  const counts = new Map<string, number>();
+  for (const { code } of value.errors) if (code) counts.set(code, (counts.get(code) || 0) + 1);
+  return [...counts].map(([code, count]) => count > 1 ? `${code} (${count} reads)` : code).join(' · ')
     || (value.status === 'not_found' ? 'codegraph_record_not_found' : fallback);
 }
 
@@ -172,7 +169,6 @@ export default function useAgentBuilderKnowledgeGraphs({
   const codeProjectionRequestRef = useRef(0);
   const codeFileRequestRef = useRef(0);
   const codeSourceRequestRef = useRef(0);
-  const codeBaseProjectionRef = useRef(emptyCodeGraphProjection(projectId));
   const codeProjectionAbortRef = useRef<AbortController | null>(null);
   const codeFileAbortRef = useRef<AbortController | null>(null);
   const codeSourceAbortRef = useRef<AbortController | null>(null);
@@ -278,7 +274,6 @@ export default function useAgentBuilderKnowledgeGraphs({
       warning: null,
       freshness: 'unverified',
     });
-    codeBaseProjectionRef.current = emptyCodeGraphProjection(projectId);
     codeProjectionRequestRef.current += 1;
     codeFileRequestRef.current += 1;
     codeSourceRequestRef.current += 1;
@@ -353,7 +348,6 @@ export default function useAgentBuilderKnowledgeGraphs({
       const warning = envelope.status === 'partial'
         ? codeGraphMessage(envelope, 'codegraph_projection_partial')
         : null;
-      codeBaseProjectionRef.current = envelope.projection;
       setCodeGraph({
         projection: envelope.projection,
         status: 'ready',
@@ -372,8 +366,8 @@ export default function useAgentBuilderKnowledgeGraphs({
     }
   }, [projectId]);
 
-  const readCodeGraphFile = useCallback(async (
-    filePath: string,
+  const readCodeGraphFiles = useCallback(async (
+    filePaths: string[],
   ): Promise<GraphProjectionV1 | null> => {
     const requestId = ++codeFileRequestRef.current;
     codeFileAbortRef.current?.abort();
@@ -383,7 +377,7 @@ export default function useAgentBuilderKnowledgeGraphs({
       const response = await fetch('/api/codegraph/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, mode: 'file', filePath }),
+        body: JSON.stringify({ projectId, mode: 'file', filePaths }),
         signal: controller.signal,
       });
       const payload = await response.json().catch(() => null);
@@ -396,13 +390,13 @@ export default function useAgentBuilderKnowledgeGraphs({
       setCodeGraph(current => ({
         ...current,
         projection: mergeCodeGraphProjections(
-          codeBaseProjectionRef.current, envelope.projection!,
+          current.projection, envelope.projection!,
         ),
         status: 'ready',
         error: null,
         warning: envelope.status === 'partial'
           ? codeGraphMessage(envelope, 'codegraph_file_partial')
-          : current.warning,
+          : null,
         freshness: envelope.freshness.status,
       }));
       return envelope.projection;
@@ -413,8 +407,8 @@ export default function useAgentBuilderKnowledgeGraphs({
   }, [projectId]);
 
   const readCodeGraphSource = useCallback(async (
-    qualifiedName: string,
-  ): Promise<CodeGraphSelectedSymbol | null> => {
+    filePath: string,
+  ): Promise<CodeGraphFileSource | null> => {
     const requestId = ++codeSourceRequestRef.current;
     codeSourceAbortRef.current?.abort();
     const controller = new AbortController();
@@ -423,48 +417,30 @@ export default function useAgentBuilderKnowledgeGraphs({
       const response = await fetch('/api/codegraph/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, mode: 'source', qualifiedName }),
+        body: JSON.stringify({ projectId, mode: 'source', filePath }),
         signal: controller.signal,
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(String(payload?.error || `codegraph_http_${response.status}`));
       const envelope = validateCodeGraphReadEnvelope(payload, { projectId, mode: 'source' });
       if (requestId !== codeSourceRequestRef.current) return null;
-      if (!envelope.selectedSymbol || ['unavailable', 'not_found'].includes(envelope.status)) {
+      if (!envelope.fileSource || ['unavailable', 'not_found'].includes(envelope.status)) {
         throw new Error(codeGraphMessage(envelope, 'codegraph_source_unavailable'));
       }
-      return envelope.selectedSymbol;
+      if (envelope.projection || envelope.status === 'partial') {
+        setCodeGraph(current => ({
+          ...current,
+          projection: envelope.projection
+            ? mergeCodeGraphProjections(current.projection, envelope.projection) : current.projection,
+          warning: envelope.status === 'partial'
+            ? codeGraphMessage(envelope, 'codegraph_connections_partial') : null,
+        }));
+      }
+      return envelope.fileSource;
     } catch (error) {
       if (controller.signal.aborted || requestId !== codeSourceRequestRef.current) return null;
       throw error;
     }
-  }, [projectId]);
-
-  const readProviderNeighborhood = useCallback(async (
-    graph: KnowledgeGraphKind,
-    providerId: string,
-    signal?: AbortSignal,
-  ): Promise<GraphProjectionV1> => {
-    const query = graph === 'thinkgraph'
-      ? new URLSearchParams({ projectId, canonicalId: providerId })
-      : new URLSearchParams({ projectId, nodeId: providerId, limit: '50' });
-    const response = await fetch(
-      graph === 'thinkgraph'
-        ? `/api/thinkgraph/neighborhood?${query}`
-        : `/api/knowgraph/expand?${query}`,
-      signal ? { signal } : undefined,
-    );
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !isRecord(payload)) {
-      throw new Error(String(payload?.error?.message || payload?.error || `HTTP ${response.status}`));
-    }
-    if (graph === 'thinkgraph') {
-      if (!Array.isArray(payload.nodes) || !Array.isArray(payload.edges)) {
-        throw new Error('invalid_thinkgraph_projection');
-      }
-      return payload as GraphProjectionV1;
-    }
-    return knowGraphProjection(payload, projectId);
   }, [projectId]);
 
   const removeThinkGraphEvidence = useCallback(async (memoryId: string) => {
@@ -494,13 +470,12 @@ export default function useAgentBuilderKnowledgeGraphs({
     projections,
     errors,
     statuses,
-    readProviderNeighborhood,
     removeThinkGraphEvidence,
     removeKnowGraphEvidence,
     refreshThinkGraph,
     codeGraph,
     loadCodeGraph,
-    readCodeGraphFile,
+    readCodeGraphFiles,
     readCodeGraphSource,
   };
 }

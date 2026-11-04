@@ -787,115 +787,35 @@ def test_invocation_rejects_every_non_graph_context_field(
         card_invocation_preparation.materialize_invocation(payload)
 
 @pytest.mark.parametrize(
-    ("card_id", "profile", "receives_old_context"),
+    ("card_id", "profile"),
     [
-        ("card_main_chat", "main", True),
-        ("builder", "builder", True),
-        ("card_thinkgraph", "thinkgraph", False),
-        ("card_knowgraph", "knowgraph", False),
+        ("card_main_chat", "main"),
+        ("builder", "builder"),
+        ("card_thinkgraph", "thinkgraph"),
+        ("card_knowgraph", "knowgraph"),
     ],
 )
-def test_only_main_and_builder_receive_current_request_grounding(
+def test_card_input_does_not_run_automatic_graph_relevance(
     monkeypatch: pytest.MonkeyPatch,
     card_id: str,
     profile: str,
-    receives_old_context: bool,
 ) -> None:
+    from app.python_models import card_run_jev
+
     loaded = _destination_fixture(monkeypatch)
     target = loaded["deck"]["nodes"][1]
     target["id"] = card_id
     target["runtime"]["profile"] = profile
     loaded["deck"]["edges"][0]["target"] = card_id
-    grounding = {
-        "schemaVersion": "project-graph.grounding.v1",
-        "projectId": loaded["projectId"],
-        "authorities": {
-            "thinkgraph": {
-                "recent": [{
-                    "engraphisMemoryId": "think-recent",
-                    "engraphisEntityId": "think-rocket",
-                    "body": "Recent compact Think.",
-                }],
-                "relevant": [{
-                    "engraphisMemoryId": "think-relevant",
-                    "engraphisEntityId": "think-rocket",
-                    "body": "Relevant compact Think.",
-                }],
-            },
-            "knowgraph": {
-                "recent": [],
-                "relevant": [{
-                    "graphitiEpisodeId": "know-relevant",
-                    "graphitiEntityId": "know-rocket",
-                    "idea": {
-                        "body": "Relevant cited For.",
-                        "citations": [{"url": "https://example.test/for"}],
-                    },
-                    "counterIdea": {
-                        "body": "Relevant cited Against.",
-                        "citations": [{"url": "https://example.test/against"}],
-                    },
-                }],
-            },
-        },
-        "revision": "b" * 64,
-    }
-    grounding_calls: list[tuple[str, str, str, tuple[str, ...]]] = []
-
-    def build_grounding(
-        project: str,
-        query: str,
-        context: str = "",
-        authorities: tuple[str, ...] = ("thinkgraph", "knowgraph"),
-    ) -> dict[str, Any]:
-        grounding_calls.append((project, query, context, authorities))
-        return {
-            **grounding,
-            "authorities": {
-                authority: grounding["authorities"][authority]
-                for authority in authorities
-            },
-        }
-
     monkeypatch.setattr(
-        card_invocation_preparation,
-        "build_project_graph_grounding",
-        build_grounding,
+        card_run_jev, "request_jev_decision",
+        lambda *_args, **_kwargs: pytest.fail("Card graph context must not invoke Jev"),
     )
     invocation = card_invocation_preparation.materialize_invocation(
         _destination_payload(card_id)
     )
-
-    graph_text = invocation["idf"]["actualGraphData"]["modelText"]
-    if receives_old_context:
-        expected_authorities = (
-            ("thinkgraph",) if card_id == "card_main_chat"
-            else ("thinkgraph", "knowgraph")
-        )
-        assert set(invocation["projectGraphGrounding"]["authorities"]) == set(
-            expected_authorities
-        )
-        assert grounding_calls == [(
-            loaded["projectId"],
-            _destination_payload(card_id)["assignment"],
-            "",
-            expected_authorities,
-        )]
-        assert "PROJECT GRAPH GROUNDING (CURRENT REQUEST)" in graph_text
-        assert "Relevant compact Think." in graph_text
-        if card_id == "card_main_chat":
-            assert "Relevant cited For." not in graph_text
-            assert "Relevant cited Against." not in graph_text
-        else:
-            assert "Relevant cited For." in graph_text
-            assert "Relevant cited Against." in graph_text
-    else:
-        assert "projectGraphGrounding" not in invocation
-        assert grounding_calls == []
-        assert "PROJECT GRAPH GROUNDING (CURRENT REQUEST)" not in graph_text
-        assert "Relevant compact Think." not in graph_text
-        assert "Relevant cited For." not in graph_text
-        assert "Relevant cited Against." not in graph_text
+    assert "projectGraphGrounding" not in invocation
+    assert "PROJECT GRAPH GROUNDING (CURRENT REQUEST)" not in invocation["idf"]["actualGraphData"]["modelText"]
     assert invocation["inputSummary"]["estimatedGraphContextTokens"] >= 0
 
 def test_builder_input_is_independent_of_changed_or_missing_plan(monkeypatch):

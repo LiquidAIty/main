@@ -94,11 +94,41 @@ function projection(): GraphProjectionV1 {
 }
 
 describe('Jev graph physics transfer profiles', () => {
+  it('counts incoming sources once, excluding outgoing, self and historical edges', () => {
+    const source: GraphProjectionV1 = { schemaVersion: 'test', projectId: 'p',
+      nodes: ['a', 'b', 'c', 'old'].map(id => ({ id, label: id })),
+      edges: [
+        { id: 'ab', source: 'a', target: 'b', predicate: 'SUPPORTS' },
+        { id: 'ab-again', source: 'a', target: 'b', predicate: 'QUALIFIES' },
+        { id: 'cb', source: 'c', target: 'b', predicate: 'SUPPORTS' },
+        { id: 'bc', source: 'b', target: 'c', predicate: 'USES' },
+        { id: 'self', source: 'b', target: 'b', predicate: 'USES' },
+        { id: 'old', source: 'old', target: 'b', predicate: 'USES', validTo: '2026-01-01' },
+      ] };
+    const before = structuredClone(source);
+    const result = applyJevGraphPhysics(source, 'galaxy');
+    expect(result.nodes.map(node => node.properties?.incomingConnectionCount)).toEqual([0, 2, 1, 0]);
+    expect(result.nodes[1].visual_radius).toBe(mapJevGraphPhysics('galaxy', 0, 2).nodeRadius);
+    expect(result.nodes[0].semantic_mass).toBeUndefined();
+    expect(result.edges).toEqual(source.edges);
+    expect(source).toEqual(before);
+  });
+
+  it('changes Jev springs but not size when incoming connections stay the same', () => {
+    const source = projection();
+    const before = applyJevGraphPhysics(source, 'galaxy');
+    source.edges[0].properties!.jev = { status: 'success', winner: 'PROVIDES',
+      distribution: { PROVIDES: 0.9, ASSOCIATED_WITH: 0.1 } };
+    const after = applyJevGraphPhysics(source, 'galaxy');
+    expect(after.nodes.map(node => node.visual_radius)).toEqual(before.nodes.map(node => node.visual_radius));
+    expect(after.edges[0].spring_strength).toBeGreaterThan(before.edges[0].spring_strength!);
+  });
+
   it.each(JEV_GRAPH_PHYSICS_PROFILES)(
     '%s keeps weak edges visible and maps higher probability monotonically',
     profile => {
-      const weak = mapJevGraphPhysics(profile, 0.2, 0.2);
-      const strong = mapJevGraphPhysics(profile, 0.9, 1.4);
+      const weak = mapJevGraphPhysics(profile, 0.2, 0);
+      const strong = mapJevGraphPhysics(profile, 0.9, 3);
       expect(weak.edgeWidth).toBeGreaterThan(0);
       expect(strong.edgeWidth).toBeGreaterThan(weak.edgeWidth);
       expect(strong.springStrength).toBeGreaterThan(weak.springStrength);
@@ -161,12 +191,12 @@ describe('Jev graph physics transfer profiles', () => {
   });
 
   it.each([1, 10, 100, 1000])(
-    'bounds durable semantic mass %s without changing the retained mass',
-    semanticMass => {
-      const mapped = mapJevGraphPhysics('galaxy', 0, semanticMass);
+    'bounds the visual radius for %s incoming connections',
+    incomingConnections => {
+      const mapped = mapJevGraphPhysics('galaxy', 0, incomingConnections);
       expect(mapped.nodeRadius).toBeGreaterThanOrEqual(DURABLE_NODE_RADIUS_MIN);
       expect(mapped.nodeRadius).toBeLessThanOrEqual(DURABLE_NODE_RADIUS_MAX);
-      if (semanticMass === 1000) expect(mapped.nodeRadius).toBe(DURABLE_NODE_RADIUS_MAX);
+      if (incomingConnections === 1000) expect(mapped.nodeRadius).toBe(DURABLE_NODE_RADIUS_MAX);
     },
   );
 });

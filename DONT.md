@@ -86,9 +86,9 @@ Know to multiple Entities. Balance belongs across research coverage and synthesi
 positive/negative pair inside every record. Only Entities are visible Project graph nodes; Knows and citations
 remain attached evidence/provenance.
 
-Current agent grounding is one most Relevant plus one distinct most Recent record from each authority by
-default. Provider owners produce candidates and Jev ranks them; TypeScript must not rank prose, substitute
-recency for failed relevance, or persist a relevance decision as graph truth. The current inspector shows
+Do not restore an automatic Jev relevance filter or default Relevant/Recent packet before Card inference.
+The actual task and deliberate provider graph selections own input context. Keep existing provider retrieval
+available; do not replace the removed filter with another ranking loop. The current inspector shows
 at most two provider-projected attached records; it has no Search/Results or Relevant/Recent control.
 
 Keep entity identity, attributed claims, uncertainty, meaningful relationships and provenance distinct.

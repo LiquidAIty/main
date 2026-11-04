@@ -180,7 +180,7 @@ export async function fetchCodeGraphRead(payload: {
   cardId: 'builder';
   mode: 'projection' | 'file' | 'source';
   filePath?: string;
-  qualifiedName?: string;
+  filePaths?: string[];
 }): Promise<unknown> {
   return requestPythonRailsJson('/codegraph/read', {
     method: 'POST',

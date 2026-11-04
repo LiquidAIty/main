@@ -1,6 +1,6 @@
 /**
  * Entity: CodeGraph
- * Relationship: Keeps explicit review/removal flags on inspected CodeGraph Files and Features in browser presentation state, without editing source or invoking agents.
+ * Relationship: Keeps explicit review/removal flags on inspected CodeGraph Files in browser presentation state, without editing source or invoking agents.
  */
 import { useEffect, useState } from 'react';
 import type { GraphProjectionNode } from './knowledgeGraphProjection';
@@ -11,9 +11,6 @@ type Flag = Target & { intent: 'review' | 'remove'; note: string; at: string };
 function nodeTarget(node: GraphProjectionNode | null): Target | null {
   if (!node) return null;
   const properties = node.properties || {};
-  if (properties.recordKind === 'feature' && Array.isArray(properties.memberFilePaths)) {
-    return { id: node.id, label: node.label, paths: properties.memberFilePaths.filter((p): p is string => typeof p === 'string') };
-  }
   if (typeof properties.filePath === 'string') {
     return { id: 'file:' + properties.filePath, label: properties.filePath, paths: [properties.filePath] };
   }
@@ -87,7 +84,7 @@ export function CodeGraphChangeReview({ projectId, selectedNode = null }: {
           onClick={() => saveFlags([...flags.filter(flag => flag.id !== target.id), {
             ...target, intent, note, at: new Date().toISOString(),
           }])}>Save flag</button>
-      </div> : <p>Select a Feature or File in CodeGraph to flag it.</p>}
+      </div> : <p>Select a File in CodeGraph to flag it.</p>}
       <details open={flags.length > 0}>
         <summary>Flags ({flags.length})</summary>
         {flags.map(flag => <article key={flag.id}>

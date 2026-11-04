@@ -25,6 +25,51 @@ beforeAll(async () => {
 afterEach(() => vi.useRealTimers());
 
 describe('Engraphis graph renderer contracts', () => {
+  it('preserves projected knowledge and code radii through normalization and drawing', () => {
+    const { sanitizeEvidenceMetrics, graphNodeRadius, radiusFromGravityMass } = (window as any).EngraphisGraph._internals;
+    const knowledge = { authority: 'joined', visual_radius: 7, gravity_mass: 40 };
+    const code = { authority: 'codegraph', visual_radius: 2.4, gravity_mass: 10 };
+    const ordinary = { visual_radius: 1, gravity_mass: 10 };
+    sanitizeEvidenceMetrics([knowledge, code, ordinary], 50);
+    expect(knowledge.visual_radius).toBe(7);
+    expect(code.visual_radius).toBe(2.4);
+    expect(ordinary.visual_radius).toBeCloseTo(radiusFromGravityMass(10));
+    expect(graphNodeRadius(knowledge, 5, 0)).toBe(7);
+    expect(graphNodeRadius(knowledge, 5, 1)).toBe(7);
+    expect(graphNodeRadius(code, 5, 1)).toBe(2.4);
+  });
+
+  it('keeps category attraction non-radial, reciprocal and independent of file count', () => {
+    const internals = (window as any).EngraphisGraph._internals;
+    const run = (count: number) => {
+      const target: any = { id: 'knowledge', x: 400, y: 0, vx: 0, vy: 0, radius: 10 };
+      const files = Array.from({ length: count }, (_, index) => ({
+        id: `file-${index}`, authority: 'codegraph', x: 0, y: 0, vx: 0, vy: 0, radius: 4,
+        properties: { recordKind: 'file', features: ['Trading'],
+          categoryTargets: { Trading: 'knowledge' }, categoryConnections: { Trading: 0 } },
+      }));
+      const nodes = [...files, target];
+      const force = internals.codeCategoryForce(nodes);
+      force(1);
+      expect(nodes).toHaveLength(count + 1);
+      expect(files.every(file => file.vx > 0 && file.vy === 0)).toBe(true);
+      expect(target.vx).toBeLessThan(0);
+      return { file: files[0].vx, target: target.vx };
+    };
+    expect(run(20)).toEqual(run(1));
+    expect(internals.codeCategoryForce([{ id: 'knowledge', x: 0, y: 0 }])).toBeNull();
+  });
+
+  it('sizes code by unique caller count without changing knowledge sizing', () => {
+    const { graphNodeRadius } = (window as any).EngraphisGraph._internals;
+    const file = (count: number) => ({ authority: 'codegraph', properties: {
+      recordKind: 'file', callerFileCount: count,
+    } });
+    expect(graphNodeRadius(file(12), 5, 0)).toBeGreaterThan(graphNodeRadius(file(2), 5, 1));
+    expect(graphNodeRadius(file(2), 10, 0)).toBeCloseTo(2 * graphNodeRadius(file(2), 5, 0));
+    expect(graphNodeRadius({}, 5, 0)).toBeCloseTo(1.2375);
+  });
+
   it('resolves node single and double clicks before either callback mutates the canvas', () => {
     vi.useFakeTimers();
     const single = vi.fn();
@@ -185,6 +230,31 @@ describe('Engraphis graph renderer contracts', () => {
     }, {}, '#ffffff')).toBeNull();
   });
 
+  it('keeps blue/orange materials, adds a violet Code ring, and paints an iridescent Solarpunk rim with face arcs', () => {
+    const internals = (window as any).EngraphisGraph._internals;
+    const node = { material_kind: 'joined-cyber', material_role: 'PAIRED_CYBER_MATERIAL',
+      material_blue: '#4FA2AD', material_orange: '#F2A64A' };
+    const plain = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', node);
+    const code = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', { ...node, material_code_present: true });
+    expect(code).toMatchObject({ fixedPalette: plain.fixedPalette,
+      codePresent: true, codeColour: 'rgb(141,97,255)' });
+    expect(plain.codePresent).toBe(false);
+    expect(code.identityKey).toBe(plain.identityKey);
+    expect(code.face).toBe(plain.face);
+    const conic = vi.fn(() => ({ addColorStop: vi.fn() }));
+    const strokes: string[] = [];
+    const context: any = { beginPath: vi.fn(), arc: vi.fn(), clip: vi.fn(), fill: vi.fn(),
+      save: vi.fn(), restore: vi.fn(), fillRect: vi.fn(),
+      createConicGradient: conic, createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      stroke: vi.fn(function (this: any) { strokes.push(String(this.strokeStyle)); }),
+      fillStyle: '', strokeStyle: '', lineWidth: 1 };
+    internals.paintMaterialDirect(context, 0, 0, 10, code, 'full');
+    expect(conic).toHaveBeenCalled();
+    expect(context.arc.mock.calls.filter((call: number[]) => call[3] === -2.88 && call[4] === 0.72))
+      .toHaveLength(13);
+    expect(strokes.at(-1)).toBe('rgba(141,97,255,0.88)');
+  });
+
   it('uses the supplied authority relationship colors without changing predicates', () => {
     const internals = (window as any).EngraphisGraph._internals;
     for (const edge of [
@@ -222,8 +292,7 @@ describe('Engraphis graph renderer contracts', () => {
       material_blue: '#4FA2AD', material_orange: '#F2A64A',
     });
     const code = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', {
-      material_kind: 'joined-cyber', material_role: 'CODE_MATERIAL',
-      material_green: '#63C79A',
+      authority: 'codegraph', properties: { recordKind: 'file' },
     });
     const paired = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', {
       material_kind: 'joined-cyber', material_role: 'PAIRED_CYBER_MATERIAL',
@@ -246,10 +315,7 @@ describe('Engraphis graph renderer contracts', () => {
     });
     expect(code).toMatchObject({
       family: ordinary.family,
-      fixedPalette: {
-        cyan: '#63C79A', blue: '#63C79A', violet: '#63C79A',
-        magenta: '#63C79A', teal: '#63C79A',
-      },
+      fixedPalette: ordinary.fixedPalette,
     });
     expect(paired.family).toBe(ordinary.family);
     expect(paired.fixedPalette).toMatchObject({

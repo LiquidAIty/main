@@ -383,13 +383,12 @@ regex, substring, keyword, or lookup-table logic.
 
 ### Main
 
-Before inference, Python rails automatically appends the complete Entity/Relationship map and the default
-current-request grounding to Main, Builder, ThinkGraph, and KnowGraph: one Jev-ranked most Relevant plus one
-distinct most Recent record per authority. Think retrieval favors the strongest faithful optimistic steelman.
+Card preparation preserves the actual task and deliberately selected provider graph references. It does not
+run automatic Jev relevance ranking or inject a default Relevant/Recent packet before inference.
+The Entity/Relationship map is a separate context contract; ordinary Main chat delivery must be proven independently.
 Each current Know is one verified sourced observation with a separate bounded interpretation and optional
 direction relative to an explicit proposition. Supporting, challenging and neutral Knows are all valid;
-balance belongs across research coverage and synthesis rather than fixed record proportions. Relevance failure
-never promotes Recent as Relevant.
+balance belongs across research coverage and synthesis rather than fixed record proportions.
 Each non-Magnetic Hermes Card has one explicit saved `Orchestrator` setting. When enabled, its actual enabled
 saved Card wires define the exact saved Bot/Card targets it may address through Hermes `message_agent`; Bot
 reachability is not restricted to orange wires. Main is the source-default direct orchestrator and may address
@@ -443,9 +442,8 @@ missions and chooses granted tools for files, terminal, research, prompts, Card 
 and application/UI construction. Card creation and configuration use explicit tool arguments,
 exact targets, current revisions and saved grants. No prefilled operation tasks or hidden modes.
 Saving a Card and invoking a Card remain separate actions. Builder has no Mag One edge.
-Builder receives the same default Relevant/Recent graph grounding as Main so construction retains the user's
-faithful steelman and the bounded sourced reality check. Its expanded inspector/search tools do not widen the
-automatic packet.
+Builder retains deliberately selected graph context and its granted provider readers. It does not receive
+an automatic Jev-ranked Relevant/Recent packet; inspector/search access does not add a pre-inference filter.
 
 ### Mag One
 
@@ -493,8 +491,8 @@ substitute for this boundary. KnowGraph retains sourced research through its exi
 research agent and queued Graphiti intake. Its dedicated Entity write stores one exact `entity_uuid` property and removes
 any Know `ABOUT` or `MENTIONS` attachment edge. Only Entities render as Project graph nodes; Thinks, Knows,
 Graphiti episodes, citations, and supporting IDs remain attached properties or provenance. Engraphis
-and Graphiti reads produce bounded candidates, and Jev ranks them against the current request for automatic
-agent grounding. The ordinary Entity inspector instead shows at most two provider-projected attached records;
+and Graphiti retain their own retrieval tools; automatic Card relevance filtering is removed. The ordinary
+Entity inspector shows at most two provider-projected attached records;
 it has no current Search/Results or Relevant/Recent control. Operating instructions belong in saved Cards; dynamic input carries
 the actual task and selected data. Do not submit system-design guidance as test chatter.
 

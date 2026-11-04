@@ -241,51 +241,22 @@ describe('shared knowledge inspector', () => {
     expect(INSPECTOR_RECORD_LIMIT).toBe(2);
   });
 
-  it('shows Code identity and requests exact source only on explicit action', () => {
-    const onLoadSource = vi.fn();
+  it('opens only a repository File on explicit action and shows its directed file connections', () => {
+    const onOpenFile = vi.fn(), onLoadSource = vi.fn();
     render(<CodeGraphNodeDetails
-      node={{
-        id: 'symbol:run',
-        label: 'run',
-        authority: 'codegraph',
-        type: 'Function',
-        etype: 'Symbol',
-        properties: {
-          recordKind: 'symbol',
-          symbolKind: 'Function',
-          qualifiedName: 'C-Projects-LiquidAIty-main.client.run',
-          filePath: 'client/src/run.ts',
-          startLine: 10,
-          endLine: 20,
-          features: ['CodeGraph'],
-        },
-      }}
-      source={null}
-      sourceLoading={false}
-      sourceError={null}
-      onLoadSource={onLoadSource}
+      node={{ id: 'source-file:client/run.ts', label: 'run.ts', authority: 'codegraph', type: 'File',
+        properties: { recordKind: 'file', filePath: 'client/run.ts', features: ['CodeGraph'],
+          contributions: [{ feature: 'CodeGraph', relationship: 'Renders file connections.' }] } }}
+      source={null} sourceLoading={false} sourceError={null} onOpenFile={onOpenFile} onLoadSource={onLoadSource}
+      connections={[{ filePath: 'client/caller.ts', direction: 'incoming', kind: 'CALLS' }]}
     />);
-
-    expect(screen.getByText('client/src/run.ts')).toBeTruthy();
-    expect(screen.getByText('CodeGraph')).toBeTruthy();
     expect(onLoadSource).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Load source' }));
-    expect(onLoadSource).toHaveBeenCalledWith('C-Projects-LiquidAIty-main.client.run');
-  });
-
-  it('opens a contributing file and requests its actual File source', () => {
-    const onOpenFile = vi.fn();
-    const onLoadSource = vi.fn();
-    const props = { source: null, sourceLoading: false, sourceError: null, onOpenFile, onLoadSource };
-    const view = render(<CodeGraphNodeDetails {...props} node={{ id: 'feature:CodeGraph', label: 'CodeGraph',
-      properties: { recordKind: 'feature', memberFilePaths: ['client/src/run.ts'] } }} />);
-    fireEvent.click(screen.getByRole('button', { name: 'client/src/run.ts' }));
-    expect(onOpenFile).toHaveBeenCalledWith('client/src/run.ts');
-    view.rerender(<CodeGraphNodeDetails {...props} node={{ id: 'file-id', label: 'run.ts', properties: {
-      recordKind: 'file', filePath: 'client/src/run.ts', qualifiedName: 'repo.client.run.ts.__file__',
-    } }} />);
-    expect(onLoadSource).not.toHaveBeenCalled();
+    expect(screen.getByText('Renders file connections.', { exact: false })).toBeTruthy();
+    expect(screen.queryByText('Qualified identity')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Load source' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Open file' }));
-    expect(onLoadSource).toHaveBeenCalledWith('repo.client.run.ts.__file__');
+    expect(onLoadSource).toHaveBeenCalledWith('client/run.ts');
+    fireEvent.click(screen.getByRole('button', { name: 'client/caller.ts' }));
+    expect(onOpenFile).toHaveBeenCalledWith('client/caller.ts');
   });
 });

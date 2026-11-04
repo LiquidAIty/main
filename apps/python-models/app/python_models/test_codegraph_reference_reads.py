@@ -143,7 +143,6 @@ def test_codegraph_projection_preserves_one_file_with_multiple_feature_membershi
         "load_deck",
         lambda *_args: _saved_builder(tools=["cbm.search_graph", "cbm.search_code"]),
     )
-    observed = {}
     monkeypatch.setattr(codegraph_reference_reads, "_REPO_ROOT", tmp_path)
     source_file = tmp_path / "client/src/example.ts"
     source_file.parent.mkdir(parents=True)
@@ -153,21 +152,8 @@ def test_codegraph_projection_preserves_one_file_with_multiple_feature_membershi
         encoding="utf-8",
     )
 
-    def reader(**kwargs):
-        observed.update(kwargs)
-        file_page = {
-                "cols": ["name", "label", "lines", "in", "out"],
-                "groups": [{
-                    "qn_prefix": "C-Projects-LiquidAIty-main.client.src.example.ts",
-                    "file": "client/src/example.ts",
-                    "rows": [["__file__", "File", "", 0, 0]],
-                }],
-                "has_more": False,
-                "truncated": False,
-            }
-        return [file_page]
-
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", reader)
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+                        lambda **_: pytest.fail("annotation projection must not call CBM"))
     result = read_codegraph_view({
         "projectId": "project-1",
         "deckId": "deck_builder",
@@ -183,23 +169,16 @@ def test_codegraph_projection_preserves_one_file_with_multiple_feature_membershi
     assert len(features) == 2
     assert len(projection["edges"]) == 2
     assert files[0]["properties"]["features"] == ["CodeGraph", "Graph Presentation"]
-    assert observed["project_id"] == "project-1"
-    assert observed["card_id"] == "builder"
-    assert observed["concurrent"] is True
-    assert observed["deadline_seconds"] == 30
-    assert len(observed["calls"]) == 1
-    assert observed["calls"][0][1]["qn_pattern"].endswith(r"\.(apps|client|services|vite)\.")
-    assert all(name == "cbm.search_graph" for name, _ in observed["calls"])
+    assert files[0]["id"] == "source-file:client/src/example.ts"
+    assert files[0]["properties"]["sourceAuthority"] == "repository-file"
+    assert "qualifiedName" not in files[0]["properties"]
 
 
 def test_projection_does_not_report_ready_when_source_headers_are_unreadable(monkeypatch, tmp_path):
     monkeypatch.setattr(codegraph_reference_reads, "_REPO_ROOT", tmp_path)
     monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
                         lambda *_args: _saved_builder(tools=["cbm.search_graph", "cbm.search_code"]))
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", lambda **_: [
-        {"cols": ["name", "label"], "groups": [{"qn_prefix": "repo", "file": "client/file.ts",
-                                                 "rows": [["file", "File"]]}]},
-    ])
+    monkeypatch.setattr(codegraph_reference_reads, "_source_file_paths", lambda: ["client/file.ts"])
     result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder",
                                  "cardId": "builder", "mode": "projection"})
     assert result["status"] == "unavailable"
@@ -225,16 +204,18 @@ def test_header_reads_preserve_the_line_80_boundary_and_reject_outside_paths(mon
     assert errors[0]["filePath"] == "../outside.py"
 
 
-def test_codegraph_projection_honors_persisted_builder_grants(
+def test_annotation_graph_and_file_text_are_independent_of_cbm_and_builder_grants(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
-    monkeypatch.setattr(
-        codegraph_reference_reads.saved_cards,
-        "load_deck",
-        lambda *_args: _saved_builder(tools=["cbm.search_graph"]),
-    )
-    reader = lambda **_kwargs: pytest.fail("provider must not be called without the saved grant")
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", reader)
+    monkeypatch.setattr(codegraph_reference_reads, "_REPO_ROOT", tmp_path)
+    source = tmp_path / "client/example.ts"
+    source.parent.mkdir()
+    source.write_text("// Entity: Example\n// Relationship: Explains this file.\nexport const value = 1;", encoding="utf-8")
+    monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
+                        lambda *_: pytest.fail("annotation graph must not depend on a saved agent"))
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+                        lambda **_: pytest.fail("annotation graph must not call CBM"))
 
     result = read_codegraph_view({
         "projectId": "project-1",
@@ -243,140 +224,164 @@ def test_codegraph_projection_honors_persisted_builder_grants(
         "mode": "projection",
     })
 
-    assert result["status"] == "unavailable"
-    assert result["errors"] == [{
-        "purpose": "authorization",
-        "operation": "cbm.search_code",
-        "code": "codegraph_saved_tool_not_granted",
-    }]
+    assert result["status"] == "ready"
+    assert result["projection"]["counts"] == {"nodes": 2, "edges": 1}
+    opened = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
+                                 "mode": "source", "filePath": "client/example.ts"})
+    assert opened["status"] == "ready"
+    assert opened["fileSource"]["content"] == source.read_text(encoding="utf-8")
+    assert opened["fileSource"]["graphSystem"] == "repository"
+    assert "cbmQualifiedName" not in opened["fileSource"]
 
 
-def test_codegraph_file_read_preserves_structural_predicates_and_current_coverage(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        codegraph_reference_reads.saved_cards,
-        "load_deck",
-        lambda *_args: _saved_builder(tools=["cbm.query_graph", "cbm.check_index_coverage"]),
-    )
+def _query_rows(rows, **pagination):
+    return {"columns": ["selected", "neighbor", "predicate"], "rows": rows, **pagination}
 
+
+def test_codegraph_file_set_uses_two_cbm_queries_not_per_file_symbol_traces(monkeypatch):
+    monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
+                        lambda *_: _saved_builder(tools=["cbm.query_graph"]))
+    observed = []
     def reader(**kwargs):
-        assert [name for name, _arguments in kwargs["calls"]] == [
-            "cbm.query_graph", "cbm.check_index_coverage",
-        ]
-        assert "client/src/example.ts" in kwargs["calls"][0][1]["query"]
+        observed.append(kwargs)
+        assert len(kwargs["calls"]) == 2
+        for operation, arguments in kwargs["calls"]:
+            assert operation == "cbm.query_graph"
+            assert '"client/a.ts", "client/b.ts"' in arguments["query"]
+            assert "RETURN DISTINCT" in arguments["query"]
+            assert "CALLS|IMPORTS" in arguments["query"]
         return [
-            {
-                "columns": [
-                    "source_qualified_name", "source_name", "source_kind",
-                    "source_file_path", "source_start_line", "source_end_line",
-                    "predicate", "target_qualified_name", "target_name",
-                    "target_kind", "target_file_path", "target_start_line",
-                    "target_end_line",
-                ],
-                "rows": [[
-                    "project.example.caller", "caller", "Function",
-                    "client/src/example.ts", "10", "20", "CALLS",
-                    "project.example.target", "target", "Function",
-                    "client/src/target.ts", "5", "9",
-                ]],
-                "truncated": False,
-                "has_more": False,
-            },
-            {
-                "paths": {
-                    "cols": ["freshness"],
-                    "rows": [["current"]],
-                },
-            },
+            _query_rows([["client/a.ts", "client/target.ts", "CALLS"],
+                         ["client/a.ts", "client/target.ts", "IMPORTS"],
+                         ["client/a.ts", "client/a.ts", "CALLS"],
+                         ["client/a.ts", "<python-builtins>", "CALLS"],
+                         ["client/b.ts", "", ""]]),
+            _query_rows([["client/b.ts", "client/caller.ts", "CALLS"]]),
         ]
-
     monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", reader)
-    result = read_codegraph_view({
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "cardId": "builder",
-        "mode": "file",
-        "filePath": "client/src/example.ts",
-    })
-
+    result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
+                                 "mode": "file", "filePaths": ["client/a.ts", "client/b.ts"]})
     assert result["status"] == "ready"
-    assert result["freshness"]["status"] == "current"
-    assert result["projection"]["edges"][0]["predicate"] == "CALLS"
-    assert {node["id"] for node in result["projection"]["nodes"]} == {
-        "project.example.caller", "project.example.target",
+    assert len(observed) == 1
+    assert observed[0]["concurrent"] is True
+    assert observed[0]["deadline_seconds"] == 30
+    assert {(edge["source"], edge["predicate"], edge["target"]) for edge in result["projection"]["edges"]} == {
+        ("source-file:client/a.ts", "CALLS", "source-file:client/target.ts"),
+        ("source-file:client/a.ts", "IMPORTS", "source-file:client/target.ts"),
+        ("source-file:client/caller.ts", "CALLS", "source-file:client/b.ts"),
     }
+    assert all(node["properties"]["recordKind"] == "file" for node in result["projection"]["nodes"])
+    assert result["projection"]["metadata"]["selectedFilePaths"] == ["client/a.ts", "client/b.ts"]
 
 
-def test_codegraph_source_read_is_explicit_and_includes_tests(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        codegraph_reference_reads.saved_cards,
-        "load_deck",
-        lambda *_args: _saved_builder(tools=["cbm.get_code_snippet", "cbm.trace_path"]),
-    )
-    observed = {}
-
-    def exact(*args, **kwargs):
-        observed["args"] = args
-        observed["kwargs"] = kwargs
-        return {
-            "cbmQualifiedName": "C-Projects-LiquidAIty-main.client.example.symbol",
-            "content": "export const symbol = true;",
-            "truncated": False,
-        }
-
-    monkeypatch.setattr(codegraph_reference_reads, "read_codegraph_exact", exact)
-    result = read_codegraph_view({
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "cardId": "builder",
-        "mode": "source",
-        "qualifiedName": "C-Projects-LiquidAIty-main.client.example.symbol",
-    })
-
-    assert result["status"] == "ready"
-    assert result["selectedSymbol"]["content"].startswith("export")
-    assert observed["kwargs"] == {
-        "bounded_expansion": 2,
-        "result_limit": codegraph_reference_reads.MAX_GRAPH_REFERENCE_RESULTS,
-        "include_tests": True,
-    }
-
-
-def test_file_source_uses_exact_cbm_file_identity_and_reports_clipping(monkeypatch):
-    monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
-                        lambda *_args: _saved_builder(tools=["cbm.get_code_snippet"]))
-    qualified = "C-Projects-LiquidAIty-main.client.src.example.ts.__file__"
-
+def test_file_query_pages_are_complete_without_a_total_neighbor_limit(monkeypatch):
+    calls = []
     def reader(**kwargs):
-        assert kwargs["calls"] == [("cbm.get_code_snippet", {
-            "project": "C-Projects-LiquidAIty-main", "qualified_name": qualified,
-            "include_neighbors": False, "source_mode": "full", "max_output_tokens": 64_000,
-            "format": "json",
-        })]
-        return [{"qualified_name": qualified, "label": "File", "source": "export const value = 1;",
-                 "file_path": "client/src/example.ts", "start_line": 1, "end_line": 1,
-                 "source_truncated": True}]
-
+        calls.extend(kwargs["calls"])
+        if len(calls) == 2:
+            return [
+                _query_rows([["client/a.ts", "client/one.ts", "CALLS"]],
+                            has_more=True, truncated=True, next_cursor="page-two"),
+                _query_rows([["client/a.ts", "", ""]]),
+            ]
+        assert len(kwargs["calls"]) == 1
+        assert kwargs["calls"][0][1]["cursor"] == "page-two"
+        return [_query_rows([["client/a.ts", "client/two.ts", "CALLS"]])]
     monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", reader)
-    result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder",
-                                 "cardId": "builder", "mode": "source", "qualifiedName": qualified})
+    result = codegraph_reference_reads._read_codegraph_files(
+        {"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
+         "tools": {"cbm.query_graph"}}, ["client/a.ts"])
+    assert result["status"] == "ready" and not result["truncated"]
+    assert len(result["projection"]["edges"]) == 2
+    assert len(result["projection"]["nodes"]) == 3
+
+
+def test_nonadvancing_query_cursor_is_incomplete_not_ready(monkeypatch):
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+        lambda **kwargs: [_query_rows([["client/a.ts", "", ""]], has_more=True, next_cursor="same")
+                          for _ in kwargs["calls"]])
+    result = codegraph_reference_reads._read_codegraph_files(
+        {"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
+         "tools": {"cbm.query_graph"}}, ["client/a.ts"])
+    assert result["status"] == "partial" and result["truncated"]
+    assert result["errors"][0]["code"] == "codegraph_cursor_not_advancing"
+    assert result["projection"]["nodes"][0]["properties"]["structuralComplete"] is False
+
+
+def test_missing_indexed_file_and_failed_query_do_not_become_empty_success(monkeypatch):
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+        lambda **kwargs: [_query_rows([]), {"error": "read_timeout"}])
+    result = codegraph_reference_reads._read_codegraph_files(
+        {"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
+         "tools": {"cbm.query_graph"}}, ["client/missing.ts"])
     assert result["status"] == "partial"
-    assert result["selectedSymbol"]["recordKind"] == "file"
-    assert result["selectedSymbol"]["truncated"] is True
-    assert result["selectedSymbol"]["content"] == "export const value = 1;"
+    assert {error["code"] for error in result["errors"]} == {"read_timeout", "codegraph_file_not_indexed"}
+    assert result["projection"]["nodes"][0]["properties"]["structuralComplete"] is False
 
 
-def test_file_source_rejects_wrong_provider_identity(monkeypatch):
+def test_query_rejects_rows_outside_the_requested_file_set(monkeypatch):
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+        lambda **kwargs: [_query_rows([["client/a.ts", "", ""],
+                                     ["client/unselected.ts", "client/other.ts", "CALLS"]]),
+                          _query_rows([["client/a.ts", "", ""]])])
+    result = codegraph_reference_reads._read_codegraph_files(
+        {"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
+         "tools": {"cbm.query_graph"}}, ["client/a.ts"])
+    assert result["status"] == "partial"
+    assert result["errors"][0]["code"] == "codegraph_result_scope_invalid"
+    assert result["projection"]["edges"] == []
+
+
+def test_file_expansion_requires_saved_query_grant_before_provider_call(monkeypatch):
     monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
-                        lambda *_args: _saved_builder(tools=["cbm.get_code_snippet"]))
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", lambda **_: [{
-        "qualified_name": "different.file", "label": "File", "source": "wrong content",
-    }])
-    result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder",
-                                 "cardId": "builder", "mode": "source",
-                                 "qualifiedName": "C-Projects-LiquidAIty-main.client.example.ts.__file__"})
+                        lambda *_: _saved_builder(tools=["cbm.search_graph", "cbm.get_code_snippet", "cbm.trace_path"]))
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+                        lambda **_: pytest.fail("ungranted query must not run"))
+    result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
+                                 "mode": "file", "filePaths": ["client/example.ts"]})
     assert result["status"] == "unavailable"
-    assert result["selectedSymbol"] is None
+    assert result["errors"][0]["operation"] == "cbm.query_graph"
+
+
+def test_file_source_reads_repository_text_without_symbol_tools(monkeypatch, tmp_path):
+    monkeypatch.setattr(codegraph_reference_reads, "_REPO_ROOT", tmp_path)
+    source = tmp_path / "client/src/example.ts"
+    source.parent.mkdir(parents=True)
+    source.write_text("export const value = 1;", encoding="utf-8")
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+                        lambda **_: pytest.fail("file text must not call a symbol reader"))
+    monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
+                        lambda *_: pytest.fail("file text must not load an agent"))
+    result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
+                                 "mode": "source", "filePath": "client/src/example.ts"})
+    assert result["status"] == "ready"
+    assert result["fileSource"]["content"] == "export const value = 1;"
+    assert result["fileSource"]["graphSystem"] == "repository"
+    assert result["fileSource"]["recordKind"] == "file"
+    assert result["fileSource"]["sourceReference"] == "source-file:client/src/example.ts"
+    assert "cbmQualifiedName" not in result["fileSource"]
+    assert result["projection"] is None
+
+
+def test_browser_source_refuses_symbol_selection_before_any_provider_call(monkeypatch):
+    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+                        lambda **_: pytest.fail("symbol read must not run"))
+    with pytest.raises(ValueError, match="codegraph_symbol_selection_not_supported"):
+        read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
+                             "mode": "source", "qualifiedName": "C-Projects-LiquidAIty-main.client.example.run"})
+
+
+def test_repository_source_reports_its_display_limit_and_refuses_outside_paths(monkeypatch, tmp_path):
+    source = tmp_path / "client/example.ts"
+    source.parent.mkdir(parents=True)
+    source.write_text("0123456789abcdef", encoding="utf-8")
+    monkeypatch.setattr(codegraph_reference_reads, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(codegraph_reference_reads, "_MAX_FILE_SOURCE_CHARS", 10)
+    payload = {"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
+               "mode": "source", "filePath": "client/example.ts"}
+    clipped = read_codegraph_view(payload)
+    assert clipped["status"] == "partial"
+    assert clipped["fileSource"]["content"] == "0123456789"
+    assert clipped["fileSource"]["truncated"] is True
+    refused = read_codegraph_view({**payload, "filePath": "../outside.py"})
+    assert refused["status"] == "unavailable" and refused["fileSource"] is None

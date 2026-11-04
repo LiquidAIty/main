@@ -1,10 +1,10 @@
-"""Exact repository-symbol reads from the official Codebase Memory authority."""
+"""CBM file-edge queries for CodeGraph and exact symbol hydration for Data Anchors."""
 # Graph + less = more: less code that does the same work as more code is more useful.
 # Entity names the feature; Relationship explains why this file belongs and what it contributes.
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: CodeGraph
-# Relationship: This file reads exact CBM structure and selected source, and joins only current leading Entity/Relationship comments from those repository Files as Feature contributions.
+# Relationship: This file reads source annotations and file text; CBM set queries own structural traversal and return directed file relationships for the selected file set.
 # Entity: Data Anchors
 # Relationship: This file hydrates one exact CodeGraph reference and optional bounded call neighborhood for canonical IDF materialization.
 # Entity: Builder Card
@@ -12,11 +12,13 @@
 # Entity: Tool Catalog
 # Relationship: This file checks each required CBM operation against Builder's saved tool ceiling before opening the authenticated materializer-read session.
 # Entity: Project Knowledge Graph
-# Relationship: This file projects Feature, File, Symbol, and structural edges for the shared graph workspace without replacing CBM as structural authority.
+# Relationship: This file projects source categories, Files, and structural edges for the shared graph workspace without replacing CBM as structural authority.
 
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import re
 from itertools import islice
 from pathlib import Path
@@ -37,12 +39,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _CODEGRAPH_PROJECT = "C-Projects-LiquidAIty-main"
 _CODEGRAPH_DECK_ID = "deck_builder"
 _CODEGRAPH_CARD_ID = "builder"
-_MAX_CODEGRAPH_ROWS = 1_000
-_CODEGRAPH_RELATIONSHIP_TYPES = (
-    "CALLS", "IMPORTS", "DEFINES", "DEFINES_METHOD", "TESTS", "TESTS_FILE",
-    "USAGE", "CALL_REFERENCE", "HTTP_CALLS", "DATA_FLOWS", "HANDLES",
-    "IMPLEMENTS", "INHERITS", "CONFIGURES", "WRITES",
-)
+_CBM_PAGE_SIZE = 200
+_MAX_FILE_SOURCE_CHARS = 256_000
 _EXCLUDED_SOURCE_PARTS = frozenset({
     ".git", ".nx", ".pytest_cache", ".venv", "__pycache__", "dist",
     "node_modules", "vendor", "venv",
@@ -191,15 +189,20 @@ def read_codegraph_view(payload: dict[str, Any]) -> dict[str, Any]:
     if mode not in {"projection", "file", "source"}:
         raise ValueError("codegraph_read_mode_invalid")
 
-    context = _saved_builder_context(project_id, deck_id, card_id)
+    context = {"projectId": project_id, "deckId": deck_id, "cardId": card_id}
     if mode == "projection":
         return _read_codegraph_projection(context)
-    if mode == "file":
-        return _read_codegraph_file(context, str(payload.get("filePath") or "").strip())
-    return _read_codegraph_source(
-        context,
-        str(payload.get("qualifiedName") or "").strip(),
-    )
+    if "qualifiedName" in payload:
+        raise ValueError("codegraph_symbol_selection_not_supported")
+    file_path = str(payload.get("filePath") or "").strip()
+    if mode == "source":
+        return _read_codegraph_file_source(context, file_path)
+    file_paths = payload.get("filePaths")
+    if file_path or not isinstance(file_paths, list) or not file_paths \
+            or any(not isinstance(path, str) or not path.strip() for path in file_paths):
+        raise ValueError("codegraph_file_paths_required")
+    context = _saved_builder_context(project_id, deck_id, card_id)
+    return _read_codegraph_files(context, file_paths)
 
 
 def _saved_builder_context(
@@ -270,7 +273,7 @@ def _missing_grants(
         "mode": mode,
         "scope": _scope(context),
         "projection": None,
-        "selectedSymbol": None,
+        "fileSource": None,
         "freshness": {"status": "unverified", "coverage": None},
         "truncated": False,
         "errors": [
@@ -297,25 +300,11 @@ def _provider_failure(
         "mode": mode,
         "scope": _scope(context),
         "projection": None,
-        "selectedSymbol": None,
+        "fileSource": None,
         "freshness": {"status": "unverified", "coverage": None},
         "truncated": False,
         "errors": [{"purpose": mode, "operation": operation, "code": code}],
     }
-
-
-def _call_codegraph_reads(
-    context: dict[str, Any],
-    calls: list[tuple[str, dict[str, Any]]],
-) -> list[dict[str, Any]]:
-    return call_materializer_read_tools(
-        project_id=context["projectId"],
-        deck_id=context["deckId"],
-        card_id=context["cardId"],
-        calls=calls,
-        concurrent=True,
-        deadline_seconds=30,
-    )
 
 
 def _eligible_source_path(value: str) -> bool:
@@ -332,30 +321,8 @@ def _eligible_source_path(value: str) -> bool:
     return Path(parts[-1]).suffix in {".py", ".ts", ".tsx"}
 
 
-def _grouped_search_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    columns = payload.get("cols")
-    groups = payload.get("groups")
-    if not isinstance(columns, list) or not isinstance(groups, list):
-        return []
-    records: list[dict[str, Any]] = []
-    for group in groups:
-        if not isinstance(group, dict) or not isinstance(group.get("rows"), list):
-            continue
-        prefix = str(group.get("qn_prefix") or "").strip()
-        file_path = str(group.get("file") or "").replace("\\", "/")
-        for row in group["rows"]:
-            if not isinstance(row, list) or len(row) != len(columns):
-                continue
-            record = {str(columns[index]): value for index, value in enumerate(row)}
-            name = str(record.get("name") or "").strip()
-            record["qualified_name"] = f"{prefix}.{name}" if prefix else name
-            record["file_path"] = file_path
-            records.append(record)
-    return records
-
-
 def _feature_contributions(file_paths: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    """Read source-owned annotations only for exact Files already returned by CBM."""
+    """Read the declared category and contribution from exact repository files."""
     contributions: dict[tuple[str, str, str], dict[str, Any]] = {}
     errors: list[dict[str, str]] = []
     root = _REPO_ROOT.resolve()
@@ -390,67 +357,30 @@ def _feature_id(name: str) -> str:
     return "feature:" + quote(name, safe="")
 
 
+def _source_file_paths() -> list[str]:
+    paths: list[str] = []
+    for directory in ("apps", "client", "services"):
+        for current, directories, files in os.walk(_REPO_ROOT / directory):
+            directories[:] = sorted(name for name in directories if name not in _EXCLUDED_SOURCE_PARTS)
+            for name in sorted(files):
+                path = (Path(current) / name).relative_to(_REPO_ROOT).as_posix()
+                if _eligible_source_path(path):
+                    paths.append(path)
+    if (_REPO_ROOT / "vite.config.ts").is_file():
+        paths.append("vite.config.ts")
+    return sorted(paths)
+
+
 def _read_codegraph_projection(context: dict[str, Any]) -> dict[str, Any]:
-    # Preserve the existing structural and source-read access ceiling for this view.
-    required = {"cbm.search_graph", "cbm.search_code"}
-    denied = _missing_grants(context, required, mode="projection")
-    if denied:
-        return denied
-    calls: list[tuple[str, dict[str, Any]]] = [
-        ("cbm.search_graph", {
-            "project": _CODEGRAPH_PROJECT,
-            "label": "File",
-            "qn_pattern": "^" + re.escape(_CODEGRAPH_PROJECT) + r"\.(apps|client|services|vite)\.",
-            "limit": _MAX_CODEGRAPH_ROWS,
-            "max_output_tokens": 128_000,
-            "format": "json",
-        })
-    ]
-    try:
-        results = _call_codegraph_reads(context, calls)
-    except Exception:
-        return _provider_failure(
-            context,
-            mode="projection",
-            operation="cbm.search_graph",
-            code="codegraph_provider_unavailable",
-        )
-    if len(results) != len(calls):
-        return _provider_failure(
-            context,
-            mode="projection",
-            operation="cbm.search_graph",
-            code="codegraph_result_invalid",
-        )
-    file_results = results
-    successful_file_results = [result for result in file_results if not result.get("error")]
-    if not successful_file_results:
-        return _provider_failure(
-            context,
-            mode="projection",
-            operation="cbm.search_graph",
-            code=str(file_results[0].get("error") or "codegraph_result_invalid"),
-        )
-    file_records = [
-        record
-        for result in successful_file_results
-        for record in _grouped_search_records(result)
-        if record.get("label") == "File"
-        and _eligible_source_path(str(record.get("file_path") or ""))
-    ]
-    files_by_path = {
-        str(record["file_path"]): record
-        for record in file_records
-    }
-    contributions, header_errors = _feature_contributions(list(files_by_path))
+    file_paths = _source_file_paths()
+    contributions, header_errors = _feature_contributions(file_paths)
     contributions_by_path: dict[str, list[dict[str, Any]]] = {}
     feature_members: dict[str, set[str]] = {}
     for contribution in contributions:
         path = contribution["filePath"]
-        if path not in files_by_path:
-            continue
         contributions_by_path.setdefault(path, []).append(contribution)
         feature_members.setdefault(contribution["feature"], set()).add(path)
+    files_by_path = {path: "source-file:" + path for path in contributions_by_path}
 
     nodes: list[dict[str, Any]] = []
     for feature in sorted(feature_members):
@@ -470,10 +400,9 @@ def _read_codegraph_projection(context: dict[str, Any]) -> dict[str, Any]:
             },
         })
     for path in sorted(files_by_path):
-        record = files_by_path[path]
         file_contributions = contributions_by_path.get(path, [])
         nodes.append({
-            "id": record["qualified_name"],
+            "id": files_by_path[path],
             "label": Path(path).name,
             "title": path,
             "type": "File",
@@ -482,19 +411,16 @@ def _read_codegraph_projection(context: dict[str, Any]) -> dict[str, Any]:
             "properties": {
                 "recordKind": "file",
                 "filePath": path,
-                "qualifiedName": record["qualified_name"],
+                "sourceReference": files_by_path[path],
                 "features": sorted({item["feature"] for item in file_contributions}),
                 "contributions": file_contributions,
-                "structuralAuthority": "cbm",
+                "sourceAuthority": "repository-file",
             },
         })
     edges: list[dict[str, Any]] = []
     for contribution in contributions:
-        file_record = files_by_path.get(contribution["filePath"])
-        if not file_record:
-            continue
         feature_node_id = _feature_id(contribution["feature"])
-        file_node_id = str(file_record["qualified_name"])
+        file_node_id = files_by_path[contribution["filePath"]]
         edges.append({
             "id": f"feature-membership:{feature_node_id}:{file_node_id}",
             "source": feature_node_id,
@@ -517,23 +443,6 @@ def _read_codegraph_projection(context: dict[str, Any]) -> dict[str, Any]:
     )
     revision = hashlib.sha256(revision_material.encode("utf-8")).hexdigest()
     errors: list[dict[str, str]] = list(header_errors)
-    for index, result in enumerate(results):
-        if result.get("error"):
-            errors.append({
-                "purpose": "structure",
-                "operation": calls[index][0],
-                "code": str(result["error"]),
-            })
-    truncated = any(
-        bool(result.get("has_more") or result.get("truncated"))
-        for result in results
-    )
-    if truncated:
-        errors.append({
-            "purpose": "projection",
-            "operation": "cbm.search_graph",
-            "code": "codegraph_provider_result_truncated",
-        })
     projection = {
         "schemaVersion": "codegraph.projection.v1",
         "authority": "codegraph",
@@ -543,9 +452,9 @@ def _read_codegraph_projection(context: dict[str, Any]) -> dict[str, Any]:
         "nodes": nodes,
         "edges": edges,
         "metadata": {
-            "structuralAuthority": "cbm",
+            "inventoryAuthority": "repository-source",
             "featureAuthority": "inline-source-comments",
-            "eligibleFileCount": len(file_records),
+            "eligibleFileCount": len(file_paths),
             "classifiedFileCount": len(contributions_by_path),
             "featureCount": len(feature_members),
             "contributionCount": len(edges),
@@ -558,11 +467,21 @@ def _read_codegraph_projection(context: dict[str, Any]) -> dict[str, Any]:
         "mode": "projection",
         "scope": _scope(context),
         "projection": projection,
-        "selectedSymbol": None,
-        "freshness": {"status": "unverified", "coverage": None},
-        "truncated": truncated,
+        "fileSource": None,
+        "freshness": {"status": "current", "coverage": None},
+        "truncated": False,
         "errors": errors,
     }
+
+
+def _repository_path(value: str) -> str:
+    path = value.replace("\\\\", "/")
+    prefix = _REPO_ROOT.as_posix().rstrip("/") + "/"
+    if path.lower().startswith(prefix.lower()):
+        path = path[len(prefix):]
+    if not path or path.startswith("/") or ":" in path or ".." in path.split("/"):
+        return ""
+    return path
 
 
 def _valid_selected_file(value: str) -> str:
@@ -572,275 +491,152 @@ def _valid_selected_file(value: str) -> str:
     return path
 
 
-def _query_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    columns = payload.get("columns")
-    rows = payload.get("rows")
-    if not isinstance(columns, list) or not isinstance(rows, list):
-        return []
-    return [
-        {str(columns[index]): value for index, value in enumerate(row)}
-        for row in rows
-        if isinstance(row, list) and len(row) == len(columns)
-    ]
-
-
-def _structural_node(record: dict[str, Any], prefix: str) -> dict[str, Any] | None:
-    qualified_name = str(record.get(f"{prefix}_qualified_name") or "").strip()
-    if not qualified_name:
-        return None
-    kind = str(record.get(f"{prefix}_kind") or "Symbol").strip() or "Symbol"
-    file_path = str(record.get(f"{prefix}_file_path") or "").replace("\\", "/")
-    name = str(record.get(f"{prefix}_name") or qualified_name.rsplit(".", 1)[-1])
-    start_line = record.get(f"{prefix}_start_line")
-    end_line = record.get(f"{prefix}_end_line")
-    return {
-        "id": qualified_name,
-        "label": Path(file_path).name if kind == "File" and file_path else name,
-        "title": file_path or qualified_name,
-        "type": kind,
-        "etype": "File" if kind == "File" else "Symbol",
-        "authority": "codegraph",
-        "properties": {
-            "recordKind": "file" if kind == "File" else "symbol",
-            "qualifiedName": qualified_name,
-            "filePath": file_path,
-            "symbolKind": kind,
-            "startLine": int(start_line) if str(start_line).isdigit() else None,
-            "endLine": int(end_line) if str(end_line).isdigit() else None,
-            "structuralAuthority": "cbm",
-        },
-    }
-
-
-def _coverage_freshness(payload: dict[str, Any]) -> str:
-    paths = payload.get("paths")
-    if not isinstance(paths, dict):
-        return "unverified"
-    columns = paths.get("cols")
-    rows = paths.get("rows")
-    if not isinstance(columns, list) or not isinstance(rows, list):
-        return "unverified"
-    try:
-        freshness_index = columns.index("freshness")
-    except ValueError:
-        return "unverified"
-    values = {
-        str(row[freshness_index] or "").strip()
-        for row in rows
-        if isinstance(row, list) and len(row) == len(columns)
-    }
-    if values == {"current"}:
-        return "current"
-    if "metadata_changed" in values:
-        return "metadata_changed"
-    return "partial" if values else "unverified"
-
-
-def _read_codegraph_file(context: dict[str, Any], requested_path: str) -> dict[str, Any]:
-    required = {"cbm.query_graph", "cbm.check_index_coverage"}
-    denied = _missing_grants(context, required, mode="file")
+def _read_codegraph_files(context: dict[str, Any], requested_paths: list[str]) -> dict[str, Any]:
+    """CBM traverses the selected set; Python projects its file-level rows only."""
+    denied = _missing_grants(context, {"cbm.query_graph"}, mode="file")
     if denied:
         return denied
-    file_path = _valid_selected_file(requested_path)
-    relationship_types = ", ".join(f"'{value}'" for value in _CODEGRAPH_RELATIONSHIP_TYPES)
-    query = (
-        "MATCH (source)-[relationship]->(target) "
-        f"WHERE (source.file_path = '{file_path}' OR target.file_path = '{file_path}') "
-        f"AND type(relationship) IN [{relationship_types}] "
-        "RETURN source.qualified_name AS source_qualified_name, "
-        "source.name AS source_name, source.label AS source_kind, "
-        "source.file_path AS source_file_path, source.start_line AS source_start_line, "
-        "source.end_line AS source_end_line, type(relationship) AS predicate, "
-        "target.qualified_name AS target_qualified_name, target.name AS target_name, "
-        "target.label AS target_kind, target.file_path AS target_file_path, "
-        "target.start_line AS target_start_line, target.end_line AS target_end_line "
-        "ORDER BY source_qualified_name, predicate, target_qualified_name "
-        f"LIMIT {_MAX_CODEGRAPH_ROWS}"
-    )
-    calls = [
-        ("cbm.query_graph", {
+    file_paths = sorted({_valid_selected_file(path) for path in requested_paths})
+    selected = set(file_paths)
+    literals = json.dumps(file_paths)
+    pending = []
+    for direction, pattern in (
+        ("outgoing", "(a)-[r:CALLS|IMPORTS]->(b)"),
+        ("incoming", "(b)-[r:CALLS|IMPORTS]->(a)"),
+    ):
+        pending.append((direction, {
             "project": _CODEGRAPH_PROJECT,
-            "query": query,
-            "max_rows": _MAX_CODEGRAPH_ROWS,
-            "max_output_tokens": 120_000,
-            "format": "json",
-        }),
-        ("cbm.check_index_coverage", {
-            "project": _CODEGRAPH_PROJECT,
-            "paths": [file_path],
-            "path_limit": 10,
-            "diagnostics": "full",
-            "format": "json",
-        }),
-    ]
+            "query": (
+                f"MATCH (a) WHERE a.file_path IN {literals} "
+                f"OPTIONAL MATCH {pattern} "
+                "RETURN DISTINCT a.file_path AS selected, b.file_path AS neighbor, type(r) AS predicate"
+            ),
+            "format": "json", "max_rows": _CBM_PAGE_SIZE, "max_output_tokens": 24_000,
+        }))
+    pairs: set[tuple[str, str, str]] = set()
+    observed_files: set[str] = set()
+    errors: list[dict[str, str]] = []
+    cursors: set[tuple[str, str]] = set()
+    truncated = False
+    # Only provider result-page transport repeats. CBM owns all graph traversal
+    # and file aggregation, irrespective of how many selected files or symbols exist.
+    while pending:
+        try:
+            results = call_materializer_read_tools(
+                project_id=context["projectId"], deck_id=context["deckId"], card_id=context["cardId"],
+                calls=[("cbm.query_graph", arguments) for _, arguments in pending],
+                concurrent=True, deadline_seconds=30,
+            )
+        except Exception:
+            return _provider_failure(context, mode="file", operation="cbm.query_graph",
+                                     code="codegraph_connections_unavailable")
+        if len(results) != len(pending):
+            errors.append({"purpose": "connections", "operation": "cbm.query_graph", "code": "codegraph_result_invalid"})
+        following = []
+        for (direction, arguments), result in zip(pending, results):
+            if result.get("error"):
+                errors.append({"purpose": "connections", "operation": "cbm.query_graph", "code": str(result["error"])})
+                continue
+            if result.get("columns") != ["selected", "neighbor", "predicate"] or not isinstance(result.get("rows"), list):
+                errors.append({"purpose": "connections", "operation": "cbm.query_graph", "code": "codegraph_result_invalid"})
+                continue
+            for row in result["rows"]:
+                if not isinstance(row, list) or len(row) != 3 or not isinstance(row[0], str):
+                    errors.append({"purpose": "connections", "operation": "cbm.query_graph", "code": "codegraph_result_invalid"})
+                    continue
+                origin = _repository_path(row[0])
+                if origin not in selected:
+                    errors.append({"purpose": "connections", "operation": "cbm.query_graph", "code": "codegraph_result_scope_invalid"})
+                    continue
+                observed_files.add(origin)
+                if row[1] in (None, "") and row[2] in (None, ""):
+                    continue  # CBM found this file but no matching edge for this symbol.
+                if not isinstance(row[1], str) or row[2] not in {"CALLS", "IMPORTS"}:
+                    errors.append({"purpose": "connections", "operation": "cbm.query_graph", "code": "codegraph_result_invalid"})
+                    continue
+                neighbor = _repository_path(row[1])
+                if not neighbor or neighbor.startswith("<") or neighbor == origin:
+                    continue
+                source, target = (origin, neighbor) if direction == "outgoing" else (neighbor, origin)
+                pairs.add((source, target, row[2]))
+            cursor = result.get("next_cursor") or result.get("next")
+            if result.get("has_more") and isinstance(cursor, str) and cursor:
+                if (direction, cursor) in cursors:
+                    errors.append({"purpose": "connections", "operation": "cbm.query_graph", "code": "codegraph_cursor_not_advancing"})
+                    truncated = True
+                else:
+                    cursors.add((direction, cursor))
+                    following.append((direction, {**arguments, "cursor": cursor}))
+            elif result.get("has_more") or result.get("truncated"):
+                truncated = True
+        pending = following
+    for missing in sorted(selected - observed_files):
+        errors.append({"purpose": "connections", "operation": "cbm.query_graph",
+                       "code": "codegraph_file_not_indexed", "filePath": missing})
+    paths = selected | {endpoint for source, target, _ in pairs for endpoint in (source, target)}
+    contributions, _ = _feature_contributions([path for path in sorted(paths) if _eligible_source_path(path)])
+    by_path: dict[str, list[dict[str, Any]]] = {}
+    for contribution in contributions:
+        by_path.setdefault(contribution["filePath"], []).append(contribution)
+    complete = not errors and not truncated
+    nodes = [{"id": "source-file:" + path, "label": Path(path).name, "title": path,
+              "type": "File", "etype": "File", "authority": "codegraph", "properties": {
+                  "recordKind": "file", "filePath": path, "sourceReference": "source-file:" + path,
+                  "sourceAuthority": "repository-file", "structuralAuthority": "cbm",
+                  "features": sorted({item["feature"] for item in by_path.get(path, [])}),
+                  "contributions": by_path.get(path, []),
+                  **({"structuralLoaded": True, "structuralComplete": complete} if path in selected else {}),
+              }} for path in sorted(paths)]
+    edges = [{
+        "id": f"cbm:{predicate}:{source}:{target}",
+        "source": "source-file:" + source, "target": "source-file:" + target,
+        "predicate": predicate, "layer": "cbm-structure", "properties": {
+            "recordKind": "structural-relationship", "structuralAuthority": "cbm",
+            "evidence": f"cbm.query_graph:{predicate}:file-pairs",
+        },
+    } for source, target, predicate in sorted(pairs)]
+    return {
+        "schemaVersion": "codegraph.read.v1", "status": "ready" if complete else "partial", "mode": "file",
+        "scope": _scope(context), "fileSource": None,
+        "projection": {
+            "schemaVersion": "codegraph.projection.v1", "authority": "codegraph", "projectId": context["projectId"],
+            "revision": "connections:" + hashlib.sha256(json.dumps([file_paths, sorted(pairs)]).encode()).hexdigest(),
+            "counts": {"nodes": len(nodes), "edges": len(edges)}, "nodes": nodes, "edges": edges,
+            "metadata": {"structuralAuthority": "cbm", "selectedFilePaths": file_paths},
+        },
+        "freshness": {"status": "unverified", "coverage": None}, "truncated": truncated, "errors": errors,
+    }
+
+
+def _read_codegraph_file_source(context: dict[str, Any], file_path: str) -> dict[str, Any]:
     try:
-        results = _call_codegraph_reads(context, calls)
-    except Exception:
-        return _provider_failure(
-            context, mode="file", operation="cbm.query_graph",
-            code="codegraph_provider_unavailable",
-        )
-    if len(results) != len(calls) or results[0].get("error"):
-        return _provider_failure(
-            context, mode="file", operation="cbm.query_graph",
-            code=str(results[0].get("error") if results else "codegraph_result_invalid"),
-        )
-    records = _query_rows(results[0])
-    nodes_by_id: dict[str, dict[str, Any]] = {}
-    edges_by_id: dict[str, dict[str, Any]] = {}
-    for record in records:
-        source = _structural_node(record, "source")
-        target = _structural_node(record, "target")
-        predicate = str(record.get("predicate") or "").strip()
-        if not source or not target or not predicate:
-            continue
-        nodes_by_id[source["id"]] = source
-        nodes_by_id[target["id"]] = target
-        edge_id = f"cbm:{predicate}:{source['id']}:{target['id']}"
-        edges_by_id[edge_id] = {
-            "id": edge_id,
-            "source": source["id"],
-            "target": target["id"],
-            "predicate": predicate,
-            "layer": "cbm-structure",
-            "properties": {
-                "recordKind": "structural-relationship",
-                "structuralAuthority": "cbm",
-                "selectedFilePath": file_path,
-            },
-        }
-    if not nodes_by_id:
-        return {
-            "schemaVersion": "codegraph.read.v1",
-            "status": "not_found",
-            "mode": "file",
-            "scope": _scope(context),
-            "projection": None,
-            "selectedSymbol": None,
-            "freshness": {"status": "unverified", "coverage": results[1]},
-            "truncated": False,
-            "errors": [],
-        }
-    coverage_error = results[1].get("error")
-    freshness = "unverified" if coverage_error else _coverage_freshness(results[1])
-    truncated = bool(results[0].get("truncated") or results[0].get("has_more"))
-    errors = []
-    if coverage_error:
-        errors.append({
-            "purpose": "coverage",
-            "operation": "cbm.check_index_coverage",
-            "code": str(coverage_error),
-        })
+        file_path = _valid_selected_file(file_path)
+        root = _REPO_ROOT.resolve()
+        source_path = (root / file_path).resolve(strict=True)
+        source_path.relative_to(root)
+        with source_path.open(encoding="utf-8-sig") as source_file:
+            content = source_file.read(_MAX_FILE_SOURCE_CHARS + 1)
+    except (OSError, ValueError, UnicodeError):
+        return _provider_failure(context, mode="source", operation="source-file",
+                                 code="codegraph_repository_source_unavailable")
+    truncated = len(content) > _MAX_FILE_SOURCE_CHARS
     if truncated:
-        errors.append({
-            "purpose": "structure",
-            "operation": "cbm.query_graph",
-            "code": "codegraph_provider_result_truncated",
-        })
-    projection = {
-        "schemaVersion": "codegraph.projection.v1",
-        "authority": "codegraph",
-        "projectId": context["projectId"],
-        "revision": f"file:{file_path}",
-        "counts": {"nodes": len(nodes_by_id), "edges": len(edges_by_id)},
-        "nodes": [nodes_by_id[key] for key in sorted(nodes_by_id)],
-        "edges": [edges_by_id[key] for key in sorted(edges_by_id)],
-        "metadata": {
-            "structuralAuthority": "cbm",
-            "selectedFilePath": file_path,
-        },
-    }
-    status = "ready" if freshness == "current" and not errors else "partial"
-    return {
-        "schemaVersion": "codegraph.read.v1",
-        "status": status,
-        "mode": "file",
-        "scope": _scope(context),
-        "projection": projection,
-        "selectedSymbol": None,
-        "freshness": {"status": freshness, "coverage": None if coverage_error else results[1]},
-        "truncated": truncated,
-        "errors": errors,
-    }
-
-
-def _read_codegraph_source(
-    context: dict[str, Any],
-    qualified_name: str,
-) -> dict[str, Any]:
-    if qualified_name.startswith(_CODEGRAPH_PROJECT + ".") and qualified_name.endswith(".__file__"):
-        return _read_codegraph_file_source(context, qualified_name)
-    required = {"cbm.get_code_snippet", "cbm.trace_path"}
-    denied = _missing_grants(context, required, mode="source")
-    if denied:
-        return denied
-    if not qualified_name.startswith(_CODEGRAPH_PROJECT + "."):
-        raise ValueError("codegraph_qualified_name_invalid")
-    try:
-        selected = read_codegraph_exact(
-            context["projectId"],
-            context["deckId"],
-            context["cardId"],
-            qualified_name,
-            bounded_expansion=2,
-            result_limit=MAX_GRAPH_REFERENCE_RESULTS,
-            include_tests=True,
-        )
-    except Exception:
-        return _provider_failure(
-            context, mode="source", operation="cbm.get_code_snippet",
-            code="codegraph_source_unavailable",
-        )
-    return {
-        "schemaVersion": "codegraph.read.v1",
-        "status": "ready" if selected else "not_found",
-        "mode": "source",
-        "scope": _scope(context),
-        "projection": None,
-        "selectedSymbol": selected,
-        "freshness": {"status": "unverified", "coverage": None},
-        "truncated": bool(selected and selected.get("truncated") is True),
-        "errors": [],
-    }
-
-
-def _read_codegraph_file_source(context: dict[str, Any], qualified_name: str) -> dict[str, Any]:
-    denied = _missing_grants(context, {"cbm.get_code_snippet"}, mode="source")
-    if denied:
-        return denied
-    try:
-        results = _call_codegraph_reads(context, [("cbm.get_code_snippet", {
-            "project": _CODEGRAPH_PROJECT,
-            "qualified_name": qualified_name,
-            "include_neighbors": False,
-            "source_mode": "full",
-            "max_output_tokens": 64_000,
-            "format": "json",
-        })])
-    except Exception:
-        return _provider_failure(context, mode="source", operation="cbm.get_code_snippet",
-                                 code="codegraph_source_unavailable")
-    snippet = results[0] if len(results) == 1 else {}
-    if snippet.get("error") or snippet.get("qualified_name") != qualified_name \
-            or snippet.get("label") != "File" or not isinstance(snippet.get("source"), str):
-        return _provider_failure(context, mode="source", operation="cbm.get_code_snippet",
-                                 code=str(snippet.get("error") or "codegraph_source_identity_mismatch"))
-    file_path = str(snippet.get("file_path") or "").replace("\\", "/")
-    repo_prefix = str(_REPO_ROOT).replace("\\", "/").rstrip("/") + "/"
-    if file_path.lower().startswith(repo_prefix.lower()):
-        file_path = file_path[len(repo_prefix):]
-    truncated = bool(snippet.get("source_truncated") or snippet.get("source_clipped"))
+        content = content[:_MAX_FILE_SOURCE_CHARS]
     selected = {
-        "graphSystem": "cbm", "cbmQualifiedName": qualified_name, "recordKind": "file",
-        "type": "File", "title": str(snippet.get("name") or file_path),
-        "content": snippet["source"],
+        "graphSystem": "repository",
+        "sourceReference": "source-file:" + file_path,
+        "recordKind": "file", "type": "File", "title": Path(file_path).name,
+        "content": content,
         "properties": {"project": _CODEGRAPH_PROJECT, "file": file_path,
-                       "startLine": snippet.get("start_line"), "endLine": snippet.get("end_line")},
-        "provenance": {"project": _CODEGRAPH_PROJECT, "qualifiedSymbol": qualified_name},
-        "asOf": utc_now_text(), "readOperation": "cbm.get_code_snippet", "truncated": truncated,
+                       "startLine": 1, "endLine": len(content.splitlines())},
+        "provenance": {"project": _CODEGRAPH_PROJECT, "filePath": file_path,
+                       "contentAuthority": "repository-file"},
+        "asOf": utc_now_text(),
+        "readOperation": "repository-file",
+        "truncated": truncated,
     }
     return {
         "schemaVersion": "codegraph.read.v1", "status": "partial" if truncated else "ready",
-        "mode": "source", "scope": _scope(context), "projection": None, "selectedSymbol": selected,
+        "mode": "source", "scope": _scope(context), "projection": None, "fileSource": selected,
         "freshness": {"status": "unverified", "coverage": None}, "truncated": truncated, "errors": [],
     }

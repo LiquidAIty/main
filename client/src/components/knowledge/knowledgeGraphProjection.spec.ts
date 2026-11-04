@@ -302,7 +302,7 @@ describe('knowledge graph projection composition', () => {
       .toHaveLength(1);
   });
 
-  it('adds Code as an isolated visual layer without cross-authority identity or edges', () => {
+  it('keeps files outside a matching knowledge Entity and supplies only layout association', () => {
     const current = currentProjections(
       {
         ...empty('thinkgraph'),
@@ -319,7 +319,7 @@ describe('knowledge graph projection composition', () => {
       projectId: 'project-1',
       nodes: [
         { id: 'feature:shared', label: 'Shared', authority: 'codegraph', type: 'Feature', etype: 'Feature', properties: { recordKind: 'feature', featureName: 'Shared' } },
-        { id: 'file:shared', label: 'shared.ts', authority: 'codegraph', type: 'File', etype: 'File', properties: { recordKind: 'file', filePath: 'client/shared.ts', qualifiedName: 'file:shared' } },
+        { id: 'file:shared', label: 'shared.ts', authority: 'codegraph', type: 'File', etype: 'File', properties: { recordKind: 'file', filePath: 'client/shared.ts', qualifiedName: 'file:shared', features: ['Shared'] } },
       ],
       edges: [{ id: 'feature-file', source: 'feature:shared', target: 'file:shared', predicate: 'FEATURE_CONTRIBUTION' }],
     };
@@ -340,25 +340,17 @@ describe('knowledge graph projection composition', () => {
       code,
       { ...DEFAULT_GRAPH_LAYER_VISIBILITY, codegraph: true },
     );
-    const codeVisualId = withCode.visualNodeIdByCodeProviderMember?.get('feature:shared');
-    expect(codeVisualId).toBe('codegraph:feature%3Ashared');
+    const codeVisualId = withCode.visualNodeIdByCodeProviderMember?.get('file:shared');
+    expect(codeVisualId).toBe('codegraph:file%3Ashared');
+    expect(withCode.visualNodeIdByCodeProviderMember?.has('feature:shared')).toBe(false);
     expect(withCode.projection.nodes.map(node => [node.id, node.label])).toEqual([
-      ['node-name:Shared', 'Shared'],
-      ['codegraph:feature%3Ashared', 'Shared'],
-      ['codegraph:file%3Ashared', 'shared.ts'],
+      ['codegraph:file%3Ashared', 'shared.ts'], ['node-name:Shared', 'Shared'],
     ]);
-    expect(withCode.codeNodeVariants?.get(codeVisualId!)).toBe(code.nodes[0]);
-    expect(withCode.projection.edges).toEqual([
-      expect.objectContaining({
-        id: 'codegraph:feature-file',
-        source: 'codegraph:feature%3Ashared',
-        target: 'codegraph:file%3Ashared',
-        layer: 'codegraph',
-      }),
-    ]);
-    expect(withCode.projection.edges.every(edge => (
-      edge.source.startsWith('codegraph:') && edge.target.startsWith('codegraph:')
-    ))).toBe(true);
+    expect(withCode.projection.nodes[0].properties?.categoryTargets).toEqual({ Shared: 'node-name:Shared' });
+    expect(withCode.projection.nodes[1].material_code_present).toBe(true);
+    expect(withCode.codeNodeVariants?.has('node-name:Shared')).toBe(false);
+    expect(withCode.projection.edges).toEqual([]);
+    expect(withCode.nodeVariants.get('node-name:Shared')?.map(item => item.authority)).toEqual(['thinkgraph', 'knowgraph']);
 
     const withoutThink = composeVisibleGraphLayers(
       current.thinkgraph,

@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: CodeGraph
- * Relationship: This file transports one fixed projection, File expansion, or explicit Symbol source read and rejects every browser-authored provider override.
+ * Relationship: This file transports annotation projections, directed File connections, and repository File text while rejecting browser symbol selection and provider overrides.
  * Entity: Authentication
  * Relationship: This file requires ownership of the exact Project and injects its canonical identity before any CodeGraph read.
  * Entity: Builder Card
@@ -24,7 +24,7 @@ import { requireOwnedProject } from './projectAccess';
 const router = Router();
 const MODES = new Set(['projection', 'file', 'source']);
 const FORBIDDEN_SCOPE_FIELDS = [
-  'cardId', 'cbmProject', 'deckId', 'mcpUrl', 'operation', 'query', 'tool',
+  'cardId', 'cbmProject', 'deckId', 'mcpUrl', 'operation', 'query', 'tool', 'qualifiedName',
 ] as const;
 
 function requestText(value: unknown): string {
@@ -41,14 +41,15 @@ router.post('/read', async (req, res) => {
   const requestedProjectId = requestText(body.projectId);
   const mode = requestText(body.mode);
   const filePath = requestText(body.filePath);
-  const qualifiedName = requestText(body.qualifiedName);
+  const filePaths = body.filePaths;
   if (!requestedProjectId || !MODES.has(mode)) {
     return res.status(400).json({ ok: false, error: 'codegraph_read_scope_required' });
   }
   if (
-    (mode === 'projection' && (filePath || qualifiedName))
-    || (mode === 'file' && (!filePath || qualifiedName))
-    || (mode === 'source' && (!qualifiedName || filePath))
+    (mode === 'projection' && (filePath || filePaths !== undefined))
+    || (mode === 'source' && (!filePath || filePaths !== undefined))
+    || (mode === 'file' && (filePath || !Array.isArray(filePaths) || !filePaths.length
+      || filePaths.some(path => typeof path !== 'string' || !path.trim())))
   ) {
     return res.status(400).json({ ok: false, error: 'codegraph_read_selection_invalid' });
   }
@@ -61,7 +62,7 @@ router.post('/read', async (req, res) => {
       cardId: BUILDER_CARD_ID,
       mode: mode as 'projection' | 'file' | 'source',
       ...(filePath ? { filePath } : {}),
-      ...(qualifiedName ? { qualifiedName } : {}),
+      ...(mode === 'file' ? { filePaths: filePaths as string[] } : {}),
     }));
   } catch (error) {
     const status = error instanceof PythonRailsHttpError

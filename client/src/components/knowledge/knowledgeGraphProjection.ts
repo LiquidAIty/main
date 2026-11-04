@@ -10,6 +10,8 @@
  * Relationship: This file preserves exact Engraphis Entity and relationship identities as ThinkGraph members of the shared presentation.
  * Entity: KnowGraph
  * Relationship: This file preserves exact Graphiti Entity and relationship identities as KnowGraph members of the shared presentation.
+ * Entity: CodeGraph
+ * Relationship: This file keeps Code Files separate from Think/Know Entities and supplies exact annotation-name layout associations without merging provider identity.
  */
 
 import { GRAPH_THEME, SOLARPUNK_PALETTE } from '../graph/graphVisualTokens';
@@ -32,7 +34,7 @@ export const DEFAULT_GRAPH_LAYER_VISIBILITY: GraphLayerVisibility = Object.freez
   codegraph: false,
 });
 
-export const CODE_GRAPH_LAYER_COLOR = '#63C79A';
+export const CODE_GRAPH_LAYER_COLOR = '#8d61ff';
 
 export type GraphSurfaceAuthority = GraphAuthority | 'joined' | 'codegraph';
 
@@ -42,7 +44,11 @@ const GRAPH_NODE_MATERIALS = {
   paired: 'PAIRED_SOLARPUNK_MATERIAL',
 } as const;
 
-export type GraphNodeMaterialRole = typeof GRAPH_NODE_MATERIALS[keyof typeof GRAPH_NODE_MATERIALS];
+const COMBINED_CYBER_MATERIAL = 'PAIRED_CYBER_MATERIAL' as const;
+
+export type GraphNodeMaterialRole =
+  | typeof GRAPH_NODE_MATERIALS[keyof typeof GRAPH_NODE_MATERIALS]
+  | typeof COMBINED_CYBER_MATERIAL;
 
 export type SolarpunkColors = {
   think: string;
@@ -57,12 +63,6 @@ export const DEFAULT_SOLARPUNK_COLORS: SolarpunkColors = {
   thinkRelationship: SOLARPUNK_PALETTE.sea,
   knowRelationship: SOLARPUNK_PALETTE.sun,
 };
-
-export type ReadProviderFocusNeighborhood = (
-  authority: GraphAuthority,
-  providerId: string,
-  signal?: AbortSignal,
-) => Promise<GraphProjectionV1>;
 
 // The server-owned graph projection contract rendered by the provider surfaces.
 
@@ -95,14 +95,14 @@ export type GraphProjectionNode = {
   community_id?: string;
   scene_rank?: number;
   ghost?: boolean;
-  material_kind?: 'solarpunk';
+  material_kind?: 'solarpunk' | 'joined-cyber';
   material_role?: GraphNodeMaterialRole;
   material_blue?: string;
   material_orange?: string;
   material_surface?: string;
   material_think_active?: boolean;
   material_know_active?: boolean;
-  material_focus_active?: boolean;
+  material_code_present?: boolean;
 };
 
 export type GraphProjectionEdge = {
@@ -194,6 +194,26 @@ export function solarpunkMaterialFields(
     material_surface: GRAPH_THEME.surface.base,
     material_think_active: thinkActive,
     material_know_active: knowActive,
+  };
+}
+
+export function combinedCyberMaterialFields(
+  source: 'think' | 'know' | 'paired',
+  thinkActive = false,
+  knowActive = false,
+  colors: SolarpunkColors = DEFAULT_SOLARPUNK_COLORS,
+): Pick<GraphProjectionNode,
+  | 'material_kind'
+  | 'material_role'
+  | 'material_blue'
+  | 'material_orange'
+  | 'material_surface'
+  | 'material_think_active'
+  | 'material_know_active'> {
+  return {
+    ...solarpunkMaterialFields(source, thinkActive, knowActive, colors),
+    material_kind: 'joined-cyber',
+    material_role: source === 'paired' ? COMBINED_CYBER_MATERIAL : GRAPH_NODE_MATERIALS[source],
   };
 }
 
@@ -411,20 +431,29 @@ export function composeVisibleGraphLayers(
   const codeNodeVariants = new Map<string, GraphProjectionNode>();
   const codeEdgeVariants = new Map<string, GraphProjectionEdge>();
   const visualNodeIdByCodeProviderMember = new Map<string, string>();
+  const entitiesByName = new Map<string, GraphProjectionNode[]>();
+  for (const node of joined.projection.nodes) {
+    entitiesByName.set(node.label, [...(entitiesByName.get(node.label) || []), node]);
+  }
+  const associatedKnowledgeIds = new Set<string>();
   const codeNodes = layerVisibility.codegraph
-    ? codeProjection.nodes.map((node) => {
+    ? codeProjection.nodes.filter(node => node.properties?.recordKind === 'file').map(node => {
       const visualId = codeProviderRenderId(node.id);
       codeNodeVariants.set(visualId, node);
       visualNodeIdByCodeProviderMember.set(node.id, visualId);
-      return {
-        ...node,
-        id: visualId,
-        authority: 'codegraph',
-        properties: { ...(node.properties || {}) },
+      const categories = Array.isArray(node.properties?.features) ? node.properties.features : [];
+      const categoryTargets = Object.fromEntries(categories.flatMap(name => {
+        if (typeof name !== 'string') return [];
+        const matches = entitiesByName.get(name);
+        if (matches?.length !== 1) return [];
+        associatedKnowledgeIds.add(matches[0].id);
+        return [[name, matches[0].id]];
+      }));
+      return { ...node, id: visualId, authority: 'codegraph',
+        properties: { ...node.properties, categoryTargets },
       };
-    })
-    : [];
-  const visibleCodeNodeIds = new Set(codeNodes.map(node => node.id));
+    }) : [];
+  const visibleCodeNodeIds = new Set([...joined.projection.nodes, ...codeNodes].map(node => node.id));
   const codeEdges = layerVisibility.codegraph
     ? codeProjection.edges.flatMap((edge): GraphProjectionEdge[] => {
       const source = visualNodeIdByCodeProviderMember.get(edge.source);
@@ -444,7 +473,9 @@ export function composeVisibleGraphLayers(
       }];
     })
     : [];
-  const nodes = [...joined.projection.nodes, ...codeNodes];
+  const nodes = [...codeNodes, ...joined.projection.nodes.map(node => ({
+    ...node, material_code_present: associatedKnowledgeIds.has(node.id),
+  }))];
   const edges = [...joined.projection.edges, ...codeEdges];
   return {
     ...joined,
