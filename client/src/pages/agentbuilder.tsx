@@ -83,7 +83,6 @@ import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuild
 import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBuilderProjectDrawer';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderKnowledgeGraphs from '../features/agentbuilder/state/useAgentBuilderKnowledgeGraphs';
-import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
 import TradingUI from './tradingui';
 import TradingUiInspectorPanel from '../features/trading/TradingUiInspectorPanel';
 import MagneticTasksTab from '../features/agentbuilder/tasks/MagneticTasksTab';
@@ -350,10 +349,6 @@ export default function AgentBuilder(): React.ReactElement {
       && deckRevision
       && deck.id === BUILDER_DECK_ID,
   );
-  const cardActivity = useCardActiveAgentCounts({
-    projectId: canonicalDeckReady ? canvasProjectId : '',
-    deck,
-  });
   const currentDeckRef = useRef(deck);
   useEffect(() => {
     currentDeckRef.current = deck;
@@ -547,7 +542,6 @@ export default function AgentBuilder(): React.ReactElement {
     canvasProjectId,
     deckId: BUILDER_DECK_ID,
     deckRevision,
-    mainCanonicalSession: cardActivity.mainCanonicalSession,
   });
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
@@ -1294,7 +1288,6 @@ export default function AgentBuilder(): React.ReactElement {
             });
           }}
           knowledgeProjectId={projectId}
-          inputRequests={cardActivity.inputRequests}
           entityMatcher={canonicalEntityMatcher}
           onEntityFocus={handleCanonicalEntityFocus}
           onEvidenceFocus={handleKnowEvidenceFocus}
@@ -1365,8 +1358,6 @@ export default function AgentBuilder(): React.ReactElement {
         document={deck}
         setDocument={setDeck}
         onPersistGraphMutation={recordDeckWriteReason}
-        activeCardIds={cardActivity.activeCardIds}
-        activeAgentCounts={cardActivity.activeAgentCounts}
         activeEdgeIds={[]}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}
