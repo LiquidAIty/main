@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Main Chat
- * Relationship: This file transports full Project conversations to Engraphis without invoking graph processing.
+ * Relationship: Transports Project conversations to Engraphis and hands newly committed database-sourced Main pairs to its existing ThinkGraph processing owner without blocking Main.
  * Entity: Projects
  * Relationship: This file resolves each conversation against the canonical Project identity and keeps message ordering isolated within that Project conversation.
  */
@@ -14,6 +14,7 @@
 // the sole owner of saved Card Runs and their IDFs.
 import { pool } from '../db/pool';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
+import { notifyThinkGraphChanged } from '../routes/thinkGraph.routes';
 
 const PROJECTS_TABLE = 'ag_catalog.projects';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -70,6 +71,7 @@ export type ConversationMessage = {
   linkedEvidenceIds?: string[];
   visibleActivities?: VisibleActivity[];
   seq: number;
+  hermesSource?: { profile: string; admissionId: string; rowId: number };
 };
 
 async function storage(action: string, input: { projectId: string; conversationId: string; [key: string]: unknown }): Promise<unknown> {
@@ -79,11 +81,14 @@ async function storage(action: string, input: { projectId: string; conversationI
     [projectId],
   );
   if (!project.rows.length) throw new Error('project_not_found');
-  return requestPythonRailsJson('/thinkgraph/operation', {
+  const request = {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projectId: String(project.rows[0].id), operation: 'conversation',
       arguments: { action, ...arguments_ } }),
-  });
+  };
+  return action === 'process'
+    ? requestPythonRailsJson('/thinkgraph/operation', request, { timeoutMs: 1_860_000 })
+    : requestPythonRailsJson('/thinkgraph/operation', request);
 }
 
 export async function appendConversationTurn(input: {
@@ -92,7 +97,20 @@ export async function appendConversationTurn(input: {
   seedMessages?: ConversationMessageWrite[];
   messages: ConversationMessageWrite[];
 }): Promise<ConversationMessage[]> {
-  return await storage('append', input) as ConversationMessage[];
+  const saved = await storage('append', input) as ConversationMessage[];
+  const assistant = saved.find(message => message.role === 'assistant' && message.hermesSource);
+  if (assistant) {
+    void storage('process', {
+      projectId: assistant.projectId, conversationId: assistant.conversationId,
+      userMessageIds: saved.filter(message => message.role === 'user').map(message => message.messageId),
+      assistantMessageId: assistant.messageId,
+    }).then(result => {
+      const outcome = result as { status: string; changed?: boolean; error?: string };
+      if (outcome.status === 'failed') throw new Error(outcome.error || 'thinkgraph_processing_failed');
+      if (outcome.changed) notifyThinkGraphChanged(assistant.projectId);
+    }).catch(error => console.error('[thinkgraph-storage] Post-turn processing failed', error));
+  }
+  return saved;
 }
 
 export async function appendConversationReplyOnce(input: {

@@ -1897,12 +1897,17 @@ async def _discover_gateway_mcp_tools(config: object) -> None:
         if not getattr(config, "multiplex_profiles", False):
             await loop.run_in_executor(None, copy_context().run, discover_mcp_tools)
             return
-        for profile_name, profile_home in _multiplex_profile_homes(config):
+        async def discover_profile(profile_name, profile_home):
             try:
                 with _profile_runtime_scope(Path(profile_home)):
                     await loop.run_in_executor(None, copy_context().run, discover_mcp_tools)
             except Exception:
                 logger.warning("MCP tool discovery failed for profile '%s'", profile_name, exc_info=True)
+
+        # Each profile owns its credentials and discovery lock. Awaiting them serially makes
+        # one unavailable server's retry budget accumulate once per profile before READY.
+        await asyncio.gather(*(discover_profile(name, home)
+                               for name, home in _multiplex_profile_homes(config)))
 
 
 def _platform_has_bot_credential(platform: "Platform", platform_config: "PlatformConfig") -> bool:

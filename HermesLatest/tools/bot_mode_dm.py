@@ -284,7 +284,7 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
         if relayed is not None:
             return relayed
     # Local teammate — folder id, or a friendly name / Desktop @-slug ('Scribe', 'Dr. Foo').
-    targets_self = raw_target.lower() in {me.lower(), _handle(me).lower()}
+    targets_self = raw_target.lower() in {me.lower(), _handle(me, roster).lower()}
     resolved = me if targets_self else _resolve_local_name(raw_target, roster, root)
     is_local_shape = bool(_LOCAL_TARGET_RE.match(raw_target))
     if resolved is None and not is_local_shape and "@" not in raw_target:
