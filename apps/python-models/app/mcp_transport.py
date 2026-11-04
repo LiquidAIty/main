@@ -11,7 +11,7 @@
 # Entity: Tool Catalog
 # Relationship: This file initializes the canonical tool catalog before accepting requests and exposes catalog health and readiness without rebuilding the catalog per client.
 # Entity: Card Profiles
-# Relationship: This file binds validated Project, Run, and Card profile headers to one request context for profile-owned MCP connections.
+# Relationship: This file binds validated Project and Card profile headers to one request context for profile-owned MCP connections.
 
 from __future__ import annotations
 
@@ -152,19 +152,13 @@ class _CardProfileContextMiddleware:
         conversation_id = raw_conversation if not raw_conversation or re.fullmatch(
             r"^[A-Za-z0-9:_-]{1,128}$", raw_conversation,
         ) else "__invalid__"
-        raw_run = _safe_request_header(scope, b"x-liquidaity-run-id").strip()
-        run_id = raw_run if not raw_run or re.fullmatch(
-            r"^[A-Za-z0-9:_-]{1,128}$", raw_run,
-        ) else "__invalid__"
         profile_token = mcp_auth.set_requested_card_profile(profile)
         project_token = mcp_auth.set_requested_project_id(project_id)
         deck_token = mcp_auth.set_requested_deck_id(deck_id)
         conversation_token = mcp_auth.set_requested_conversation_id(conversation_id)
-        run_token = mcp_auth.set_requested_run_id(run_id)
         try:
             await self.app(scope, receive, send)
         finally:
-            mcp_auth.reset_requested_run_id(run_token)
             mcp_auth.reset_requested_conversation_id(conversation_token)
             mcp_auth.reset_requested_deck_id(deck_token)
             mcp_auth.reset_requested_project_id(project_token)

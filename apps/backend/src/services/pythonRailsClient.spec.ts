@@ -81,7 +81,7 @@ describe('pythonRailsClient', () => {
     });
     vi.stubGlobal('fetch', fetchMock as any);
 
-    const request = requestPythonRailsJson('/domain/runs/latest', {
+    const request = requestPythonRailsJson('/', {
       method: 'POST',
       body: JSON.stringify({ projectId: 'project-one' }),
     });
@@ -93,7 +93,7 @@ describe('pythonRailsClient', () => {
       message: 'provider_failure',
     } satisfies Partial<PythonRailsHttpError>);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://python-rails:8001/domain/runs/latest',
+      'http://python-rails:8001/',
       expect.objectContaining({ method: 'POST' }),
     );
   });

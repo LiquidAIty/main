@@ -68,7 +68,7 @@ not another metadata schema, registry, graph writer or runtime input.
 
 | Concern | Current owner | Contract |
 | --- | --- | --- |
-| Saved Card system | `saved_card_contract.py`, `saved_cards.py`, `card_invocation_configuration.py`, `card_invocation_tools.py`, `card_invocation_preparation.py`, `card_run_preparation.py`, `card_run_inputs.py`, `card_run_readback.py`, `card_run_graph_references.py`, `card_run_execution.py`, `card_run_settlement.py`, `card_run_selection_context.py`, `card_run_jev.py`, `card_run_auto_tools.py`, `card_run_auto_model.py`, `agentgraph_query.py`, `agentgraph_topology.py`, `agentgraph_run_observations.py`, and `agentgraph_inspection.py` under `apps/python-models/app/python_models/` | Separate literal owners for saved identity/runtime validation, Project/deck/Card revisions, saved execution configuration, effective tools, graph selection and IDF preparation, Run acceptance/preparation, canonical input retention, exact provider-reference evidence, readback/projection, start evidence, terminal settlement, bounded Jev context/transport, saved-ceiling AutoTools, same-provider AutoModel, AGE query/topology/observations, and read-only AgentGraph inspection |
+| Saved Card system | `saved_card_contract.py`, `saved_cards.py`, `card_invocation_configuration.py`, `card_invocation_tools.py`, `card_invocation_preparation.py`, `card_run_inputs.py`, `card_run_selection_context.py`, `card_run_jev.py`, `card_run_auto_tools.py`, `card_run_auto_model.py`, `agentgraph_query.py`, `agentgraph_topology.py`, `agentgraph_run_observations.py`, and `agentgraph_inspection.py` under `apps/python-models/app/python_models/` | Separate literal owners for saved identity/runtime validation, Project/deck/Card revisions, saved execution configuration, effective tools, graph selection and IDF preparation, canonical input retention, bounded Jev context/transport, saved-ceiling AutoTools, same-provider AutoModel, AGE query/topology/observations, and read-only AgentGraph inspection |
 | Canonical Run input | `idf.py`, `idf_contract.py`, `idf_graph_records.py`, and `idf_projection.py` under `apps/python-models/app/python_models/`; sole constructor `idf.py::materialize_idf` | Literal contract, bounded graph-record construction, inspection/model projections, and one materializer which writes and rereads one UTF-8 `in.idf` before execution |
 | Card Python Script | `apps/python-models/app/python_models/card_script.py`, the existing Card editor transport, and `HermesLatest/agent/{card_turn_tools,card_script_tool}.py` | Saved Card-owned source, structural compilation, live selected-tool validation, one immutable turn contract, and execution through Hermes' existing child Python runner against profile-loaded tools; no TypeScript executor or application callback tool protocol |
 | Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, unified Think/Know/Code visual-layer controls, and no semantic routing |
@@ -141,7 +141,7 @@ or disabled source is inert. General hook points remain future work. No syntheti
 
 `apps/backend/src/routes/index.ts` mounts each domain once. Browser-facing routes use normal user
 authentication. The official Python MCP host's `/api/mcp` Project/profile context, exact active saved-Card
-profile/Run context, and Card-editor projection use the existing process-secret boundary and are
+profile context, and Card-editor projection use the existing process-secret boundary and are
 mounted separately from browser authentication. The current route index does not mount the retired
 `/api/card-turn` receiving-Card lifecycle or Card Run-read/Script routers.
 
@@ -151,7 +151,7 @@ mounted separately from browser authentication. The current route index does not
 | `/api/main/session` | `mainSession.routes.ts` owns `/chat`, `/history`, `/activity`, `/stop`, `/respond`, and `/voice/{transcribe,speak}` through the saved Project/Card scope |
 | `/api/card-terminals` | `cardTerminal.routes.ts` opens the exact Card's canonical conversation and upgrades its authenticated browser socket to a full CLI viewer |
 | `/api/idd` | `builderIdd.routes.ts` owns Builder/editor-only IDD fields, deterministic live-catalog tool projection, and Script-header projection |
-| `/api/mcp` | `mcpInternal.routes.ts` owns process-authenticated Project/profile context, persisted Card grant readback, optional active-Run validation when a Run ID is supplied, and Card-editor projection |
+| `/api/mcp` | `mcpInternal.routes.ts` owns process-authenticated Project/profile context, persisted Card grant readback, and Card-editor projection |
 | `/api/thinkgraph` and `/api/knowgraph` | Engraphis and Graphiti projections/operations without merging authority |
 | `/api/codegraph/read` | One Project-authenticated route: annotation projection and repository-file text read current source directly; separate explicit CBM structural reads reload the fixed saved Builder context and use its read-only grants |
 | `/api/projects` | Project and deck transport |

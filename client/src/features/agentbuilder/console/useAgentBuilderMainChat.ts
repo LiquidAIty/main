@@ -445,7 +445,7 @@ export default function useAgentBuilderMainChat({
         reader.readAsDataURL(recorded);
       });
       const result = await requestVoiceAudio('transcribe', { projectId: canvasProjectId, deckId,
-        message: draft, dataUrl, mimeType: recorded.type }, signal);
+        dataUrl, mimeType: recorded.type }, signal);
       signal.throwIfAborted();
       if (typeof result.transcript !== 'string') throw new Error('voice_transcript_missing');
       if (!result.transcript.trim()) { setVoiceState({ key: projectKey, phase: 'idle', error: null }); return false; }

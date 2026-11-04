@@ -83,7 +83,6 @@ def test_card_runtime_uses_only_backend_resolved_saved_grants(monkeypatch):
         "projectId": "project-one",
         "deckId": "deck_builder",
         "conversationId": "project-one",
-        "parentRunId": "run-one",
         "callerCardId": "trading",
         "grantedTools": ["forecast_market_bars", "trading.record_decision"],
         "mainEntryAuthorized": False,
@@ -123,7 +122,6 @@ def test_card_runtime_bearer_requires_exact_saved_card_context(monkeypatch):
         "projectId": "project-one",
         "deckId": "deck_builder",
         "conversationId": "project-one",
-        "parentRunId": "",
         "callerCardId": "trading",
         "grantedTools": ["forecast_market_bars"],
         "mainEntryAuthorized": False,
@@ -323,7 +321,6 @@ def test_external_main_entries_use_verified_project_binding_not_card_grants(monk
         "projectId": "project-one",
         "deckId": "deck_builder",
         "conversationId": "project-one",
-        "parentRunId": "",
         "callerCardId": "card_main_chat",
         "grantedTools": ["canvas.inspect"],
         "mainEntryAuthorized": True,
@@ -349,7 +346,6 @@ def test_authenticated_catalog_keeps_external_main_entries_outside_saved_grants(
         "projectId": "project-one",
         "deckId": "deck_builder",
         "conversationId": "project-one",
-        "parentRunId": "",
         "callerCardId": "card_main_chat",
         "grantedTools": ["canvas.inspect"],
         "mainEntryAuthorized": True,
@@ -624,85 +620,6 @@ def test_saved_cards_use_the_existing_graphiti_tool_contract(monkeypatch, operat
     assert arguments == {"group_id": "liquidaity-project-one", "uuid": "know-one"}
 
 
-
-
-def test_exact_get_know_readback_is_correlated_to_the_authenticated_card_run(
-    monkeypatch, clear_live_provider_operations,
-):
-    import asyncio
-    from mcp.types import CallToolResult, TextContent, Tool
-    from app.python_models import card_run_graph_references
-
-    provider_result = CallToolResult(
-        content=[TextContent(type="text", text="found")],
-        structuredContent={"result": {"know": {
-            "uuid": "know-one",
-            "entity_uuid": "entity-one",
-            "group_id": "liquidaity-project-one",
-            "content_hash": "a" * 64,
-        }}},
-        isError=False,
-    )
-    async def call_graphiti(*_args, **_kwargs):
-        return provider_result
-
-    monkeypatch.setattr(
-        mcp_provider_operations,
-        "call_graphiti_operation",
-        call_graphiti,
-    )
-    provider_tool = Tool(
-        name="get_know",
-        description="Read one exact Know.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "uuid": {"type": "string"},
-                "group_id": {"type": "string"},
-            },
-            "required": ["uuid"],
-            "additionalProperties": False,
-        },
-    )
-    mcp_provider_operations.register_graphiti_catalog(
-        mcp_provider_operations.namespace_provider_tools("graphiti", [provider_tool])
-    )
-    context = {
-        "projectId": "project-one",
-        "deckId": "deck_builder",
-        "conversationId": "conversation-one",
-        "parentRunId": "run-one",
-        "callerCardId": "card_knowgraph",
-        "grantedTools": ["graphiti.get_know"],
-        "mainEntryAuthorized": False,
-    }
-    monkeypatch.setattr(
-        mcp_auth, "internal_mcp_principal", lambda: {"kind": "card-runtime"},
-    )
-    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: context)
-    monkeypatch.setattr(
-        mcp_catalog_runtime,
-        "published_mcp_tool_names",
-        lambda: frozenset({"graphiti.get_know"}),
-    )
-    recorded = []
-    monkeypatch.setattr(
-        card_run_graph_references,
-        "record_graphiti_know_readback",
-        lambda **kwargs: recorded.append(kwargs),
-    )
-
-    result = asyncio.run(mcp_request_dispatch.dispatch_tool(
-        "graphiti.get_know", {"uuid": "know-one"},
-    ))
-
-    assert result is provider_result
-    assert recorded == [{
-        "result": provider_result,
-        "run_id": "run-one",
-        "project_id": "project-one",
-        "card_id": "card_knowgraph",
-    }]
 
 
 def test_entity_know_dispatch_leaves_idempotence_to_graphiti_core(

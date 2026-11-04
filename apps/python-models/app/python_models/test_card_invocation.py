@@ -24,7 +24,6 @@ import pytest
 from app.python_models import (
     agentgraph_topology,
     card_invocation_preparation,
-    card_run_preparation,
     saved_card_contract,
     saved_cards,
 )
@@ -603,9 +602,6 @@ def test_selected_helper_and_mag_one_graph_data_is_validated_without_creating_a_
         card_invocation_preparation,
         "materialize_invocation",
         lambda _payload, **_kwargs: prepared,
-    )
-    monkeypatch.setattr(card_run_preparation, "_insert_run",
-        lambda *_args, **_kwargs: pytest.fail("graph-data validation created a Run"),
     )
     payload = {"dataAnchors": [{
         "cbmQualifiedName": "symbol-one",

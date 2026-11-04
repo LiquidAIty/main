@@ -340,7 +340,6 @@ export async function loadSessionHistory(args: {
 export async function requestVoiceAudio(operation: 'transcribe' | 'speak', args: {
   projectId: string;
   deckId: string;
-  message?: string;
   cardId?: string;
   dataUrl?: string;
   mimeType?: string;

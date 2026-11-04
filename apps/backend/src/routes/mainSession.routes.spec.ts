@@ -1,5 +1,5 @@
 // Entity: Main Chat
-// Relationship: Verifies the HTTP reply ends before one completed-pair storage call, including slow or failed storage.
+// Relationship: Verifies unchanged Main input and reply completion before one completed-pair storage call.
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
@@ -112,21 +112,4 @@ it('does not turn a failed save into a failed model reply', async () => {
   expect(body).toContain('event: done');
   expect(body).not.toContain('event: error');
   expect(log).toHaveBeenCalled();
-});
-
-it('keeps Builder delivery and attribution on Builder when its save is delayed', async () => {
-  let release!: () => void;
-  mocks.save.mockReturnValueOnce(new Promise(resolve => { release = () => resolve([]); }));
-  const response = await submit('@Builder Suggest two comparison fields.');
-  emit('message.complete', 'Use revenue and cash flow.', 'builder');
-  const body = await response.text();
-  expect(body).toContain('@Builder Use revenue and cash flow.');
-  expect(mocks.request).toHaveBeenCalledWith('prompt.submit', expect.objectContaining({
-    profile: 'builder', session_id: 'builder-session',
-  }), expect.any(Number));
-  release();
-  expect(mocks.save).toHaveBeenCalledOnce();
-  const pair = mocks.save.mock.calls[0][0].messages;
-  expect(pair[0].target.profile).toBe('builder');
-  expect(pair[1].speaker.profile).toBe('builder');
 });

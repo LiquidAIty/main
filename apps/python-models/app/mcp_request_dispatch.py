@@ -9,7 +9,7 @@
 # Entity: Tool Catalog
 # Relationship: This file resolves only published operation definitions, enforces each request's exact grants, rejects caller-supplied server identity, and invokes the selected canonical operation.
 # Entity: Authentication
-# Relationship: This file injects only the Project, Card, Run, and caller scope established by the authenticated request principal.
+# Relationship: This file injects only the Project, Card, and caller scope established by the authenticated request principal.
 
 from __future__ import annotations
 
@@ -185,12 +185,8 @@ async def dispatch_tool(
                             and (args.get("runId") or args.get("projectWide") is True)):
                         continue
                     args[field] = str(context[field])
-            if "parentRunId" in dispatcher_context:
-                args["parentRunId"] = str(context.get("parentRunId") or "")
             if "_sourceCardId" in dispatcher_context:
                 args["_sourceCardId"] = str(context["callerCardId"])
-            if "_sourceRunId" in dispatcher_context:
-                args["_sourceRunId"] = str(context["parentRunId"])
             if "_callerCardId" in dispatcher_context:
                 args["_callerCardId"] = str(context["callerCardId"])
             if "_authenticatedProjectId" in dispatcher_context:
@@ -245,20 +241,6 @@ async def dispatch_tool(
             failure_code="application_tool_failure",
             category="APPLICATION",
             dependency="tool-runtime",
-        )
-    graph_reference_identity = {
-        "run_id": str((context or {}).get("parentRunId") or "").strip(),
-        "project_id": str((context or {}).get("projectId") or "").strip(),
-        "card_id": str((context or {}).get("callerCardId") or "").strip(),
-    }
-    if name == "graphiti.get_know" and all(graph_reference_identity.values()):
-        from app.python_models.card_run_graph_references import (
-            record_graphiti_know_readback,
-        )
-
-        record_graphiti_know_readback(
-            result=result,
-            **graph_reference_identity,
         )
     if isinstance(result, CallToolResult):
         return result

@@ -5,7 +5,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Authentication
-# Relationship: This file verifies Auth0 bearer tokens and internal signed principals before any MCP request receives Project, Card, Run, or tool authority.
+# Relationship: This file verifies Auth0 bearer tokens and internal signed principals before any MCP request receives Project, Card, or tool authority.
 # Entity: MCP Host
 # Relationship: This file supplies the MCP host's OAuth resource contract, token verifier, authenticated request context, and internal-principal validation.
 # Entity: Projects
@@ -63,7 +63,7 @@ OAUTH_ENFORCED = os.environ.get("MCP_OAUTH_ENFORCED", "false").strip().lower() i
 }
 _MAIN_CONTEXT_TIMEOUT_SECONDS = 30.0
 PROJECT_CONTEXT_FIELDS = frozenset(
-    {"projectId", "deckId", "conversationId", "parentRunId", "callerCardId"}
+    {"projectId", "deckId", "conversationId", "callerCardId"}
 )
 PROJECT_CONTEXT_TOOLS_FIELD = "grantedTools"
 PROJECT_CONTEXT_MAIN_ENTRY_FIELD = "mainEntryAuthorized"
@@ -78,9 +78,6 @@ _REQUESTED_DECK_ID: ContextVar[str] = ContextVar(
 )
 _REQUESTED_CONVERSATION_ID: ContextVar[str] = ContextVar(
     "requested_conversation_id", default="",
-)
-_REQUESTED_RUN_ID: ContextVar[str] = ContextVar(
-    "requested_run_id", default="",
 )
 
 
@@ -130,18 +127,6 @@ def reset_requested_conversation_id(token: Token[str]) -> None:
 
 def requested_conversation_id() -> str:
     return _REQUESTED_CONVERSATION_ID.get()
-
-
-def set_requested_run_id(run_id: str) -> Token[str]:
-    return _REQUESTED_RUN_ID.set(str(run_id or "").strip())
-
-
-def reset_requested_run_id(token: Token[str]) -> None:
-    _REQUESTED_RUN_ID.reset(token)
-
-
-def requested_run_id() -> str:
-    return _REQUESTED_RUN_ID.get()
 
 
 def oauth_trace_fields() -> dict[str, str]:
@@ -296,7 +281,6 @@ def _resolve_external_project_context_sync(
                 "subject": subject,
                 "projectId": requested_project_id(),
                 "profile": requested_card_profile(),
-                "runId": requested_run_id(),
             }).encode("utf-8"),
             headers=headers,
             method="POST",
@@ -326,7 +310,6 @@ def _resolve_internal_card_context_sync(principal: dict[str, Any]) -> dict[str, 
                 "deckId": principal["deckId"],
                 "profile": principal["profile"],
                 "conversationId": requested_conversation_id(),
-                "runId": requested_run_id(),
             }).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",

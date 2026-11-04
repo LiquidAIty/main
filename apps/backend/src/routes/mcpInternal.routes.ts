@@ -12,8 +12,6 @@
 // Relationship: This file binds external context to one Project actually owned by the granted local user.
 // Entity: Saved Cards
 // Relationship: This file resolves one enabled persisted Card and returns only its exact profile, caller identity, and saved tool ceiling.
-// Entity: Run Ledger
-// Relationship: This file accepts an optional parent Run only when it matches the resolved Card and remains pending or running.
 // Entity: IDD
 // Relationship: This file returns the canonical Card-editor materialization for one exact Project, deck, and Card to the internal MCP process.
 
@@ -22,7 +20,6 @@ import { Router, type Request } from 'express';
 import { resolveExternalIdentityProjectGrant } from '../auth/externalIdentityGrantStore';
 import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
 import { getDeckDocument } from '../decks/deckDomainClient';
-import { readCardRun } from '../services/cardRunLifecycle';
 import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
 import { assertCardProfileOwner, getOwnedProjectByReference } from '../services/projectStore';
 import { materializeCardEditor } from './builderIdd.routes';
@@ -46,7 +43,6 @@ mcpInternalRoutes.post('/context', async (req, res) => {
   const subject = String(req.body?.subject || '').trim();
   const requestedProjectId = String(req.body?.projectId || '').trim();
   const profile = String(req.body?.profile || '').trim();
-  const requestedRunId = String(req.body?.runId || '').trim();
   if (!issuer || !subject) {
     return res.status(400).json({ ok: false, error: 'verified_issuer_and_subject_required' });
   }
@@ -76,27 +72,12 @@ mcpInternalRoutes.post('/context', async (req, res) => {
     }
     const matchedCard = matchingCards[0];
     const grantedTools = exactStrings(objectRecord(matchedCard.runtimeOptions).tools);
-    let parentRunId = '';
-    if (requestedRunId) {
-      const run = await readCardRun({
-        projectId: project.id,
-        deckId: DEFAULT_PROJECT_DECK_ID,
-        runId: requestedRunId,
-        cardId: matchedCard.id,
-        profile: matchedCard.runtime.profile,
-      });
-      if (!['pending', 'running'].includes(String(run.state || ''))) {
-        return res.status(409).json({ ok: false, error: 'card_turn_run_unavailable' });
-      }
-      parentRunId = requestedRunId;
-    }
     return res.json({
       ok: true,
       context: {
         projectId: project.id,
         deckId: DEFAULT_PROJECT_DECK_ID,
         conversationId: project.id,
-        parentRunId,
         callerCardId: matchedCard.id,
         grantedTools,
         mainEntryAuthorized: matchedCard.runtime.mode === 'main',
@@ -119,7 +100,6 @@ mcpInternalRoutes.post('/card-context', async (req, res) => {
   const deckId = String(req.body?.deckId || '').trim();
   const profile = String(req.body?.profile || '').trim().toLowerCase();
   const conversationId = String(req.body?.conversationId || projectId).trim();
-  const runId = String(req.body?.runId || '').trim();
   if (!ownerUserId || !projectId || !deckId || !profile) {
     return res.status(400).json({ ok: false, error: 'card_runtime_context_required' });
   }
@@ -139,21 +119,12 @@ mcpInternalRoutes.post('/card-context', async (req, res) => {
       return res.status(409).json({ ok: false, error: 'persisted_card_profile_unavailable' });
     }
     const matched = matches[0];
-    if (runId) {
-      const run = await readCardRun({
-        projectId, deckId, runId, cardId: matched.card.id, profile: matched.profile, conversationId,
-      });
-      if (!['pending', 'running'].includes(String(run.state || ''))) {
-        return res.status(409).json({ ok: false, error: 'card_turn_run_unavailable' });
-      }
-    }
     return res.json({
       ok: true,
       context: {
         projectId,
         deckId,
         conversationId,
-        parentRunId: runId,
         callerCardId: matched.card.id,
         grantedTools: exactStrings(objectRecord(matched.card.runtimeOptions).tools),
         mainEntryAuthorized: false,

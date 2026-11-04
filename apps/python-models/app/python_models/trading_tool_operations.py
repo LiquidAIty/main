@@ -15,9 +15,8 @@ from app.python_models.operation_definition import OperationDefinition
 from app.python_models.trading_forecast import forecast_market_bars
 
 async def trading_get_state_tool(
-    *, projectId: str, deckId: str, _callerCardId: str, _sourceRunId: str,
+    *, projectId: str, deckId: str, _callerCardId: str,
 ) -> dict[str, Any]:
-    del _sourceRunId
     from app.python_models.trading_jobs import read_trading_state
 
     return await asyncio.to_thread(
@@ -116,7 +115,7 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
             external_source_id="python_runtime",
             annotations=read_closed,
             dispatcher_context_arguments=frozenset({
-                "projectId", "deckId", "_callerCardId", "_sourceRunId",
+                "projectId", "deckId", "_callerCardId",
             }),
         ),
         OperationDefinition(

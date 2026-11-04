@@ -1,4 +1,4 @@
-"""Card, IDD, tool, Script, deck, and Run routes."""
+"""Card, IDD, tool, Script, deck routes."""
 # Graph + less = more: less code that does the same work as more code is more useful.
 # Entity names the feature; Relationship explains why this file belongs and what it contributes.
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
@@ -14,18 +14,11 @@
 #
 # Entity: Card Scripts
 # Relationship: This file exposes unsaved Script validation and generated read-only authoring headers without executing or persisting the draft.
-#
-# Entity: Run Ledger
-# Relationship: This file exposes begin, start, finish, exact read, and bounded history operations for the durable outer Run ledger.
 
 from fastapi import APIRouter, HTTPException
 from typing import Any
 from app.python_models.saved_card_contract import CardDomainError
 from app.python_models.saved_cards import load_deck, save_deck
-from app.python_models.card_run_execution import start_run
-from app.python_models.card_run_preparation import begin_run
-from app.python_models.card_run_readback import read_latest_runs, read_run, read_run_history
-from app.python_models.card_run_settlement import finish_run
 from app.python_models.card_script import CardScriptValidationError, generate_card_script_header, saved_script
 from app.python_models.idd import IddValidationError, materialize_card_editor, materialize_runtime_options
 from app.python_models.tool_catalog import ToolCatalogError, materialize_live_tool_catalog
@@ -151,52 +144,6 @@ def domain_deck_write(project_id: str, deck_id: str, payload: dict[str, Any]):
         raise HTTPException(status_code=status, detail=str(err)) from err
 
 
-@router.post("/domain/runs/begin")
-def domain_run_begin(payload: dict[str, Any]):
-    try:
-        return begin_run(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@router.post("/domain/runs/finish")
-def domain_run_finish(payload: dict[str, Any]):
-    try:
-        return finish_run(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@router.post("/domain/runs/start")
-def domain_run_start(payload: dict[str, Any]):
-    try:
-        return start_run(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@router.post("/domain/runs/read")
-def domain_run_read(payload: dict[str, Any]):
-    try:
-        return read_run(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@router.post("/domain/runs/history")
-def domain_run_history(payload: dict[str, Any]):
-    try:
-        return read_run_history(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@router.post("/domain/runs/latest")
-def domain_runs_latest(payload: dict[str, Any]):
-    try:
-        return read_latest_runs(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
 
 
  

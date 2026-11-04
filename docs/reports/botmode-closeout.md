@@ -108,7 +108,7 @@ On Oracle this PTY runs on the server. Deployment must install/build platform-ap
 
 ## Other bounded findings
 
-- Activity no longer uses `/domain/runs/latest`. Counts now represent the number of actual working/streaming sessions returned by Hermes, not a fabricated root-plus-workers estimate. This is not a promise that all nested subagents are represented by that endpoint.
+- Counts now represent the number of actual working/streaming sessions returned by Hermes, not a fabricated root-plus-workers estimate. This is not a promise that all nested subagents are represented by that endpoint.
 - PostgreSQL remains the application conversation store. Hermes owns execution transcripts; `refreshOpenBotChat` appends exact provider-row identities once. No competing store or sync engine was created.
 - Shared-source risk: canonical Bot Chat lookup is profile-scoped, not Project-keyed. If the same stable profile is shared between Projects, context/roster isolation needs explicit proof and a supported contract. Other Projects were not opened to investigate; profiles were not renamed or cloned.
 - `prepareProfiles` currently refreshes scoped MCP credentials and connected rosters. The old profile-materialization file is absent; new saved-prompt/model/tool publication after Card edits was not exercised. Do not claim that surface is proven or silently recreate the removed materializer.

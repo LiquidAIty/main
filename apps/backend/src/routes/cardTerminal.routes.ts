@@ -11,12 +11,10 @@
  * Relationship: Closing the terminal disposes its CLI viewer, not the persistent Hermes Gateway or conversation.
  */
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import type { Server } from 'node:http';
 import { Router } from 'express';
 import { spawn } from 'node-pty';
 import { WebSocketServer, WebSocket } from 'ws';
-import { tsImport } from 'tsx/esm/api';
 import { getUserBySessionId } from '../auth/sessionStore';
 import { getAllowedCorsOrigins } from '../security/requestAccess';
 import { projectCardAuthority } from '../services/projectCardAuthority';
@@ -56,10 +54,6 @@ export function installCardTerminals(server: Server): void {
       await assertCardProfileOwner(card.profile, user.id);
       if (await findExistingCanonicalChat(card.profile) !== sessionId) throw new Error('card_cli_session_changed');
       const root = path.join(resolveRepoRoot(), 'HermesLatest');
-      const freshness = await tsImport(pathToFileURL(path.join(root, 'scripts/build/freshness.mjs')).href, pathToFileURL(__filename).href);
-      if (!freshness.productCurrent({ source: root, product: 'tui', out: path.join(root, 'ui-tui/dist') })) {
-        throw new Error('card_cli_build_required');
-      }
       if (socket.destroyed) return;
       sockets.handleUpgrade(req, socket, head, ws => {
         const command = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
@@ -71,7 +65,7 @@ export function installCardTerminals(server: Server): void {
             name: 'xterm-256color', cols: 80, rows: 24, cwd: resolveRepoRoot(),
             env: { ...env, HERMES_HOME: path.join(root, '.hermes'), HERMES_PYTHON: command,
               HERMES_PYTHON_SRC_ROOT: root, HERMES_NODE: process.execPath,
-              HERMES_TUI_DIR: path.join(root, 'ui-tui'), PYTHONPATH: root,
+              PYTHONPATH: root,
               TERM: 'xterm-256color', COLORTERM: 'truecolor' },
           });
         } catch { ws.close(1011, 'card_cli_start_failed'); return; }

@@ -2,9 +2,9 @@
  * Entity: Main Chat
  * Relationship: Forwards Hermes input and replies, then stores the completed pair through the existing store after delivering the reply.
  * Entity: Agent Messaging
- * Relationship: Uses saved Card profiles and wired rosters; Hermes owns Bot delivery and execution.
+ * Relationship: Preserves mentions as Main input; saved profile configuration and wires define Hermes Bot Mode authority.
  * Entity: Card Sessions
- * Relationship: Opens Hermes Bot Chats on Project opening and accepts only the receiving Card's returned handle on Send.
+ * Relationship: Opens Hermes Bot Chats on Project opening and forwards Main input using Main's returned handle.
  * Entity: Card Terminals
  * Relationship: Preserves the existing Card CLI's open and identity-check exports.
  * Entity: Voice
@@ -97,12 +97,6 @@ async function context(req: Request, res: Response, input = req.method === 'GET'
 }
 
 type Context = NonNullable<Awaited<ReturnType<typeof context>>>;
-function addressedCard(scope: Context, message: string) {
-  const address = /^@([^\s]+)(?:\s|$)/u.exec(message)?.[1];
-  const matches = address ? scope.roster.filter(card => card.address?.toLowerCase() === address.toLowerCase()) : [scope.authority.main];
-  if (matches.length !== 1) throw new Error('main_agent_address_unavailable');
-  return matches[0];
-}
 const speaker = (card: ProjectCardBinding) => ({ kind: 'card' as const, cardId: card.card.id,
   label: card.title, profile: card.profile, address: card.address });
 
@@ -190,7 +184,7 @@ router.post('/chat', async (req, res) => {
     if (req.body.dataAnchors?.length) { res.status(422).json({ error: 'main_data_anchor_transport_unavailable' }); return; }
     const scope = await context(req, res);
     if (!scope) return;
-    const card = addressedCard(scope, message);
+    const card = scope.authority.main;
     await assertCardProfileOwner(card.profile, scope.ownerUserId);
     const sessionId = objectRecord(req.body.sessions)[card.card.id];
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('main_project_not_open');
@@ -203,8 +197,7 @@ router.post('/chat', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache'); res.flushHeaders();
     const send = (kind: string, data: Rpc) => res.write(`event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`);
     send('session', { projectId: scope.projectId, deckId: scope.deckId, cardId: card.card.id, sessionId });
-    const prefix = card === scope.authority.main ? '' : `@${card.address} `;
-    let started = false, completed = false;
+    let completed = false;
     let submission: Promise<Rpc>;
     const { client } = await gateway();
     const offEvent = client.onEvent((event: Rpc) => {
@@ -217,13 +210,13 @@ router.post('/chat', async (req, res) => {
         }
         if (event.admission_id !== receipt.admission_id) return;
         if (event.type === 'message.delta' && typeof payload.text === 'string' && payload.text) {
-          send('text', { text: (started ? '' : prefix) + payload.text }); started = true;
+          send('text', { text: payload.text });
         }
         if (event.type !== 'message.complete') return;
         completed = true;
         if (payload.error || payload.status === 'error') throw new Error(String(payload.error || payload.failure_reason || 'card_turn_failed'));
         const text = typeof payload.text === 'string' ? payload.text : '';
-        send('done', { fullText: text ? prefix + text : '', speechText: text }); res.end();
+        send('done', { fullText: text, speechText: text }); res.end();
         if (text.trim()) void appendConversationTurn({ projectId: scope.projectId, conversationId: scope.projectId, messages: [
           { messageId: submissionId, role: 'user', content: message, speaker: { kind: 'user', label: 'You' },
             target: speaker(card), providerContinuationRef: sessionId, providerMessageId: `hermes:${card.profile}:admission:${receipt.admission_id}` },
@@ -269,7 +262,7 @@ for (const operation of ['transcribe', 'speak'] as const) {
       if (!scope) return;
       const card = operation === 'speak'
         ? [scope.authority.main, ...scope.roster].find(item => item.card.id === req.body.cardId)
-        : addressedCard(scope, typeof req.body.message === 'string' ? req.body.message : '');
+        : scope.authority.main;
       if (!card) { res.status(403).json({ error: 'main_agent_address_unavailable' }); return; }
       await assertCardProfileOwner(card.profile, scope.ownerUserId);
       const body = operation === 'transcribe' ? { data_url: req.body.dataUrl, mime_type: req.body.mimeType } : { text: req.body.text };
