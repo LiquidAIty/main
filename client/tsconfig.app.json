@@ -44,6 +44,8 @@
     "../HermesLatest/apps/shared/src/gateway-events.ts",
     "../HermesLatest/apps/shared/src/json-rpc-channel.ts",
     "../HermesLatest/apps/shared/src/json-rpc-gateway.ts",
+    "../HermesLatest/apps/shared/src/session-http-mutations.ts",
+    "../HermesLatest/apps/shared/src/websocket-url.ts",
     "../agent-products/nrgsim/client/src/components/energy/**/*.tsx",
     "../agent-products/nrgsim/client/src/features/energy/*.ts",
     "../agent-products/nrgsim/client/src/types/*.ts",

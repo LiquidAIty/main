@@ -27,6 +27,8 @@ vi.mock('./hermesHost', () => ({
 
 import useHermesMainChat, { HERMES_MAIN_SESSION_TITLE } from './useHermesMainChat';
 
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 describe('Hermes Main chat binding', () => {
   beforeEach(() => {
     host.handlers.clear();
@@ -52,17 +54,54 @@ describe('Hermes Main chat binding', () => {
     expect(host.request).toHaveBeenCalledWith('session.create', expect.objectContaining({
       profile: 'main',
       title: HERMES_MAIN_SESSION_TITLE,
-      idempotency_key: 'main:bot-chat',
+      request_id: expect.stringMatching(UUID_V4),
+      source: 'gui',
+      hidden: true,
+      follow_profile_config: true,
     }));
 
     await act(async () => {
       expect(await result.current.send('  @KnowGraph exact text  ')).toBe(true);
     });
-    expect(host.request).toHaveBeenCalledWith('prompt.submit', {
+    expect(host.request).toHaveBeenCalledWith('prompt.submit', expect.objectContaining({
       session_id: 'main-session',
       profile: 'main',
+      submission_id: expect.stringMatching(UUID_V4),
       text: '  @KnowGraph exact text  ',
+    }));
+  });
+
+  it('gives a voice transcript its own Hermes submission identity', async () => {
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: [] };
+      if (method === 'session.create') return { session_id: 'main-session', messages: [] };
+      if (method === 'voice.record') return { status: 'recording' };
+      if (method === 'prompt.submit') return { accepted: true };
+      throw new Error(`Unexpected method ${method}`);
     });
+
+    const { result } = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+
+    await act(async () => {
+      expect(await result.current.startVoice('typed draft', { images: [] })).toBe(true);
+    });
+    act(() => host.handlers.get('voice.transcript')?.({
+      type: 'voice.transcript',
+      session_id: 'main-session',
+      payload: { text: 'spoken words' },
+    }));
+
+    await waitFor(() => expect(host.request).toHaveBeenCalledWith(
+      'prompt.submit',
+      expect.objectContaining({
+        session_id: 'main-session',
+        profile: 'main',
+        submission_id: expect.stringMatching(UUID_V4),
+        text: 'typed draft\nspoken words',
+        voice_turn: true,
+      }),
+    ));
   });
 
   it('resumes Hermes history and retains the author Hermes reports', async () => {
@@ -106,6 +145,11 @@ describe('Hermes Main chat binding', () => {
 
     const { result } = renderHook(() => useHermesMainChat('trading-project'));
     await waitFor(() => expect(result.current.historyLoading).toBe(false));
+    expect(host.request).toHaveBeenCalledWith('session.resume', {
+      session_id: 'resolved-main',
+      profile: 'main',
+      source: 'gui',
+    });
     expect(result.current.messages).toEqual([expect.objectContaining({
       role: 'assistant',
       speaker: 'knowgraph',

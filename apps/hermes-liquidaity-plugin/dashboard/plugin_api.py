@@ -32,19 +32,30 @@ def _runtime():
 router = APIRouter()
 
 
+def _active_profile_name() -> str:
+    """Return the Hermes profile scope already selected for this plugin request."""
+
+    from hermes_cli.profiles import get_active_profile_name
+
+    return get_active_profile_name() or "default"
+
+
 @router.get("/navigation-map")
-async def navigation_map_status(profile: str):
-    return {"ok": True, **_runtime().navigation_status(profile)}
+async def navigation_map_status():
+    return {"ok": True, **_runtime().navigation_status(_active_profile_name())}
 
 
 @router.put("/navigation-map")
-async def publish_navigation_map(body: dict, profile: str):
+async def publish_navigation_map(body: dict):
     try:
-        return {"ok": True, **_runtime().publish_navigation_map(body, profile)}
+        return {
+            "ok": True,
+            **_runtime().publish_navigation_map(body, _active_profile_name()),
+        }
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.delete("/navigation-map")
-async def clear_navigation_map(profile: str):
-    return {"ok": True, **_runtime().clear_navigation_map(profile)}
+async def clear_navigation_map():
+    return {"ok": True, **_runtime().clear_navigation_map(_active_profile_name())}

@@ -1,6 +1,6 @@
 /**
  * Entity: Authentication
- * Relationship: This file defines loopback, bootstrap-session, and CORS trust checks for the standalone client and official Hermes dashboard host so local-development access cannot be authorized by spoofed headers.
+ * Relationship: This file defines loopback, bootstrap-session, and CORS trust checks for the standalone client and Hermes browser hosts so local-development access cannot be authorized by spoofed headers.
  * Entity: Credentials
  * Relationship: This file reads and timing-safely compares the optional bootstrap token without accepting a missing or mismatched value.
  */
@@ -19,6 +19,8 @@ const DEFAULT_LOCAL_ORIGINS = [
   'http://127.0.0.1:4173',
   'http://localhost:9119',
   'http://127.0.0.1:9119',
+  'http://localhost:9120',
+  'http://127.0.0.1:9120',
 ];
 
 function normalizeHost(value: string): string {

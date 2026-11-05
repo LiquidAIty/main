@@ -16,6 +16,7 @@ import type {
 } from '../../../../HermesLatest/apps/shared/src/gateway-contract.generated';
 import type { GatewayEvent } from '../../../../HermesLatest/apps/shared/src/gateway-events';
 import type { ServerRequest } from '../../../../HermesLatest/apps/shared/src/json-rpc-channel';
+import { randomUuid } from '../../../../HermesLatest/apps/shared/src/session-http-mutations';
 import { hermesGateway } from './hermesHost';
 import { awaitHermesNavigationMapReady } from './hermesNavigationMapClient';
 
@@ -336,7 +337,11 @@ export default function useHermesMainChat(projectId: string) {
             });
           }
           await gateway.request('prompt.submit', {
-            session_id: sessionRef.current, profile, text: literal, voice_turn: true,
+            session_id: sessionRef.current,
+            profile,
+            submission_id: randomUuid(),
+            text: literal,
+            voice_turn: true,
           });
           setMessages((current) => [...current, {
             role: 'user', text: literal, speaker: 'You', status: 'complete',
@@ -357,13 +362,17 @@ export default function useHermesMainChat(projectId: string) {
       if (existing) {
         opened = await gateway.request<SessionResumeResult>('session.resume', {
           session_id: existing.resolved_id || existing.id,
-          profile, source: 'web', inline_images: true, close_on_disconnect: false,
+          profile,
+          source: 'gui',
         });
       } else {
         opened = await gateway.request<SessionCreateResult>('session.create', {
-          profile, source: 'web', title: HERMES_MAIN_SESSION_TITLE,
-          follow_profile_config: true, close_on_disconnect: false,
-          idempotency_key: 'main:bot-chat',
+          profile,
+          request_id: randomUuid(),
+          source: 'gui',
+          title: HERMES_MAIN_SESSION_TITLE,
+          hidden: true,
+          follow_profile_config: true,
         });
       }
       if (disposed || generationRef.current !== generation) return;
@@ -395,7 +404,10 @@ export default function useHermesMainChat(projectId: string) {
         });
       }
       await gateway.request('prompt.submit', {
-        session_id: sessionRef.current, profile, text: body,
+        session_id: sessionRef.current,
+        profile,
+        submission_id: randomUuid(),
+        text: body,
       });
       setMessages((current) => [...current, {
         role: 'user', text: body, speaker: 'You', status: 'complete',

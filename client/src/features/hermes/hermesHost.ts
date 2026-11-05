@@ -1,6 +1,6 @@
 /**
  * Entity: Hermes UI Integration
- * Relationship: Obtains authenticated WebSocket URLs from the public Hermes dashboard plugin SDK and reuses Hermes's generated JSON-RPC client without another decoder or backend requester.
+ * Relationship: Connects the unchanged LiquidAIty web UI to Hermes through either its browser-hosted Webapp tickets or dashboard SDK, then reuses Hermes's generated JSON-RPC client without another decoder or backend requester.
  */
 
 import {
@@ -11,6 +11,7 @@ import {
 import type {
   RpcMethods,
 } from '../../../../HermesLatest/apps/shared/src/gateway-contract.generated';
+import { buildHermesWebSocketUrl, normalizeBasePath } from '../../../../HermesLatest/apps/shared/src/websocket-url';
 
 type DashboardPluginSdk = {
   buildWsUrl(path: string, params?: Record<string, string>): Promise<string>;
@@ -20,7 +21,108 @@ type DashboardPluginSdk = {
 
 type HermesWindow = Window & {
   __HERMES_PLUGIN_SDK__?: DashboardPluginSdk;
+  __HERMES_AUTH_REQUIRED__?: boolean;
+  __HERMES_BASE_PATH__?: string;
+  __HERMES_UI_SURFACE__?: string;
 };
+
+const WEBAPP_SESSION_HEADER = 'X-Hermes-Session-Token';
+const WEBAPP_NATIVE_DIAL = 'browser';
+
+type WebappBootstrap = {
+  authRequired: boolean;
+  basePath: string;
+  token: string;
+};
+
+function webappSessionKey(basePath: string): string {
+  return `hermes.webapp.session.v1:${JSON.stringify([window.location.origin, basePath])}`;
+}
+
+function webappBootstrap(): WebappBootstrap | null {
+  const host = window as HermesWindow;
+  if (host.__HERMES_UI_SURFACE__ !== 'webapp') return null;
+  const basePath = normalizeBasePath(host.__HERMES_BASE_PATH__);
+  let token = '';
+  try {
+    token = window.sessionStorage.getItem(webappSessionKey(basePath)) || '';
+  } catch {
+    token = '';
+  }
+  return {
+    authRequired: host.__HERMES_AUTH_REQUIRED__ === true,
+    basePath,
+    token,
+  };
+}
+
+function webappEndpoint(basePath: string, path: string): string {
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  return `${basePath}${suffix}`;
+}
+
+async function webappFetch(
+  bootstrap: WebappBootstrap,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  if (!bootstrap.authRequired && !bootstrap.token) {
+    throw new Error('Run hermes webapp to sign this browser into LiquidAIty.');
+  }
+  const headers = new Headers(init?.headers);
+  if (bootstrap.token) headers.set(WEBAPP_SESSION_HEADER, bootstrap.token);
+  return fetch(webappEndpoint(bootstrap.basePath, path), {
+    ...init,
+    credentials: 'same-origin',
+    headers,
+  });
+}
+
+function webappHost(bootstrap: WebappBootstrap): DashboardPluginSdk {
+  return {
+    async buildWsUrl(path, params = {}) {
+      if (path === '/api/ws') {
+        const query = new URLSearchParams({ socket: 'gateway' });
+        if (params.profile) query.set('profile', params.profile);
+        const response = await webappFetch(
+          bootstrap,
+          `/api/webapp/socket-ticket?${query.toString()}`,
+          { method: 'POST' },
+        );
+        if (!response.ok) {
+          throw new Error(`Hermes Webapp ticket mint failed (${response.status}).`);
+        }
+        const payload = await response.json() as { ticket?: unknown };
+        const ticket = typeof payload.ticket === 'string' ? payload.ticket.trim() : '';
+        if (!ticket) throw new Error('Hermes Webapp did not return a Gateway ticket.');
+        return buildHermesWebSocketUrl({
+          authParam: ['ticket', ticket],
+          basePath: bootstrap.basePath,
+          params: { ...params, native_dial: WEBAPP_NATIVE_DIAL },
+          path,
+        });
+      }
+
+      return buildHermesWebSocketUrl({
+        authParam: bootstrap.token ? ['token', bootstrap.token] : undefined,
+        basePath: bootstrap.basePath,
+        params,
+        path,
+      });
+    },
+    async fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+      const response = await webappFetch(bootstrap, path, init);
+      const body = await response.text();
+      if (!response.ok) {
+        throw new Error(body || `Hermes Webapp request failed (${response.status}).`);
+      }
+      return (body ? JSON.parse(body) : null) as T;
+    },
+    authedFetch(path: string, init?: RequestInit): Promise<Response> {
+      return webappFetch(bootstrap, path, init);
+    },
+  };
+}
 
 const clients = new Map<string, JsonRpcGatewayClient>();
 const connections = new Map<string, Promise<JsonRpcGatewayClient>>();
@@ -31,10 +133,10 @@ const MAX_RECONNECT_DELAY_MS = 30_000;
 
 export function hermesDashboardSdk(): DashboardPluginSdk {
   const sdk = (window as HermesWindow).__HERMES_PLUGIN_SDK__;
-  if (!sdk?.buildWsUrl) {
-    throw new Error('LiquidAIty must run as a Hermes web-dashboard plugin.');
-  }
-  return sdk;
+  if (sdk?.buildWsUrl) return sdk;
+  const bootstrap = webappBootstrap();
+  if (bootstrap) return webappHost(bootstrap);
+  throw new Error('LiquidAIty must run through Hermes Webapp.');
 }
 
 function scheduleReconnect(profile: string, client: JsonRpcGatewayClient): void {

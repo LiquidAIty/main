@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import hashlib
 import json
@@ -213,6 +214,35 @@ def test_dashboard_api_and_native_hook_share_the_same_process_cache():
     api = importlib.util.module_from_spec(api_spec)
     api_spec.loader.exec_module(api)
     assert api._runtime() is plugin._navigation_runtime()
+
+
+def test_dashboard_api_uses_the_profile_scope_selected_by_hermes(monkeypatch):
+    api_spec = importlib.util.spec_from_file_location(
+        "liquidaity_dashboard_api_profile_scope",
+        ROOT / "dashboard" / "plugin_api.py",
+    )
+    assert api_spec and api_spec.loader
+    api = importlib.util.module_from_spec(api_spec)
+    api_spec.loader.exec_module(api)
+    runtime = api._runtime()
+    monkeypatch.setattr(api, "_active_profile_name", lambda: "builder")
+    body = {
+        "schemaVersion": "liquidaity.navigation-map.v1",
+        "projectId": "trading",
+        "layers": ["thinkgraph"],
+        "revision": "revision-one",
+        "nodes": [["Rocket Lab", "Entity", [["thinkgraph", "eng-1"]]]],
+        "relationships": [],
+        "focus": None,
+    }
+
+    runtime.clear_navigation_map("builder")
+    published = asyncio.run(api.publish_navigation_map(body))
+    assert published["ok"] is True
+    assert runtime.navigation_status("builder")["projectId"] == "trading"
+    assert asyncio.run(api.navigation_map_status())["available"] is True
+    cleared = asyncio.run(api.clear_navigation_map())
+    assert cleared == {"ok": True, **runtime.navigation_status("builder")}
 
 
 def test_completed_turn_reads_main_context_calls_plugin_llm_and_settles_with_engraphis(monkeypatch):

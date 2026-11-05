@@ -1,6 +1,6 @@
 /**
  * Entity: Authentication
- * Relationship: This file verifies development bootstrap trusts only real loopback sockets with matching headers, exposes standalone and Hermes-dashboard loopback CORS origins, and never activates in production.
+ * Relationship: This file verifies development bootstrap trusts only real loopback sockets with matching headers, exposes standalone and Hermes-hosted loopback CORS origins, and never activates in production.
  * Entity: Credentials
  * Relationship: This file protects the bootstrap-token boundary by proving remote requests cannot manufacture local authority through caller-controlled headers.
  */
@@ -49,6 +49,7 @@ describe('local development request authority', () => {
     expect(origins).toContain('http://127.0.0.1:5173');
     expect(origins).toContain('http://127.0.0.1:4173');
     expect(origins).toContain('http://127.0.0.1:9119');
+    expect(origins).toContain('http://127.0.0.1:9120');
     expect(origins.every(origin => new URL(origin).hostname === '127.0.0.1'
       || new URL(origin).hostname === 'localhost')).toBe(true);
   });

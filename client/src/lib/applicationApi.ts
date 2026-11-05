@@ -1,10 +1,11 @@
 /**
  * Entity: Application Transport
- * Relationship: Keeps the standalone Vite path relative while routing the Hermes dashboard plugin page to the existing loopback LiquidAIty backend with credentialed browser requests.
+ * Relationship: Keeps the standalone Vite path relative while routing Hermes-hosted LiquidAIty pages to the existing loopback application backend with credentialed browser requests.
  */
 
 type HermesDashboardWindow = Window & {
   __HERMES_PLUGIN_SDK__?: unknown;
+  __HERMES_UI_SURFACE__?: string;
 };
 
 const DASHBOARD_BACKEND_ORIGIN = String(
@@ -13,7 +14,10 @@ const DASHBOARD_BACKEND_ORIGIN = String(
 
 export function isHermesDashboardHosted(): boolean {
   return typeof window !== 'undefined'
-    && Boolean((window as HermesDashboardWindow).__HERMES_PLUGIN_SDK__);
+    && (
+      Boolean((window as HermesDashboardWindow).__HERMES_PLUGIN_SDK__)
+      || (window as HermesDashboardWindow).__HERMES_UI_SURFACE__ === 'webapp'
+    );
 }
 
 export function applicationApiUrl(path: string): string {
