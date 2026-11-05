@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Saved Cards
  * Relationship: This file defines the backend's canonical saved deck, immutable Card revision identity, and saved Card configuration transport types.
  * Entity: Card Topology
@@ -10,7 +6,7 @@
  * Entity: Agent Messaging
  * Relationship: This file defines the saved orchestrator setting and wire classifications used for Card-hosted agent reachability.
  * Entity: Magnetic Membership
- * Relationship: This file defines blue magentic_option membership as an additional deferred meaning on an otherwise messageable wire.
+ * Relationship: This file defines blue magentic_option membership as the exact Magnetic worker ceiling on an otherwise directly messageable wire.
  * Entity: Card Profiles
  * Relationship: This file defines each saved Card's single runtime mode, profile, provider, model, subagent, skill, toolset, and MCP selections.
  * Entity: Card Scripts
@@ -36,14 +32,12 @@ export type CardRuntime = {
 export type DeckEdgeType = 'magentic_option' | 'flow' | 'invalid';
 
 export type SavedCardConfiguration = {
-  autoTools?: boolean;
-  autoModel?: boolean;
   /** Saved outbound Card-to-Card authority for an ordinary agent Card. */
   orchestrator?: boolean;
   /** Temporary delegated children for one Card turn. */
   subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
-   * runtime capability. The receiving Card's IDF carries this exact value. */
+   * runtime capability. */
   configuration?: Record<string, unknown> | null;
   script?: {
     enabled?: boolean;

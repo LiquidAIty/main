@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Projects
  * Relationship: This file verifies each new Project receives an independent canonical source-default deck and exact persistence readback.
  * Entity: Saved Cards
@@ -47,43 +43,43 @@ const EXPECTED_PROMPT_CONTRACTS = [
     asset: 'magnetic.md',
     templateId: 'prompt_magentic',
     cardId: 'card_magentic',
-    bytes: 1529,
-    sha256: '1e1c2637989231c605e9c04c54658dcb13830a51fd9abc918ed614cb2a73b5ae',
+    bytes: 2280,
+    sha256: 'cd7de88273f25c161414179bdcfc1cce676d46b705e98f996c2605845e5594a7',
   },
   {
     asset: 'main.md',
     templateId: 'prompt_main_chat',
     cardId: 'card_main_chat',
-    bytes: 6382,
-    sha256: 'c43b70e7fcc557fdf01652ac1ed05868203f8544c8bbb53ce0e162ba219a02ee',
+    bytes: 8069,
+    sha256: 'e5ce56b309a874ac06be2c27ab0782fa76254520d7944c27daf673fe8126bf0d',
   },
   {
     asset: 'builder.md',
     templateId: 'prompt_builder',
     cardId: 'builder',
-    bytes: 1852,
-    sha256: '7ad48c7e9ae1ad707f8fe255e5da0f516c538acbf5df71d685b59a0edfbe8ed5',
+    bytes: 2547,
+    sha256: '12ca4e9b0933cc4f5bbd90d4e2a1dbacaea11b24c9353838aa877c321bc9da1c',
   },
   {
     asset: 'thinkgraph.md',
     templateId: 'prompt_thinkgraph',
     cardId: 'card_thinkgraph',
-    bytes: 5498,
-    sha256: 'eabc43f0cac64fb50aca8ec60583e0581b51582ea920456391f9f4939db2998d',
+    bytes: 5506,
+    sha256: 'aa972bc0d325dcc9259dcb2e4ef0ec22f1bd7f3af14bafe99da4570e3b93515a',
   },
   {
     asset: 'team.md',
     templateId: 'prompt_team',
     cardId: 'card_team',
-    bytes: 1549,
-    sha256: 'e8636f8cfd9d6f302cfe447de110f2bccb0a4ababa4546da8895c33b62a97a67',
+    bytes: 1979,
+    sha256: '5acc8d04f5cbab0b04e7489c124f12a30367a75820a50861011cf4b0a733f43f',
   },
   {
     asset: 'knowgraph.md',
     templateId: 'prompt_knowgraph',
     cardId: 'card_knowgraph',
-    bytes: 6859,
-    sha256: '744bb4ea4a5a53c8fc9702e79bae9d4ed9fecf74de0e297b47364352d16c6c2c',
+    bytes: 6888,
+    sha256: '750fa84c6c2023dcab8397acb2a797b0beb6d0272174d388662d9e8a46a5b1d0',
   },
 ] as const;
 
@@ -157,6 +153,9 @@ describe('backend-owned default Project deck', () => {
       modelKey: 'gpt-5.6-sol',
       tools: [
         'canvas.inspect',
+        'engraphis_recall_context',
+        'graphiti.search_nodes',
+        'graphiti.search_memory_facts',
         'worldview.set_capability',
       ],
     });
@@ -190,7 +189,23 @@ describe('backend-owned default Project deck', () => {
     expect(byId.get('builder')?.runtimeOptions).toMatchObject({
       subagentType: 'none',
       modelKey: 'gpt-5.6-sol',
-      skills: ['agent-builder-inspection'],
+      skills: ['codebase-inspection'],
+      tools: [
+        'canvas.inspect',
+        'canvas.upsert_wire',
+        'card.create',
+        'card.update_configuration',
+        'engraphis_recall_context',
+        'graphiti.search_nodes',
+        'graphiti.search_memory_facts',
+        'cbm.search_graph',
+        'cbm.trace_path',
+        'cbm.get_code_snippet',
+        'cbm.check_index_coverage',
+        'cbm.detect_changes',
+        'cbm.search_code',
+        'cbm.query_graph',
+      ],
       toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
     });
     expect(byId.get('card_thinkgraph')?.runtimeOptions?.tools).toEqual([
@@ -234,6 +249,11 @@ describe('backend-owned default Project deck', () => {
         'graphiti.search_memory_facts',
         'graphiti.get_episodes',
       ],
+      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution', 'liquidaity'],
+    });
+    expect(byId.get('card_magentic')?.runtimeOptions).toMatchObject({
+      modelKey: 'gpt-5.6-sol',
+      toolsets: ['liquidaity'],
     });
     expect(byId.get('card_knowgraph')?.runtimeOptions).toMatchObject({
       modelKey: 'gpt-5.6-sol',
@@ -246,6 +266,17 @@ describe('backend-owned default Project deck', () => {
         'graphiti.search_knows',
       ]),
       toolsets: ['web'],
+    });
+    expect(Object.fromEntries(DEFAULT_PROJECT_DECK.nodes.map((card) => [
+      card.id,
+      card.runtimeOptions?.skills,
+    ]))).toEqual({
+      card_main_chat: ['hermes-agent'],
+      builder: ['codebase-inspection'],
+      card_thinkgraph: ['hermes-agent'],
+      card_magentic: ['hermes-agent'],
+      card_team: ['grounded-citations'],
+      card_knowgraph: ['grounded-citations'],
     });
     expect(byId.get('card_knowgraph')?.runtimeOptions?.skills).toEqual([
       'grounded-citations',

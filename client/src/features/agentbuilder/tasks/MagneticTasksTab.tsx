@@ -1,12 +1,8 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Magnetic Tasks
- * Relationship: This file renders inspect-only task dependencies, saved Card assignments, bounded handoffs, and exact current states for the selected Magnetic Run.
+ * Relationship: This file renders inspect-only Hermes task dependencies, saved profile assignments, bounded handoffs, and exact current states for the selected Team or Magnetic profile.
  * Entity: Run Ledger
- * Relationship: This file reads the current outer Run status and displays task attempts and the same root identity without creating or mutating work.
+ * Relationship: This file reads Hermes's bundled Kanban board/task APIs and reconstructs only the exact creator lineage rooted in the selected profile session without creating or mutating work.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -28,6 +24,7 @@ import {
   graphDrawerSectionStyle,
   graphGlassPillStyle,
 } from '../../../components/graph/graphVisualTokens';
+import { hermesDashboardSdk } from '../../hermes/hermesHost';
 
 export const TASK_STATUSES = [
   'triage',
@@ -60,7 +57,7 @@ export type MagneticTask = {
 };
 
 type MagneticRunStatus = {
-  runId: string;
+  executionId: string;
   rootTaskId: string | null;
   state: string;
   tasks: MagneticTask[];
@@ -92,6 +89,166 @@ function taskStatus(value: unknown): TaskStatus | null {
   return VALID_TASK_STATUSES.has(candidate) ? candidate as TaskStatus : null;
 }
 
+type KanbanTaskRecord = Record<string, unknown> & {
+  id?: unknown;
+  title?: unknown;
+  assignee?: unknown;
+  status?: unknown;
+  session_id?: unknown;
+  workflow_template_id?: unknown;
+  current_step_key?: unknown;
+  created_at?: unknown;
+  result?: unknown;
+  latest_summary?: unknown;
+};
+
+type KanbanTaskDetail = {
+  task?: KanbanTaskRecord;
+  events?: Array<Record<string, unknown>>;
+  links?: { parents?: unknown; children?: unknown };
+  runs?: Array<Record<string, unknown>>;
+};
+
+const TEAM_WORKFLOW_ID = 'auto-team-v1';
+const MAGNETIC_WORKFLOW_ID = 'liquidaity-magnetic-v1';
+const TEAM_ROOT_STEPS = new Set(['decomposition', 'synthesis']);
+const MAGNETIC_ROOT_STEP = 'magnetic-orchestration';
+const MAX_TASKGRAPH_STATUS_TASKS = 64;
+
+function boardTasks(value: unknown): KanbanTaskRecord[] {
+  if (!value || typeof value !== 'object') return [];
+  const columns = (value as Record<string, unknown>).columns;
+  if (!Array.isArray(columns)) return [];
+  return columns.flatMap((column): KanbanTaskRecord[] => {
+    if (!column || typeof column !== 'object') return [];
+    const tasks = (column as Record<string, unknown>).tasks;
+    return Array.isArray(tasks)
+      ? tasks.filter((task): task is KanbanTaskRecord => Boolean(task) && typeof task === 'object')
+      : [];
+  });
+}
+
+function isTaskgraphRoot(task: KanbanTaskRecord, profile: string, sessionId: string): boolean {
+  const workflow = text(task.workflow_template_id);
+  const step = text(task.current_step_key);
+  return (
+    text(task.assignee) === profile
+    && text(task.session_id) === sessionId
+    && (
+      (workflow === TEAM_WORKFLOW_ID && TEAM_ROOT_STEPS.has(step))
+      || (workflow === MAGNETIC_WORKFLOW_ID && step === MAGNETIC_ROOT_STEP)
+    )
+  );
+}
+
+function creatorTaskId(detail: KanbanTaskDetail): string {
+  for (const event of detail.events || []) {
+    if (text(event.kind) !== 'created') continue;
+    const payload = event.payload;
+    if (!payload || typeof payload !== 'object') continue;
+    const creator = text((payload as Record<string, unknown>).creator_task_id);
+    if (creator) return creator;
+  }
+  return '';
+}
+
+function createdEventId(detail: KanbanTaskDetail | undefined): number {
+  return Math.max(0, ...(detail?.events || []).flatMap((event) => (
+    text(event.kind) === 'created' && Number.isSafeInteger(Number(event.id))
+      ? [Number(event.id)]
+      : []
+  )));
+}
+
+function latestRun(runs: Array<Record<string, unknown>>): Record<string, unknown> | null {
+  return [...runs].sort((left, right) => Number(right.id || 0) - Number(left.id || 0))[0] || null;
+}
+
+export function readKanbanTaskgraphStatus(
+  board: unknown,
+  details: readonly KanbanTaskDetail[],
+  profile: string,
+  sessionId: string,
+): MagneticRunStatus | null {
+  const allTasks = boardTasks(board);
+  const detailById = new Map(details.flatMap((detail): Array<[string, KanbanTaskDetail]> => {
+    const taskId = text(detail.task?.id);
+    return taskId ? [[taskId, detail]] : [];
+  }));
+  const roots = allTasks.filter((task) => isTaskgraphRoot(task, profile, sessionId));
+  roots.sort((left, right) => (
+    Number(right.created_at || 0) - Number(left.created_at || 0)
+    || createdEventId(detailById.get(text(right.id)))
+      - createdEventId(detailById.get(text(left.id)))
+    || text(right.id).localeCompare(text(left.id))
+  ));
+  const root = roots[0];
+  const rootId = text(root?.id);
+  if (!root || !rootId) return null;
+  const included = new Set([rootId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [taskId, detail] of detailById) {
+      if (included.has(taskId) || !included.has(creatorTaskId(detail))) continue;
+      included.add(taskId);
+      changed = true;
+    }
+  }
+  const tasks = [...included].flatMap((taskId): MagneticTask[] => {
+    const detail = detailById.get(taskId);
+    const task = detail?.task;
+    const status = taskStatus(task?.status);
+    if (!detail || !task || !status) return [];
+    const run = latestRun(Array.isArray(detail.runs) ? detail.runs : []);
+    const rawRunId = run?.id;
+    const runId = typeof rawRunId === 'string' || typeof rawRunId === 'number'
+      ? rawRunId
+      : null;
+    const summary = text(task.result) || text(task.latest_summary) || text(run?.summary);
+    const boundedSummary = summary ? exactBoundedText(summary, MAX_HANDOFF_SUMMARY_CHARS) : null;
+    return [{
+      taskId,
+      title: text(task.title) || taskId,
+      assignee: text(task.assignee) || null,
+      status,
+      dependencyIds: Array.isArray(detail.links?.parents)
+        ? detail.links.parents.map(text).filter((id) => included.has(id))
+        : [],
+      latestAttempt: run && runId !== null
+        ? { runId, status: text(run.status) }
+        : null,
+      resultAvailable: Boolean(text(task.result) || text(task.latest_summary) || text(run?.summary)),
+      handoffSummary: boundedSummary,
+    }];
+  });
+  const rootTask = tasks.find((task) => task.taskId === rootId);
+  if (!rootTask) return null;
+  const descendants = tasks.filter((task) => task.taskId !== rootId);
+  const liveStatuses = new Set<TaskStatus>([
+    'triage', 'todo', 'scheduled', 'ready', 'running', 'review',
+  ]);
+  const state = tasks.some((task) => task.status === 'running')
+    ? 'running'
+    : descendants.some((task) => liveStatuses.has(task.status))
+      ? 'pending'
+      : rootTask.status === 'done'
+        && descendants.every((task) => ['done', 'archived'].includes(task.status))
+        ? 'completed'
+        : rootTask.status === 'archived'
+          ? 'stopped'
+          : rootTask.status === 'blocked'
+            || descendants.some((task) => task.status === 'blocked')
+            ? 'blocked'
+            : 'pending';
+  return {
+    executionId: rootId,
+    rootTaskId: rootId,
+    state,
+    tasks,
+  };
+}
+
 export function taskStatusLabel(
   status: TaskStatus,
   _dependencyCount = 0,
@@ -107,58 +264,6 @@ export function taskStatusLabel(
     case 'done': return 'Done';
     case 'archived': return 'Stopped';
   }
-}
-
-export function readMagneticRunStatus(value: unknown): MagneticRunStatus | null {
-  if (!value || typeof value !== 'object') return null;
-  const source = value as Record<string, unknown>;
-  const runId = text(source.runId);
-  if (!runId) return null;
-  const tasks = Array.isArray(source.tasks)
-    ? source.tasks.flatMap((entry): MagneticTask[] => {
-      if (!entry || typeof entry !== 'object') return [];
-      const task = entry as Record<string, unknown>;
-      const taskId = text(task.taskId);
-      const status = taskStatus(task.status);
-      if (!taskId || !status) return [];
-      const rawAttempt = task.latestAttempt;
-      const attempt = rawAttempt && typeof rawAttempt === 'object'
-        ? rawAttempt as Record<string, unknown>
-        : null;
-      const attemptRunId = attempt && (
-        typeof attempt.runId === 'string' || typeof attempt.runId === 'number'
-      ) ? attempt.runId : null;
-      const handoffSummary = task.handoffSummary === null || task.handoffSummary === undefined
-        ? null
-        : exactBoundedText(task.handoffSummary, MAX_HANDOFF_SUMMARY_CHARS);
-      if (task.handoffSummary !== null && task.handoffSummary !== undefined && !handoffSummary) {
-        return [];
-      }
-      return [{
-        taskId,
-        title: text(task.title) || taskId,
-        assignee: text(task.assignee) || null,
-        status,
-        dependencyIds: Array.isArray(task.dependencyIds)
-          ? task.dependencyIds.map(text).filter(Boolean)
-          : [],
-        latestAttempt: attempt && attemptRunId !== null
-          ? {
-            runId: attemptRunId,
-            status: text(attempt.status),
-          }
-          : null,
-        resultAvailable: task.resultAvailable === true,
-        handoffSummary,
-      }];
-    })
-    : [];
-  return {
-    runId,
-    rootTaskId: text(source.providerThreadRef) || null,
-    state: text(source.state),
-    tasks,
-  };
 }
 
 function taskTone(
@@ -331,13 +436,13 @@ const MAGNETIC_TASK_NODE_TYPES = { magneticTask: MagneticTaskCard };
 function SelectedTaskDetails({
   task,
   rootTaskId,
-  runId,
+  executionId,
   allTasks,
   cardTitlesByProfile,
 }: {
   task: MagneticTask;
   rootTaskId: string | null;
-  runId: string;
+  executionId: string;
   allTasks: MagneticTask[];
   cardTitlesByProfile: Readonly<Record<string, string>>;
 }): React.ReactElement {
@@ -357,7 +462,7 @@ function SelectedTaskDetails({
       <div style={detailStyle}>Status · {task.status}</div>
       <div style={detailStyle}>Profile · {task.assignee || '—'}</div>
       <div style={detailStyle}>Task · {task.taskId}</div>
-      <div style={detailStyle}>Run · {runId}</div>
+      <div style={detailStyle}>Execution · {executionId}</div>
       {task.taskId === rootTaskId ? <div style={detailStyle}>Root</div> : null}
       {task.dependencyIds.length > 0 ? (
         <div style={detailStyle}>
@@ -383,15 +488,13 @@ function SelectedTaskDetails({
 }
 
 export default function MagneticTasksTab({
-  projectId,
-  deckId,
-  cardId,
+  profile,
+  sessionId,
   label,
   cardTitlesByProfile,
 }: {
-  projectId: string;
-  deckId: string;
-  cardId: string;
+  profile: string;
+  sessionId: string;
   label?: string;
   cardTitlesByProfile: Readonly<Record<string, string>>;
 }): React.ReactElement {
@@ -405,6 +508,7 @@ export default function MagneticTasksTab({
   const graphHostRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = useCallback(async (signal?: AbortSignal): Promise<MagneticRunStatus | null> => {
+    if (!sessionId) return null;
     const requestController = new AbortController();
     let timedOut = false;
     const forwardAbort = (): void => requestController.abort();
@@ -415,28 +519,32 @@ export default function MagneticTasksTab({
       requestController.abort();
     }, STATUS_REQUEST_TIMEOUT_MS);
     try {
-      const response = await fetch('/api/cards/runs/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
+      const fetchJSON = hermesDashboardSdk().fetchJSON;
+      if (!fetchJSON) throw new Error('Hermes dashboard fetchJSON is unavailable.');
+      const board = await fetchJSON<unknown>('/api/plugins/kanban/board?include_archived=true', {
         signal: requestController.signal,
-        body: JSON.stringify({
-          action: 'status',
-          inspectOnly: true,
-          projectId,
-          deckId,
-          cardId,
-        }),
       });
-      const payload = await response.json().catch(() => null) as {
-        ok?: boolean;
-        result?: unknown;
-        error?: unknown;
-      } | null;
-      if (!response.ok || payload?.ok !== true) {
-        throw new Error(text(payload?.error) || `magnetic_tasks_http_${response.status}`);
+      const tasks = boardTasks(board);
+      const roots = tasks.filter((task) => isTaskgraphRoot(task, profile, sessionId));
+      roots.sort((left, right) => (
+        Number(right.created_at || 0) - Number(left.created_at || 0)
+        || text(right.id).localeCompare(text(left.id))
+      ));
+      const root = roots[0];
+      if (!root) return null;
+      const rootCreatedAt = Number(root.created_at || 0);
+      const candidates = tasks.filter((task) => (
+        text(task.session_id) === sessionId
+        && Number(task.created_at || 0) >= rootCreatedAt
+      ));
+      if (candidates.length > MAX_TASKGRAPH_STATUS_TASKS) {
+        throw new Error('taskgraph_status_scope_too_large');
       }
-      return readMagneticRunStatus(payload.result);
+      const details = await Promise.all(candidates.map((task) => fetchJSON<KanbanTaskDetail>(
+        `/api/plugins/kanban/tasks/${encodeURIComponent(text(task.id))}`,
+        { signal: requestController.signal },
+      )));
+      return readKanbanTaskgraphStatus(board, details, profile, sessionId);
     } catch (reason) {
       if (timedOut) throw new Error('timeout');
       throw reason;
@@ -444,7 +552,7 @@ export default function MagneticTasksTab({
       window.clearTimeout(timeout);
       signal?.removeEventListener('abort', forwardAbort);
     }
-  }, [cardId, deckId, projectId]);
+  }, [profile, sessionId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -568,7 +676,7 @@ export default function MagneticTasksTab({
             }}
           >
             <ReactFlow<MagneticTaskNode, Edge>
-              key={`${run.runId}:${taskLayout.nodes.map((node) => node.id).join('|')}`}
+              key={`${run.executionId}:${taskLayout.nodes.map((node) => node.id).join('|')}`}
               nodes={taskLayout.nodes}
               edges={taskLayout.edges}
               nodeTypes={MAGNETIC_TASK_NODE_TYPES}
@@ -596,7 +704,7 @@ export default function MagneticTasksTab({
             <SelectedTaskDetails
               task={selectedTask}
               rootTaskId={run.rootTaskId}
-              runId={run.runId}
+              executionId={run.executionId}
               allTasks={run.tasks}
               cardTitlesByProfile={cardTitlesByProfile}
             />

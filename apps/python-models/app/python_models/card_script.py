@@ -6,10 +6,6 @@ code or interprets intent. Invalid source remains saved and inspectable, but
 cannot become the active runtime presentation.
 """
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Card Scripts
 # Relationship: This file compiles one saved Card's bounded Python tool recipe against its current grants into the exact per-turn external Script contract.
 
@@ -682,7 +678,7 @@ def runtime_card_script_definition(
     enabled_tools: list[str],
     presented_tools: list[str],
 ) -> dict[str, Any] | None:
-    """Mechanically project one already-compiled IDF Script into the external turn contract."""
+    """Mechanically project one validated saved recipe into the plugin tool contract."""
 
     if presentation_mode != "script":
         return None

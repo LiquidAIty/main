@@ -1,7 +1,3 @@
-// Graph + less = more: less code that does the same work as more code is more useful.
-// Entity names the feature; Relationship explains why this file belongs and what it contributes.
-// Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-// Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: Saved Cards
 // Relationship: Edits one saved Card's title, prompt and runtime options, including model, reasoning, delegation, skills, tools, orchestrator skill and optional Python source.
 // Entity: Agent Builder
@@ -9,13 +5,13 @@
 // Entity: IDD
 // Relationship: This file loads the current Card-editor field and choice projection instead of maintaining a second runtime configuration dictionary.
 // Entity: Card Profiles
-// Relationship: Reads effective profile state, publishes the saved prompt and application-tool selection, and applies skill/toolset toggles and learning edits through the existing settings owner.
+// Relationship: Publishes compiled PromptBlocks to SOUL.md and edits the profile-scoped Card SKILL.md, skill auto-load, toolsets, MCP grants, and Bot roster through public Hermes surfaces.
 // Entity: Tool Catalog
 // Relationship: Displays selected application capabilities from IDD, preserves unavailable saved selections, and edits the Card's explicit grants through checkboxes.
 // Entity: Card Scripts
 // Relationship: This file mounts the saved Python Script editor and persists only the visible Script configuration returned by that bounded editor.
-// Entity: Run Ledger
-// Relationship: This file reads the selected Card's latest runtime and token metrics for display without starting or reconciling a Run.
+// Entity: Saved Cards
+// Relationship: Displays the selected Card profile's Hermes-reported model, active-model count, token usage, and average latency without another Run metrics route.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -24,13 +20,17 @@ import type {
   CardRuntime,
 } from '../types/agentgraph';
 import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
-import HermesSkillGraph from '../features/agentbuilder/HermesSkillGraph';
+import { applicationFetch } from '../lib/applicationApi';
+import type { HermesRuntimeSnapshot } from '../features/hermes/hermesRuntimeClient';
 import {
-  applyCardProfileOperation,
-  loadCardProfile,
-  loadCardLearningDetail,
-  type CardProfileView,
-} from '../features/agentbuilder/cardProfileClient';
+  configureHermesProfile,
+  createHermesProfile,
+  createHermesSkill,
+  loadHermesProfile,
+  loadHermesSkill,
+  saveHermesSkill,
+  type HermesProfileView,
+} from '../features/hermes/hermesProfileClient';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
@@ -63,6 +63,38 @@ function subagentAccessMode(provider: string): SavedSubagentModel['accessMode'] 
   return provider === 'openrouter' ? 'openrouter-api'
     : provider === 'openai' ? 'chatgpt-account'
     : 'openai-api';
+}
+
+function hermesProfileProvider(
+  provider: CardEditorConfig['provider'],
+  accessMode: CardEditorConfig['access_mode'],
+): string {
+  if (provider === 'openai' && accessMode === 'chatgpt-account') return 'openai-codex';
+  if (provider === 'openrouter') return 'openrouter';
+  if (provider === 'openai') return 'openai';
+  return String(provider || '').trim();
+}
+
+function hermesProfileDescription(
+  runtime: CardRuntime,
+  cardName: string,
+  prompt: string,
+): string {
+  const category = runtime.mode === 'main'
+    ? 'Category: system. User-facing Project orchestrator.'
+    : runtime.mode === 'magentic_one'
+      ? 'Category: team. Fixed saved blue-wire specialist roster.'
+      : runtime.profile === 'team'
+        ? 'Category: fallback-team. Automatic decomposition when no specialist matches.'
+        : runtime.profile === 'builder'
+          ? 'Category: builder. Prompts, saved Cards, UI, and supporting code.'
+          : runtime.profile === 'thinkgraph'
+            ? 'Category: memory. Engraphis reasoning and operational knowledge.'
+            : runtime.profile === 'knowgraph'
+              ? 'Category: research. Firecrawl evidence and Graphiti sourced knowledge.'
+              : `Category: specialist. ${String(cardName || runtime.profile).trim()}.`;
+  const callGuidance = parsePromptTemplate(prompt).orchestratorSkill.trim();
+  return callGuidance ? `${category}\n${callGuidance}` : category;
 }
 type InputDictionaryEditorField = {
   name: string;
@@ -163,12 +195,16 @@ interface CardEditorProps {
   onChangeCardName?: (value: string) => void;
   localConfig?: CardEditorConfig | null;
   onSaveLocalConfig?: (config: CardEditorConfig) => void | Promise<void>;
-  orangeConnections?: Array<{
+  wiredConnections?: Array<{
     cardId: string;
+    cardRevisionId: string;
     title: string;
+    profile: string;
     direction: 'incoming' | 'outgoing';
+    edgeType: 'flow' | 'magentic_option';
     prompt?: string;
   }>;
+  runtimeSnapshot?: HermesRuntimeSnapshot;
 }
 
 export type CardEditorConfig = {
@@ -188,9 +224,7 @@ export type CardEditorConfig = {
   mcp_connection_ids?: unknown[];
 };
 
-type RuntimeMetrics = { runtimeMs: number | null; totalTokens: number | null };
-
-function formatRuntime(value: number | null): string {
+function formatDuration(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return 'unavailable';
   const totalSeconds = Math.max(0, Math.floor(value / 1_000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -339,6 +373,34 @@ function parseListText(value: string): string[] {
     .filter(Boolean);
 }
 
+const CARD_SKILL_NAME = 'card-skill';
+
+function cardSkillTemplate(cardName: string, profile: string): string {
+  const title = String(cardName || profile || 'Card').replace(/\s+/g, ' ').trim();
+  return `---\nname: ${CARD_SKILL_NAME}\ndescription: Procedures this saved Hermes Card follows for every run.\n---\n\n# ${title} skill\n\nDescribe the procedures this Card should follow during its runs.\n`;
+}
+
+async function loadCardScriptRuntime(
+  projectId: string,
+  deckId: string,
+  cardId: string,
+): Promise<Record<string, unknown> | null> {
+  const params = new URLSearchParams({ projectId, deckId, cardId });
+  const response = await applicationFetch(`/api/idd/card-script-runtime?${params}`, {
+    credentials: 'include',
+  });
+  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(String(payload?.error || 'card_script_runtime_unavailable'));
+  }
+  const script = payload.script;
+  if (script === null || script === undefined) return null;
+  if (!script || typeof script !== 'object' || Array.isArray(script)) {
+    throw new Error('card_script_runtime_invalid');
+  }
+  return script as Record<string, unknown>;
+}
+
 export function CardEditor({
   cardId = '',
   projectId = '',
@@ -348,25 +410,21 @@ export function CardEditor({
   onChangeCardName,
   localConfig,
   onSaveLocalConfig,
-  orangeConnections = [],
+  wiredConnections = [],
+  runtimeSnapshot,
 }: CardEditorProps) {
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
-  const outboundOrangeConnections = orangeConnections.filter(
+  const outboundWiredConnections = wiredConnections.filter(
     (connection) => connection.direction === 'outgoing',
   );
   const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
   const [selectedConnectedCardId, setSelectedConnectedCardId] = useState<string | null>(null);
-  const [runtimeMetrics, setRuntimeMetrics] = useState<RuntimeMetrics | null>(null);
-  const [runtimeMetricsLoading, setRuntimeMetricsLoading] = useState(false);
   const cardSaveInFlightRef = useRef<Promise<boolean> | null>(null);
   const [draftRevision, setDraftRevision] = useState(0);
   const cardDraftRevisionRef = useRef(0);
-  const cardLearningRevisionRef = useRef(0);
-  const cardLearningDirtyRef = useRef(false);
-  const cardProfileReadbackRef = useRef<CardProfileView | null>(null);
   const runtimeKind = localConfig?.runtime.kind;
   const runtimeMode = localConfig?.runtime.mode;
-  const selectedConnectedCard = outboundOrangeConnections.find(
+  const selectedConnectedCard = outboundWiredConnections.find(
     (connection) => connection.cardId === selectedConnectedCardId,
   ) || null;
   const selectedConnectedIntroduction = selectedConnectedCard
@@ -384,15 +442,12 @@ export function CardEditor({
   const [{ key: modelKey, providerModelId }, setModel] = useState<{
     key: string; providerModelId?: string | null;
   }>({ key: '' });
-  const [autoModel, setAutoModel] = useState(false);
-  const [autoTools, setAutoTools] = useState(false);
   const [orchestratorEnabled, setOrchestratorEnabled] = useState(false);
   const [orchestratorTouched, setOrchestratorTouched] = useState(false);
   const [subagentModel, setSubagentModel] = useState<SavedSubagentModel>(DEFAULT_SUBAGENT_MODEL);
   const [subagentType, setSubagentType] = useState<SavedSubagentType>('none');
   const [subagentTouched, setSubagentTouched] = useState(false);
   const [subagentTypeTouched, setSubagentTypeTouched] = useState(false);
-  const learningEditsRef = useRef(new Map<string, string>());
   const [scriptDraft, setScriptDraft] = useState<SavedCardScript>(blankCardScript);
   const scriptDraftCacheRef = useRef<Map<string, SavedCardScript>>(new Map());
   const dirtyScriptCardsRef = useRef<Set<string>>(new Set());
@@ -431,74 +486,29 @@ export function CardEditor({
   const [skillsText, setSkillsText] = useState('');
   const [toolsetsText, setToolsetsText] = useState('');
   const [mcpConnectionIdsText, setMcpConnectionIdsText] = useState('');
-  const [cardProfileState, setCardProfileState] = useState<CardProfileView | null>(null);
-  const [cardProfileStatus, setCardProfileStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
-  const [cardProfileError, setCardProfileError] = useState<string | null>(null);
-  const [profileSettingBusy, setProfileSettingBusy] = useState(false);
-  const [profileSettingError, setProfileSettingError] = useState<string | null>(null);
-  const profileIdentityRef = useRef('');
-  profileIdentityRef.current = `${projectId}:${deckId}:${cardId}`;
-  const [cardLearningDetail, setCardLearningDetail] = useState<{
-    kind: 'memory' | 'skill';
-    id: string;
-    label: string;
+  const [hermesProfile, setHermesProfile] = useState<HermesProfileView | null>(null);
+  const [hermesProfileStatus, setHermesProfileStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [hermesProfileError, setHermesProfileError] = useState<string | null>(null);
+  const [hermesProfileBusy, setHermesProfileBusy] = useState(false);
+  const [skillEditor, setSkillEditor] = useState<{
+    name: string;
     content: string;
+    savedContent: string;
+    exists: boolean;
+    status: 'loading' | 'ready' | 'saving' | 'failed';
+    error?: string;
   } | null>(null);
-  const [cardLearningDraft, setCardLearningDraft] = useState('');
-  const [cardLearningStatus, setCardLearningStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
-  const [cardLearningError, setCardLearningError] = useState<string | null>(null);
   const draftDirtyRef = useRef(false);
   useEffect(() => {
     setCardNameDraft(cardName);
   }, [cardId, cardName]);
 
   useEffect(() => {
-    if (activeTab !== 'Runtime' || !projectId || !deckId || !cardId) {
-      setRuntimeMetrics(null);
-      setRuntimeMetricsLoading(false);
-      return;
-    }
-    const controller = new AbortController();
-    setRuntimeMetrics(null);
-    setRuntimeMetricsLoading(true);
-    void fetch('/api/cards/runs/read', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'metrics', projectId, deckId, cardId, inspectOnly: true,
-      }),
-      signal: controller.signal,
-    }).then(async (response) => {
-      const payload = await response.json().catch(() => null) as Record<string, any> | null;
-      if (!response.ok || payload?.ok !== true) {
-        throw new Error(String(payload?.error || 'card_runtime_metrics_unavailable'));
-      }
-      const result = payload.result && typeof payload.result === 'object'
-        ? payload.result as Record<string, unknown>
-        : null;
-      if (result && String(result.cardId || '') !== cardId) {
-        throw new Error('card_runtime_metrics_identity_mismatch');
-      }
-      setRuntimeMetrics(result ? {
-        runtimeMs: typeof result.runtimeMs === 'number' ? result.runtimeMs : null,
-        totalTokens: typeof result.totalTokens === 'number' ? result.totalTokens : null,
-      } : null);
-      setRuntimeMetricsLoading(false);
-    }).catch(() => {
-      if (controller.signal.aborted) return;
-      setRuntimeMetrics(null);
-      setRuntimeMetricsLoading(false);
-    });
-    return () => controller.abort();
-  }, [activeTab, cardId, deckId, projectId]);
-
-  useEffect(() => {
     let active = true;
     setRuntimeOptionsStatus('loading');
     setCardEditorFields([]);
     setModelsByProvider({});
-    void fetch('/api/cards/options')
+    void applicationFetch('/api/cards/options')
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok || payload?.ok !== true) {
@@ -541,8 +551,6 @@ export function CardEditor({
     );
     setModel({ key: localConfig.model_key || '',
       providerModelId: localConfig.runtime_options?.providerModelId });
-    setAutoModel(localConfig.runtime_options?.autoModel === true);
-    setAutoTools(localConfig.runtime_options?.autoTools === true);
     setOrchestratorEnabled(
       localConfig.runtime.mode === 'main'
       || localConfig.runtime_options?.orchestrator === true,
@@ -562,7 +570,6 @@ export function CardEditor({
     const savedScript = localConfig.runtime_options?.script
       ? structuredClone(localConfig.runtime_options.script)
       : blankCardScript();
-    savedScript.enabled = Boolean(savedScript.source.trim());
     const cachedScript = scriptDraftCacheRef.current.get(cardId);
     const preserveUnsavedScript = Boolean(
       cachedScript
@@ -618,66 +625,91 @@ export function CardEditor({
     );
   }, [isLocalConfigMode, localConfig]);
 
-  const acceptCardProfileReadback = useCallback((state: CardProfileView | null) => {
-    cardProfileReadbackRef.current = state;
-    setCardProfileState(state);
-    if (!state) {
-      setCardLearningDetail(null);
-      setCardLearningDraft('');
-      setCardLearningStatus('idle');
-      setCardLearningError(null);
+  useEffect(() => {
+    const profile = localConfig?.runtime.kind === 'hermes'
+      ? localConfig.runtime.profile.trim()
+      : '';
+    setHermesProfile(null);
+    setHermesProfileError(null);
+    setSkillEditor(null);
+    if (!isLocalConfigMode || !profile) {
+      setHermesProfileStatus('idle');
       return;
     }
-  }, []);
+    let active = true;
+    setHermesProfileStatus('loading');
+    void loadHermesProfile(profile).then((state) => {
+      if (!active) return;
+      setHermesProfile(state);
+      setHermesProfileStatus('ready');
+    }).catch((error) => {
+      if (!active) return;
+      setHermesProfileStatus('failed');
+      setHermesProfileError(error instanceof Error ? error.message : 'Hermes profile unavailable.');
+    });
+    return () => { active = false; };
+  }, [cardId, isLocalConfigMode, localConfig?.runtime]);
+
+  const cardSkillInstalled = hermesProfile?.skills.some(
+    (skill) => skill.name === CARD_SKILL_NAME,
+  ) === true;
 
   useEffect(() => {
-    if (
-      !isLocalConfigMode
-      || localConfig?.runtime.kind !== 'hermes'
-      || !projectId
-      || !deckId
-      || !cardId
-    ) {
-      acceptCardProfileReadback(null);
-      setCardProfileStatus('idle');
-      setCardProfileError(null);
+    const profile = localConfig?.runtime.kind === 'hermes'
+      ? localConfig.runtime.profile.trim()
+      : '';
+    if (activeTab !== 'Skills' || !profile || hermesProfileStatus !== 'ready') return;
+    if (!cardSkillInstalled) {
+      setSkillEditor({
+        name: CARD_SKILL_NAME,
+        content: cardSkillTemplate(cardName, profile),
+        savedContent: '',
+        exists: false,
+        status: 'ready',
+      });
       return;
     }
-    const controller = new AbortController();
-    acceptCardProfileReadback(null);
-    setCardProfileStatus('loading');
-    setCardProfileError(null);
-    setCardLearningDetail(null);
-    setCardLearningDraft('');
-    setCardLearningStatus('idle');
-    setCardLearningError(null);
-    void loadCardProfile({ projectId, deckId, cardId, signal: controller.signal })
-      .then((state) => {
-        if (controller.signal.aborted) return;
-        acceptCardProfileReadback(state);
-        setCardProfileStatus('ready');
-      })
-      .catch((error) => {
-        if (controller.signal.aborted) return;
-        acceptCardProfileReadback(null);
-        setCardProfileStatus('failed');
-        setCardProfileError(error instanceof Error ? error.message : 'Profile unavailable.');
+    let active = true;
+    setSkillEditor({
+      name: CARD_SKILL_NAME,
+      content: '',
+      savedContent: '',
+      exists: true,
+      status: 'loading',
+    });
+    void loadHermesSkill(profile, CARD_SKILL_NAME).then((result) => {
+      if (!active) return;
+      setSkillEditor({
+        name: result.name,
+        content: result.content,
+        savedContent: result.content,
+        exists: true,
+        status: 'ready',
       });
-    return () => controller.abort();
-  // Initial profile readback is identity-scoped and independent from unsaved
-  // drafts. Publication happens only after the Card revision itself saves.
-  }, [isLocalConfigMode, projectId, deckId, cardId, acceptCardProfileReadback]);
-
+    }).catch((error) => {
+      if (!active) return;
+      setSkillEditor({
+        name: CARD_SKILL_NAME,
+        content: '',
+        savedContent: '',
+        exists: true,
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Hermes Card skill unavailable.',
+      });
+    });
+    return () => { active = false; };
+  }, [
+    activeTab,
+    cardId,
+    cardName,
+    cardSkillInstalled,
+    hermesProfileStatus,
+    localConfig?.runtime,
+  ]);
 
   const markDraftDirty = () => {
     draftDirtyRef.current = true;
     cardDraftRevisionRef.current += 1;
-    setDraftRevision((revision) => revision + 1);
-  };
-
-  const markCardLearningDirty = () => {
-    cardLearningDirtyRef.current = true;
-    cardLearningRevisionRef.current += 1;
     setDraftRevision((revision) => revision + 1);
   };
 
@@ -738,18 +770,6 @@ export function CardEditor({
       ...(providerModelId !== undefined ? { providerModelId } : {}),
       ...(
         runtimeKind === 'hermes'
-        && (autoModel || localConfig.runtime_options?.autoModel !== undefined)
-          ? { autoModel }
-          : {}
-      ),
-      ...(
-        runtimeKind === 'hermes'
-        && (autoTools || localConfig.runtime_options?.autoTools !== undefined)
-          ? { autoTools }
-          : {}
-      ),
-      ...(
-        runtimeKind === 'hermes'
         && runtimeMode === 'delegate'
         && (orchestratorTouched || localConfig.runtime_options?.orchestrator !== undefined)
           ? { orchestrator: orchestratorEnabled }
@@ -781,8 +801,6 @@ export function CardEditor({
     accessMode,
     modelKey,
     providerModelId,
-    autoModel,
-    autoTools,
     orchestratorEnabled,
     orchestratorTouched,
     subagentModel,
@@ -806,20 +824,87 @@ export function CardEditor({
     const revision = cardDraftRevisionRef.current;
     const payload = buildCurrentLocalPayload();
     await Promise.resolve(onSaveLocalConfig(payload));
-    if (localConfig.runtime.kind === 'hermes') {
-      const state = await applyCardProfileOperation({
-        projectId,
-        deckId,
-        cardId,
-        change: { method: 'configuration.publish', params: {} },
-      });
-      if (
-        state.profile.soul.matchesSavedPrompt !== true
-        || state.profile.applicationTools.matchesSavedSelection !== true
-      ) {
-        throw new Error('Card profile publication readback failed.');
+    if (payload.runtime.kind === 'hermes') {
+      const profileDescription = hermesProfileDescription(
+        payload.runtime,
+        cardName,
+        String(payload.prompt_template || ''),
+      );
+      const profileModel = String(payload.model_key || '').trim() || undefined;
+      const profileProvider = hermesProfileProvider(
+        payload.provider,
+        payload.access_mode,
+      ) || undefined;
+      const activeProfile = hermesProfile || await loadHermesProfile(
+        payload.runtime.profile,
+      ).catch(() => createHermesProfile({
+        profile: payload.runtime.profile,
+        description: profileDescription,
+        soul: String(payload.prompt_template || ''),
+        model: profileModel,
+        provider: profileProvider,
+      }));
+      setHermesProfile(activeProfile);
+      setHermesProfileStatus('ready');
+      const selectedTools = parseListText(String((payload.tools || []).join('\n')));
+      const selectedSkills = parseListText(String((payload.skills || []).join('\n')));
+      if (selectedSkills.length !== 1) {
+        throw new Error('Select exactly one Card or Hermes skill before publishing its profile.');
       }
-      acceptCardProfileReadback(state);
+      const cardScript = await loadCardScriptRuntime(projectId, deckId, cardId);
+      const enabledMcpServers = new Set(parseListText(String(
+        (payload.mcp_connection_ids || []).join('\n'),
+      )));
+      if (selectedTools.length || cardScript) enabledMcpServers.add('liquidaity');
+      const orchestrator = payload.runtime.mode === 'main'
+        || payload.runtime_options?.orchestrator === true;
+      const taskMode = payload.runtime.mode === 'magentic_one'
+        ? 'magnetic' as const
+        : payload.runtime.profile === 'team'
+          ? 'team' as const
+          : '' as const;
+      const savedSubagentModel = payload.runtime_options?.subagentModel;
+      const profileSubagentModel = savedSubagentModel
+        ? {
+            provider: hermesProfileProvider(
+              savedSubagentModel.provider as AgentCardRuntimeOptions['provider'],
+              savedSubagentModel.accessMode,
+            ),
+            model: savedSubagentModel.providerModelId || savedSubagentModel.modelKey,
+            reasoningEffort: '',
+          }
+        : null;
+      const botModeRoster = payload.runtime.mode === 'magentic_one'
+        ? outboundWiredConnections
+          .filter((connection) => connection.edgeType === 'magentic_option')
+          .map((connection) => connection.profile)
+        : orchestrator
+          ? outboundWiredConnections.map((connection) => connection.profile)
+          : [];
+      const enabledToolsets = new Set(
+        parseListText(String((payload.toolsets || []).join('\n'))),
+      );
+      if (cardScript || taskMode) enabledToolsets.add('liquidaity');
+      else enabledToolsets.delete('liquidaity');
+      const state = await configureHermesProfile({
+        profile: payload.runtime.profile,
+        soul: String(payload.prompt_template || ''),
+        description: profileDescription,
+        model: profileModel,
+        provider: profileProvider,
+        enabledSkills: selectedSkills,
+        autoLoadSkills: selectedSkills,
+        enabledToolsets: [...enabledToolsets],
+        enabledMcpServers: [...enabledMcpServers],
+        botModeRoster,
+        applicationTools: selectedTools,
+        cardScript,
+        taskMode,
+        subagentModel: profileSubagentModel,
+      });
+      setHermesProfile(state);
+      setHermesProfileStatus('ready');
+      setHermesProfileError(null);
     }
     if (cardDraftRevisionRef.current === revision) {
       draftDirtyRef.current = false;
@@ -829,73 +914,92 @@ export function CardEditor({
     localConfig,
     onSaveLocalConfig,
     buildCurrentLocalPayload,
+    hermesProfile,
+    outboundWiredConnections,
+    cardName,
     projectId,
     deckId,
     cardId,
-    acceptCardProfileReadback,
   ]);
 
-  const openCardLearningNode = useCallback(async (nodeId: string) => {
-    if (!projectId || !deckId || !cardId) return;
-    setCardLearningStatus('loading');
-    setCardLearningError(null);
+  const changeSavedToolset = async (name: string, enabled: boolean) => {
+    if (!localConfig || localConfig.runtime.kind !== 'hermes' || hermesProfileBusy) return;
+    const current = parseListText(toolsetsText);
+    const next = enabled
+      ? [...new Set([...current, name])]
+      : current.filter((entry) => entry !== name);
+    setHermesProfileBusy(true);
+    setHermesProfileError(null);
     try {
-      const detail = await loadCardLearningDetail({ projectId, deckId, cardId, nodeId });
-      setCardLearningDetail(detail);
-      setCardLearningDraft(learningEditsRef.current.get(nodeId) ?? detail.content);
-      setCardLearningStatus('ready');
-    } catch (error) {
-      setCardLearningStatus('failed');
-      setCardLearningError(error instanceof Error ? error.message : 'Card learning node unavailable.');
-    }
-  }, [projectId, deckId, cardId]);
-
-  const changeProfileSetting = async (method: 'toolset.toggle' | 'skill.toggle', name: string, enabled: boolean) => {
-    if (profileSettingBusy) return;
-    const identity = profileIdentityRef.current;
-    setProfileSettingBusy(true);
-    setProfileSettingError(null);
-    try {
-      const state = await applyCardProfileOperation({ projectId, deckId, cardId,
-        change: { method, params: { name, enabled } } });
-      if (profileIdentityRef.current !== identity) return;
-      acceptCardProfileReadback(state);
-      if (method === 'toolset.toggle') {
-        setToolsetsText(state.profile.toolsets.filter(row => row.enabled && row.platform === 'cli').map(row => row.name).join('\n'));
-      } else {
-        setSkillsText(state.profile.skills.filter(row => row.enabled).map(row => row.name).join('\n'));
-      }
+      const state = await configureHermesProfile({
+        profile: localConfig.runtime.profile,
+        enabledToolsets: next,
+      });
+      setHermesProfile(state);
+      setToolsetsText(next.join('\n'));
       markDraftDirty();
     } catch (error) {
-      if (profileIdentityRef.current === identity) setProfileSettingError(error instanceof Error ? error.message : 'Card setting failed.');
+      setHermesProfileError(error instanceof Error ? error.message : 'Hermes profile update failed.');
     } finally {
-      setProfileSettingBusy(false);
+      setHermesProfileBusy(false);
+    }
+  };
+
+  const saveCardSkill = async () => {
+    if (
+      !localConfig
+      || localConfig.runtime.kind !== 'hermes'
+      || !skillEditor
+      || skillEditor.status === 'saving'
+      || hermesProfileBusy
+    ) return;
+    const profile = localConfig.runtime.profile;
+    const { content, exists: existed } = skillEditor;
+    let writeCompleted = false;
+    setHermesProfileBusy(true);
+    setHermesProfileError(null);
+    setSkillEditor((current) => current
+      ? { ...current, status: 'saving', error: undefined }
+      : current);
+    try {
+      if (existed) await saveHermesSkill(profile, CARD_SKILL_NAME, content);
+      else await createHermesSkill(profile, CARD_SKILL_NAME, content);
+      writeCompleted = true;
+      setSkillEditor((current) => current
+        ? { ...current, exists: true, savedContent: content }
+        : current);
+      const selectedSkills = [CARD_SKILL_NAME];
+      const state = await configureHermesProfile({
+        profile,
+        enabledSkills: selectedSkills,
+        autoLoadSkills: selectedSkills,
+      });
+      setHermesProfile(state);
+      setSkillsText(selectedSkills.join('\n'));
+      setSkillEditor((current) => current
+        ? { ...current, exists: true, savedContent: content, status: 'ready', error: undefined }
+        : current);
+      markDraftDirty();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Card skill save failed.';
+      setHermesProfileError(message);
+      setSkillEditor((current) => current
+        ? {
+            ...current,
+            exists: current.exists || writeCompleted,
+            savedContent: writeCompleted ? content : current.savedContent,
+            status: 'ready',
+            error: message,
+          }
+        : current);
+    } finally {
+      setHermesProfileBusy(false);
     }
   };
 
   const saveCurrentDraft = useCallback(async (): Promise<void> => {
-      const learningRevision = cardLearningRevisionRef.current;
-      const profileState = cardProfileReadbackRef.current;
-      const learningEdits = [...learningEditsRef.current];
-      if (cardLearningDirtyRef.current) {
-        if (!profileState || !projectId || !deckId || !cardId) throw new Error('Card profile unavailable.');
-      }
-      await runSaveConfig();
-      if (cardLearningDirtyRef.current) {
-        let latestReadback = profileState;
-        for (const [id, content] of learningEdits) {
-          latestReadback = await applyCardProfileOperation({ projectId, deckId, cardId,
-            change: { method: 'learning.edit', params: { id, content } } });
-          cardProfileReadbackRef.current = latestReadback;
-          setCardProfileState(latestReadback);
-          if (learningEditsRef.current.get(id) === content) learningEditsRef.current.delete(id);
-        }
-        if (cardLearningRevisionRef.current === learningRevision) {
-          cardLearningDirtyRef.current = false;
-          if (latestReadback) acceptCardProfileReadback(latestReadback);
-        }
-      }
-  }, [runSaveConfig, projectId, deckId, cardId, acceptCardProfileReadback]);
+    await runSaveConfig();
+  }, [runSaveConfig]);
 
   const saveLatestDraftRef = useRef(saveCurrentDraft);
   useLayoutEffect(() => {
@@ -906,11 +1010,11 @@ export function CardEditor({
     // The canvas clears one selection and sets the other in the same click.
     // Both callers must await the same save, including any newer edits.
     if (cardSaveInFlightRef.current) return cardSaveInFlightRef.current;
-    if (!draftDirtyRef.current && !cardLearningDirtyRef.current) return Promise.resolve(true);
+    if (!draftDirtyRef.current) return Promise.resolve(true);
     const save = Promise.resolve().then(async () => {
       setSaveCardErrorMessage(null);
       try {
-        while (draftDirtyRef.current || cardLearningDirtyRef.current) {
+        while (draftDirtyRef.current) {
           await saveLatestDraftRef.current();
         }
         return true;
@@ -926,7 +1030,7 @@ export function CardEditor({
   }, []);
 
   useEffect(() => {
-    if (!draftDirtyRef.current && !cardLearningDirtyRef.current) return;
+    if (!draftDirtyRef.current) return;
     const timer = window.setTimeout(() => { void saveOnCardLeave(); }, 350);
     return () => window.clearTimeout(timer);
   }, [draftRevision, saveOnCardLeave]);
@@ -941,8 +1045,6 @@ export function CardEditor({
   const subagentTypeField = editorField('subagentType');
   const accessModeField = editorField('accessMode');
   const modelKeyField = editorField('modelKey');
-  const autoModelField = editorField('autoModel');
-  const autoToolsField = editorField('autoTools');
   const reasoningEffortField = editorField('reasoningEffort');
   const providerOptions = (providerField?.options || []).filter(
     (option) => (modelsByProvider[option.value] || []).length > 0,
@@ -954,8 +1056,6 @@ export function CardEditor({
     && subagentTypeField?.control === 'select'
     && accessModeField
     && modelKeyField
-    && autoModelField?.control === 'checkbox'
-    && autoToolsField?.control === 'checkbox'
     && reasoningEffortField,
   );
   const savedToolNames = parseListText(toolsText);
@@ -994,7 +1094,7 @@ export function CardEditor({
             limit: '200',
           });
           if (savedToolNames.length) params.set('selectedIds', savedToolNames.join(','));
-          const response = await fetch(`/api/idd/tools?${params}`, {
+          const response = await applicationFetch(`/api/idd/tools?${params}`, {
             signal: controller.signal,
           });
           const payload = await response.json();
@@ -1067,11 +1167,11 @@ export function CardEditor({
             </label>
           ) : null}
 
-          {orchestratorOn && outboundOrangeConnections.length > 0 ? (
+          {orchestratorOn && outboundWiredConnections.length > 0 ? (
             <div style={{ display: 'grid', gap: 7, color: '#E0DED5', fontSize: 12 }}>
               <span style={{ fontWeight: 700 }}>All connected agents</span>
               <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {outboundOrangeConnections.map((connection) => (
+                {outboundWiredConnections.map((connection) => (
                   <button
                     type="button"
                     key={`${connection.direction}:${connection.cardId}`}
@@ -1319,42 +1419,34 @@ export function CardEditor({
     if (sectionTab === 'Skills') {
       return (
         <section data-testid="agent-manager-skills" style={{ display: 'grid', gap: 12 }}>
-          {cardProfileStatus === 'failed' ? (
-            <div role="alert">{cardProfileError || 'Skills unavailable.'}</div>
-          ) : cardProfileState ? (
-            <>
-              <HermesSkillGraph graph={cardProfileState.profile.learning.graph}
-                profile={cardProfileState.binding.profile}
-                onOpenNode={(id) => void openCardLearningNode(id)} />
-              <details>
-                <summary>Installed skills</summary>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  {cardProfileState.profile.skills.map((skill) => (
-                    <label key={skill.name}>
-                      <input type="checkbox" checked={skill.enabled} disabled={profileSettingBusy}
-                        aria-label={`Enable skill ${skill.name}`}
-                        onChange={(event) => void changeProfileSetting('skill.toggle', skill.name, event.target.checked)} />
-                      {' '}{skill.name}
-                    </label>
-                  ))}
+          <strong>Card skill</strong>
+          <div style={{ color: '#91A9B8', fontSize: 11 }}>
+            Hermes stores this profile-scoped SKILL.md and auto-loads it into every new Card session.
+            PromptBlocks remain in SOUL.md.
+          </div>
+          {hermesProfileStatus === 'loading' ? <div role="status">Loading Card skill…</div> : null}
+          {hermesProfileStatus === 'failed' ? <div role="alert">{hermesProfileError}</div> : null}
+          {hermesProfileError && hermesProfileStatus !== 'failed' ? <div role="alert">{hermesProfileError}</div> : null}
+          {skillEditor ? (
+            <section style={{ display: 'grid', gap: 8 }} aria-label="Skill editor">
+              <strong>{skillEditor.exists ? 'Edit' : 'Create'} {skillEditor.name}/SKILL.md</strong>
+              {skillEditor.status === 'loading' ? <div role="status">Loading skill…</div> : null}
+              {skillEditor.error ? <div role="alert">{skillEditor.error}</div> : null}
+              {skillEditor.status === 'ready' || skillEditor.status === 'saving' ? <>
+                <textarea aria-label="Skill content" rows={16} value={skillEditor.content}
+                  disabled={skillEditor.status === 'saving'}
+                  onChange={(event) => setSkillEditor((current) => current
+                    ? { ...current, content: event.target.value }
+                    : current)} />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button"
+                    disabled={skillEditor.status === 'saving'
+                      || (skillEditor.exists && skillEditor.content === skillEditor.savedContent)}
+                    onClick={() => void saveCardSkill()}>Save Card Skill</button>
                 </div>
-              </details>
-              {profileSettingError ? <div role="alert">{profileSettingError}</div> : null}
-              {cardLearningStatus === 'loading' ? <div role="status">Opening…</div> : null}
-              {cardLearningStatus === 'failed' ? <div role="alert">{cardLearningError}</div> : null}
-              {cardLearningDetail ? (
-                <section style={{ display: 'grid', gap: 6 }}>
-                  <strong>{cardLearningDetail.kind}: {cardLearningDetail.label}</strong>
-                  <textarea aria-label="Learning" value={cardLearningDraft} rows={10}
-                    onChange={(event) => {
-                      setCardLearningDraft(event.target.value);
-                      learningEditsRef.current.set(cardLearningDetail.id, event.target.value);
-                      markCardLearningDirty();
-                    }} />
-                </section>
-              ) : null}
-            </>
-          ) : <div role="status">Loading Hermes learning graph…</div>}
+              </> : null}
+            </section>
+          ) : null}
         </section>
       );
     }
@@ -1428,7 +1520,6 @@ export function CardEditor({
                       const selected = availableModels.find((model) => model.key === key);
                       if (key && !selected) return;
                       setModel({ key, providerModelId: selected?.providerModelId ?? null });
-                      setAutoModel(false);
                       markDraftDirty();
                     }}
                   >
@@ -1444,21 +1535,6 @@ export function CardEditor({
                     <div role="status" style={{ color: '#80969F', fontSize: 11 }}>
                       No configured models available for this provider. Saved selection is unchanged.
                     </div>
-                  ) : null}
-                  {runtimeKind === 'hermes' && runtimeMode !== 'magentic_one' ? (
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, color: '#91A9B8', fontSize: 11 }}>
-                      <input
-                        type="checkbox"
-                        aria-label="Auto Model with Jev"
-                        disabled={!runtimeDictionaryReady}
-                        checked={autoModel}
-                        onChange={(event) => {
-                          setAutoModel(event.target.checked);
-                          markDraftDirty();
-                        }}
-                      />
-                      {autoModelField?.label || 'Auto Model'} with Jev
-                    </label>
                   ) : null}
                 </div>
                 {runtimeKind === 'hermes'
@@ -1537,46 +1613,29 @@ export function CardEditor({
     }
 
     if (sectionTab === 'Tools') {
+      const savedToolsets = parseListText(toolsetsText);
+      const visibleToolsets = hermesProfile?.toolsets || savedToolsets.map((name) => ({
+        name, enabled: true,
+      }));
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <section aria-label="Hermes tools" style={{ display: 'grid', gap: 8 }}>
-            <strong>Hermes</strong>
-            {cardProfileStatus === 'failed' ? <div role="alert">{cardProfileError}</div>
-              : !cardProfileState ? <div role="status">Loading Hermes tools…</div>
-              : cardProfileState.profile.toolsets.map(toolset => (
-                <div key={toolset.name}>
-                  <label title={toolset.description}>
-                    <input type="checkbox" checked={toolset.enabled} disabled={profileSettingBusy}
-                      aria-label={`Enable Hermes ${toolset.name}`}
-                      onChange={(event) => void changeProfileSetting('toolset.toggle', toolset.name, event.target.checked)} />
-                    {' '}{toolset.label || toolset.name}
-                  </label>
-                  {toolset.tools?.length ? <details style={{ paddingLeft: 22 }}>
-                    <summary>{toolset.tools.length} tools</summary>
-                    {toolset.tools.map(name => <div key={name}><code>{name}</code></div>)}
-                  </details> : null}
-                </div>
-              ))}
-            {profileSettingError ? <div role="alert">{profileSettingError}</div> : null}
+            <strong>Hermes toolsets</strong>
+            {hermesProfileStatus === 'loading' ? <div role="status">Loading Hermes toolsets…</div> : null}
+            {visibleToolsets.length ? visibleToolsets.map((toolset) => (
+              <label key={toolset.name} title={toolset.description}>
+                <input type="checkbox" checked={toolset.enabled} disabled={hermesProfileBusy}
+                  aria-label={`Enable Hermes ${toolset.name}`}
+                  onChange={(event) => void changeSavedToolset(toolset.name, event.target.checked)} />
+                {' '}{toolset.label || toolset.name}
+                {toolset.toolCount ? ` · ${toolset.toolCount}` : ''}
+              </label>
+            )) : hermesProfileStatus === 'ready' ? <div>No Hermes toolsets.</div> : null}
+            {hermesProfileError ? <div role="alert">{hermesProfileError}</div> : null}
           </section>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
             Application capabilities
           </div>
-          {runtimeKind === 'hermes' && runtimeMode !== 'magentic_one' ? (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#91A9B8', fontSize: 11 }}>
-              <input
-                type="checkbox"
-                aria-label="Auto Tools with Jev"
-                disabled={!runtimeDictionaryReady}
-                checked={autoTools}
-                onChange={(event) => {
-                  setAutoTools(event.target.checked);
-                  markDraftDirty();
-                }}
-              />
-              {autoToolsField?.label || 'Auto Tools'} with Jev · choose only from this Card's selected authorized tools
-            </label>
-          ) : null}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
             <input
               value={toolDictionaryQuery}
@@ -1718,14 +1777,14 @@ export function CardEditor({
               }}
             >
               <span>
-                Runtime: {runtimeMetricsLoading
+                Avg runtime: {runtimeSnapshot === undefined
                   ? 'loading…'
-                  : formatRuntime(runtimeMetrics?.runtimeMs ?? null)}
+                  : formatDuration(runtimeSnapshot.averageLatencyMs)}
               </span>
               <span>
-                Tokens: {runtimeMetricsLoading
+                Tokens: {runtimeSnapshot === undefined
                   ? 'loading…'
-                  : formatTokens(runtimeMetrics?.totalTokens ?? null)}
+                  : formatTokens(runtimeSnapshot.totalTokens)}
               </span>
             </section>
             <section aria-label="Runtime configuration">{renderSectionBody('Runtime')}</section>

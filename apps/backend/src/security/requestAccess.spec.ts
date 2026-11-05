@@ -1,10 +1,6 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Authentication
- * Relationship: This file verifies development bootstrap trusts only real loopback sockets with matching headers, exposes only loopback CORS origins, and never activates in production.
+ * Relationship: This file verifies development bootstrap trusts only real loopback sockets with matching headers, exposes standalone and Hermes-dashboard loopback CORS origins, and never activates in production.
  * Entity: Credentials
  * Relationship: This file protects the bootstrap-token boundary by proving remote requests cannot manufacture local authority through caller-controlled headers.
  */
@@ -52,6 +48,7 @@ describe('local development request authority', () => {
     const origins = getAllowedCorsOrigins();
     expect(origins).toContain('http://127.0.0.1:5173');
     expect(origins).toContain('http://127.0.0.1:4173');
+    expect(origins).toContain('http://127.0.0.1:9119');
     expect(origins.every(origin => new URL(origin).hostname === '127.0.0.1'
       || new URL(origin).hostname === 'localhost')).toBe(true);
   });

@@ -1,14 +1,11 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Trading
  * Relationship: Presents read-only market charts, paper portfolio state, plan and journal evidence, and bounded pause or resume interventions for the selected Trading Card.
  */
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import './tradingui.css';
 import type { AgentCardInstance } from '../types/agentgraph';
+import { applicationFetch } from '../lib/applicationApi';
 import { resolveInstrument } from '../features/trading/instrument';
 import {
   readTradingConfiguration, reconcileTradingState,
@@ -178,7 +175,7 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
   useEffect(() => {
     if (!query) return;
     const controller = new AbortController();
-    void fetch('/api/trading/state?' + query, { credentials: 'include', signal: controller.signal })
+    void applicationFetch('/api/trading/state?' + query, { credentials: 'include', signal: controller.signal })
       .then(async response => {
         if (!response.ok) throw new Error('trading_state_unavailable');
         const body = await response.json();
@@ -201,13 +198,13 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
     if (!projectId || !selectedJob || !reason.trim() || !state?.commands.pauseResume.available) return;
     setBusy(true); setInterventionError(false);
     try {
-      const response = await fetch('/api/trading/intervene', {
+      const response = await applicationFetch('/api/trading/intervene', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId, deckId, cardId, jobId: selectedJob.jobId, action, reason }),
       });
       if (!response.ok) throw new Error('trading_intervention_failed');
       setReason('');
-      const updated = await fetch('/api/trading/state?' + query, { credentials: 'include' });
+      const updated = await applicationFetch('/api/trading/state?' + query, { credentials: 'include' });
       if (!updated.ok) throw new Error('trading_state_unavailable');
       acceptSnapshot(await updated.json() as TradingState);
     } catch { setInterventionError(true); }

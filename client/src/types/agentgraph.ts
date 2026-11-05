@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Saved Cards
  * Relationship: This file defines the client-side saved deck, immutable Card revision identity, and saved Card configuration types consumed by the Canvas and editor.
  * Entity: Card Topology
@@ -43,7 +39,7 @@ export type AgentCardRuntimeOptions = {
    * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
   subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
-   * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
+   * runtime/domain adapter. */
   configuration?: Record<string, unknown> | null;
   script?: {
     enabled: boolean;
@@ -76,12 +72,6 @@ export type AgentCardRuntimeOptions = {
   accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;
   modelKey?: string | null;
   providerModelId?: string | null;
-  /** Let one Run-scoped Jev Choice select among eligible configured models.
-   * The saved model remains the durable default and is never overwritten. */
-  autoModel?: boolean;
-  /** Let one Run-scoped Jev request narrow this Card's own authorized tools.
-   * It never grants tools or changes the saved selection. */
-  autoTools?: boolean;
   /** Saved desired model for bounded delegated children and
    * background skill review. Profile readback remains effective truth. */
   subagentModel?: {

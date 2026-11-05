@@ -1,8 +1,4 @@
 """Exact-revision saved Card configuration updates."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Saved Cards
 # Relationship: This file validates and applies an exact-revision saved Card configuration update and returns the persisted revision readback.
 # Entity: Card Profiles
@@ -11,6 +7,8 @@
 # Relationship: This file accepts only exact normalized capability lists and rejects tools unavailable to saved Card grants.
 # Entity: Card Scripts
 # Relationship: This file validates, authors, versions, and saves the next Card Script configuration without creating another executor.
+# Entity: Builder Card
+# Relationship: This file permits authenticated Builder configuration edits only for existing non-core blue workers.
 
 from __future__ import annotations
 
@@ -29,7 +27,6 @@ from app.saved_card_operation_validation import (
     _reasoning_effort_selection,
     _save_saved_deck,
     _subagent_model_selection,
-    _validate_auto_flags,
     _validate_card_runtime_authority,
     _validate_tool_selections,
 )
@@ -40,7 +37,7 @@ _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "script", "accessMode", "modelKey", "provider", "providerModelId",
     "subagentType", "subagentModel", "tools", "skills",
     "toolsets", "mcpConnectionIds", "configuration",
-    "autoTools", "autoModel", "reasoningEffort",
+    "reasoningEffort",
 }
 
 
@@ -77,9 +74,10 @@ async def card_update_configuration(
         }
     if "tools" in updates:
         _validate_tool_selections(updates["tools"], operation="card_update")
+    if "skills" in updates and len(updates["skills"]) != 1:
+        raise ApplicationToolError("card_update_skill_exactly_one_required")
     if "configuration" in updates and not isinstance(updates["configuration"], dict):
         raise ApplicationToolError("card_update_configuration_invalid")
-    _validate_auto_flags(updates, operation="card_update")
     if "script" in updates:
         from app.python_models.card_script import (
             CardScriptValidationError,
@@ -131,6 +129,9 @@ async def card_update_configuration(
 
     def apply() -> dict[str, Any]:
         deck, revision = _load_saved_deck(project_id, deck_id)
+        from app.builder_worker_policy import require_builder_worker_update
+
+        require_builder_worker_update(caller_card_id, deck, card_id)
         card = _find_saved_card(deck, card_id)
         if (
             args.get("expectedRevision") is not None
@@ -155,24 +156,6 @@ async def card_update_configuration(
         current_options = card.get("runtimeOptions")
         if not isinstance(current_options, dict):
             current_options = {}
-        if {"autoTools", "autoModel"}.intersection(updates):
-            from app.python_models.saved_card_contract import (
-                CardDomainError,
-                validate_auto_runtime_options,
-                card_runtime,
-            )
-
-            try:
-                validate_auto_runtime_options(
-                    {**current_options, **{
-                        key: updates[key]
-                        for key in ("autoTools", "autoModel")
-                        if key in updates
-                    }},
-                    card_runtime(card),
-                )
-            except CardDomainError as error:
-                raise ApplicationToolError(str(error)) from error
         if {"provider", "accessMode"}.intersection(updates):
             _validate_card_runtime_authority(
                 provider=updates.get(

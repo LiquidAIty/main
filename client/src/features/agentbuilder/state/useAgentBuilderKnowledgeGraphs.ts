@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file owns the Project graph workspace's independent provider load, error, refresh, removal, and opt-in Code state.
  * Entity: ThinkGraph
@@ -25,6 +21,7 @@ import {
   type CodeGraphFileSource,
 } from '../../../components/knowledge/codeGraphProjection';
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
+import { applicationApiUrl, applicationFetch } from '../../../lib/applicationApi';
 import type { KnowledgeGraphKind } from '../../../types/agentgraph';
 
 type KnowledgeGraphState = {
@@ -185,7 +182,7 @@ export default function useAgentBuilderKnowledgeGraphs({
     setStatuses((current) => ({ ...current, thinkgraph: 'loading' }));
     try {
       const query = new URLSearchParams({ projectId });
-      const response = await fetch(`/api/thinkgraph/projection?${query}`, {
+      const response = await applicationFetch(`/api/thinkgraph/projection?${query}`, {
         signal: controller.signal,
       });
       const payload = await response.json().catch(() => null);
@@ -235,7 +232,7 @@ export default function useAgentBuilderKnowledgeGraphs({
       if (requestId !== knowRequestRef.current) return false;
       try {
         const query = new URLSearchParams({ projectId, limit: '200' });
-        const response = await fetch(`/api/knowgraph/graph?${query}`, {
+        const response = await applicationFetch(`/api/knowgraph/graph?${query}`, {
           signal: controller.signal,
         });
         const payload = await response.json().catch(() => null);
@@ -299,7 +296,7 @@ export default function useAgentBuilderKnowledgeGraphs({
   useEffect(() => {
     if (!projectId.trim()) return undefined;
     const query = new URLSearchParams({ projectId });
-    const stream = new EventSource(`/api/thinkgraph/events?${query}`, { withCredentials: true });
+    const stream = new EventSource(applicationApiUrl(`/api/thinkgraph/events?${query}`), { withCredentials: true });
     const refresh = () => { void refreshThinkGraph(); };
     const disconnected = () => {
       setErrors(current => ({ ...current, thinkgraph: 'ThinkGraph live updates disconnected. Reconnecting.' }));
@@ -328,7 +325,7 @@ export default function useAgentBuilderKnowledgeGraphs({
       ...current, status: 'loading', error: null, warning: null,
     }));
     try {
-      const response = await fetch('/api/codegraph/read', {
+      const response = await applicationFetch('/api/codegraph/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId, mode: 'projection' }),
@@ -374,7 +371,7 @@ export default function useAgentBuilderKnowledgeGraphs({
     const controller = new AbortController();
     codeFileAbortRef.current = controller;
     try {
-      const response = await fetch('/api/codegraph/read', {
+      const response = await applicationFetch('/api/codegraph/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId, mode: 'file', filePaths }),
@@ -414,7 +411,7 @@ export default function useAgentBuilderKnowledgeGraphs({
     const controller = new AbortController();
     codeSourceAbortRef.current = controller;
     try {
-      const response = await fetch('/api/codegraph/read', {
+      const response = await applicationFetch('/api/codegraph/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId, mode: 'source', filePath }),
@@ -444,7 +441,7 @@ export default function useAgentBuilderKnowledgeGraphs({
   }, [projectId]);
 
   const removeThinkGraphEvidence = useCallback(async (memoryId: string) => {
-    const response = await fetch('/api/thinkgraph/retire', {
+    const response = await applicationFetch('/api/thinkgraph/retire', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId, memoryId }),
@@ -454,7 +451,7 @@ export default function useAgentBuilderKnowledgeGraphs({
   }, [projectId, refreshThinkGraph]);
 
   const removeKnowGraphEvidence = useCallback(async (episodeId: string) => {
-    const response = await fetch('/api/knowgraph/delete-episode', {
+    const response = await applicationFetch('/api/knowgraph/delete-episode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

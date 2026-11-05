@@ -1,14 +1,10 @@
 """MCP Tool construction, provider discovery, and request projection."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Tool Catalog
 # Relationship: This file builds the canonical MCP catalog, projects server-owned arguments out of model-visible schemas, rejects duplicate identities, and filters each request to exact grants.
 # Entity: MCP Host
 # Relationship: This file discovers the selected live provider families through host-owned clients and freezes their namespaced tools into the host catalog.
 # Entity: Authentication
-# Relationship: This file attaches the OAuth security declaration and narrows each external or materializer request to its authenticated Project tool authority.
+# Relationship: This file attaches the OAuth security declaration and narrows each external or internal graph-read request to its authenticated Project tool authority.
 
 from __future__ import annotations
 
@@ -126,7 +122,7 @@ def requested_provider_families() -> tuple[str, ...]:
             for family in mcp_provider_operations.PROVIDER_FAMILIES
             if any(mcp_provider_operations.belongs_to_provider(name, family) for name in selected)
         )
-    if kind != "materializer-read":
+    if kind != "graph-read":
         return ()
     tool_names = mcp_auth.validated_principal_tool_names(
         principal.get("grantedTools")
@@ -197,7 +193,7 @@ def catalog_for_request(tools: list[Tool]) -> list[Tool]:
     ]
     principal = mcp_auth.internal_mcp_principal()
     kind = str((principal or {}).get("kind") or "")
-    if kind == "materializer-read":
+    if kind == "graph-read":
         granted = mcp_auth.validated_principal_tool_names(principal.get("grantedTools"))
         visible = [tool for tool in visible if (
             granted is not None

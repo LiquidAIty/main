@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Projects
  * Relationship: This file loads the authenticated Project list, fences overlapping refreshes, reconciles the active Project with the URL, and preserves explicit preferred selection.
  * Entity: Agent Builder
@@ -18,6 +14,7 @@ import {
   nextRequestSequence,
   safeJson,
 } from "./requestGuards";
+import { applicationFetch } from '../../lib/applicationApi';
 
 export function useBuilderProjects({
   projectsApi,
@@ -80,7 +77,7 @@ export function useBuilderProjects({
         dedupe: false,
         signal: controller.signal,
         fetcher: async (signal) => {
-          const response = await fetch(endpoint, { signal });
+          const response = await applicationFetch(endpoint, { signal });
           const data = await safeJson(response);
           return { response, data };
         },

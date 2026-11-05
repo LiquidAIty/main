@@ -1,18 +1,15 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Saved Cards
  * Relationship: This file normalizes Card runtime configuration, optional editor text, default new-Card model authority, identifiers, and detached deck copies for Project editing.
  *
  * Entity: Card Topology
- * Relationship: This file recognizes saved orange orchestrator authority and canonical orange or blue edge types used by Card nodes, rails, and topology editing.
+ * Relationship: This file recognizes saved orchestrator authority, canonical orange or blue edge types, and the exact enabled wired Card roster projected into Hermes Bot Mode.
  */
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
   CardRuntime,
+  DeckDocument,
   DeckEdgeType,
 } from '../../../types/agentgraph';
 
@@ -80,6 +77,64 @@ export function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
   if (type === 'magentic_option') return 'magentic_option';
   if (type === 'flow') return 'flow';
   return 'invalid';
+}
+
+export type WiredBotTarget = {
+  cardId: string;
+  cardRevisionId: string;
+  title: string;
+  profile: string;
+  direction: 'outgoing';
+  edgeType: 'flow' | 'magentic_option';
+  prompt: string;
+};
+
+/** Project wires are the only application authority projected into Hermes's
+ * native Bot Mode roster. Main sees every enabled Card participating in the
+ * enabled topology; another Card sees only Cards on its own enabled incident
+ * wires. Both orange flow and blue Magnetic membership carry Bot reachability. */
+export function wiredBotTargets(deck: DeckDocument, cardId: string): WiredBotTarget[] {
+  const selected = deck.nodes.find((node) => node.id === cardId);
+  if (!selected || selected.enabled === false || selected.runtime.kind !== 'hermes') return [];
+  const nodeById = new Map(deck.nodes.map((node) => [node.id, node] as const));
+  const targetEdgeTypes = new Map<string, 'flow' | 'magentic_option'>();
+  const include = (targetId: string, edgeType: 'flow' | 'magentic_option'): void => {
+    const previous = targetEdgeTypes.get(targetId);
+    if (!previous || edgeType === 'magentic_option') {
+      targetEdgeTypes.set(targetId, edgeType);
+    }
+  };
+  for (const edge of deck.edges) {
+    const edgeType = normalizeDeckEdgeType(edge.edgeType);
+    if (edge.enabled === false || edgeType === 'invalid') continue;
+    if (selected.runtime.mode === 'main') {
+      include(edge.source, edgeType);
+      include(edge.target, edgeType);
+    } else if (edge.source === cardId) {
+      include(edge.target, edgeType);
+    } else if (edge.target === cardId) {
+      include(edge.source, edgeType);
+    }
+  }
+  targetEdgeTypes.delete(cardId);
+  return [...targetEdgeTypes].flatMap(([targetId, edgeType]) => {
+    const target = nodeById.get(targetId);
+    if (
+      !target
+      || target.enabled === false
+      || target.runtime.kind !== 'hermes'
+      || !target.runtime.profile.trim()
+    ) return [];
+    return [{
+      cardId: target.id,
+      cardRevisionId: String(target._cardRevisionId || ''),
+      title: safeText(target.title || target.id),
+      profile: target.runtime.profile,
+      direction: 'outgoing' as const,
+      edgeType,
+      prompt: String(target.prompt || ''),
+    }];
+  });
 }
 export const uid = () => Math.random().toString(36).slice(2, 8);
 

@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file renders the shared inspector for Think, Know, Code, source, relationship, probability, time, and removal details on one evidence surface.
  *
@@ -17,6 +13,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { applicationFetch } from '../../lib/applicationApi';
 import type { CodeGraphFileSource } from './codeGraphProjection';
 import type { GraphProjectionNode } from './knowledgeGraphProjection';
 
@@ -247,7 +244,7 @@ function ThinkSourceExchange({ projectId, memoryId, chunkCount = 0 }: { projectI
     request.current = controller;
     setError('');
     try {
-      const response = await fetch(`/api/thinkgraph/sources?${new URLSearchParams({ projectId, memoryId,
+      const response = await applicationFetch(`/api/thinkgraph/sources?${new URLSearchParams({ projectId, memoryId,
         ...(includeExchange ? { includeExchange: 'true' } : {}) })}`, {
         signal: controller.signal,
       });
@@ -299,7 +296,7 @@ export function SourceSearchControls({ projectId }: { projectId: string }) {
   const search = async () => {
     setError('');
     try {
-      const response = await fetch(`/api/thinkgraph/source-search?${new URLSearchParams({ projectId, query })}`);
+      const response = await applicationFetch(`/api/thinkgraph/source-search?${new URLSearchParams({ projectId, query })}`);
       const value = await response.json();
       if (!response.ok || !Array.isArray(value.matches)) throw new Error('Source search unavailable.');
       setMatches(value.matches);

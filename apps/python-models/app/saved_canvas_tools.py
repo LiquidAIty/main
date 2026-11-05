@@ -1,14 +1,12 @@
 """Saved Canvas inspection and one-wire optimistic updates."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Card Topology
 # Relationship: This file publishes exact topology inspection and single-connection update operations while enforcing endpoints, edge types, direction, enabled state, and revision authority.
 #
 # Entity: Saved Cards
 # Relationship: This file reads and revision-checks the persisted Project deck before returning or changing any Card connection.
+# Entity: Builder Card
+# Relationship: This file permits authenticated Builder to change only non-core blue worker membership and protects orange and core Team wiring.
 
 from __future__ import annotations
 
@@ -277,6 +275,7 @@ def _apply_wire_update(
     target: str,
     edge_type: str,
     wire_id: str,
+    caller_card_id: str = "",
 ) -> dict[str, Any]:
     deck, revision = _load_saved_deck(project_id, deck_id)
     cards = {str(node.get("id") or ""): node for node in deck.get("nodes") or []}
@@ -286,6 +285,18 @@ def _apply_wire_update(
     resolved_id = wire_id or f"{source}->{target}:{resolved_type}"
     if prior is None:
         prior = next((edge for edge in edges if edge.get("id") == resolved_id), None)
+    from app.builder_worker_policy import require_builder_wire_change
+
+    require_builder_wire_change(
+        caller_card_id,
+        deck,
+        op=op,
+        wire=wire,
+        prior=prior,
+        resolved_type=resolved_type,
+        source=source,
+        target=target,
+    )
     changed = True
     if op == "upsert":
         edges, changed = _upsert_wire_in_deck(
@@ -314,7 +325,11 @@ def _apply_wire_update(
     }
 
 
-async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
+async def canvas_upsert_wire(
+    args: dict[str, Any],
+    *,
+    caller_card_id: str = "",
+) -> dict[str, Any]:
     (
         op, wire, source, target, edge_type, wire_id, project_id, deck_id,
     ) = _validated_wire_request(args)
@@ -329,6 +344,7 @@ async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
             target=target,
             edge_type=edge_type,
             wire_id=wire_id,
+            caller_card_id=caller_card_id,
         )
 
     return await asyncio.to_thread(apply)

@@ -1,13 +1,9 @@
-from __future__ import annotations
-
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
 # Relationship: This file contributes proof of explicit environment loading and fail-closed configuration behavior to the KnowGraph feature.
 # Entity: Credentials
 # Relationship: This file contributes proof of file-backed secret loading, process-secret precedence, and secret-safe errors to the Credentials feature.
+
+from __future__ import annotations
 
 import os
 

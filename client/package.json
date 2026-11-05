@@ -23,7 +23,9 @@
     "use-sync-external-store": "1.6.0"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && vite build --config vite.dashboard.config.ts",
+    "build:standalone": "vite build",
+    "build:hermes-plugin": "vite build --config vite.dashboard.config.ts",
     "dev": "vite dev",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",

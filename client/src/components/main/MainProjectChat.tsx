@@ -1,14 +1,10 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Main Chat
- * Relationship: This file renders the Project conversation and bounded composer, preserving drafts on rejected submissions and showing transport failures outside assistant speech.
+ * Relationship: This file renders the Project conversation, Hermes approval/clarify requests, and bounded composer, preserving drafts on rejected submissions and showing transport failures outside assistant speech.
  * Entity: Agent Messaging
  * Relationship: This file offers @Card completion only from Main's server-supplied authorized roster without rewriting submitted text or replies.
- * Entity: Card Invocation
- * Relationship: Validates image type, filename, size, and count, then sends unchanged user text and image records through the conversation callback while allowing new drafts during active work.
+ * Entity: Main Attachments
+ * Relationship: Validates image type, filename, size, and count, then sends unchanged user text and image records through the Hermes conversation callback while allowing new drafts during active work.
  * Entity: Voice
  * Relationship: The existing microphone control carries the current draft and images into the same saved-agent conversation without changing layout.
  * Entity: Project Knowledge Graph
@@ -27,12 +23,6 @@ import {
 } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
-import type { DirectChatTarget } from "../../features/agentbuilder/console/mainSessionClient";
-import {
-  MAX_MAIN_CHAT_IMAGES,
-  type MainChatRunInput,
-  type MainChatVoicePhase,
-} from "../../features/agentbuilder/console/useAgentBuilderMainChat";
 import UploadAttachment from "../knowledge/UploadAttachment";
 import {
   prepareChatBubbleText,
@@ -51,6 +41,37 @@ type MainProjectChatColors = {
   neutral: string;
 };
 
+type DirectChatTarget = {
+  cardId: string;
+  title: string;
+  address: string;
+};
+
+type MainChatRunInput = {
+  images?: ComposerImage[];
+  voiceTurn?: boolean;
+};
+
+type MainChatVoicePhase = "idle" | "requesting" | "listening" | "processing" | "speaking" | "error";
+
+type MainChatApprovalChoice = 'once' | 'session' | 'always' | 'deny';
+
+export type MainChatPendingRequest = {
+  id: string;
+  kind: 'approval' | 'clarify';
+  command?: string;
+  description?: string;
+  choices?: MainChatApprovalChoice[];
+  questions?: Array<{
+    qid: string;
+    question: string;
+    choices?: string[] | null;
+    multi_select?: boolean;
+  }>;
+};
+
+const MAX_MAIN_CHAT_IMAGES = 4;
+
 function safeText(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "string") return value;
@@ -64,9 +85,10 @@ function safeText(value: unknown): string {
   return String(value);
 }
 
-type MainProjectChatMessage = {
+export type MainProjectChatMessage = {
   role: string;
   text: string;
+  speaker?: string;
   linkedEvidenceIds?: string[];
   status?: "pending" | "complete" | "error";
 };
@@ -124,6 +146,122 @@ function readComposerImage(file: File): Promise<ComposerImage> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function MainChatRequestPanel({
+  colors,
+  request,
+  onApproval,
+  onClarify,
+  onCancel,
+}: {
+  colors: MainProjectChatColors;
+  request: MainChatPendingRequest;
+  onApproval?: (id: string, choice: MainChatApprovalChoice) => void;
+  onClarify?: (id: string, answers: Record<string, string | null>) => void;
+  onCancel?: (id: string) => void;
+}) {
+  const [staged, setStaged] = useState<Record<string, { choices: string[]; draft: string }>>({});
+  useEffect(() => setStaged({}), [request.id]);
+  const questions = request.questions || [];
+  const approvalLabels: Record<MainChatApprovalChoice, string> = {
+    once: 'Approve once',
+    session: 'Approve for session',
+    always: 'Always approve',
+    deny: 'Deny',
+  };
+  const setChoice = (qid: string, choice: string, multi: boolean) => {
+    setStaged((current) => {
+      const previous = current[qid] || { choices: [], draft: '' };
+      const choices = multi
+        ? previous.choices.includes(choice)
+          ? previous.choices.filter((item) => item !== choice)
+          : [...previous.choices, choice]
+        : [choice];
+      return { ...current, [qid]: { ...previous, choices } };
+    });
+  };
+  const submitClarify = () => {
+    const answers = Object.fromEntries(questions.map((question) => {
+      const answer = staged[question.qid] || { choices: [], draft: '' };
+      const draft = answer.draft.trim();
+      if (question.multi_select) {
+        const combined = [...answer.choices, ...(draft ? [draft] : [])];
+        return [question.qid, combined.length ? JSON.stringify(combined) : null];
+      }
+      return [question.qid, answer.choices[0] || draft || null];
+    }));
+    onClarify?.(request.id, answers);
+  };
+
+  return (
+    <section
+      data-testid="main-chat-hermes-request"
+      aria-label={request.kind === 'approval' ? 'Hermes approval request' : 'Hermes clarification request'}
+      style={{
+        display: 'grid', gap: 9, margin: '0 4px 9px', padding: 11,
+        borderRadius: 11, border: `1px solid ${colors.border}`,
+        background: 'rgba(16,20,24,0.96)', color: colors.text, fontSize: 12,
+      }}
+    >
+      {request.kind === 'approval' ? (
+        <>
+          <strong>Hermes needs approval</strong>
+          {request.description ? <span>{request.description}</span> : null}
+          {request.command ? <code style={{ overflowWrap: 'anywhere' }}>{request.command}</code> : null}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+            {(request.choices?.length
+              ? request.choices
+              : ['once', 'deny'] as MainChatApprovalChoice[]).map((choice) => (
+              <button key={choice} type="button" onClick={() => onApproval?.(request.id, choice)}>
+                {approvalLabels[choice]}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <strong>Hermes needs clarification</strong>
+          {questions.map((question) => {
+            const answer = staged[question.qid] || { choices: [], draft: '' };
+            return (
+              <fieldset key={question.qid} style={{ display: 'grid', gap: 7, border: 0, padding: 0 }}>
+                <legend>{question.question}</legend>
+                {question.choices?.length ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {question.choices.map((choice) => (
+                      <label key={choice} style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                        <input
+                          type={question.multi_select ? 'checkbox' : 'radio'}
+                          name={`clarify-${request.id}-${question.qid}`}
+                          checked={answer.choices.includes(choice)}
+                          onChange={() => setChoice(question.qid, choice, question.multi_select === true)}
+                        />
+                        {choice}
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
+                <input
+                  aria-label={`${question.question} answer`}
+                  placeholder={question.choices?.length ? 'Other answer (optional)' : 'Type your answer'}
+                  value={answer.draft}
+                  onChange={(event) => setStaged((current) => ({
+                    ...current,
+                    [question.qid]: { ...answer, draft: event.target.value },
+                  }))}
+                />
+              </fieldset>
+            );
+          })}
+          <div style={{ display: 'flex', gap: 7 }}>
+            <button type="button" onClick={submitClarify}>Confirm and continue</button>
+            <button type="button" onClick={() => onCancel?.(request.id)}>Skip</button>
+          </div>
+        </>
+      )}
+    </section>
+  );
 }
 
 function followLatestOutput(atBottom: boolean): "auto" | false {
@@ -392,6 +530,12 @@ function MainProjectChatMessageBubble({
               : "inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.18), 0 4px 18px rgba(0,0,0,0.14)",
           }}
         >
+          {!isUser && message.speaker && message.speaker !== 'Main' ? (
+            <div data-testid="main-chat-message-speaker" style={{
+              color: '#7FD9D0', fontSize: 10, fontWeight: 700,
+              letterSpacing: '0.04em', marginBottom: 5,
+            }}>{message.speaker}</div>
+          ) : null}
           {isUser
             ? text
             : renderChatMarkdown(text, message.role, entityMatcher, onEntityFocus)}
@@ -439,6 +583,10 @@ export default function MainProjectChat({
   onVoiceStart,
   onVoiceStop,
   onStop,
+  pendingRequest,
+  onApproval,
+  onClarify,
+  onRequestCancel,
   draft,
   onDraftChange,
   entityMatcher,
@@ -447,7 +595,7 @@ export default function MainProjectChat({
 }: {
   messages: MainProjectChatMessage[];
   directChatTargets?: DirectChatTarget[];
-  onSend: (t: string, runInput?: MainChatRunInput) => void | boolean;
+  onSend: (t: string, runInput?: MainChatRunInput) => void | boolean | Promise<boolean | void>;
   knowledgeProjectId: string;
   colors: MainProjectChatColors;
   /** A real Card turn is active; the composer remains available. */
@@ -463,6 +611,10 @@ export default function MainProjectChat({
   onVoiceStart?: (draft: string, runInput: MainChatRunInput) => void | boolean | Promise<boolean>;
   onVoiceStop?: () => void;
   onStop?: () => void;
+  pendingRequest?: MainChatPendingRequest | null;
+  onApproval?: (id: string, choice: MainChatApprovalChoice) => void;
+  onClarify?: (id: string, answers: Record<string, string | null>) => void;
+  onRequestCancel?: (id: string) => void;
   draft?: string;
   onDraftChange?: (value: string) => void;
   entityMatcher?: CanonicalEntityMatcher | null;
@@ -632,9 +784,12 @@ export default function MainProjectChat({
     });
   }, []);
 
-  const send = () => {
+  const send = async () => {
     if (!value.trim() || interactionDisabled || imageReadRef.current) return;
-    const accepted = images.length ? onSend(value, { images }) : onSend(value);
+    const submission = images.length ? onSend(value, { images }) : onSend(value);
+    const accepted = submission && typeof (submission as Promise<unknown>).then === 'function'
+      ? await submission
+      : submission;
     if (accepted === false) return;
     setImages([]);
     setImageError(null);
@@ -730,6 +885,15 @@ export default function MainProjectChat({
         ) : null}
       </div>
       <div className="px-4 pb-4">
+        {pendingRequest ? (
+          <MainChatRequestPanel
+            colors={colors}
+            request={pendingRequest}
+            onApproval={onApproval}
+            onClarify={onClarify}
+            onCancel={onRequestCancel}
+          />
+        ) : null}
         {imageError || error || voiceError || voicePhase === 'requesting' ? (
           <div
             data-testid="main-chat-error"
@@ -829,7 +993,7 @@ export default function MainProjectChat({
               }
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                send();
+                void send();
               }
             }}
             aria-label="Message"
@@ -982,7 +1146,7 @@ export default function MainProjectChat({
                 onStop?.();
                 return;
               }
-              send();
+              void send();
             }}
             disabled={stopActive ? false : interactionDisabled || readingImages}
             aria-label={stopActive ? "Stop" : "Send"}

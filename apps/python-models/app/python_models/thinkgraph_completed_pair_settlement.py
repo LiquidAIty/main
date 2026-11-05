@@ -1,9 +1,5 @@
 """Engraphis settlement for one completed User/Main pair."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
 # Relationship: This file atomically settles a completed User/Main pair as bounded Entity-specific Thinks with their same-pass research indication, exact attachments, and durable Engraphis relationships.
 # Entity: Jev Decisions
@@ -53,7 +49,7 @@ def _think_metadata(
     *,
     completed: dict[str, Any],
     output: dict[str, Any],
-    card_run: dict[str, str],
+    model_run: dict[str, str],
     pair_reference_value: str,
     fact_index: int,
     fact_count: int,
@@ -75,14 +71,11 @@ def _think_metadata(
         "consolidation_exempt": True,
         "thinkgraph_origin": {
             "authority": "thinkgraph",
-            "writer": "saved_thinkgraph_card",
-            "card_id": card_run["cardId"],
-            "card_revision_id": card_run["revisionId"],
-            "run_id": card_run["runId"],
-            "profile": card_run["profile"],
-            "hermes_session_id": card_run["hermesSessionId"],
-            "resolved_provider": card_run["resolvedProvider"],
-            "resolved_model": card_run["resolvedModel"],
+            "writer": "engraphis_structured_extractor",
+            "llm_task": model_run["task"],
+            "llm_purpose": model_run["purpose"],
+            "resolved_provider": model_run["provider"],
+            "resolved_model": model_run["model"],
             "completed_pair_reference": pair_reference_value,
             "fact_index": fact_index,
             "fact_count": fact_count,
@@ -90,10 +83,10 @@ def _think_metadata(
             **({"source_chunks": output["source_chunks"]} if output.get("source_chunks") else {}),
         },
         "provenance": {
-            "source": "saved_thinkgraph_card",
+            "source": "automatic_thinkgraph",
             "trusted": True,
             "review_state": "approved",
-            "trust_origin": "saved_card_runtime",
+            "trust_origin": "hermes_plugin_llm",
         },
     }
 
@@ -104,7 +97,7 @@ def _save_think_batch(
     workspace_id: str,
     completed: dict[str, Any],
     outputs: list[dict[str, Any]],
-    card_run: dict[str, str],
+    model_run: dict[str, str],
     pair_reference_value: str,
     finalizer: Callable[[list[dict[str, Any]]], None],
 ) -> list[dict[str, Any]]:
@@ -121,7 +114,7 @@ def _save_think_batch(
             metadata=_think_metadata(
                 completed=completed,
                 output=output,
-                card_run=card_run,
+                model_run=model_run,
                 pair_reference_value=pair_reference_value,
                 fact_index=index,
                 fact_count=fact_count,
@@ -180,7 +173,7 @@ def _validate_settle_payload(
         "projectId", "deckId", "conversationId", "runId", "cardId",
         "hermesSessionId", "completedAt", "userMessage", "mainResponse", "sourceReferences",
     }
-    extras = {"pairReference", "structuredOutput", "cardRun"}
+    extras = {"pairReference", "structuredOutput", "modelRun"}
     if set(payload) - completed_keys - extras:
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     completed = validate_completed_pair_payload({
@@ -192,26 +185,23 @@ def _validate_settle_payload(
     structured_output = payload.get("structuredOutput")
     if not isinstance(structured_output, dict):
         raise ValueError("thinkgraph_card_output_invalid")
-    raw_run = payload.get("cardRun")
+    raw_run = payload.get("modelRun")
     if not isinstance(raw_run, dict):
-        raise ValueError("thinkgraph_card_run_invalid")
-    allowed_run = {
-        "runId", "cardId", "revisionId", "profile", "hermesSessionId",
-        "resolvedProvider", "resolvedModel",
-    }
+        raise ValueError("thinkgraph_model_run_invalid")
+    allowed_run = {"provider", "model", "task", "purpose"}
     if set(raw_run) - allowed_run:
-        raise ValueError("thinkgraph_card_run_invalid")
-    card_run = {key: str(raw_run.get(key) or "") for key in allowed_run}
-    if any(not card_run[key] for key in allowed_run):
-        raise ValueError("thinkgraph_card_run_invalid")
-    return completed, pair_reference_value, structured_output, card_run
+        raise ValueError("thinkgraph_model_run_invalid")
+    model_run = {key: str(raw_run.get(key) or "") for key in allowed_run}
+    if any(not model_run[key] for key in allowed_run):
+        raise ValueError("thinkgraph_model_run_invalid")
+    return completed, pair_reference_value, structured_output, model_run
 
 
 def _existing_completed_pair_result(
     *,
     project: str,
     pair_reference_value: str,
-    card_run: dict[str, str],
+    model_run: dict[str, str],
     revision_before: str,
     memories: list[Any],
     entity_ids: dict[str, str],
@@ -238,7 +228,7 @@ def _existing_completed_pair_result(
         "revision": revision_before,
         "revisionChanged": False,
         "status": "completed",
-        "cardRun": card_run,
+        "modelRun": model_run,
         "relationships": [],
         "newEntities": [],
         "changedNodeIds": [],
@@ -256,7 +246,7 @@ def _settle_new_completed_pair(
     completed: dict[str, Any],
     pair_reference_value: str,
     card_output: Any,
-    card_run: dict[str, str],
+    model_run: dict[str, str],
     classifier: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
     project = completed["projectId"]
@@ -270,7 +260,7 @@ def _settle_new_completed_pair(
             "exact_user_message": completed["userMessage"],
             "exact_main_response": completed["mainResponse"],
         },
-        card_run=card_run,
+        model_run=model_run,
     )
     outputs = project_saved_card_thinks(facts)
     from .conversations import source_chunks, index_source_chunks
@@ -307,7 +297,7 @@ def _settle_new_completed_pair(
             "revision": revision,
             "revisionChanged": revision != revision_before,
             "status": "completed",
-            "cardRun": card_run,
+            "modelRun": model_run,
             "relationships": [],
             "newEntities": [],
             "relationshipVocabulary": relationship_vocabulary_state(
@@ -436,7 +426,7 @@ def _settle_new_completed_pair(
             workspace_id=workspace_id,
             completed=completed,
             outputs=outputs,
-            card_run=card_run,
+            model_run=model_run,
             pair_reference_value=pair_reference_value,
             finalizer=finalize,
         )
@@ -460,7 +450,7 @@ def _settle_new_completed_pair(
         return _existing_completed_pair_result(
             project=project,
             pair_reference_value=pair_reference_value,
-            card_run=card_run,
+            model_run=model_run,
             revision_before=revision_before,
             memories=existing,
             entity_ids=exact_entities,
@@ -516,7 +506,7 @@ def _settle_new_completed_pair(
         "revision": revision,
         "revisionChanged": revision != revision_before,
         "status": "completed",
-        "cardRun": card_run,
+        "modelRun": model_run,
         "relationships": settled_graph["relationships"],
         "newEntities": settled_graph["newEntities"],
         "relationshipVocabulary": relationship_vocabulary_state(
@@ -535,7 +525,7 @@ def settle_completed_pair(
 ) -> dict[str, Any]:
     """Append at most one Think per Entity plus separately classified Jev edges."""
 
-    completed, pair_reference_value, card_output, card_run = (
+    completed, pair_reference_value, card_output, model_run = (
         _validate_settle_payload(payload)
     )
     project = completed["projectId"]
@@ -558,7 +548,7 @@ def settle_completed_pair(
             return _existing_completed_pair_result(
                 project=project,
                 pair_reference_value=pair_reference_value,
-                card_run=card_run,
+                model_run=model_run,
                 revision_before=revision_before,
                 memories=existing,
                 entity_ids=exact_entities,
@@ -571,6 +561,6 @@ def settle_completed_pair(
             completed=completed,
             pair_reference_value=pair_reference_value,
             card_output=card_output,
-            card_run=card_run,
+            model_run=model_run,
             classifier=classifier,
         )

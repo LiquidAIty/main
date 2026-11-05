@@ -1,9 +1,5 @@
 """Complete cross-authority Entity identities for exact shared-name context."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Project Knowledge Graph
 # Relationship: This file validates complete provider Entity directories, joins only exact canonical-name bytes, and emits a bounded revisioned identity map without copying records or edges.
 # Entity: ThinkGraph
@@ -18,9 +14,9 @@ import math
 import time
 from typing import Any
 
-from app.python_models.data_anchor_contract import (
+from app.python_models.graph_read_contract import (
     GRAPH_CONTEXT_BYTE_LIMIT,
-    DataAnchorError,
+    GraphReadError,
     canonical_json,
 )
 from app.python_models.knowgraph_exact_reads import read_knowgraph_entity_directory
@@ -31,7 +27,7 @@ def _entity_directory_source(
     value: Any,
 ) -> tuple[list[dict[str, str]], str]:
     if not isinstance(value, dict) or value.get("complete") is not True:
-        raise DataAnchorError("entity_directory_authority_incomplete")
+        raise GraphReadError("entity_directory_authority_incomplete")
     raw_entities = value.get("entities")
     count = value.get("count")
     revision = str(value.get("revision") or "").strip()
@@ -43,13 +39,13 @@ def _entity_directory_source(
         or count != len(raw_entities)
         or not revision
     ):
-        raise DataAnchorError("entity_directory_authority_invalid")
+        raise GraphReadError("entity_directory_authority_invalid")
     entities: list[dict[str, str]] = []
     seen_ids: set[str] = set()
     seen_names: set[str] = set()
     for raw in raw_entities:
         if not isinstance(raw, dict) or set(raw) != {id_field, "canonicalName"}:
-            raise DataAnchorError("entity_directory_entity_invalid")
+            raise GraphReadError("entity_directory_entity_invalid")
         record = {
             id_field: str(raw.get(id_field) or ""),
             "canonicalName": str(raw.get("canonicalName") or ""),
@@ -60,11 +56,11 @@ def _entity_directory_source(
             or not record["canonicalName"].strip()
             or len(record["canonicalName"]) > 256
         ):
-            raise DataAnchorError("entity_directory_entity_invalid")
+            raise GraphReadError("entity_directory_entity_invalid")
         if record[id_field] in seen_ids:
-            raise DataAnchorError("entity_directory_entity_duplicate")
+            raise GraphReadError("entity_directory_entity_duplicate")
         if record["canonicalName"] in seen_names:
-            raise DataAnchorError("entity_directory_entity_name_duplicate")
+            raise GraphReadError("entity_directory_entity_name_duplicate")
         seen_ids.add(record[id_field])
         seen_names.add(record["canonicalName"])
         entities.append(record)
@@ -82,7 +78,7 @@ def assemble_canonical_entity_directory(
 
     project_id = str(project_id or "").strip()
     if not project_id:
-        raise DataAnchorError("entity_directory_project_invalid")
+        raise GraphReadError("entity_directory_project_invalid")
     think_entities, think_revision = _entity_directory_source(
         "engraphisEntityId", think_source
     )
@@ -142,7 +138,7 @@ def assemble_canonical_entity_directory(
         "readDurationMs": round(max(0.0, float(read_duration_ms)), 3),
     }
     if len(canonical_json(directory).encode("utf-8")) > GRAPH_CONTEXT_BYTE_LIMIT:
-        raise DataAnchorError("entity_directory_input_limit_exceeded")
+        raise GraphReadError("entity_directory_input_limit_exceeded")
     return directory
 
 

@@ -1,22 +1,18 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Agent Builder
  * Relationship: This file composes the Project-scoped Agent Builder workspace and delegates each surface to its established state, transport, and persistence owner.
  * Entity: Projects
  * Relationship: This file binds workspace selection, navigation, canonical deck load, and save scope to the active Project.
  * Entity: Main Chat
- * Relationship: Connects the Project conversation hook to the existing composer, server-resolved agent roster, Stop action, and voice controls.
+ * Relationship: Mounts the presentation-only Main conversation surface; Hermes owns its messages, composer submission, history, Stop, voice, and Bot Mode state.
  * Entity: Agent Input
- * Relationship: Passes the existing roster's Hermes questions to the Project conversation without creating another observer.
+ * Relationship: Maps Hermes approval and clarification requests plus their response callbacks into the Main conversation surface without creating another request owner.
  * Entity: Builder Card
  * Relationship: This file mounts the saved Builder Card's own terminal as the permanent lower work surface beneath Main.
  * Entity: Saved Cards
  * Relationship: This file composes exact deck hydration, optimistic persistence, existing-Card attachment, new-Card authoring, and Card configuration editing.
  * Entity: Card Topology
- * Relationship: This file owns the visible saved Card canvas composition, Card and edge selection, edge deletion, activity projection, and camera focus requests.
+ * Relationship: This file owns the visible saved Card canvas composition, Card and edge selection, edge deletion, Hermes-sourced activity projection, and camera focus requests.
  * Entity: Card Terminals
  * Relationship: This file mounts the selected non-Main Card terminal in its CLI tab and keeps Builder's terminal separate from other Cards.
  * Entity: Magnetic Membership
@@ -72,7 +68,10 @@ import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurface
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
 import MainBuilderSplitPanel from '../features/agentbuilder/console/MainBuilderSplitPanel';
-import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
+import useHermesMainChat from '../features/hermes/useHermesMainChat';
+import useHermesCardRuntime from '../features/hermes/useHermesCardRuntime';
+import { synchronizeHermesTopologyProfiles } from '../features/hermes/hermesTopologyProfileSync';
+import { applicationFetch } from '../lib/applicationApi';
 import useAgentBuilderAutosave, {
   projectDeckForPersistence,
 } from '../features/agentbuilder/state/useAgentBuilderAutosave';
@@ -99,6 +98,7 @@ import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import {
   cloneDeckDocument,
   safeText,
+  wiredBotTargets,
 } from '../features/agentbuilder/deck/deckPrimitives';
 import {
   BUILDER_CARD_ID,
@@ -244,25 +244,13 @@ function hasTaskLedger(card: AgentCardInstance | null | undefined): boolean {
   return card?.id === 'card_magentic' || card?.id === 'card_team';
 }
 
-function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): string {
-  if (card.id !== 'card_team') return card.id;
-  for (const edge of deck.edges) {
-    if (edge.edgeType !== 'magentic_option' || edge.enabled === false) continue;
-    const peerId = edge.source === card.id
-      ? edge.target
-      : edge.target === card.id ? edge.source : null;
-    const peer = peerId ? deck.nodes.find((node) => node.id === peerId) : null;
-    if (peer?.id === 'card_magentic') return peer.id;
-  }
-  return card.id;
-}
 // The Graphs workspace presents independently visible Think, Know, and opt-in Code
 // layers on one canvas; all three remain backed by their own provider authority.
 const PROJECTS_API = '/api/projects';
 const NrgsimWorkspace = lazy(() => import('../../../agent-products/nrgsim/client/src/components/energy/NrgsimWorkspace'));
 
 /** Mean synodic month in days (NASA/USNO convention). */
-export default function AgentBuilder(): React.ReactElement {
+export default function AgentBuilder({ embedded = false }: { embedded?: boolean } = {}): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
   const largeSurface = 'chat' as const;
   const [workspaceView, setWorkspaceView] = useState<
@@ -298,6 +286,7 @@ export default function AgentBuilder(): React.ReactElement {
     workspaceView,
     openCanvasWorkspace: () => setWorkspaceView('canvas'),
   });
+  const mainChat = useHermesMainChat(canvasProjectId);
   const {
     chatMinWidth,
     chatPanelWidth,
@@ -349,10 +338,52 @@ export default function AgentBuilder(): React.ReactElement {
       && deckRevision
       && deck.id === BUILDER_DECK_ID,
   );
+  const runtimeIdentities = useMemo(() => canonicalDeckReady
+    ? deck.nodes.flatMap((card) => (
+        card.enabled !== false && card.runtime.kind === 'hermes'
+          ? [{ cardId: card.id, profile: card.runtime.profile }]
+          : []
+      ))
+    : [], [canonicalDeckReady, deck.nodes]);
+  const cardRuntimeSnapshots = useHermesCardRuntime(runtimeIdentities);
+  const activeCardIds = useMemo(() => Object.entries(cardRuntimeSnapshots)
+    .filter(([, snapshot]) => snapshot.running)
+    .map(([cardId]) => cardId), [cardRuntimeSnapshots]);
+  const activeAgentCounts = useMemo(() => Object.fromEntries(
+    Object.entries(cardRuntimeSnapshots).map(([cardId, snapshot]) => [
+      cardId,
+      snapshot.activeModelCount,
+    ]),
+  ), [cardRuntimeSnapshots]);
   const currentDeckRef = useRef(deck);
+  const topologyProfileRevisionRef = useRef('');
   useEffect(() => {
     currentDeckRef.current = deck;
   }, [deck]);
+  useEffect(() => {
+    if (!canonicalDeckReady || !canvasProjectId || !deckRevision) return;
+    const identity = `${canvasProjectId}:${deckRevision}`;
+    if (topologyProfileRevisionRef.current === identity) return;
+    let cancelled = false;
+    const snapshot = cloneDeckDocument(currentDeckRef.current);
+    void synchronizeHermesTopologyProfiles(snapshot).then(() => {
+      if (!cancelled) topologyProfileRevisionRef.current = identity;
+    }).catch((error) => {
+      if (!cancelled) {
+        setDeckStatusMessage(
+          error instanceof Error
+            ? `Hermes topology publication failed: ${error.message}`
+            : 'Hermes topology publication failed.',
+        );
+      }
+    });
+    return () => { cancelled = true; };
+  }, [
+    canonicalDeckReady,
+    canvasProjectId,
+    deckRevision,
+    setDeckStatusMessage,
+  ]);
   const visibleRailItems = useMemo(
     () =>
       deriveVisibleRailItems({
@@ -385,7 +416,7 @@ export default function AgentBuilder(): React.ReactElement {
     let current = true;
     setModelingAvailable(false);
     if (canvasProjectId) {
-      fetch(`/api/nrgsim/projects/${encodeURIComponent(canvasProjectId)}`, {
+      applicationFetch(`/api/nrgsim/projects/${encodeURIComponent(canvasProjectId)}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'state' }),
       }).then(async response => response.ok ? response.json() : null)
         .then(value => { if (current) setModelingAvailable(value?.configured === true); })
@@ -407,6 +438,26 @@ export default function AgentBuilder(): React.ReactElement {
     )) || null,
     [deck.nodes],
   );
+  const mainChatTargets = useMemo(() => {
+    if (!mainCardId) return [];
+    const cardById = new Map(deck.nodes.map((card) => [card.id, card] as const));
+    const targets = new Set<string>();
+    for (const edge of deck.edges) {
+      if (edge.enabled === false) continue;
+      if (edge.edgeType === 'flow' && edge.source === mainCardId) targets.add(edge.target);
+      if (edge.edgeType === 'magentic_option') {
+        targets.add(edge.source);
+        targets.add(edge.target);
+      }
+    }
+    targets.delete(mainCardId);
+    return [...targets].flatMap((cardId) => {
+      const card = cardById.get(cardId);
+      if (!card || card.enabled === false || card.runtime.kind !== 'hermes') return [];
+      const title = safeText(card.title || card.id).trim();
+      return title ? [{ cardId: card.id, title, address: `@${title}` }] : [];
+    });
+  }, [deck.edges, deck.nodes, mainCardId]);
   const cardTitlesByProfile = useMemo(() => {
     const titles = new Map<string, string>();
     const ambiguous = new Set<string>();
@@ -525,24 +576,6 @@ export default function AgentBuilder(): React.ReactElement {
     knowledgeGraphs.projections.knowgraph,
     knowledgeGraphs.projections.thinkgraph.canonicalEntityDirectory,
   ]);
-  const {
-    handleSend,
-    messages,
-    addressableAgents,
-    sessionActive,
-    sessionConnecting,
-    sessionHistoryLoading,
-    startVoiceSession,
-    stopMainTurn,
-    stopVoiceSession,
-    technicalError,
-    voiceError,
-    voicePhase,
-  } = useAgentBuilderMainChat({
-    canvasProjectId,
-    deckId: BUILDER_DECK_ID,
-    deckRevision,
-  });
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
     tick();
@@ -760,31 +793,8 @@ export default function AgentBuilder(): React.ReactElement {
     prepareDeckForCardSave,
     onCardPersisted: handleCardPersisted,
   });
-  const selectedOrangeConnections = useMemo(() => {
-    if (!selectedCard) return [];
-    const nodeById = new Map(deck.nodes.map((node) => [node.id, node] as const));
-    const connectedIds = new Set<string>();
-    for (const edge of deck.edges) {
-      if (edge.enabled === false) continue;
-      if (edge.edgeType === 'flow' && edge.source === selectedCard.id) {
-        connectedIds.add(edge.target);
-      }
-      if (selectedCard.runtime.mode === 'main' && edge.edgeType === 'magentic_option') {
-        connectedIds.add(edge.source);
-        connectedIds.add(edge.target);
-      }
-    }
-    connectedIds.delete(selectedCard.id);
-    return [...connectedIds].flatMap((cardId) => {
-      const other = nodeById.get(cardId);
-      if (!other || other.enabled === false) return [];
-      return [{
-        cardId,
-        title: safeText(other.title || cardId),
-        direction: 'outgoing' as const,
-        prompt: String(other.prompt || ''),
-      }];
-    });
+  const selectedWiredConnections = useMemo(() => {
+    return selectedCard ? wiredBotTargets(deck, selectedCard.id) : [];
   }, [deck.edges, deck.nodes, selectedCard]);
   const builderTabs = useMemo(() => {
     if (selectedCard) return [
@@ -862,7 +872,7 @@ export default function AgentBuilder(): React.ReactElement {
     setSavedCardChooserBusy(true);
     setSavedCardChooserError(null);
     try {
-      const response = await fetch(
+      const response = await applicationFetch(
         `${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}/saved-cards`,
       );
       const payload = await response.json().catch(() => null);
@@ -893,7 +903,7 @@ export default function AgentBuilder(): React.ReactElement {
       -220,
     );
     try {
-      const response = await fetch(
+      const response = await applicationFetch(
         `${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}/memberships`,
         {
           method: 'POST',
@@ -959,7 +969,7 @@ export default function AgentBuilder(): React.ReactElement {
     setSavedCardChooserBusy(true);
     setSavedCardChooserError(null);
     try {
-      const response = await fetch('/api/idd/card-editor');
+      const response = await applicationFetch('/api/idd/card-editor');
       const dictionary = await response.json().catch(() => null);
       const binding = dictionary?.templates?.template_assist?.runtime;
       if (!response.ok || dictionary?.ok !== true
@@ -1092,9 +1102,8 @@ export default function AgentBuilder(): React.ReactElement {
           && hasTaskLedger(selectedCard)
         ) {
           return <MagneticTasksTab
-            projectId={canvasProjectId}
-            deckId={BUILDER_DECK_ID}
-            cardId={taskLedgerRunCardId(selectedCard, deck)}
+            profile={selectedCard.runtime.profile}
+            sessionId={cardRuntimeSnapshots[selectedCard.id]?.sessionId || ''}
             label={selectedCard.title}
             cardTitlesByProfile={cardTitlesByProfile}
           />;
@@ -1112,6 +1121,7 @@ export default function AgentBuilder(): React.ReactElement {
               projectId: canvasProjectId,
               deckId: BUILDER_DECK_ID,
               cardId: selectedCard.id,
+              profile: selectedCard.runtime.profile,
             }}
           />;
         }
@@ -1145,7 +1155,8 @@ export default function AgentBuilder(): React.ReactElement {
                     onChangeCardName={handleRenameSelectedCard}
                     localConfig={selectedCardConfig}
                     onSaveLocalConfig={handleSaveSelectedCardConfig}
-                    orangeConnections={selectedOrangeConnections}
+                    wiredConnections={selectedWiredConnections}
+                    runtimeSnapshot={cardRuntimeSnapshots[selectedCard.id]}
                   />
                 </Suspense>
               </CardEditorErrorBoundary>
@@ -1267,14 +1278,24 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    // Main owns the chat above; the permanent lower work surface belongs only
-    // to the separately saved Builder Card and its own session.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <MainProjectChat
-          messages={messages}
-          directChatTargets={addressableAgents}
-          onSend={handleSend}
+          messages={mainChat.messages}
+          directChatTargets={mainChatTargets}
+          onSend={mainChat.send}
+          busy={mainChat.busy}
+          historyLoading={mainChat.historyLoading}
+          error={mainChat.error}
+          voiceError={mainChat.voiceError}
+          voicePhase={mainChat.voicePhase}
+          onVoiceStart={mainChat.startVoice}
+          onVoiceStop={mainChat.stopVoice}
+          onStop={mainChat.stop}
+          pendingRequest={mainChat.pendingRequest}
+          onApproval={mainChat.answerApproval}
+          onClarify={mainChat.answerClarify}
+          onRequestCancel={mainChat.cancelRequest}
           draft={mainCardId ? transientCardInputs[mainCardId] || '' : ''}
           onDraftChange={(value) => {
             if (!mainCardId) return;
@@ -1292,21 +1313,6 @@ export default function AgentBuilder(): React.ReactElement {
           onEntityFocus={handleCanonicalEntityFocus}
           onEvidenceFocus={handleKnowEvidenceFocus}
           colors={C}
-          busy={sessionActive}
-          connecting={sessionConnecting}
-          historyLoading={sessionHistoryLoading}
-          error={technicalError}
-          voiceError={voiceError}
-          voicePhase={voicePhase}
-          onVoiceStart={startVoiceSession}
-          onVoiceStop={() => {
-            void stopVoiceSession();
-          }}
-          onStop={() => {
-            void stopMainTurn().catch((error) => {
-              setDeckStatusMessage(error instanceof Error ? error.message : 'Main run stop failed.');
-            });
-          }}
         />
       </div>
     );
@@ -1323,6 +1329,7 @@ export default function AgentBuilder(): React.ReactElement {
               projectId: canvasProjectId,
               deckId: BUILDER_DECK_ID,
               cardId: builderCard.id,
+              profile: builderCard.runtime.profile,
             }}
           />
         </div>
@@ -1358,6 +1365,8 @@ export default function AgentBuilder(): React.ReactElement {
         document={deck}
         setDocument={setDeck}
         onPersistGraphMutation={recordDeckWriteReason}
+        activeCardIds={activeCardIds}
+        activeAgentCounts={activeAgentCounts}
         activeEdgeIds={[]}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}
@@ -1740,7 +1749,7 @@ export default function AgentBuilder(): React.ReactElement {
   return (
     <FrontendCrashBoundary scopeLabel="AgentBuilder">
       <div
-        className="h-screen w-full flex overflow-hidden"
+        className={`${embedded ? 'h-full' : 'h-screen'} w-full flex overflow-hidden`}
         style={{ background: C.bg, color: C.text }}
       >
         <AgentBuilderWorkspace

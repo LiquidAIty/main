@@ -1,8 +1,4 @@
 """Card, IDD, tool, Script, deck routes."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Saved Cards
 # Relationship: This file exposes the Python-owned Project deck read and revision-checked save operations through internal HTTP routes.
 #
@@ -19,7 +15,13 @@ from fastapi import APIRouter, HTTPException
 from typing import Any
 from app.python_models.saved_card_contract import CardDomainError
 from app.python_models.saved_cards import load_deck, save_deck
-from app.python_models.card_script import CardScriptValidationError, generate_card_script_header, saved_script
+from app.python_models.card_script import (
+    CardScriptValidationError,
+    generate_card_script_header,
+    runtime_card_script_definition,
+    saved_script,
+    script_presentation,
+)
 from app.python_models.idd import IddValidationError, materialize_card_editor, materialize_runtime_options
 from app.python_models.tool_catalog import ToolCatalogError, materialize_live_tool_catalog
 
@@ -108,6 +110,48 @@ def card_script_header(payload: dict[str, Any]):
             card_id=str(payload.get("cardId") or ""),
         )
     except (IddValidationError, ValueError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@router.post("/card-script/runtime")
+def card_script_runtime(payload: dict[str, Any]):
+    """Project one persisted Card Script into the Hermes plugin turn contract."""
+
+    project_id = str(payload.get("projectId") or "").strip()
+    deck_id = str(payload.get("deckId") or "").strip()
+    card_id = str(payload.get("cardId") or "").strip()
+    if not project_id or not deck_id or not card_id:
+        raise HTTPException(status_code=400, detail="card_script_scope_required")
+    try:
+        loaded = load_deck(project_id, deck_id)
+        card = next(
+            (item for item in loaded["deck"]["nodes"] if item.get("id") == card_id),
+            None,
+        )
+        if card is None:
+            raise CardDomainError("card_not_found")
+        if card.get("enabled") is False:
+            return {"ok": True, "script": None}
+        runtime = card.get("runtime") or {}
+        if runtime.get("kind") != "hermes":
+            raise CardDomainError("card_script_requires_hermes_runtime")
+        options = card.get("runtimeOptions") or {}
+        selected_tools = [
+            str(name).strip() for name in options.get("tools") or []
+            if str(name).strip()
+        ]
+        presentation = script_presentation(
+            options.get("script"),
+            selected_tools=selected_tools,
+        )
+        definition = runtime_card_script_definition(
+            presentation["script"],
+            presentation_mode=presentation["mode"],
+            enabled_tools=selected_tools,
+            presented_tools=presentation["presentedTools"],
+        )
+        return {"ok": True, "script": definition}
+    except (CardDomainError, CardScriptValidationError) as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 

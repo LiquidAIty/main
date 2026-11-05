@@ -12,6 +12,7 @@ tool calls or reasoning.
 """
 
 import logging
+import os
 import time
 import weakref
 from pathlib import Path
@@ -568,6 +569,13 @@ def delegate_task(
         return _handle_control_action(normalized_action, subagent_id, message, parent_agent)
     if normalized_action and normalized_action != "spawn":
         return tool_error(f"Unknown action '{action}'. Use spawn (default), list, steer, or stop.")
+
+    # AutoTeam workers finish only their durable assigned task. They cannot
+    # open a second ephemeral delegation tree beneath the bounded fanout.
+    if os.environ.get("HERMES_KANBAN_TEAM_WORKER", "").strip() == "1":
+        return tool_error(
+            "Team workers cannot delegate nested team, leaf, or orchestrator work."
+        )
 
     # Operator kill switch (TUI / delegation.pause RPC): blocks NEW spawns only.
     if is_spawn_paused():

@@ -1,15 +1,11 @@
 """Focused projection and exact-read contracts for Graphiti-backed KnowGraph."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
 # Relationship: This file verifies Graphiti-backed KnowGraph projection, exact Entity and episode reads, citation containment, provider identity, provenance, and Project-scoped query behavior.
 # Entity: Project Knowledge Graph
 # Relationship: This file proves KnowGraph projections expose only valid Entity nodes, bounded relationships, and attached evidence to the shared graph surface.
-# Entity: Data Anchors
-# Relationship: This file proves exact selected KnowGraph references hydrate only requested Project-scoped records and provenance.
+# Entity: Project Knowledge Graph
+# Relationship: This file proves exact KnowGraph pointer reads return only requested Project-scoped records and provenance.
 # Entity: Jev Decisions
 # Relationship: This file verifies valid persisted Jev relationship decisions enrich KnowGraph edges while malformed decisions do not replace provider facts.
 

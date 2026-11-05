@@ -1,9 +1,5 @@
 """OAuth, internal-principal, and authenticated Project/profile context for MCP."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Authentication
 # Relationship: This file verifies Auth0 bearer tokens and internal signed principals before any MCP request receives Project, Card, or tool authority.
 # Entity: MCP Host
@@ -13,7 +9,7 @@
 # Entity: Card Profiles
 # Relationship: This file carries the validated saved-profile identity requested by a profile-owned MCP connection into the backend context lookup.
 # Entity: Tool Catalog
-# Relationship: This file validates the exact granted-tool set carried by authenticated external and materializer-read principals.
+# Relationship: This file validates the exact granted-tool set carried by authenticated external and graph-read principals.
 
 from __future__ import annotations
 
@@ -364,10 +360,10 @@ class Auth0TokenVerifier:
                 )
                 principal = claims.get("principal")
                 if not isinstance(principal, dict) or principal.get("kind") not in {
-                    "catalog-reader", "materializer-read", "card-runtime",
+                    "catalog-reader", "graph-read", "card-runtime",
                 }:
                     return None
-                if principal.get("kind") == "materializer-read":
+                if principal.get("kind") == "graph-read":
                     required = ("projectId", "deckId", "callerCardId")
                     if any(
                         not str(principal.get(field) or "").strip()

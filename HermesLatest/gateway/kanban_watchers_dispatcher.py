@@ -284,15 +284,51 @@ class _KanbanDispatcher:
                         os.environ["HERMES_KANBAN_BOARD"] = prev_env
         return successes
 
-    @staticmethod
-    def _decompose_one(_decomp: Any, slug: str, tid: str) -> int:
+    def _record_team_decomposition_failure(
+        self, slug: str, tid: str, reason: str,
+    ) -> dict[str, Any]:
+        """Apply the bounded breaker only when the task is a Team Triage row."""
+
+        from hermes_cli.kanban_team import record_decomposition_failure
+
+        try:
+            conn = _kbc().connect(board=slug)
+        except Exception as exc:
+            logger.debug(
+                "kanban auto-decompose [%s]: could not record Team failure for %s: %s",
+                slug, tid, exc,
+            )
+            return {"handled": False, "blocked": False}
+        try:
+            try:
+                return record_decomposition_failure(
+                    conn,
+                    tid,
+                    reason,
+                    failure_limit=self.settings.failure_limit,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "kanban auto-decompose [%s]: could not record Team failure for %s: %s",
+                    slug, tid, exc,
+                )
+                return {"handled": False, "blocked": False}
+        finally:
+            with contextlib.suppress(Exception):
+                conn.close()
+
+    def _decompose_one(self, _decomp: Any, slug: str, tid: str) -> int:
         """Decompose one triage task; returns 1 on success, 0 otherwise."""
         try:
             outcome = _decomp.decompose_task(tid, author="auto-decomposer")
-        except Exception:
+        except Exception as exc:
             logger.exception("kanban auto-decompose: decompose_task crashed on %s", tid)
+            self._record_team_decomposition_failure(
+                slug, tid, f"{type(exc).__name__}: {exc}",
+            )
             return 0
         if not outcome.ok:
+            self._record_team_decomposition_failure(slug, tid, outcome.reason)
             # Common no-op reasons (no aux client) must not spam logs every tick.
             logger.debug("kanban auto-decompose [%s]: %s skipped: %s", slug, tid, outcome.reason)
             return 0

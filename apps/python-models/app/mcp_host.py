@@ -1,9 +1,5 @@
 """The one official Python MCP host composition and executable entrypoint."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: MCP Host
 # Relationship: This file composes resource, tool-list, and tool-dispatch handlers into the one versioned MCP server and selects its supported stdio or Streamable HTTP transport.
 # Entity: Tool Catalog
@@ -12,36 +8,25 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 from typing import Any
 
 _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
 if _PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, _PACKAGE_ROOT)
 
 from app.python_models.provider_config import ensure_env_loaded
 ensure_env_loaded()
 
-from app import mcp_catalog_runtime, mcp_request_dispatch, mcp_transport
+from app import mcp_catalog_runtime, mcp_observability, mcp_request_dispatch, mcp_transport
 from mcp.server.lowlevel.server import NotificationOptions, Server
 from mcp.types import CallToolRequestParams, CallToolResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams
 
 MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
 _PUBLIC_MCP_NAME = "LiquidAIty"
 
-def _application_version() -> str:
-    try:
-        with open(os.path.join(_REPO_ROOT, "package.json"), encoding="utf-8") as package_file:
-            package = json.load(package_file)
-        version = str(package.get("version") or "").strip()
-        return version or "unknown"
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return "unknown"
-
-_MCP_IMPLEMENTATION_VERSION = _application_version()
+_MCP_IMPLEMENTATION_VERSION = mcp_observability.STARTUP_CATALOG_VERSION
 _PUBLIC_MCP_DESCRIPTION = (
     "Use LiquidAIty when the user asks to inspect or operate an authenticated Project, "
     "saved Card, AgentGraph, CodeGraph, ThinkGraph, KnowGraph, WorldView, or supported "

@@ -1,22 +1,18 @@
 """Exact project-scoped reads from the Engraphis ThinkGraph authority."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
 # Relationship: This file reads one exact Project-scoped Engraphis Entity or Think and projects bounded portable content with provider provenance and truncation.
-# Entity: Data Anchors
-# Relationship: This file hydrates exact ThinkGraph reference IDs and an optional one-hop relationship expansion for canonical IDF materialization.
+# Entity: Project Knowledge Graph
+# Relationship: This file resolves exact ThinkGraph record pointers and an optional one-hop relationship expansion without copying graph ownership.
 
 from __future__ import annotations
 
 import json
 from typing import Any
 
-from app.python_models.data_anchor_contract import (
-    ANCHOR_BODY_LIMIT,
-    MAX_GRAPH_REFERENCE_RESULTS,
-    DataAnchorError,
+from app.python_models.graph_read_contract import (
+    GRAPH_RECORD_BODY_LIMIT,
+    MAX_GRAPH_READ_RESULTS,
+    GraphReadError,
 )
 from app.python_models.engraphis_operations import private_operation
 
@@ -27,14 +23,14 @@ def read_thinkgraph_exact(
     identifier: str,
     *,
     bounded_expansion: int = 0,
-    result_limit: int = MAX_GRAPH_REFERENCE_RESULTS,
+    result_limit: int = MAX_GRAPH_READ_RESULTS,
 ) -> dict[str, Any] | None:
     """Read one exact memory or entity through the Engraphis service owner."""
 
-    if bounded_expansion not in (0, 1) or not 1 <= result_limit <= MAX_GRAPH_REFERENCE_RESULTS:
-        raise DataAnchorError("data_anchor_expansion_invalid")
+    if bounded_expansion not in (0, 1) or not 1 <= result_limit <= MAX_GRAPH_READ_RESULTS:
+        raise GraphReadError("graph_read_expansion_invalid")
     if id_field not in {"engraphisEntityId", "engraphisMemoryId"}:
-        raise DataAnchorError("data_anchor_engraphis_reference_unsupported")
+        raise GraphReadError("thinkgraph_reference_unsupported")
     try:
         engraphis_record = private_operation(
             project_id,
@@ -46,7 +42,7 @@ def read_thinkgraph_exact(
     except (RuntimeError, ValueError, KeyError):
         return None
     except Exception as error:
-        raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
+        raise GraphReadError("thinkgraph_read_failed") from error
     entity = engraphis_record.get("entity")
     if isinstance(entity, dict):
         evidence = entity.get("evidence", [])
@@ -82,14 +78,14 @@ def read_thinkgraph_exact(
             "engraphisEntityId": entity["canonical_id"],
             "recordKind": "entity",
             "recordId": entity["canonical_id"], "type": entity["type"], "title": entity["label"],
-            "content": body[:ANCHOR_BODY_LIMIT],
+            "content": body[:GRAPH_RECORD_BODY_LIMIT],
             "metadata": {"thinks": bounded_thinks, "evidence": bounded_evidence},
             "provenance": {"engine": "engraphis", "memberIds": entity["member_ids"]},
             "asOf": "current", "readOperation": "graph_entity",
             "relationshipEvidence": [{"nodes": [{"id": r["other_id"], "title": r["other_label"]} for r in relations],
                 "relationships": [{"id": r["id"], "sourceId": r["source"],
                     "targetId": r["target"], "type": r["relation"]} for r in relations]}] if relations else [],
-            "resultLimit": result_limit, "truncated": len(body) > ANCHOR_BODY_LIMIT
+            "resultLimit": result_limit, "truncated": len(body) > GRAPH_RECORD_BODY_LIMIT
                 or len(thinks) + len(residual_evidence) > (
                     len(bounded_thinks) + len(bounded_evidence)
                 )
@@ -112,7 +108,7 @@ def read_thinkgraph_exact(
         "engraphisMemoryId": row["id"],
         "recordKind": "memory",
         "recordId": row["id"], "type": row.get("mtype", "semantic"),
-        "title": row.get("title", ""), "content": str(row.get("content", ""))[:ANCHOR_BODY_LIMIT],
+        "title": row.get("title", ""), "content": str(row.get("content", ""))[:GRAPH_RECORD_BODY_LIMIT],
         "properties": {
             "memoryType": row.get("mtype", "semantic"),
             "validFrom": row.get("valid_from"),
@@ -129,6 +125,6 @@ def read_thinkgraph_exact(
             "relationships": relationships,
         }] if relationships else [],
         "resultLimit": result_limit,
-        "truncated": len(str(row.get("content", ""))) > ANCHOR_BODY_LIMIT
+        "truncated": len(str(row.get("content", ""))) > GRAPH_RECORD_BODY_LIMIT
             or bounded_expansion > 0 and len(engraphis_record.get("relationships", [])) > len(links),
     }

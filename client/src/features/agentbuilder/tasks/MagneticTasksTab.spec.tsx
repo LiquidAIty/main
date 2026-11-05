@@ -1,10 +1,6 @@
 // @vitest-environment jsdom
 
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Magnetic Tasks
  * Relationship: This file verifies inspect-only Magnetic status renders exact task states, deterministic dependency layers, saved Card assignees, bounded details, idle state, and timeout.
  * Entity: Run Ledger
@@ -14,7 +10,13 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const hermesHost = vi.hoisted(() => ({ fetchJSON: vi.fn() }));
+
+vi.mock('../../hermes/hermesHost', () => ({
+  hermesDashboardSdk: () => ({ fetchJSON: hermesHost.fetchJSON }),
+}));
 
 vi.mock('@xyflow/react', () => ({
   Background: () => null,
@@ -46,7 +48,7 @@ vi.mock('@xyflow/react', () => ({
 
 import MagneticTasksTab, {
   buildMagneticTaskLayout,
-  readMagneticRunStatus,
+  readKanbanTaskgraphStatus,
   taskStatusLabel,
   type MagneticTask,
 } from './MagneticTasksTab';
@@ -55,6 +57,13 @@ import MagneticTasksTab, {
   .IS_REACT_ACT_ENVIRONMENT = true;
 
 const mounted = new Set<{ root: Root; container: HTMLDivElement }>();
+
+beforeEach(() => {
+  hermesHost.fetchJSON.mockImplementation(async (path: string, init?: RequestInit) => {
+    const response = await fetch(path, init);
+    return response.json();
+  });
+});
 
 function render(element: ReactElement) {
   const container = document.createElement('div');
@@ -98,25 +107,42 @@ describe('MagneticTasksTab', () => {
   });
 
   it('reads only exact task statuses', () => {
-    const result = readMagneticRunStatus({
-      runId: 'run-1',
-      providerThreadRef: 'root-1',
-      state: 'running',
-      tasks: [
-        {
-          taskId: 'task-ready', title: 'Ready', assignee: 'signal', status: 'ready', dependencyIds: [],
-          latestAttempt: { runId: 'runtime-run-2', status: 'waiting' },
-        },
-        { taskId: 'task-invalid', title: 'Invalid', assignee: 'signal', status: 'unsupported', dependencyIds: [] },
-        { taskId: 'task-invalid-two', title: 'Invalid', assignee: null, status: 'unknown', dependencyIds: [] },
-      ],
-    });
+    const board = { columns: [{ tasks: [
+      {
+        id: 'root-1', title: 'Root', assignee: 'card_magentic', status: 'ready',
+        session_id: 'magnetic-session', workflow_template_id: 'liquidaity-magnetic-v1',
+        current_step_key: 'magnetic-orchestration', created_at: 1,
+      },
+      {
+        id: 'task-ready', title: 'Ready', assignee: 'signal', status: 'ready',
+        session_id: 'magnetic-session', created_at: 2,
+      },
+      {
+        id: 'task-invalid', title: 'Invalid', assignee: 'signal', status: 'unsupported',
+        session_id: 'magnetic-session', created_at: 3,
+      },
+    ] }] };
+    const result = readKanbanTaskgraphStatus(board, [
+      { task: board.columns[0].tasks[0], events: [], links: { parents: [], children: [] }, runs: [] },
+      {
+        task: board.columns[0].tasks[1],
+        events: [{ kind: 'created', payload: { creator_task_id: 'root-1' } }],
+        links: { parents: [], children: [] },
+        runs: [{ id: 'runtime-run-2', status: 'waiting' }],
+      },
+      {
+        task: board.columns[0].tasks[2],
+        events: [{ kind: 'created', payload: { creator_task_id: 'root-1' } }],
+        links: { parents: [], children: [] },
+        runs: [],
+      },
+    ], 'card_magentic', 'magnetic-session');
     expect(result?.rootTaskId).toBe('root-1');
-    expect(result?.tasks.map((task) => task.taskId)).toEqual(['task-ready']);
-    expect(result?.tasks[0]?.latestAttempt).toEqual({
+    expect(result?.tasks.map((task) => task.taskId)).toEqual(['root-1', 'task-ready']);
+    expect(result?.tasks[1]?.latestAttempt).toEqual({
       runId: 'runtime-run-2', status: 'waiting',
     });
-    expect(result?.tasks[0]).toMatchObject({
+    expect(result?.tasks[1]).toMatchObject({
       handoffSummary: null,
     });
   });
@@ -161,36 +187,49 @@ describe('MagneticTasksTab', () => {
   });
 
   it('shows the task graph and selected attempt details without a mutating action', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      ok: true,
-      result: {
-        runId: 'run-1',
-        providerThreadRef: 'task-blocked',
-        state: 'completed',
-        tasks: [
-          {
-            taskId: 'task-running', title: 'Collect evidence', assignee: 'liquidaity-signal', status: 'running',
-            dependencyIds: [], latestAttempt: { runId: 'attempt-7', status: 'running', startedAt: null, endedAt: null },
-            resultAvailable: false,
-            handoffSummary: 'Worker grounded the handoff in the saved Card result.',
-          },
-          {
-            taskId: 'task-blocked', title: 'Synthesize', assignee: 'card_magentic', status: 'blocked',
-            dependencyIds: ['task-running'], latestAttempt: null, resultAvailable: false,
-          },
-          {
-            taskId: 'task-done', title: 'Scope mission', assignee: 'card_magentic', status: 'done',
-            dependencyIds: [], latestAttempt: { runId: 3, status: 'completed', startedAt: 1, endedAt: 2 },
-            resultAvailable: true,
-          },
-        ],
+    const publicTasks: Record<string, any> = {
+      'task-blocked': {
+        id: 'task-blocked', title: 'Synthesize', assignee: 'card_magentic', status: 'blocked',
+        session_id: 'magnetic-session', workflow_template_id: 'liquidaity-magnetic-v1',
+        current_step_key: 'magnetic-orchestration', created_at: 1,
       },
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      'task-running': {
+        id: 'task-running', title: 'Collect evidence', assignee: 'liquidaity-signal', status: 'running',
+        session_id: 'magnetic-session', created_at: 2,
+        latest_summary: 'Worker grounded the handoff in the saved Card result.',
+      },
+      'task-done': {
+        id: 'task-done', title: 'Scope mission', assignee: 'card_magentic', status: 'done',
+        session_id: 'magnetic-session', created_at: 3, result: 'Scoped.',
+      },
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === '/api/plugins/kanban/board?include_archived=true') {
+        return new Response(JSON.stringify({ columns: [{ name: 'active', tasks: Object.values(publicTasks) }] }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const taskId = decodeURIComponent(path.split('/').pop() || '');
+      const task = publicTasks[taskId];
+      return new Response(JSON.stringify({
+        task,
+        events: taskId === 'task-blocked' ? [] : [{
+          kind: 'created', payload: { creator_task_id: 'task-blocked' },
+        }],
+        links: {
+          parents: taskId === 'task-blocked' ? ['task-running'] : [],
+          children: taskId === 'task-running' ? ['task-blocked'] : [],
+        },
+        runs: taskId === 'task-running'
+          ? [{ id: 'attempt-7', status: 'running' }]
+          : taskId === 'task-done' ? [{ id: 3, status: 'completed', summary: 'Scoped.' }] : [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
 
     const view = render(<MagneticTasksTab
-      projectId="project-1"
-      deckId="deck_builder"
-      cardId="card_magentic"
+      profile="card_magentic"
+      sessionId="magnetic-session"
       cardTitlesByProfile={{
         'liquidaity-signal': 'Signal',
         card_magentic: 'Magnetic',
@@ -218,29 +257,26 @@ describe('MagneticTasksTab', () => {
     act(() => fireEvent.click(screen.getByTestId('flow-node-task-running')));
     expect(screen.getByText('Handoff · Worker grounded the handoff in the saved Card result.')).toBeTruthy();
     expect(screen.queryByText(/worker session|tool|call|receipt/i)).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body || '{}'));
-    expect(body).toEqual({
-      action: 'status',
-      inspectOnly: true,
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      cardId: 'card_magentic',
-    });
-    expect(body.action).not.toBe('execute');
-    expect(body.action).not.toBe('stop');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/plugins/kanban/board?include_archived=true');
+    expect(fetchMock.mock.calls.slice(1).map(([path]) => String(path)).sort()).toEqual([
+      '/api/plugins/kanban/tasks/task-blocked',
+      '/api/plugins/kanban/tasks/task-done',
+      '/api/plugins/kanban/tasks/task-running',
+    ]);
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({
+      signal: expect.any(AbortSignal),
+    }));
     view.unmount();
   });
 
   it('shows a calm empty state when Magnetic has no current run', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      ok: true,
-      result: null,
+      columns: [],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     const view = render(<MagneticTasksTab
-      projectId="project-1"
-      deckId="deck_builder"
-      cardId="card_magentic"
+      profile="card_magentic"
+      sessionId="magnetic-session"
       cardTitlesByProfile={{ card_magentic: 'Magnetic' }}
     />);
     await waitFor(() => expect(screen.getByText('Idle')).toBeTruthy());
@@ -253,9 +289,8 @@ describe('MagneticTasksTab', () => {
       init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
     }));
     const view = render(<MagneticTasksTab
-      projectId="project-1"
-      deckId="deck_builder"
-      cardId="card_magentic"
+      profile="card_magentic"
+      sessionId="magnetic-session"
       cardTitlesByProfile={{ card_magentic: 'Magnetic' }}
     />);
     expect(screen.getByText('Loading…')).toBeTruthy();

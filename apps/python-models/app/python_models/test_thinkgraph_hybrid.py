@@ -1,20 +1,13 @@
 """Focused proof for the one-Think, Jev-governed Engraphis lifecycle."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
 # Relationship: This file exercises completed-pair extraction, atomic Think writes, exact Entity attachment, duplicate handling, projection, and reads across the retained Engraphis lifecycle.
 #
 # Entity: Jev Decisions
 # Relationship: This file verifies every free-form Think relationship receives a bounded Jev choice before atomic edge settlement, including vocabulary promotion, provider failure, and rollback.
 #
-# Entity: Data Anchors
-# Relationship: This file verifies exact ThinkGraph Entity and Memory references remain Project-scoped, read-only, and distinct from each other.
-#
 # Entity: Project Knowledge Graph
-# Relationship: This file verifies projection contains Entity nodes with bounded attached Thinks and never turns Think memories into visible graph nodes.
+# Relationship: This file verifies exact ThinkGraph pointer reads remain Project-scoped and projection contains Entity nodes with bounded attached Thinks rather than visible Think nodes.
 
 from __future__ import annotations
 
@@ -184,15 +177,12 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_engraphis_evidenc
     ] == ["mem_other"]
 
 
-def _card_run(run_id: str = "thinkgraph-run-one") -> dict[str, str]:
+def _model_run(_run_id: str = "thinkgraph-run-one") -> dict[str, str]:
     return {
-        "runId": run_id,
-        "cardId": "card_thinkgraph",
-        "revisionId": "revision-one",
-        "profile": "thinkgraph",
-        "hermesSessionId": "thinkgraph-session-one",
-        "resolvedProvider": "openai-codex",
-        "resolvedModel": "configured/model",
+        "provider": "openai-codex",
+        "model": "configured/model",
+        "task": "thinkgraph",
+        "purpose": "automatic_completed_main_pair",
     }
 
 
@@ -248,14 +238,14 @@ def _settle_payload(
     completed: dict[str, Any] | None = None,
     *,
     output: dict[str, Any] | None = None,
-    card_run: dict[str, str] | None = None,
+    model_run: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     source = completed or _completed()
     return {
         **source,
         "pairReference": completed_pair_preparation.pair_reference(source),
         "structuredOutput": output or _structured_output(),
-        "cardRun": card_run or _card_run(),
+        "modelRun": model_run or _model_run(),
     }
 
 
@@ -335,7 +325,7 @@ def test_custom_schema_supports_at_most_one_episodic_think_per_entity() -> None:
         _structured_output(),
         pair_text="USER: x\nMAIN: y",
         context={},
-        card_run=_card_run(),
+        model_run=_model_run(),
     )
     projected = completed_pair_extraction.project_saved_card_thinks(facts)
 
@@ -359,7 +349,7 @@ def test_optional_think_detail_remains_inside_the_same_structured_think() -> Non
         _structured_output(detail=detail),
         pair_text="USER: x\nMAIN: y",
         context={},
-        card_run=_card_run(),
+        model_run=_model_run(),
     )
 
     projected = completed_pair_extraction.project_saved_card_thinks(facts)
@@ -374,18 +364,18 @@ def test_relationship_output_is_explicit_even_for_an_incoming_only_entity() -> N
     fact["entities"] = [fact["entity"]]
     fact["relations"] = []
     facts = completed_pair_extraction.extract_saved_card_facts(
-        output, pair_text="USER: x\nMAIN: y", context={}, card_run=_card_run(),
+        output, pair_text="USER: x\nMAIN: y", context={}, model_run=_model_run(),
     )
     assert completed_pair_extraction.project_saved_card_thinks(facts)[0]["relationships"] == []
     del fact["relations"]
     with pytest.raises(relationship_vocabulary.ThinkGraphIntakeError,
                        match="thinkgraph_card_llm_structured_invalid"):
         completed_pair_extraction.extract_saved_card_facts(
-            output, pair_text="USER: x\nMAIN: y", context={}, card_run=_card_run(),
+            output, pair_text="USER: x\nMAIN: y", context={}, model_run=_model_run(),
         )
 
 
-def test_identical_think_cannot_be_copied_to_different_entities() -> None:
+def test_engraphis_projection_applies_no_second_semantic_filter() -> None:
     output = _structured_output()
     first = output["facts"][0]
     first["entities"] = [first["entity"]]
@@ -395,11 +385,10 @@ def test_identical_think_cannot_be_copied_to_different_entities() -> None:
     second["entities"] = ["Electron"]
     output["facts"].append(second)
     facts = completed_pair_extraction.extract_saved_card_facts(
-        output, pair_text="USER: x\nMAIN: y", context={}, card_run=_card_run(),
+        output, pair_text="USER: x\nMAIN: y", context={}, model_run=_model_run(),
     )
-    with pytest.raises(relationship_vocabulary.ThinkGraphIntakeError,
-                       match="thinkgraph_card_think_duplicate"):
-        completed_pair_extraction.project_saved_card_thinks(facts)
+    projected = completed_pair_extraction.project_saved_card_thinks(facts)
+    assert [item["entity"] for item in projected] == ["Rocket Lab", "Electron"]
 
 
 def test_multiple_entity_chunks_are_distinct_and_relationships_are_source_owned() -> None:
@@ -421,7 +410,7 @@ def test_multiple_entity_chunks_are_distinct_and_relationships_are_source_owned(
         output,
         pair_text="USER: x\nMAIN: y",
         context={},
-        card_run=_card_run(),
+        model_run=_model_run(),
     )
     projected = completed_pair_extraction.project_saved_card_thinks(facts)
 
@@ -439,17 +428,14 @@ def test_multiple_entity_chunks_are_distinct_and_relationships_are_source_owned(
         [_fact()],
     ],
 )
-def test_structured_extraction_rejects_untyped_model_output(value: Any) -> None:
-    with pytest.raises(
-        relationship_vocabulary.ThinkGraphIntakeError,
-        match="thinkgraph_card_entity_think_count_invalid",
-    ):
-        completed_pair_extraction.extract_saved_card_facts(
-            value,
-            pair_text="USER: x\nMAIN: y",
-            context={},
-            card_run=_card_run(),
-        )
+def test_engraphis_structured_extractor_normalizes_supported_wire_forms(value: Any) -> None:
+    facts = completed_pair_extraction.extract_saved_card_facts(
+        value,
+        pair_text="USER: x\nMAIN: y",
+        context={},
+        model_run=_model_run(),
+    )
+    assert len(facts) == 1
 
 
 def test_relationship_choice_plan_has_no_abstention_option() -> None:
@@ -504,12 +490,8 @@ def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
 @pytest.mark.parametrize(
     "structured_output",
     [
-        {"facts": [_fact(), _fact(title="duplicate second fact")]},
         {"facts": [{key: value for key, value in _fact().items() if key != "think"}]},
         {"wrong": [_fact()]},
-        json.dumps(_structured_output()),
-        f"```json\n{json.dumps(_structured_output())}\n```",
-        [_fact()],
     ],
 )
 def test_invalid_or_duplicate_entity_card_output_creates_no_graph_rows(
@@ -642,11 +624,9 @@ def test_one_pair_writes_one_think_and_only_jev_edge(
     assert memory.mtype == service_adapter.MemoryType.EPISODIC
     assert memory.metadata["consolidation_exempt"] is True
     origin = memory.metadata["thinkgraph_origin"]
-    assert origin["card_id"] == "card_thinkgraph"
-    assert origin["card_revision_id"] == "revision-one"
-    assert origin["run_id"] == "thinkgraph-run-one"
-    assert origin["profile"] == "thinkgraph"
-    assert origin["hermes_session_id"] == "thinkgraph-session-one"
+    assert origin["writer"] == "engraphis_structured_extractor"
+    assert origin["llm_task"] == "thinkgraph"
+    assert origin["llm_purpose"] == "automatic_completed_main_pair"
     assert origin["resolved_provider"] == "openai-codex"
     assert origin["resolved_model"] == "configured/model"
     assert origin["source_pair"] == {
@@ -1001,7 +981,7 @@ def test_later_pair_reuses_entity_and_reports_only_new_endpoint(
         payload=_settle_payload(
             later,
             output=output,
-            card_run=_card_run("thinkgraph-run-two"),
+            model_run=_model_run("thinkgraph-run-two"),
         ),
         classifier=_classifier("REQUIRES"),
     )

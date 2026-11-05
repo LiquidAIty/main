@@ -1,8 +1,4 @@
 """Typed saved-Card runtime and model configuration contracts."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Saved Cards
 # Relationship: This file defines the strict saved Card configuration shapes shared by editing, validation, persistence, and execution.
 # Entity: Card Profiles
@@ -11,8 +7,8 @@
 # Relationship: This file defines the saved orchestrator switch that permits outbound orange Card messaging when topology also authorizes it.
 # Entity: Tool Catalog
 # Relationship: This file defines the exact saved tool identity list used as the Card's grant ceiling.
-# Entity: Jev Decisions
-# Relationship: This file defines the optional per-Run AutoTools and AutoModel switches without changing the Card's durable selections.
+# Entity: Retired Runtime Fields
+# Relationship: This file rejects removed automatic model and tool selectors instead of silently accepting a second runtime policy.
 
 from __future__ import annotations
 
@@ -64,6 +60,8 @@ CardSubagentType = Literal["none", "leaf", "recursive"]
 class CardConfiguration(BaseModel):
     """Executable field shapes referenced by the Card dictionary."""
 
+    model_config = ConfigDict(extra="forbid")
+
     runtimeKind: str
     runtimeMode: str
     runtimeProfile: str = ""
@@ -74,6 +72,4 @@ class CardConfiguration(BaseModel):
     orchestrator: bool = False
     tools: list[str] = Field(default_factory=list)
     subagentModel: CardSubagentModel | None = None
-    autoTools: StrictBool | None = None
-    autoModel: StrictBool | None = None
     reasoningEffort: Literal["low", "medium", "high", "xhigh", "max", "ultra"] | None = None

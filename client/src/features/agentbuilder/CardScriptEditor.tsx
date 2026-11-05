@@ -1,11 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
-
-// Graph + less = more: less code that does the same work as more code is more useful.
-// Entity names the feature; Relationship explains why this file belongs and what it contributes.
-// Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-// Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: Card Scripts
 // Relationship: Presents one real editable card.py source file. Python owns validation and execution.
+
+import { useEffect, useRef, useState } from 'react';
 
 import type { AgentCardRuntimeOptions } from '../../types/agentgraph';
 import './CardScriptEditor.css';
@@ -122,7 +118,7 @@ function editorOptions(): import('monaco-editor/editor/editor.api').editor.IStan
 function scriptWithSource(current: CardScript, source: string): CardScript {
   return {
     ...current,
-    enabled: Boolean(source.trim()),
+    enabled: source.trim() ? current.enabled : false,
     source,
     sourceHash: '',
     compiledHash: '',
@@ -220,6 +216,16 @@ export function CardScriptEditor({
     <section data-testid="card-script-editor" className="card-script-ide">
       <header className="card-script-ide__header">
         <div className="card-script-ide__identity"><strong>Card Python Script</strong></div>
+        <label className="card-script-ide__activation">
+          <input
+            type="checkbox"
+            aria-label="Enable Card Python Script"
+            checked={script.enabled}
+            disabled={!script.source.trim()}
+            onChange={(event) => onChange({ ...script, enabled: event.target.checked })}
+          />
+          Enable
+        </label>
       </header>
       <div className="card-script-ide__frame">
         <div className="card-script-ide__tabs" role="tablist" aria-label="Card Script files">

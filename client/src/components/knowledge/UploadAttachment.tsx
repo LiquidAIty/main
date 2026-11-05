@@ -1,13 +1,10 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: KnowGraph
  * Relationship: This file validates one selected PDF and Project, submits KnowGraph ingestion, clears the picker, and renders bounded application-owned success or failure feedback.
  */
 
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { applicationFetch } from '../../lib/applicationApi';
 
 type UploadAttachmentProps = {
   knowledgeProjectId: string;
@@ -48,7 +45,7 @@ async function postKnowgraphIngest(file: File, projectId: string): Promise<{
   formData.append("project_id", projectId);
   formData.append("document_id", documentId);
 
-  const response = await fetch("/api/knowgraph/ingest", {
+  const response = await applicationFetch("/api/knowgraph/ingest", {
     method: "POST",
     body: formData,
     credentials: "include",

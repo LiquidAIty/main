@@ -1,13 +1,7 @@
-// Graph + less = more: less code that does the same work as more code is more useful.
-// Entity names the feature; Relationship explains why this file belongs and what it contributes.
-// Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-// Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: Card Profiles
 // Relationship: This file verifies pinned provider/model identities remain valid saved profile choices without compatibility aliases.
 // Entity: IDD
 // Relationship: This file verifies each configured registry key projects exactly once into the Card editor model options with one canonical default.
-// Entity: Jev Decisions
-// Relationship: This file verifies manually available but Auto Model-ineligible entries remain explicitly excluded from automatic selection.
 
 import { describe, it, expect } from 'vitest';
 import { listConfiguredModelOptions, MODEL_REGISTRY } from './models.config';
@@ -45,7 +39,6 @@ describe('canonical model catalog — DeepSeek V4 Pro 0813', () => {
       label: 'OpenRouter DeepSeek V4 Pro 0813',
       provider: 'openrouter',
       id: KEY,
-      autoModelFacts: { eligible: false },
     });
   });
 });

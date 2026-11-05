@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Application Startup
  * Relationship: Builds and serves the client on explicit loopback ports while proxying only the approved local backend and companion-service transports.
  *
@@ -19,14 +15,14 @@ import fs from 'node:fs';
 import postcss from 'postcss';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '..');
-const worldviewRoot = path.resolve(repoRoot, 'agent-products/gods-eye-view');
+export const repoRoot = path.resolve(__dirname, '..');
+export const worldviewRoot = path.resolve(repoRoot, 'agent-products/gods-eye-view');
 const worldviewStylePath = path.resolve(worldviewRoot, 'style.css');
 const vendorRequire = createRequire(path.resolve(worldviewRoot, 'package.json'));
 const cesiumPluginModule = vendorRequire('vite-plugin-cesium') as {
   default?: (options?: Record<string, unknown>) => Plugin;
 } | ((options?: Record<string, unknown>) => Plugin);
-const cesiumPlugin = typeof cesiumPluginModule === 'function'
+export const cesiumPlugin = typeof cesiumPluginModule === 'function'
   ? cesiumPluginModule
   : cesiumPluginModule.default!;
 
@@ -46,7 +42,7 @@ export function worldviewNativeMountModuleSource(command: 'serve' | 'build'): st
   return `export const importNativeWorldViewMount = () => import(${ignore}${JSON.stringify(target)});`;
 }
 
-function worldviewNativeMountPlugin(command: 'serve' | 'build'): Plugin {
+export function worldviewNativeMountPlugin(command: 'serve' | 'build'): Plugin {
   return {
     name: 'worldview-native-mount-module',
     resolveId(id) {
@@ -64,7 +60,7 @@ function worldviewNativeMountPlugin(command: 'serve' | 'build'): Plugin {
   };
 }
 
-function splitSelectors(selectorList: string): string[] {
+export function splitSelectors(selectorList: string): string[] {
   const selectors: string[] = [];
   let start = 0;
   let depth = 0;
@@ -112,7 +108,7 @@ function isInsideKeyframes(rule: { parent?: any }): boolean {
   return false;
 }
 
-function worldviewNativeCssPlugin(): Plugin {
+export function worldviewNativeCssPlugin(): Plugin {
   return {
     name: 'worldview-native-scoped-css',
     resolveId(id) {
@@ -214,7 +210,6 @@ export default defineConfig(({ mode, command }) => {
       ],
     },
     resolve: {
-      alias: { '@/lib/time': path.resolve(repoRoot, 'HermesLatest/apps/desktop/src/lib/time.ts') },
       dedupe: [
         'react',
         'react-dom',

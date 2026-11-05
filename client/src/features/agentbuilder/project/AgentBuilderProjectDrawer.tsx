@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Projects
  * Relationship: This file renders owner-scoped Project creation, selection, and deletion controls and navigates only after canonical persisted deck readback.
  * Entity: Authentication
@@ -13,6 +9,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 
 import BuilderDrawer from '../../../components/builder/BuilderDrawer';
+import { applicationFetch } from '../../../lib/applicationApi';
 import { safeText } from '../deck/deckPrimitives';
 import { BUILDER_DECK_ID } from '../deck/newProjectDeck';
 
@@ -81,7 +78,7 @@ export default function AgentBuilderProjectDrawer({
       .replace(/(^-|-$)/g, '');
 
     try {
-      const response = await fetch(projectsApi, {
+      const response = await applicationFetch(projectsApi, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -132,7 +129,7 @@ export default function AgentBuilderProjectDrawer({
     }
 
     try {
-      const response = await fetch(`${projectsApi}/${project.id}`, {
+      const response = await applicationFetch(`${projectsApi}/${project.id}`, {
         method: 'DELETE',
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -303,7 +300,7 @@ export default function AgentBuilderProjectDrawer({
           </div>
           <button
             onClick={() => {
-              void fetch('/api/auth/logout', {
+              void applicationFetch('/api/auth/logout', {
                 method: 'POST',
                 credentials: 'include',
               })

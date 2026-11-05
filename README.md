@@ -3,9 +3,8 @@
 LiquidAIty is a durable agent system for work that develops over time.
 
 Instead of treating every conversation as a disposable chat, LiquidAIty organizes work inside a
-**Project**. A Project preserves its agents, instructions, tools, relationships, conversation,
-knowledge, runs, and artifacts so the system can continue from an established state rather than
-reconstructing itself on every turn.
+**Project**. A Project preserves its saved agents, instructions, tools, relationships, and provider-owned
+knowledge, while Hermes preserves profiles, sessions, chat history, delivery, and execution.
 
 ## Durable Projects
 
@@ -17,7 +16,7 @@ Each Project brings together:
 - **specialized Cards** for work such as research, analysis, trading, world intelligence, or modeling;
 - **explicit connections** that determine which saved agents may communicate or participate in coordinated work;
 - **provider-owned knowledge** that remains attributable to its real source and storage authority;
-- **Runs and artifacts** that preserve what was actually invoked and produced.
+- **Hermes sessions and task receipts** that report what actually ran without a copied runtime ledger.
 
 A Card is not a temporary role invented for one answer. It is a saved agent with its own durable
 configuration and runtime identity. Connecting Cards makes collaboration explicit without merging their
@@ -53,10 +52,11 @@ contracts.
 LiquidAIty follows a deliberately small ownership rule:
 
 ```text
-TypeScript = transport and pixels
-Python rails = runtime preparation and deterministic computation
+TypeScript = LiquidAIty pixels and typed transport projection
+Python rails = deterministic application operations and graph/data adapters
 models = semantic reasoning
 saved Cards and graph topology = identity and authority
+Hermes = profiles, sessions, delivery, tools, taskgraphs, PTY, telemetry, and lifecycle
 ```
 
 The repository also uses a source-owned CodeGraph overlay:
@@ -75,8 +75,9 @@ file path without copying either authority into the other.
 | Path | Purpose |
 | --- | --- |
 | `client/` | React workbench and visual surfaces |
-| `apps/backend/` | Authenticated HTTP/SSE transport and saved Project access |
-| `apps/python-models/` | Python rails, Card/Run preparation, graph adapters, and deterministic operations |
+| `apps/backend/` | Authenticated LiquidAIty Product APIs and saved Project access; no Hermes chat transport |
+| `apps/python-models/` | Python rails, graph adapters, MCP publication, and deterministic operations |
+| `apps/hermes-liquidaity-plugin/` | Native Hermes hooks/tools plus the LiquidAIty web-dashboard manifest/API/bundle |
 | `services/knowgraph/` | KnowGraph ingestion and Graphiti integration |
 | `agent-products/` | Specialized product applications and controlled imports |
 | `HermesLatest/`, `GraphitiLatest/`, `EngraphisLatest/` | Controlled upstream forks with bounded local divergences |
@@ -85,6 +86,8 @@ The canonical documents have distinct jobs:
 
 | Document | Purpose |
 | --- | --- |
+| [plugin.md](plugin.md) | Canonical Hermes web-plugin integration and runtime ownership contract |
+| [CODEGRAPH.md](CODEGRAPH.md) | CodeGraph product, source-pair, module-cohesion, and repository-ingestion contract |
 | [PLAN.md](PLAN.md) | Current status, evidence, gaps, and next accepted boundary |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Current technical owners, contracts, and controlled divergences |
 | [RUNTIME.md](RUNTIME.md) | Product runtime and acceptance contract |

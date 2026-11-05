@@ -1,9 +1,5 @@
 """Pure saved-Card identity, runtime, provider, and serialization contract."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Saved Cards
 # Relationship: This file defines canonical saved Card identity and serialization and validates each proposed immutable revision before persistence or invocation.
 # Entity: Card Profiles
@@ -15,9 +11,7 @@
 # Entity: Agent Messaging
 # Relationship: This file validates the saved orchestrator switch only for eligible non-Magnetic agent Cards.
 # Entity: Magnetic Membership
-# Relationship: This file recognizes the saved magentic_one runtime while preventing ordinary AutoTools, AutoModel, and orchestrator settings from changing Magnetic authority.
-# Entity: Jev Decisions
-# Relationship: This file validates the optional AutoTools and AutoModel switches as per-Run selectors that never replace durable saved choices.
+# Relationship: This file recognizes the saved magentic_one runtime while preventing ordinary orchestrator settings from changing Magnetic authority.
 
 from __future__ import annotations
 
@@ -49,7 +43,9 @@ _RETIRED_CARD_TOOL_IDS = frozenset({
     "engraphis_link",
     "write_mag_one_instructions",
 })
-_RETIRED_RUNTIME_OPTION_FIELDS = frozenset({"openaiRuntime", "team", "writeMode"})
+_RETIRED_RUNTIME_OPTION_FIELDS = frozenset({
+    "openaiRuntime", "team", "writeMode", "autoTools", "autoModel",
+})
 
 KNOWN_RUNTIME_OPTION_FIELDS = {
     "tools", "skills", "toolsets", "mcpConnectionIds",
@@ -180,30 +176,6 @@ def card_runtime(card: dict[str, Any]) -> dict[str, str]:
 
 def is_magnetic_runtime(runtime: dict[str, Any]) -> bool:
     return runtime.get("kind") == "hermes" and runtime.get("mode") == "magentic_one"
-
-def validate_auto_runtime_options(
-    options: dict[str, Any],
-    runtime: dict[str, Any],
-) -> tuple[bool, bool]:
-    """Validate saved Auto selectors without consulting live availability."""
-
-    values: list[bool] = []
-    for field, error_field in (
-        ("autoTools", "auto_tools"),
-        ("autoModel", "auto_model"),
-    ):
-        value = options.get(field)
-        if value is not None and not isinstance(value, bool):
-            raise CardDomainError(f"card_{error_field}_invalid")
-        if value is not None and (
-            runtime.get("kind") != "hermes"
-            or is_magnetic_runtime(runtime)
-        ):
-            raise CardDomainError(
-                f"card_{error_field}_requires_ordinary_card_runtime"
-            )
-        values.append(value is True)
-    return values[0], values[1]
 
 def validate_saved_provider_selection(
     provider: Any,
@@ -373,7 +345,8 @@ def validate_new_card_revision(card: dict[str, Any]) -> None:
     options = json_object(card.get("runtimeOptions"), "runtime_options")
     runtime = card_runtime(card)
     is_supported_runtime = runtime["kind"] == "hermes"
-    validate_auto_runtime_options(options, runtime)
+    if len(string_list(options.get("skills"), "skills")) != 1:
+        raise CardDomainError("card_skill_exactly_one_required")
     validate_saved_card_runtime_authority(
         options.get("provider"),
         options.get("accessMode"),

@@ -1,15 +1,9 @@
 """Exact Project-scoped KnowGraph Entity, episode, and reference reads."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
 # Relationship: This file performs exact Project-scoped Graphiti Entity, relationship, episode, Know, directory, and bounded-neighborhood reads.
-# Entity: Data Anchors
-# Relationship: This file hydrates selected KnowGraph references with bounded records and provenance for Card input.
 # Entity: Project Knowledge Graph
-# Relationship: This file supplies the exact KnowGraph directory and record projections shown on the shared graph surface.
+# Relationship: This file supplies exact bounded KnowGraph records and provenance to the shared graph surface and MCP pointer reads.
 
 from __future__ import annotations
 
@@ -17,10 +11,10 @@ import hashlib
 import json
 from typing import Any
 
-from app.python_models.data_anchor_contract import (
-    ANCHOR_BODY_LIMIT,
-    MAX_GRAPH_REFERENCE_RESULTS,
-    DataAnchorError,
+from app.python_models.graph_read_contract import (
+    GRAPH_RECORD_BODY_LIMIT,
+    MAX_GRAPH_READ_RESULTS,
+    GraphReadError,
     canonical_json,
     utc_now_text,
 )
@@ -77,7 +71,7 @@ def _read_knowgraph_entity_knows(
 
     entity_id = str(graphiti_entity_id or "").strip()
     if not entity_id:
-        raise DataAnchorError("graphiti_entity_id_required")
+        raise GraphReadError("graphiti_entity_id_required")
     driver, database = knowgraph_driver()
     scope_ids = graphiti_project_scope_ids(project_id)
     try:
@@ -103,9 +97,9 @@ def _read_knowgraph_entity_knows(
                 limit=limit,
             ))
     except Exception as error:
-        if isinstance(error, DataAnchorError):
+        if isinstance(error, GraphReadError):
             raise
-        raise DataAnchorError("knowgraph_entity_know_read_failed") from error
+        raise GraphReadError("knowgraph_entity_know_read_failed") from error
     finally:
         close = getattr(driver, "close", None)
         if callable(close):
@@ -135,7 +129,7 @@ def read_knowgraph_entity_knows(
     """Read the at-most-two exact Knows allowed by the public Entity context."""
 
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 12:
-        raise DataAnchorError("knowgraph_entity_know_limit_invalid")
+        raise GraphReadError("knowgraph_entity_know_limit_invalid")
     return _read_knowgraph_entity_knows(
         project_id, graphiti_entity_id, limit=limit,
     )
@@ -150,7 +144,7 @@ def read_knowgraph_entity_know_candidates(
     """Read a bounded exact candidate pool for Graphiti search/Jev relevance."""
 
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 24:
-        raise DataAnchorError("knowgraph_entity_candidate_limit_invalid")
+        raise GraphReadError("knowgraph_entity_candidate_limit_invalid")
     return _read_knowgraph_entity_knows(
         project_id, graphiti_entity_id, limit=limit,
     )
@@ -164,7 +158,7 @@ def read_recent_knowgraph_knows(
     """Read the newest exact Entity-owned Knows across one Project."""
 
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 12:
-        raise DataAnchorError("knowgraph_recent_know_limit_invalid")
+        raise GraphReadError("knowgraph_recent_know_limit_invalid")
     scope_ids = graphiti_project_scope_ids(project_id)
     driver, database = knowgraph_driver()
     try:
@@ -189,7 +183,7 @@ def read_recent_knowgraph_knows(
                 limit=limit,
             ))
     except Exception as error:
-        raise DataAnchorError("knowgraph_recent_know_read_failed") from error
+        raise GraphReadError("knowgraph_recent_know_read_failed") from error
     finally:
         close = getattr(driver, "close", None)
         if callable(close):
@@ -236,15 +230,15 @@ def read_knowgraph_entity_directory(project_id: str) -> dict[str, Any]:
                 scopeIds=scope_ids,
             ))
     except Exception as error:
-        if isinstance(error, DataAnchorError):
+        if isinstance(error, GraphReadError):
             raise
-        raise DataAnchorError("entity_directory_knowgraph_unavailable") from error
+        raise GraphReadError("entity_directory_knowgraph_unavailable") from error
     finally:
         close = getattr(driver, "close", None)
         if callable(close):
             close()
     if len(count_rows) != 1:
-        raise DataAnchorError("entity_directory_knowgraph_count_invalid")
+        raise GraphReadError("entity_directory_knowgraph_count_invalid")
     raw_count = count_rows[0].get("count")
     # Normalize scalar wrappers at the provider boundary before projection.
     if hasattr(raw_count, "to_native"):
@@ -252,7 +246,7 @@ def read_knowgraph_entity_directory(project_id: str) -> dict[str, Any]:
     if hasattr(raw_count, "toNumber"):
         raw_count = raw_count.toNumber()
     if isinstance(raw_count, bool) or not isinstance(raw_count, (int, float)):
-        raise DataAnchorError("entity_directory_knowgraph_count_invalid")
+        raise GraphReadError("entity_directory_knowgraph_count_invalid")
     raw_entities: list[dict[str, str]] = []
     for row in rows:
         raw_entities.append({
@@ -289,7 +283,7 @@ def read_knowgraph_episodes_exact(
     if not requested:
         return []
     if len(requested) > _KNOWGRAPH_EPISODE_LIMIT:
-        raise DataAnchorError("data_anchor_knowgraph_episode_limit_invalid")
+        raise GraphReadError("knowgraph_episode_limit_invalid")
     driver, database = knowgraph_driver()
     scope_ids = graphiti_project_scope_ids(project_id)
     try:
@@ -310,9 +304,9 @@ def read_knowgraph_episodes_exact(
                 projectId=project_id,
             ))
     except Exception as error:
-        if isinstance(error, DataAnchorError):
+        if isinstance(error, GraphReadError):
             raise
-        raise DataAnchorError("data_anchor_knowgraph_episode_read_failed") from error
+        raise GraphReadError("knowgraph_episode_read_failed") from error
     finally:
         close = getattr(driver, "close", None)
         if callable(close):
@@ -420,9 +414,9 @@ def _read_knowgraph_center_rows(
                     limit=result_limit,
                 ))
     except Exception as error:
-        if isinstance(error, DataAnchorError):
+        if isinstance(error, GraphReadError):
             raise
-        raise DataAnchorError("data_anchor_knowgraph_read_failed") from error
+        raise GraphReadError("knowgraph_read_failed") from error
     finally:
         close = getattr(driver, "close", None)
         if callable(close):
@@ -436,18 +430,18 @@ def read_knowgraph_exact(
     identifier: str,
     *,
     bounded_expansion: int = 0,
-    result_limit: int = MAX_GRAPH_REFERENCE_RESULTS,
+    result_limit: int = MAX_GRAPH_READ_RESULTS,
 ) -> dict[str, Any] | None:
     """Read one project-scoped Neo4j object and a bounded current neighborhood."""
 
     if bounded_expansion < 0 or bounded_expansion > 3:
-        raise DataAnchorError("data_anchor_expansion_invalid")
-    if result_limit < 1 or result_limit > MAX_GRAPH_REFERENCE_RESULTS:
-        raise DataAnchorError("data_anchor_result_limit_invalid")
+        raise GraphReadError("graph_read_expansion_invalid")
+    if result_limit < 1 or result_limit > MAX_GRAPH_READ_RESULTS:
+        raise GraphReadError("graph_read_result_limit_invalid")
     if id_field not in {
         "graphitiEpisodeId", "graphitiEntityId", "graphitiRelationshipId",
     }:
-        raise DataAnchorError("data_anchor_graphiti_reference_unsupported")
+        raise GraphReadError("knowgraph_graphiti_reference_unsupported")
     center_rows, relationship_center, paths = _read_knowgraph_center_rows(
         project_id,
         identifier,
@@ -487,7 +481,7 @@ def read_knowgraph_exact(
             ensure_ascii=False,
             separators=(",", ":"),
             default=str,
-        )[:ANCHOR_BODY_LIMIT],
+        )[:GRAPH_RECORD_BODY_LIMIT],
         "properties": properties,
         "endpointNodes": endpoint_nodes,
         "sourceId": str(center.get("sourceGraphitiId") or ""),

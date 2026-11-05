@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Projects
  * Relationship: This file defines the complete Card deck persisted when a new Project is created.
  * Entity: Saved Cards
@@ -53,8 +49,12 @@ const DEFAULT_SUBAGENT_MODEL = {
 
 const BUILDER_TOOLS = [
   'canvas.inspect',
+  'canvas.upsert_wire',
   'card.create',
   'card.update_configuration',
+  'engraphis_recall_context',
+  'graphiti.search_nodes',
+  'graphiti.search_memory_facts',
   'cbm.search_graph',
   'cbm.trace_path',
   'cbm.get_code_snippet',
@@ -66,6 +66,9 @@ const BUILDER_TOOLS = [
 
 const MAIN_TOOLS = [
   'canvas.inspect',
+  'engraphis_recall_context',
+  'graphiti.search_nodes',
+  'graphiti.search_memory_facts',
   'worldview.set_capability',
 ];
 
@@ -141,6 +144,7 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
         providerModelId: MAIN_CHAT_MODEL_KEY,
         subagentModel: { ...DEFAULT_SUBAGENT_MODEL },
         tools: [...MAIN_TOOLS],
+        skills: ['hermes-agent'],
       },
       parentGraphId: null,
       title: 'Main',
@@ -161,7 +165,7 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
         providerModelId: AGENT_BUILDER_MODEL_KEY,
         subagentModel: { ...DEFAULT_SUBAGENT_MODEL },
         tools: [...BUILDER_TOOLS],
-        skills: ['agent-builder-inspection'],
+        skills: ['codebase-inspection'],
         toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
       },
       parentGraphId: null,
@@ -184,6 +188,7 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         reasoningEffort: 'low',
+        skills: ['hermes-agent'],
       },
       parentGraphId: null,
       title: 'ThinkGraph',
@@ -201,6 +206,8 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: MAGNETIC_MODEL_KEY,
+        skills: ['hermes-agent'],
+        toolsets: ['liquidaity'],
       },
       parentGraphId: null,
       title: 'Magnetic',
@@ -221,7 +228,7 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
         subagentModel: { ...DEFAULT_SUBAGENT_MODEL },
         tools: [...TEAM_TOOLS],
         skills: ['grounded-citations'],
-        toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
+        toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution', 'liquidaity'],
       },
       parentGraphId: null,
       title: 'Team',

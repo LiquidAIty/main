@@ -1,138 +1,163 @@
-# Runtime contract — Hermes Bot Mode
+# Runtime contract — LiquidAIty on Hermes
 
-This is the owner-approved product contract and acceptance standard. It describes
-what must work; it is not a claim that the current implementation has passed live
-acceptance. This document is repository documentation only. Do not load it into
-Card prompts, agent messages, or runtime context.
+[Plugin contract](plugin.md) is the canonical implementation boundary. This file states product
+behavior and acceptance criteria. It is not proof that current source is loaded, and it must never be
+injected into a Card prompt or user turn.
 
-## One real conversation, real saved agents
+## One UI, one runtime
 
-LiquidAIty must provide one real conversation with real saved agents, powered by
-official Hermes Bot Mode. The application must not pretend that agents talked.
-A custom Card-to-Card runtime is outside this contract. Do not introduce one as
-an alternative, fallback, or additional execution layer.
+LiquidAIty is its own React UI inside a Hermes web-dashboard plugin page. Hermes is the only agent
+runtime and owns:
 
-### Ordinary messages go to Main
+- profiles, provider/model resolution, skills, memory providers, and MCP loading;
+- Bot Chats, sessions, history, admission, streaming, approvals, clarification, and Stop;
+- voice/image attachment delivery;
+- `message_agent`, recipient execution, late replies, and sender identity;
+- task/dependency rows, attempts, worker processes, retries, and synthesis;
+- PTY/TUI and runtime telemetry.
 
-Main is the default conversation participant and orchestrator. Ordinary user
-messages reach the actual saved Main Card running through Hermes with its saved
-system prompt, model, tools, and profile. Main must produce an actual answer.
-There is no required `@Main` address or separate Main runtime.
+LiquidAIty owns Product pixels, saved Card revisions, Project wire topology, profile projection,
+application MCP operations, and graph views. It must not introduce a second session API, Gateway
+manager, transcript store, task scheduler, PTY host, or reply waiter.
 
-### `@Name` directly addresses a saved Card
+## Main conversation
 
-An explicit `@Name` addresses the corresponding saved, wired Card in the authorized
-Project. The saved enabled wires define the roster itself. An unwired Card is not
-rostered; mere visibility on the Canvas or an installed profile does not make it
-addressable. The chooser and submission path must resolve that same roster,
-rather than build a global Card list and hide unwanted entries afterward.
-That Card must actually receive the message and execute through Hermes
-with its own saved system prompt, model, tools, and profile.
+Main is the human-facing fast boss. The Main composer sends the user's literal text and selected
+images to the canonical Main Hermes Bot Chat through the generated Gateway client.
 
-Its actual answer appears as `@Name` in the same visible conversation. Main must
-not replace direct delivery with an announcement that it asked the Card, answer
-on the Card's behalf, or impersonate that Card. Mechanical address selection is
-transport, not semantic planning or an application-owned agent executor.
+LiquidAIty does not parse a leading `@Name` into a direct target. Main and Hermes decide whether to
+use native `message_agent`. A mounted composer is accepted only when Send reaches Hermes, history
+comes from Hermes, Stop interrupts the active Hermes submission, and replies retain Hermes-provided
+identity.
 
-Human access to a saved Project Card and an agent's permission to address another
-Card are separate authorities. Preserve Project authorization, saved bindings,
-and the established agent-to-agent permissions; do not invent additional limits
-or silently widen agent grants.
+Main may finish before a delegated Bot. A later Bot answer appears once when Hermes emits or replays it.
+The UI never relabels Main prose as another Card or infers the sender from a wire, title, mention, or text.
 
-### Main also communicates through Hermes Bot Mode
+Main delegates time-consuming work, reviews results, and answers. Main never creates or edits Cards,
+profiles, prompts, skills, tools, or wires.
 
-When Main communicates with another Card, Hermes must perform the real
-`message_agent` operation, recipient execution, delivery, replies, and
-continuation. The reply must come from the actual recipient.
+Hermes currently identifies the canonical Bot Chat by stable profile and exposes no LiquidAIty Project
+key in the generated session contract. v0.1 therefore claims the retained Trading Project only, not
+concurrent multi-Project history isolation. A cloned profile, local session registry, copied transcript,
+or history filter is not an acceptable substitute for a documented Hermes capability.
 
-User-initiated and Main-initiated Card communication must use the same real
-Hermes runtime and saved agent identities. Do not add an application executor,
-return runner, queue, scheduler, reply waiter, synthetic continuation, or second
-communication mode. A queued acknowledgement is not a recipient's answer.
+## Saved Cards and wires
 
-## Cards are the system-prompt authority
+One saved Card maps to one stable Hermes profile. The Card owns its prompt blocks, model/provider,
+selected skill, toolsets, MCP includes, optional Python recipe, and Product identity. LiquidAIty
+publishes that configuration through public profile calls and verifies readback.
 
-Each saved Card owns its system prompt, model, tools, and stable Hermes profile.
-Preserve the saved prompt blocks and their existing compilation into the bound
-Hermes profile. User messages are input to those Cards.
+Every valid enabled wire provides native Bot reachability:
 
-Application code must not invent Builder missions, replacement personas,
-operating instructions, combined agent prompts, canned answers, or waiting and
-delivery-status prose. Repository documentation and test instructions must not
-be injected into agent context. Do not rewrite saved Card prompts to compensate
-for a transport or runtime integration defect.
+- orange `flow` is an ordinary direct relationship;
+- blue `magentic_option` is the same relationship plus Magnetic worker membership.
 
-## The chat contains the actual conversation
+An unwired visible Card is not a target. A wire does not make the target an orchestrator or grant
+reverse access. Main is source-default orchestrator. Any other enabled orchestrator receives only its
+own exact wired roster.
 
-The visible conversation contains correctly attributed user messages and actual
-agent answers. Attribution comes from the saved Card that executed, not from
-guessing who wrote a piece of text or relabelling Main's output.
+Each rostered profile description contains a category plus the Card's exact
+`[ORCHESTRATOR SKILL]` introduction. Main uses those descriptions to choose intelligently; LiquidAIty
+does not implement a deterministic router.
 
-- Use `@Name` for addressed-agent attribution, without emoji or extra role labels.
-- Do not expose internal process commands, delivery JSON, notification envelopes,
-  or model-only scaffolding as conversation messages.
-- Do not substitute “I sent it,” “I asked,” or “waiting for a reply” for the
-  actual result of a directly addressed Card.
-- Do not manufacture replies, tool results, execution claims, or activity.
-- Do not hide duplicate execution or a broken reply path through text matching,
-  deletion of evidence, or cosmetic suppression.
-- Preserve the actual conversation and its correct attribution after reload
-  through the established persistence owners. Do not invent another conversation
-  or session store to work around a missing Hermes contract.
+## Builder
 
-Correct presentation alone is insufficient. If the wrong agent executed, the
-recipient never executed, or the result never arrived, the integration failed.
+Builder builds and never runs. It may author PromptSpecs, prompts, applications, code, and new non-core
+blue worker candidates. It may edit only existing non-core blue workers and their blue Magnetic wires.
+Core system Cards, orange system topology, and unrelated unwired Cards are protected by the Python
+operation owner.
 
-## Keep the connection small
+Saving and testing are separate. Main tests a saved Card through native `message_agent`. Builder
+does not self-run the Card it created.
 
-Application-owned code is limited to the existing authentication and Project
-authorization, saved Card/profile resolution, explicit user addressing,
-supported transport, and established conversation persistence and presentation.
-Hermes owns agent execution and inter-agent communication.
+Builder's lower terminal uses Hermes dashboard `/api/pty`. Closing/collapsing the panel detaches the
+viewer; LiquidAIty does not spawn or stop a TUI process.
 
-Use the actual supported Hermes operations and compare the integration with the
-corresponding Hermes Desktop contracts. Do not infer a usable operation from a
-filename, copy Desktop's UI into the application, or recreate Hermes behavior
-under new TypeScript names. Required external protocol identifiers retain their
-actual names.
+## Direct specialist, Team, and Magnetic
 
-Prefer refactoring the existing connection. When a path is replaced, remove its
-abandoned application-owned implementation and exclusive callers in the same
-change. Do not accumulate alternative paths, compatibility layers without a real
-consumer, mocks, simulated agents, or another runtime.
+Main selects the smallest suitable path:
 
-Preserve the existing UI and Canvas appearance and wiring, Card identities,
-system prompts, CLI surfaces, profile bindings, saved data, and unrelated
-functionality. Hermes vendored source remains protected unless the owner
-explicitly authorizes an exact change. Terminal work remains a separate boundary;
-it must not expand the messaging integration into a replacement runtime.
+1. Call one saved specialist directly for bounded matching work.
+2. Call protected Team directly when no saved specialist matches.
+3. Ask Builder to prepare the exact PromptSpec for deliberate multi-agent work, then send that
+   PromptSpec to Magnetic.
 
-## Acceptance requires real product proof
+Team's Bot turn calls `taskgraph_start` once. Hermes creates one marked root, decomposes it into
+same-profile depth-one workers, and returns to the same root for synthesis.
 
-The following must be demonstrated through the actual loaded application:
+Magnetic's Bot turn calls `taskgraph_start` once. Hermes creates one root restricted to the exact
+blue roster, dispatches/dependency-blocks its children, and returns to the same root for synthesis.
+Magnetic may assign a child to Team; Team then owns its separate same-profile AutoTeam boundary.
 
-1. An ordinary user message reaches Main and Main produces an actual answer.
-2. A user `@Name` message executes the named saved Card through Hermes, rather
-   than making Main claim that it contacted that Card.
-3. The recipient's real answer appears with correct `@Name` attribution in the
-   same visible conversation.
-4. Main's own inter-agent work uses the real `message_agent` operation, the
-   recipient executes, and the resulting answer reaches the visible conversation.
-5. Reload preserves the conversation and correct speaker identities.
-6. Internal delivery payloads, fabricated status prose, and duplicate or
-   misattributed Main messages do not substitute for actual agent communication.
+LiquidAIty renders Task status from Hermes's bundled authenticated Kanban board/task reads and keeps only
+the exact creator lineage rooted in the selected profile session. It has no Kanban board, task copy,
+worker selector, scheduler, or progress simulator.
 
-Use short, meaningful human requests for live verification. Do not use scripted
-models, mock recipients, exact-repeat output tricks, fabricated responses, or
-runtime instructions disguised as test chatter. Do not alter Cards or grants
-merely to make a test pass.
+## Card skills, memory, and Python
 
-Source inspection, typechecks, builds, service health, actual agent execution,
-persistence, visual verification, and owner acceptance are separate proof tiers.
-A successful connection, initial Main acknowledgement, queued receipt, or
-passing build does not establish that the complete conversation works.
+Every runnable Card selects exactly one custom or existing Hermes skill. The Card editor may edit its
+custom skill. Launch MVP has no second LiquidAIty skill library and no automatic skill-making UI.
 
-If a required Hermes contract is absent, identify the exact missing operation
-and the blocked behavior. Do not invent an imitation, quietly change runtime
-ownership, or claim completion. Official Hermes Bot Mode remains the selected
-runtime unless the owner explicitly changes that decision.
+Every retained profile selects Holographic. Built-in Markdown memory, user-profile Markdown, background
+review, curator behavior, and automatic skill creation are disabled.
+
+The on-Card Python editor is retained. Disabled or blank recipes are inert. Enabled recipes run through
+the native LiquidAIty plugin's bounded Python tool with immutable hashes, schemas, timeout, output size,
+tool-call count, and exact saved MCP scope. A bad recipe fails without producing a result or widening
+the Card's grants.
+
+## Graph context and completed-turn intake
+
+The visible Think/Know/Code canvas publishes one compact in-memory navigation map containing exactly
+enabled visible nodes/relationships, provider pointers, and at most one open-node detail record.
+Main Send fails closed until the map shown to the user is synchronized with the plugin cache. Main,
+Builder, ThinkGraph, and KnowGraph receive the pre-rendered map; provider tools perform deeper reads.
+
+After a successful Main turn, the Hermes plugin host—not Main—owns the background ThinkGraph intake task.
+Main cannot start, stop, steer, approve, supervise, or settle it. The hook captures the exact User/Main
+`state.db` row IDs at turn completion; Python rails reads only those rows, the registered auxiliary model
+extracts structured candidates, and Engraphis records the pair outcome while settling zero or more Thinks.
+
+KnowGraph uses Hermes Web pinned to Firecrawl plus Graphiti search/write. ThinkGraph uses Engraphis
+hybrid vector/lexical operations. Main and Builder receive the bounded search grants appropriate to
+their roles. No UI code merges graph meaning or writes provider records.
+
+## Voice, images, and telemetry
+
+Voice and image controls remain LiquidAIty pixels over Hermes session/attachment contracts. They do not
+open another conversation or provider path.
+
+Card glow, running-model count, tokens, and latency use actual Hermes session/subagent/usage data. Unknown
+renders as unavailable. Planned workers, roster size, mentions, and UI intent never count as activity.
+
+## Attribution and persistence
+
+The visible chat contains literal user input and actual Hermes-reported answers. Do not expose internal
+delivery envelopes, task JSON, or model scaffolding as conversation messages. Do not manufacture
+acknowledgements or hide duplicate execution through prose filtering.
+
+Hermes owns conversation history. LiquidAIty does not copy it into a TypeScript conversation store.
+Engraphis raw completed-pair intake is a one-way graph source workflow, not a second chat history or a
+history polling mechanism.
+
+Project switching detaches listeners from the old view. It does not delete Hermes sessions, saved Cards,
+profiles, graph data, or tasks.
+
+## Acceptance tiers
+
+Report each tier separately:
+
+1. source owners and forbidden-residue absence;
+2. focused tests;
+3. full relevant tests;
+4. typechecks and normal/dashboard builds;
+5. loaded plugin discovery and current source identity;
+6. real Main send/history/Stop/voice/image behavior;
+7. real direct specialist, Team, and Magnetic behavior;
+8. Holographic and graph persistence readback;
+9. refreshed external connector catalog;
+10. Jeremiah's visual acceptance.
+
+A source-defined route or passing fixture is not a loaded turn. A task accepted is not a completed task.
+A queued Bot acknowledgement is not a recipient answer. No live success may be claimed without the
+corresponding loaded evidence.

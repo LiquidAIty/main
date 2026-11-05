@@ -1,11 +1,9 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: WorldView
  * Relationship: Transports authenticated Project capability reads and explicit user writes for the one Earth surface while rejecting malformed, cross-Project, duplicate, or mismatched server state.
  */
+
+import { applicationFetch } from '../../lib/applicationApi';
 
 export type ProjectWorldviewCapability = {
   capabilityId: string;
@@ -70,7 +68,7 @@ async function responseJson(response: Response): Promise<unknown> {
 
 export async function loadProjectWorldview(
   projectId: string,
-  fetcher: typeof fetch = fetch,
+  fetcher: typeof fetch = applicationFetch as typeof fetch,
 ): Promise<ProjectWorldviewState> {
   const normalizedProjectId = String(projectId || '').trim();
   if (!normalizedProjectId) throw new Error('project_id_required');
@@ -85,7 +83,7 @@ export async function setProjectWorldviewCapability(
   projectId: string,
   capabilityId: string,
   enabled: boolean,
-  fetcher: typeof fetch = fetch,
+  fetcher: typeof fetch = applicationFetch as typeof fetch,
 ): Promise<ProjectWorldviewCapability> {
   const normalizedProjectId = String(projectId || '').trim();
   const normalizedCapabilityId = String(capabilityId || '').trim();

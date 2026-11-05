@@ -1,15 +1,11 @@
 """Saved AGE Card topology and authorization projections."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: AgentGraph
 # Relationship: This file persists and loads Project-owned Card vertices and relationships through exact fixed AGE queries.
 # Entity: Card Topology
 # Relationship: This file validates saved Card addresses, endpoints, edge identity, direction, handles, enabled state, and one-Magnetic-bus-per-worker constraints.
 # Entity: Agent Messaging
-# Relationship: This file derives one orchestrator Card's addressable targets only from enabled outbound orange flow edges and never grants reverse authority.
+# Relationship: This file derives one orchestrator Card's addressable targets from every enabled incident orange or blue wire while requiring the orchestrator's own saved authority.
 # Entity: Magnetic Membership
 # Relationship: This file derives Magnetic's saved worker membership only from enabled blue wires and preserves each worker's exact revision and Card profile.
 # Entity: Tool Catalog
@@ -254,7 +250,8 @@ def validate_card_topology(nodes: list[dict[str, Any]], edges: list[dict[str, An
     addressable_ids = {
         endpoint
         for edge in edges
-        if edge.get("edgeType") == "flow" and edge.get("enabled") is not False
+        if edge.get("edgeType") in {"flow", "magentic_option"}
+        and edge.get("enabled") is not False
         for endpoint in (edge["source"], edge["target"])
     }
     addresses: dict[str, str] = {}
@@ -271,9 +268,7 @@ def validate_card_topology(nodes: list[dict[str, Any]], edges: list[dict[str, An
             raise CardDomainError(f"card_address_duplicate:{folded}")
         addresses[folded] = card_id
     for edge in edges:
-        if edge.get("edgeType") != "flow":
-            continue
-        if edge.get("enabled") is False:
+        if edge.get("edgeType") != "flow" or edge.get("enabled") is False:
             continue
         targets = direct_orchestrator_targets(edge["source"], cards, [edge])
         if not any(target["cardId"] == edge["target"] for target in targets):
@@ -337,7 +332,7 @@ def connected_agent_targets(
             continue
         # Orange FLOW may address the saved Magnetic Card itself. Blue
         # MAGENTIC_OPTION edges, by contrast, project only worker Cards.
-        if edge_type == "magentic_option" and is_magnetic_runtime(runtime):
+        if edge_type == "magentic_option" and is_magnetic_runtime(runtime) and strict:
             if strict:
                 raise CardDomainError(f"magnetic_worker_runtime_invalid:{peer_id}")
             continue
@@ -423,13 +418,21 @@ def direct_orchestrator_targets(
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Project one saved orchestrator Card's Bots from outbound FLOW edges."""
+    """Project one saved orchestrator Card's Bots from enabled incident wires."""
     source = cards.get(card_id)
     if source is None or not card_has_orchestrator_authority(source):
         return []
-    return connected_agent_targets(
-        card_id,
-        cards,
-        [edge for edge in edges if edge.get("source") == card_id],
-        edge_type="flow",
-    )
+    projected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for edge_type in ("flow", "magentic_option"):
+        for target in connected_agent_targets(
+            card_id,
+            cards,
+            edges,
+            edge_type=edge_type,
+        ):
+            if target["cardId"] in seen:
+                continue
+            seen.add(target["cardId"])
+            projected.append(target)
+    return projected

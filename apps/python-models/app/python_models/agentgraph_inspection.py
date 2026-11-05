@@ -1,14 +1,10 @@
 """Read-only saved-deck and AGE AgentGraph inspection."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: AgentGraph
 # Relationship: This file reads bounded Project-scoped Card, relationship, Run, assignment, lineage, and artifact observations from PostgreSQL and AGE without inventing missing fields.
 # Entity: Card Topology
 # Relationship: This file projects the current saved Card roster and orange or blue relationship records into the AgentGraph inspector response.
 # Entity: Run Ledger
-# Relationship: This file exposes bounded outer Run identity, lifecycle, lineage, assignments, and artifacts while explicitly excluding raw IDF content.
+# Relationship: This file exposes bounded retained Run identity, lifecycle, lineage, assignments, and artifacts while excluding raw model input and transcript content.
 
 from __future__ import annotations
 

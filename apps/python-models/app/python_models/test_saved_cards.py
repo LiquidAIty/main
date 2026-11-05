@@ -1,9 +1,3 @@
-from __future__ import annotations
-
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Saved Cards
 # Relationship: This file verifies immutable Card revision forking, optimistic deck saves, stable Card identity, and portable Project configuration.
 # Entity: Card Profiles
@@ -14,6 +8,8 @@ from __future__ import annotations
 # Relationship: This file verifies orange flow endpoints require exact unique one-word saved Card addresses.
 # Entity: Magnetic Membership
 # Relationship: This file verifies blue membership is direction-independent and contains exactly one Magnetic endpoint.
+
+from __future__ import annotations
 # Entity: AgentGraph
 # Relationship: This file verifies a saved Card revision update also preserves the exact Project-local AGE Card presence.
 
@@ -39,6 +35,7 @@ def _agent(card_id: str, **overrides):
             "providerModelId": "deepseek/deepseek-v4-flash-0731",
             "accessMode": "openrouter-api",
             "tools": [],
+            "skills": ["hermes-agent"],
         },
         "position": {"x": 0, "y": 0},
     }
@@ -238,7 +235,7 @@ def test_flow_endpoints_require_unique_exact_one_word_public_addresses():
         title='Magnetic',
         runtime={"kind": "hermes", "mode": "magentic_one", "profile": "magnetic"},
     )
-    worker = _agent('worker', title='Trading Agent')
+    worker = _agent('worker', title='Trader')
     document = {
         'id': 'd',
         'nodes': [main, helper, magnetic, worker],

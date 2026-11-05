@@ -1,9 +1,5 @@
 """Saved orange and blue Card-topology contracts."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: AgentGraph
 # Relationship: This file verifies saved AGE Card relationships retain exact enabled Card identity and never gain authority from presentation fields.
 #
@@ -160,7 +156,7 @@ def test_team_worker_projection_uses_stable_identity_and_saved_parent_model():
         },
     }]
 
-def test_saved_orchestrator_flag_grants_non_main_outbound_bot_authority():
+def test_saved_orchestrator_flag_grants_non_main_incident_wire_bot_authority():
     main = _main_bot(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
     )
@@ -185,7 +181,7 @@ def test_saved_orchestrator_flag_grants_non_main_outbound_bot_authority():
     )] == ["signal"]
     assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets(
         "signal", indexed, edges,
-    )] == ["worldsignals"]
+    )] == ["main", "worldsignals"]
 
 def test_magnetic_cannot_gain_outbound_orange_bot_authority():
     magnetic = _agent(
@@ -204,7 +200,7 @@ def test_magnetic_cannot_gain_outbound_orange_bot_authority():
               "edgeType": "flow"}],
         )
 
-def test_delegate_orchestrator_can_remain_a_blue_worker_with_an_outbound_orange_roster():
+def test_delegate_orchestrator_can_remain_a_blue_worker_with_an_incident_wire_roster():
     main = _main_bot(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
     )
@@ -237,7 +233,7 @@ def test_delegate_orchestrator_can_remain_a_blue_worker_with_an_outbound_orange_
     )] == ["worldview"]
     assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets(
         "worldview", indexed, edges,
-    )] == ["worldsignals"]
+    )] == ["main", "worldsignals", "magnetic"]
 
 def test_flow_creation_reconnection_and_main_bot_authority():
     controller = _main_bot("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})

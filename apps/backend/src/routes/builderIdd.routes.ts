@@ -1,7 +1,3 @@
-// Graph + less = more: less code that does the same work as more code is more useful.
-// Entity names the feature; Relationship explains why this file belongs and what it contributes.
-// Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-// Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: IDD
 // Relationship: This file exposes the Project-authorized Card editor projection materialized from the literal IDD and current configured model catalog.
 // Entity: Tool Catalog
@@ -195,6 +191,35 @@ builderIddRoutes.get('/script-tools', async (req, res) => {
       references: [],
       paletteFingerprint: '',
       header: null,
+    });
+  }
+});
+builderIddRoutes.get('/card-script-runtime', async (req, res) => {
+  const projectId = String(req.query.projectId || '').trim();
+  const deckId = String(req.query.deckId || '').trim();
+  const cardId = String(req.query.cardId || '').trim();
+  if (!projectId || !deckId || !cardId) {
+    return res.status(400).json({ ok: false, error: 'card_script_scope_required' });
+  }
+  if (!(await authorizeCardProject(req, projectId))) {
+    return res.status(403).json({ ok: false, error: 'card_editor_project_access_denied' });
+  }
+  try {
+    const result = await requestPythonRailsJson('/card-script/runtime', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, deckId, cardId }),
+    }) as Record<string, unknown>;
+    if (
+      result?.ok !== true
+      || (result.script !== null && typeof result.script !== 'object')
+      || Array.isArray(result.script)
+    ) throw new Error('card_script_runtime_invalid');
+    return res.json({ ok: true, script: result.script ?? null });
+  } catch (error) {
+    return res.status(503).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'card_script_runtime_unavailable',
     });
   }
 });

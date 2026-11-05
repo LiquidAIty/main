@@ -1927,6 +1927,10 @@ DEFAULT_CONFIG = {
         # Max triage tasks decomposed per tick, bounding the aux-LLM burst from a bulk load. Excess
         # defers to the next tick.
         "auto_decompose_per_tick": 3,
+        # Per-profile structural task mode. "team" marks a saved profile whose
+        # taskgraph uses bounded auto decomposition, same-profile workers, and
+        # final synthesis on the same root. Empty preserves ordinary Hermes tasks.
+        "task_mode": "",
         # Running tasks with no heartbeat (last_heartbeat_at) for this many seconds are reclaimed to
         # ready on the next tick; a still-running local worker is terminated first. 0 = off.
         "dispatch_stale_timeout_seconds": 14400,

@@ -1,0 +1,51 @@
+/**
+ * Entity: Card Topology
+ * Relationship: Projects each persisted orchestrator wire roster into its stable Hermes profile after exact deck readback.
+ * Entity: Agent Messaging
+ * Relationship: Keeps native Bot reachability and Magnetic's blue worker ceiling synchronized with saved orange and blue topology.
+ */
+
+import type { DeckDocument } from '../../types/agentgraph';
+import {
+  hasAgentOrchestratorAuthority,
+  wiredBotTargets,
+} from '../agentbuilder/deck/deckPrimitives';
+import { configureHermesProfile } from './hermesProfileClient';
+
+export type HermesTopologyPlan = {
+  cardId: string;
+  profile: string;
+  botModeRoster: string[];
+};
+
+export function hermesTopologyPlans(deck: DeckDocument): HermesTopologyPlan[] {
+  return deck.nodes.flatMap((card): HermesTopologyPlan[] => {
+    if (
+      card.enabled === false
+      || card.runtime.kind !== 'hermes'
+      || (!hasAgentOrchestratorAuthority(card) && card.runtime.mode !== 'magentic_one')
+    ) return [];
+    const targets = wiredBotTargets(deck, card.id);
+    const roster = card.runtime.mode === 'magentic_one'
+      ? targets.filter((target) => target.edgeType === 'magentic_option')
+      : targets;
+    return [{
+      cardId: card.id,
+      profile: card.runtime.profile,
+      botModeRoster: [...new Set(roster.map((target) => target.profile))],
+    }];
+  });
+}
+
+export async function synchronizeHermesTopologyProfiles(
+  deck: DeckDocument,
+): Promise<HermesTopologyPlan[]> {
+  const plans = hermesTopologyPlans(deck);
+  for (const plan of plans) {
+    await configureHermesProfile({
+      profile: plan.profile,
+      botModeRoster: plan.botModeRoster,
+    });
+  }
+  return plans;
+}

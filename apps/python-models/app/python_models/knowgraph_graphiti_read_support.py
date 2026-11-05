@@ -1,9 +1,5 @@
 """Shared Graphiti/Neo4j read connection and Relationship metadata."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
 # Relationship: This file opens Project-scoped Graphiti reads and removes citation URLs and embedding vectors from KnowGraph projections.
 # Entity: Jev Decisions
@@ -17,7 +13,7 @@ import os
 from typing import Any
 from urllib.parse import urlsplit
 
-from app.python_models.data_anchor_contract import DataAnchorError
+from app.python_models.graph_read_contract import GraphReadError
 from app.python_models.jev_validation import (
     validate_rounded_choice_winner,
     validate_rounded_probability_distribution,
@@ -99,11 +95,11 @@ def knowgraph_driver() -> tuple[Any, str]:
     user = os.environ.get("NEO4J_USER", "").strip()
     password = os.environ.get("NEO4J_PASSWORD", "").strip()
     if not uri or not user or not password:
-        raise DataAnchorError("data_anchor_knowgraph_unavailable")
+        raise GraphReadError("knowgraph_unavailable")
     try:
         from neo4j import GraphDatabase
     except ImportError as error:
-        raise DataAnchorError("data_anchorknowgraph_driver_unavailable") from error
+        raise GraphReadError("knowgraph_driver_unavailable") from error
     return GraphDatabase.driver(uri, auth=(user, password)), database
 def graphiti_episode_ids(item: dict[str, Any]) -> list[str]:
     values: list[str] = []

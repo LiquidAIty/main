@@ -1,19 +1,13 @@
 """Focused exact-symbol read contracts for CodeGraph."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: CodeGraph
 # Relationship: This file verifies exact qualified-symbol reads preserve repository-relative source coordinates, structural predicates, Feature contributions, and grouped caller records without semantic interpretation.
-# Entity: Data Anchors
-# Relationship: This file verifies exact Symbol hydration uses only the authorized CBM snippet and bounded trace operations.
 # Entity: Builder Card
 # Relationship: This file verifies the shared Code view is unavailable unless the persisted Builder Card grants every required read operation.
 # Entity: Tool Catalog
 # Relationship: This file verifies projection, File expansion, and source read each enforce the exact saved CBM grant set.
 # Entity: Project Knowledge Graph
-# Relationship: This file verifies one File can contribute to multiple Features and the shared workspace receives exact structural expansions and explicit source reads.
+# Relationship: This file verifies one File can contribute to multiple Features and the shared workspace receives exact authorized structural expansions, pointer reads, and explicit source reads.
 
 from __future__ import annotations
 
@@ -53,13 +47,13 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol(
         observed.update(kwargs)
         return [
             {
-                "qualified_name": "project.module.materialize_idf",
-                "name": "materialize_idf",
+                "qualified_name": "project.module.resolve_graph_pointer",
+                "name": "resolve_graph_pointer",
                 "label": "Function",
                 "file_path": "C:/Projects/LiquidAIty/main/apps/python-models/app/python_models/idf.py",
                 "start_line": 37,
                 "end_line": 78,
-                "source": "def materialize_idf():\n    pass",
+                "source": "def resolve_graph_pointer():\n    pass",
                 "signature": "()",
                 "fp": "current-fingerprint",
             },
@@ -68,19 +62,19 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol(
 
     monkeypatch.setattr(
         codegraph_reference_reads,
-        "call_materializer_read_tools",
+        "call_graph_read_tools",
         reader,
     )
     record = read_codegraph_exact(
         "project-1",
         "deck_builder",
         "card_helper",
-        "project.module.materialize_idf",
+        "project.module.resolve_graph_pointer",
         bounded_expansion=1,
     )
 
     assert record is not None
-    assert record["cbmQualifiedName"] == "project.module.materialize_idf"
+    assert record["cbmQualifiedName"] == "project.module.resolve_graph_pointer"
     assert record["properties"]["file"] == "apps/python-models/app/python_models/idf.py"
     assert record["relationshipEvidence"]["callers"][0]["qualified_name"].endswith("caller")
     assert [name for name, _args in observed["calls"]] == [
@@ -95,11 +89,11 @@ def test_codegraph_exact_read_normalizes_provider_grouped_trace_json(
     def reader(**_kwargs):
         return [
             {
-                "qualified_name": "project.module.materialize_idf",
-                "name": "materialize_idf",
+                "qualified_name": "project.module.resolve_graph_pointer",
+                "name": "resolve_graph_pointer",
                 "label": "Function",
                 "file_path": "apps/python-models/app/python_models/idf.py",
-                "source": "def materialize_idf():\n    pass",
+                "source": "def resolve_graph_pointer():\n    pass",
             },
             {
                 "callers": {
@@ -115,14 +109,14 @@ def test_codegraph_exact_read_normalizes_provider_grouped_trace_json(
 
     monkeypatch.setattr(
         codegraph_reference_reads,
-        "call_materializer_read_tools",
+        "call_graph_read_tools",
         reader,
     )
     record = read_codegraph_exact(
         "project-1",
         "deck_builder",
         "card_helper",
-        "project.module.materialize_idf",
+        "project.module.resolve_graph_pointer",
         bounded_expansion=1,
     )
 
@@ -152,7 +146,7 @@ def test_codegraph_projection_preserves_one_file_with_multiple_feature_membershi
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
                         lambda **_: pytest.fail("annotation projection must not call CBM"))
     result = read_codegraph_view({
         "projectId": "project-1",
@@ -214,7 +208,7 @@ def test_annotation_graph_and_file_text_are_independent_of_cbm_and_builder_grant
     source.write_text("// Entity: Example\n// Relationship: Explains this file.\nexport const value = 1;", encoding="utf-8")
     monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
                         lambda *_: pytest.fail("annotation graph must not depend on a saved agent"))
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
                         lambda **_: pytest.fail("annotation graph must not call CBM"))
 
     result = read_codegraph_view({
@@ -258,7 +252,7 @@ def test_codegraph_file_set_uses_two_cbm_queries_not_per_file_symbol_traces(monk
                          ["client/b.ts", "", ""]]),
             _query_rows([["client/b.ts", "client/caller.ts", "CALLS"]]),
         ]
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", reader)
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools", reader)
     result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
                                  "mode": "file", "filePaths": ["client/a.ts", "client/b.ts"]})
     assert result["status"] == "ready"
@@ -287,7 +281,7 @@ def test_file_query_pages_are_complete_without_a_total_neighbor_limit(monkeypatc
         assert len(kwargs["calls"]) == 1
         assert kwargs["calls"][0][1]["cursor"] == "page-two"
         return [_query_rows([["client/a.ts", "client/two.ts", "CALLS"]])]
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools", reader)
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools", reader)
     result = codegraph_reference_reads._read_codegraph_files(
         {"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
          "tools": {"cbm.query_graph"}}, ["client/a.ts"])
@@ -297,7 +291,7 @@ def test_file_query_pages_are_complete_without_a_total_neighbor_limit(monkeypatc
 
 
 def test_nonadvancing_query_cursor_is_incomplete_not_ready(monkeypatch):
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
         lambda **kwargs: [_query_rows([["client/a.ts", "", ""]], has_more=True, next_cursor="same")
                           for _ in kwargs["calls"]])
     result = codegraph_reference_reads._read_codegraph_files(
@@ -309,7 +303,7 @@ def test_nonadvancing_query_cursor_is_incomplete_not_ready(monkeypatch):
 
 
 def test_missing_indexed_file_and_failed_query_do_not_become_empty_success(monkeypatch):
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
         lambda **kwargs: [_query_rows([]), {"error": "read_timeout"}])
     result = codegraph_reference_reads._read_codegraph_files(
         {"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
@@ -320,7 +314,7 @@ def test_missing_indexed_file_and_failed_query_do_not_become_empty_success(monke
 
 
 def test_query_rejects_rows_outside_the_requested_file_set(monkeypatch):
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
         lambda **kwargs: [_query_rows([["client/a.ts", "", ""],
                                      ["client/unselected.ts", "client/other.ts", "CALLS"]]),
                           _query_rows([["client/a.ts", "", ""]])])
@@ -335,7 +329,7 @@ def test_query_rejects_rows_outside_the_requested_file_set(monkeypatch):
 def test_file_expansion_requires_saved_query_grant_before_provider_call(monkeypatch):
     monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
                         lambda *_: _saved_builder(tools=["cbm.search_graph", "cbm.get_code_snippet", "cbm.trace_path"]))
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
                         lambda **_: pytest.fail("ungranted query must not run"))
     result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
                                  "mode": "file", "filePaths": ["client/example.ts"]})
@@ -348,7 +342,7 @@ def test_file_source_reads_repository_text_without_symbol_tools(monkeypatch, tmp
     source = tmp_path / "client/src/example.ts"
     source.parent.mkdir(parents=True)
     source.write_text("export const value = 1;", encoding="utf-8")
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
                         lambda **_: pytest.fail("file text must not call a symbol reader"))
     monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
                         lambda *_: pytest.fail("file text must not load an agent"))
@@ -364,7 +358,7 @@ def test_file_source_reads_repository_text_without_symbol_tools(monkeypatch, tmp
 
 
 def test_browser_source_refuses_symbol_selection_before_any_provider_call(monkeypatch):
-    monkeypatch.setattr(codegraph_reference_reads, "call_materializer_read_tools",
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
                         lambda **_: pytest.fail("symbol read must not run"))
     with pytest.raises(ValueError, match="codegraph_symbol_selection_not_supported"):
         read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",

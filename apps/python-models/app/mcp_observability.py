@@ -1,13 +1,9 @@
 """Process/source observability and structurally typed MCP outcomes."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: MCP Host
 # Relationship: This file records bounded MCP process, session, authorization, and request outcomes while hashing sensitive identities and redacting secrets from diagnostic details.
 # Entity: Tool Catalog
-# Relationship: This file hashes the complete code-owned catalog source boundary and records catalog identity without exposing request arguments or credentials.
+# Relationship: This file hashes the complete code-owned catalog source boundary, composes product-plus-source catalog version metadata, and records catalog identity without exposing request arguments or credentials.
 
 from __future__ import annotations
 
@@ -29,6 +25,15 @@ _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
 _APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 CATALOG_SOURCE_PATHS = (
+    os.path.join(_REPO_ROOT, "package.json"),
+    os.path.join(_REPO_ROOT, "apps", "hermes-liquidaity-plugin", "plugin.yaml"),
+    os.path.join(
+        _REPO_ROOT,
+        "apps",
+        "hermes-liquidaity-plugin",
+        "dashboard",
+        "manifest.json",
+    ),
     os.path.join(_APP_ROOT, "mcp_host.py"),
     os.path.join(_APP_ROOT, "mcp_auth.py"),
     os.path.join(_APP_ROOT, "mcp_catalog_runtime.py"),
@@ -70,6 +75,33 @@ def catalog_source_sha256() -> str:
     return digest.hexdigest()
 
 
+def application_version() -> str:
+    """Read the one LiquidAIty product version shared by plugin metadata."""
+
+    try:
+        with open(
+            os.path.join(_REPO_ROOT, "package.json"),
+            encoding="utf-8",
+        ) as package_file:
+            package = json.load(package_file)
+        version = str(package.get("version") or "").strip()
+        return version or "unknown"
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return "unknown"
+
+
+def catalog_implementation_version() -> str:
+    """Version MCP metadata by product release and exact catalog source."""
+
+    version = application_version()
+    source_sha256 = catalog_source_sha256()
+    return (
+        f"{version}+catalog.{source_sha256[:12]}"
+        if source_sha256
+        else version
+    )
+
+
 def _startup_source_identity() -> tuple[str, str]:
     """Capture the loaded checkout and complete catalog-source bundle once."""
     try:
@@ -90,6 +122,7 @@ def _startup_source_identity() -> tuple[str, str]:
 STARTUP_ID = uuid4().hex
 STARTUP_PROCESS_ID = os.getpid()
 STARTUP_SOURCE_REVISION, STARTUP_SOURCE_SHA256 = _startup_source_identity()
+STARTUP_CATALOG_VERSION = catalog_implementation_version()
 TRACE_LOCK = threading.Lock()
 
 

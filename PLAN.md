@@ -1,376 +1,226 @@
 # LiquidAIty current plan
 
-[Overview](README.md) · [Execution law](AGENTS.md) · [Known failures](DONT.md) · [Current architecture](ARCHITECTURE.md) · [Deferred work](FUTURE.md)
+[Plugin contract](plugin.md) · [CodeGraph contract](CODEGRAPH.md) · [Execution law](AGENTS.md) · [Rejected paths](DONT.md) ·
+[Current architecture](ARCHITECTURE.md) · [Deferred work](FUTURE.md)
 
-This file records current status and the next approved boundary. It is not runtime input, a task
-ledger, a historical report, or authority to begin deferred work. [ARCHITECTURE.md](ARCHITECTURE.md#bot-mode-application-boundary)
-owns the durable Bot Mode implementation description.
+This file records the current source state, remaining proof, and the order of work. It is not runtime
+input, a task ledger, or permission to revive a removed layer. plugin.md owns the Hermes integration
+contract.
 
-## Product outcome
+## Goal
 
-LiquidAIty's MVP is a persistent Project workbench where:
+Ship LiquidAIty as a distinctive Hermes web-dashboard UI plugin with one runtime owner:
 
-- saved Cards own durable identity, prompt, provider/model/profile, grants, and topology;
-- Main is the human-facing Project conversation and bounded orchestration agent;
-- ThinkGraph compounds Project reasoning in Engraphis;
-- KnowGraph preserves sourced evidence and provenance in Graphiti/Neo4j;
-- Builder turns Project reasoning and evidence into PromptSpecs, Cards, applications, code, artifacts,
-  and executable missions;
-- Magnetic remains the saved coordination agent with exact blue membership; worker execution is deferred;
-- Team remains a saved general-purpose agent; automatic worker behavior is deferred;
-- specialized domain Cards add bounded capabilities without becoming graph authorities.
-
-The retained saved-Card Run contract uses one canonical `in.idf` for saved revision, dynamic input,
-selected data, images and grants. The current Bot Mode chat route submits directly to Hermes; its
-working conversation is not proof of Run/IDF or completed-Main graph-capture integration.
+- Hermes owns chat, sessions, history, delivery, reply identity, Bot Mode, profiles, skills, tools,
+  memory-provider loading, task execution, PTY, telemetry, and cancellation.
+- LiquidAIty owns its product pixels, saved Card revisions, Project wire topology, application MCP
+  operations, and graph views.
+- Engraphis, Graphiti, CBM, AGE, and Holographic retain separate authority.
+- No application-owned transport, Gateway manager, copied task runtime, IDF pipeline, or hidden
+  fallback survives.
 
 ## Current source truth
 
-### Saved Cards and new Projects
+### Plugin and UI host
 
-The server attaches six core Cards to a new agent Project: Main, Builder, ThinkGraph, Magnetic, Team,
-and KnowGraph. The default server topology contains Main → Builder and Team ↔ Magnetic only. Client
-seed examples also contain optional/domain Cards, but those examples are not the saved-state authority
-for an existing Project.
+The first-party plugin is `apps/hermes-liquidaity-plugin`. Its native entry is
+`plugin.yaml` plus `register(ctx)`. Its web entry is `dashboard/manifest.json` plus the
+prebuilt dashboard bundle and authenticated plugin API.
 
-PostgreSQL current Card revisions and grants remain authoritative. A source seed, title, installed
-profile, or historical screenshot cannot establish one Project's current configuration.
+The dashboard bootstrap uses Hermes's injected React and plugin registry. LiquidAIty's existing
+Agent Builder workspace renders directly as the plugin page—no Electron, iframe, second React host, or
+replacement stock UI.
 
-### Graph context
+The browser obtains profile-scoped authenticated WebSocket URLs from the dashboard SDK. It imports
+Hermes's generated Gateway contract/client and maps public events into existing LiquidAIty components.
 
-- The canonical Entity directory is a complete union of separate Engraphis and Graphiti rows. It does
-  not persist a merged identity.
-- Exact Data Anchors resolve provider-owned IDs and bounded data before Python materializes the single
-  IDF.
-- The approved compact map is JSON of the Entity/Relationship view the user sees at that turn, with
-  only the single displayed top Jev result, not a second candidate or hidden graph data. It is transient
-  turn context, not a graph record or agent tool.
-  ThinkGraph preparation includes map context; no automatic delivery from Main's conversation save is connected.
-  The custom map plugin and endpoint are removed. Ordinary per-turn view delivery through the existing
-  application/Hermes input path is not yet proven in Preview; do not restore a plugin or tool to claim it.
-  Graph agents use their existing granted Engraphis and Graphiti readers; the application publishes
-  no additional Project-graph read or research-preparation tools.
-- The joined graph may visually pair exact same-name provider members without becoming another graph.
-- Only Entities render as graph nodes. Thinks and Knows are attached properties; Graphiti episodes,
-  citations, and supporting IDs remain evidence/provenance and never become visible Project nodes.
-- The Entity inspector defaults to KnowGraph when both authorities exist and shows at most two current
-  provider-projected attached Thinks or Knows. Search/Results and a Relevant/Recent switch are not current UI.
-- Automatic Jev relevance ranking and the default Relevant/Recent packet are removed from Card preparation.
-  Explicit provider selections and existing graph readers remain; the separate map-delivery proof gap above
-  is unchanged. No replacement ranking filter or retrieval loop is introduced.
-- One unified canvas shows **Think** in blue and **Know** in orange by default. The detailed graph-design
-  inspector owns the small color-key visibility controls plus the deliberate default reset; an empty-canvas
-  click clears selection and returns to that combined visible-layer view without changing visibility.
-- Entity radius derives from distinct incoming connected Entities in the visible relationship view.
-  Repeated relationships from one source do not multiply its contribution; word counts do not affect size.
-  Jev relationship probability governs spring strength, distance and edge width, independently of radius.
-- The existing Graphs workspace has an opt-in violet Code source on the same 2D canvas.
-  Current source annotations own category selection and file-specific relationship prose; they load
-  independently of CBM and agent startup. The inspector exposes category checkboxes and All/None,
-  preserving the selection when Code is hidden. Opening Code does not select every category; All is explicit.
-  Each selected file set is read through CBM set queries for incoming/outgoing Calls/Imports, not a browser
-  per-file loop or Python per-symbol traversal. Category records and membership edges remain selector
-  data, not rendered hubs or spokes. Only Files and actual directed CBM Calls/Imports render for Code,
-  including cross-category neighbors. Saved grants still govern structural reads.
-- Think/Know may share an Entity; Code Files never merge into it or add a third inspector tab.
-  Exact annotation-name matches supply transient category-centre attraction and a violet presence rim.
-  Code radius derives from distinct incoming Files across real Calls/Imports, at a smaller file-node scale;
-  the inspector's caller count remains Calls-only. Structural springs retain real directions,
-  and local category connectivity supplies a soft non-radial grouping influence. Knowledge retains
-  its Jev `galaxy` transfer curve in the ordinary force simulation, not whole-canvas orbital mode.
-  Code uses no Jev probabilities. Code-only uses the Communities preset; mixed/knowledge uses Compact
-  with Code category attraction. The existing renderer owns all movement. Tuning controls are internal;
-  normal users retain source/category visibility, inspection and navigation.
-  Code has local damping, solid call arrows and thinner dashed import arrows, with no new legend.
-- Manual Jev Focus/collapse, its black-hole view replacement, and its dedicated HTTP/Python route are
-  removed. Ordinary selection, source navigation, pan/zoom, saved review flags and Think/Know evidence
-  inspection remain. Upstream renderer options are not a second application Focus path.
-- Loaded proof currently includes an actual CBM read of trading_forecast.py returning four Files and
-  three directed cross-file Calls. Preview renders real file nodes and arrows, but larger file reads
-  still report timeouts. Full category structure, the reduced node scale, and a real populated
-  Think/Know/Code association still require acceptance; no graph records were seeded for proof.
+### Main, history, Stop, voice, images, and activity
 
-### ThinkGraph
+Main uses the canonical Hermes Bot Chat and the generated Gateway client. Hermes owns session
+creation/resume/history, prompt submit, streaming, approvals, clarification, Stop, reconnect/replay,
+image delivery, and author identity. LiquidAIty has no Main session route, backend Bot requester,
+second decoder, transcript poller, or reply waiter.
 
-The approved design stores the full application conversation in Engraphis. ThinkGraph receives new pairs
-from that saved source and uses the existing extraction and Think settlement path; no new agent tools,
-grants or Card prompts are required. The prior automatic-capture paragraph was not proof of the restored
-Bot Mode source and must not be used to reintroduce a Main-session completion hook.
+Voice remains a LiquidAIty control surface over Hermes-owned chat delivery. The UI never treats local
+speech state as a second session authority.
 
-Current storage uses Engraphis's existing raw-event ledger at the fixed application-instance
-`db/engraphis.sqlite`, with Project-named workspaces. This is **not per-user database selection**:
-Project ownership is enforced at the application boundary. The old schema-20 `db/thinkgraph.sqlite`
-is preserved untouched. Old test conversations are not migrated, seeded, replayed or processed.
-Raw conversation events are not Thinks and do not become Entity nodes.
+Card glow, live model count, token totals, and average latency read actual Hermes session/subagent/usage
+state. Missing Hermes data renders unavailable; it is never guessed.
 
-The application-side save-triggered handoff is removed, including its Main-session connection,
-receipt-based pair search, automatic ThinkGraph delivery, and completion-wait/settlement wrapper.
-Conversation writes and reads retain their existing Engraphis storage implementation and do not
-invoke ThinkGraph. The graph's existing preparation, extraction, settlement and source readers remain;
-no replacement automatic delivery is connected. Historical tests do not prove a current automatic path.
-The rejected invocation-scope plugin and its callback and transport additions remain removed.
+Hermes currently exposes the canonical `Bot Chat` by stable profile, not by LiquidAIty Project. The
+generated client exposes no Project/session metadata key. Source therefore claims one retained Trading
+development Project, not concurrent multi-Project Main-history isolation. No profile cloning, session map,
+history filter, or replacement transport is permitted to conceal this exact upstream capability gap.
 
-The completed-pair prompt now distinguishes substantive Entity-specific reasoning from general strategy
-and incidental mentions. Each Think retains one primary native incidence. The existing Engraphis text
-mention linker records secondary references separately; they do not copy Thinks onto other Entities or
-create semantic relationships. The inspector renders persisted mentions and incoming references, with
-clickable targets limited to exact current canvas Entities. The proposed content-only visibility filter
-was removed at the owner's direction. No ABOUT fanout or second Entity store was introduced.
+### Saved Cards and profiles
 
-Test 419 and its comparison follow-up produced 13 nonempty, distinct Thinks on 9 Entities, with 14 current
-Jev relationships and one primary incidence per Think. ASTS and LUNR retained their separate reasoning;
-an actual Call options Think mention opened ASTS without creating another record. This is bounded live
-evidence, not a claim that every substantive statement in every response is extracted. Agent context
-depth, native hook delivery, and the startup/activity delay remain separate follow-ups.
+Each saved Card maps to one stable Hermes profile. Card Save persists the Product revision, creates the
+profile through the public API when missing, configures it, and verifies readback.
 
-#### Remaining storage task — private database selection per user account
+The profile projection includes provider/model, compiled SOUL, one selected custom or Hermes skill,
+toolsets, exact MCP includes, Holographic policy, exact Bot roster, useful categorized description,
+optional Card Python, and Team/Magnetic task mode.
 
-The intended private Engraphis layout is **one SQLite database per authenticated user account,
-containing that user's multiple Project workspaces**. Preserving the current instance database for
-the invocation repair does not accept it as the final multi-user design.
+New Projects retain six core Cards: Main, Builder, ThinkGraph, Magnetic, Team, and KnowGraph. Persisted
+Project Cards remain authority; source defaults do not overwrite an existing Project.
 
-- Select the database server-side from authenticated ownership, never model input or a profile name.
-- Preserve the existing Project workspace structure within each user's database and retain Project authorization.
-- Scope connections to requests/jobs; do not introduce a global mutable "current user" database switch.
-- Preserve existing data with a verified migration and readback before any cutover.
-- Do not create a database per Card, agent, Hermes session, or invocation.
+### Roles and wires
 
-This is a separate remaining task. No database layout, migration, connection-owner change, or
-cutover is part of this Think allocation and mention repair.
+Every valid enabled wire provides direct native Bot reachability:
 
-### KnowGraph
+- orange `flow`: ordinary Bot relationship;
+- blue `magentic_option`: the same direct relationship plus Magnetic worker membership.
 
-The approved entrance is ordinary Main-to-KnowGraph Hermes Bot Mode. A Think may retain the optional
-`researchRequested` boolean, but it does not dispatch research. There is no application research-ticket
-registry, generated personal-context extraction, or separate structured research-question record.
-New live Bot Mode acceptance after the current removal must be reported separately from older receipts.
+Main is the fast boss and source-default orchestrator. It delegates, reviews, and answers; it never
+builds. Builder builds and never runs. Main tests a saved Card through `message_agent`.
 
-KnowGraph has Hermes Web plus its saved Graphiti read/write corridor. A deliberately supplied Think is
-framing, not evidence. Useful sourced findings enter Graphiti through Graphiti's queued `add_know`, which
-creates one first-class `Episodic:Know`, reuses an exact supplied or exact-name Entity when present and creates
-that Entity otherwise, stores its exact UUID in `entity_uuid`, removes Know `ABOUT` and `MENTIONS` attachment
-edges, updates Graphiti communities by default, and may associate the continuing research thread with one Saga. One Know has
-one verified source document, one exact evidence passage, one self-contained observation, one separate bounded
-interpretation and optional direction relative to an explicit proposition. Its typed citation properties and
-plain-text episode content remain inspectable and searchable through Graphiti. Supporting-only,
-challenging-only and neutral findings are valid. Distinct sources remain distinct Knows, including several
-attached to the same Entity; deterministic content identity prevents repeated copies of the same sourced Know.
-Hermes `grounded-citations` verifies the research chain from actual retrieval through exact extracted-page
-evidence before the KnowGraph root sends the typed citation to the unchanged Graphiti per-group processing
-queue. Python rails preserves Project scope and typed citation transport; it does not operate a second web
-retrieval or citation ledger.
-The acceptance receipt supplies the deterministic Know UUID and content hash without claiming persistence;
-`get_know` provides the exact readback used to establish materialization.
-The application forwards the native queued result without a completion-wait helper or research-settlement
-wrapper. Existing graph reads and refresh behavior remain; no custom research-completion callback is retained.
-The source-default KnowGraph Card uses Sol; ThinkGraph remains Luna. Queue acceptance does not prove
-materialization.
+Builder's mutation tools enforce a narrow boundary in Python: create new non-core blue worker
+candidates, edit existing non-core blue workers, and maintain their blue Magnetic wires. Core Cards,
+orange system topology, and unrelated unwired Cards are protected.
 
-Main consults the saved KnowGraph Card through its exact saved wire authority. KnowGraph currently performs
-its bounded research with the saved Card's own granted Web and Graphiti capabilities. No automatic Team,
-candidate-worker, scheduler, task-store, or worker-pool behavior is current or proven.
+Profile descriptions publish each connected Card's category plus exact `[ORCHESTRATOR SKILL]`
+introduction so Main can distinguish specialists, memory/research helpers, Team, and Magnetic without
+copying their full prompts.
 
-### Execution
+### Team and Magnetic taskgraphs
 
-- Every recognised enabled wire contributes messaging reachability. Blue has additional deferred Magnetic
-  membership meaning; it does not start work.
-- The connected runtime owns inference, delivery, recipient execution, transcripts, queues, retries, and
-  completion. LiquidAIty has no direct target runner, reply-wait protocol, task-progress mirror, or separate
-  Magnetic runtime owner.
-- Team automatic work and Magnetic task execution remain deferred. Ordinary messaging's live proof
-  does not authorize starting those separate workflows.
+The plugin's `taskgraph_start` tool admits one current Bot assignment into Hermes's existing SQLite
+task/dependency runtime.
 
-### Bot Mode checkpoint — 2026-10-26
+- Team is a protected wildcard. Main may call it directly when no saved specialist matches. Its root
+  auto-decomposes into same-profile depth-one workers and returns to the same root for synthesis.
+- Magnetic receives an exact Builder-authored PromptSpec from Main. Its root is restricted to the exact
+  saved blue roster. Dependencies block the same root until worker work is ready, then that root
+  synthesizes.
+- Magnetic may assign a blue child to Team. Team then owns its own AutoTeam boundary.
+- Ordinary direct specialists remain ordinary Bot Mode.
 
-Ordinary Main, direct `@Trader`, real Main-to-Trader delivery/reply, conversation persistence and image
-understanding have live evidence, with the owner accepting the direct replies. Builder's visible CLI
-accepted a question, executed its Terminal tool, answered and returned to its prompt. The owner's
-No thanks choice is saved with collection/upload disabled. This is not full Desktop, all-Project or
-Oracle acceptance; see [the implementation boundary](ARCHITECTURE.md#bot-mode-application-boundary)
-and [dated evidence](docs/reports/botmode-closeout.md).
+Hermes owns tasks, dependencies, attempts, workers, retries, dispatch, and synthesis. LiquidAIty has no
+task copy, scheduler, board, worker selector, or dispatcher. The Task tab reads Hermes's bundled
+authenticated Kanban board/task APIs and reconstructs only the exact root creator lineage.
 
-Remaining Bot Mode-related gaps are local voice recognition blocked by Windows App Control, actual
-microphone-to-audible-reply acceptance, genuine structured approval/clarification, prior CLI disconnect
-cause/recovery, other eligible CLI turns, intended Builder workspace binding, saved configuration
-publication, active-input steering, shared-profile Project isolation and deployment acceptance.
-Edge synthesis passed after the authorized dependency update. Inline sent images, nonempty Data Anchors,
-Automatic Team and Magnetic TaskGraphs remain outside the completed baseline. No new runtime work is
-authorized by this list.
+The plugin admits through documented `ctx.dispatch_tool("kanban_create", ...)`. The retained Hermes
+0.22.7 fork contains the smallest policy delta needed because upstream `kanban_create` has no structural
+Team/Magnetic root or mission-scoped assignee ceiling. Ordinary Kanban and Bot Mode behavior are
+regression-tested.
 
-## Current gaps before live acceptance
+### Card Python and skills
 
-These are acceptance gaps, not permission to expand the current runtime:
+The on-Card Python editor is preserved. A checkbox controls publication. Disabled or blank code is
+inert. Enabled recipes are immutable, schema-bound, time/output/call bounded, and may call only the
+Card's selected LiquidAIty MCP operations through Hermes's plugin context.
 
-1. The former removed-entry blocker is superseded by the current Bot Mode checkpoint above. Do not
-   restore the deleted application runtime owners; preserve the accepted Gateway conversation path.
-2. Main's approved quick-Web direction is not present in its source-default toolsets.
-3. Main's source-default prompt describes ThinkGraph/KnowGraph use, but the server's default new-Project
-   topology does not attach those orange edges.
-4. Quick-Web evidence handoff to durable KnowGraph correlation is not implemented.
-5. Existing saved Projects remain governed by their persisted Card revisions; the new source-default
-   prompts, grants, and KnowGraph model do not silently overwrite saved authority.
-6. The 2026-10-14 loaded pass proved ordinary Main, Main consultation, direct Builder/ThinkGraph/KnowGraph/
-   WorldView/Trader delivery, refresh retention, and the Builder terminal. The 2026-10-15 cleanup passed a
-   fresh loaded health/source check and graph-inspector visual regression, but did not repeat model turns.
-   Interactive profile OAuth, enabled Card Script execution/failure recovery, Team, Magnetic, graph writes,
-   external clients, and final owner visual acceptance remain separate.
-7. The 2026-10-17 CodeGraph implementation passed its focused provider, transport, projection, hook,
-   renderer, and shared-Inspector checks. The subsequently authorized daemon recovery and canonical
-   reload succeeded: the MCP host froze 57 generated/published/unique tools with no unavailable family,
-   and the loaded Code projection rendered 51 real Features and 374 Files with no `read_failed` state or retired
-   Feature sorter. Main and Builder then completed one real turn each and their outer Runs read back.
-   CodeGraph freshness still reports `unverified`, and final owner visual acceptance remains separate.
+Each runnable Card has one selected skill. A user may edit the Card's custom skill or choose an
+existing Hermes skill. There is no second LiquidAIty skill library or automatic skill-learning UI.
 
-## Loaded core checkpoint — reached 2026-10-14
+### Tool grants
 
-That dated source had one connected path from the restored UI through saved Card authority, one Project
-session per Card, one IDF/Run lifecycle, Hermes profile tools, wired Bot delivery, blue modified-Team
-worker authority, and each non-Main Card terminal. The old combined-conversation runtime, direct target executor,
-per-turn application tool callback, transport selector, fake status/limit controls, generic Card-tools host,
-and their stale tests are absent from the live application path. The reserved saved-profile `liquidaity`
-connection instead uses one short-lived, exact active-Run internal principal against the official MCP host.
+Source-default grants are:
 
-That historical loaded pass covered the real Main/Bot/Builder terminal cases. It did not prove
-OAuth-backed tool execution, an enabled Card Script, Team, Magnetic, graph writes, external clients, or
-complete owner visual acceptance.
+- Main: Engraphis recall plus Graphiti node/fact search and its retained worldview capability.
+- Builder: Engraphis and Graphiti search, bounded CBM reads, explicit Card create/update, canvas
+  inspection, and blue-wire editing, plus its saved construction toolsets.
+- ThinkGraph: Engraphis hybrid vector/lexical reads and Think settlement operations.
+- KnowGraph: Graphiti search/write and Hermes Web pinned to Firecrawl.
+- Team: its saved research/execution surface plus the LiquidAIty plugin toolset.
+- Magnetic: the LiquidAIty plugin toolset for taskgraph admission.
 
-## Oracle, external MCP, and saved-agent publish checkpoint — reached 2026-10-18
+Saved Project configuration remains the runtime ceiling. The MCP host publishes one canonical catalog.
+Catalog version includes the root package version and source-manifest hash.
 
-The bounded publish-preparation pass now has the following separate results:
+### Shared graph navigation map
 
-- The LiquidAIty MCP host reloaded the current catalog with 58 generated/published/unique tools,
-  completed `liquidaity`, `cbm`, and `graphiti` families, no unavailable family, catalog hash
-  `1ad9a7da010a924b75815357a13f51b64707668ef6523b48f691d70c7e2fb1c3`, and the complete
-  catalog-source hash `47b01fa48c4f1025fe880c8e67ce067e3b68e7759a8bfd0e91cf43d05e2b1163` with
-  `sourceCurrent=true`. The connected LiquidAIty tool's real `main.context` returned that receipt.
-- The catalog now includes the source-default KnowGraph `graphiti.get_status` grant, human-facing
-  provider titles, accurate Engraphis side-effect copy, frozen-catalog `listChanged=false`, and a
-  multi-file source identity. Plugin Management cannot manage this created-by-owner development reference
-  as a public installed plugin.
-- The existing saved Project correctly retained its own revisions and grants. External calls to
-  `graphiti.get_status` and `graphiti.search_nodes` returned `tool_not_granted`; no source-default rewrite
-  or saved-Card mutation was applied to bypass persisted authority.
-- Fresh loaded saved-Card turns completed for Main, Builder, and ThinkGraph. Direct Builder execution
-  produced one correlated `message_agent` delivery, its own completed child Run, primary-source research,
-  and a persisted Builder reply. The saved-profile MCP repair moved every reserved `liquidaity` connection
-  from the public OAuth resource to the internal loopback host without changing Card grants. Ten tool-bearing
-  profiles read back `credentialStatus=not_required` with their exact include filters, while Builder retained
-  its saved web, browser, terminal, file, code-execution, and vision Hermes toolsets. A fresh direct Trader
-  child Run emitted exactly one real `mcp__liquidaity__forecast_market_bars` call for RKLB and returned the
-  honest Alpaca `provider_unconfigured` result. Its receipt recorded one tool call; Trading state retained no
-  jobs or positions, execution remained unapproved, and no fallback, trade, decision, graph write, or saved-Card
-  mutation occurred. Earlier unavailable-tool Trader and WorldView observations remain historical failures,
-  not current tool-transport acceptance.
-- Canonical `npm run dev:fresh` now starts and health-waits the existing root PostgreSQL/AGE and Neo4j
-  Compose services, then withholds Vite until Python rails and the complete MCP catalog are ready. Preview no
-  longer lands on `conversation_history_read_failed` during a normal cold start.
-- A pre-session Hermes heartbeat timeout exposed an outer-Run settlement defect. The failed test Run was
-  settled explicitly, and current source now omits nonexistent provider evidence before a session binding;
-  the focused regression and the complete root TypeScript suite pass.
-- The controlled ShadowBroker source is a Web/Docker experimental Oracle release candidate: release
-  carriers agree at 0.9.83; production frontend dependencies report zero known vulnerabilities; strict
-  production-source type checking, Next standalone, Vite embed, backend release gates, Compose parsing,
-  and clean source image builds passed. The loaded local backend/frontend containers are healthy, the UI
-  returns HTTP 200, MKT remains explicitly off, and Oracle provider search returns the expected 409 refusal.
-  No provider-backed market read, signed prediction, settlement, persistence-after-restart, or owner visual
-  acceptance was performed.
-- ShadowBroker `/api/health` returns HTTP 200 and version 0.9.83, but its aggregate data SLO remains
-  `error` because live UAP/NUFORC and global FIRMS have never fetched successfully; other stale/low-volume
-  feeds remain yellow. Container health is green, but full data-plane health is not.
+The graph surface publishes one compact in-memory JSON snapshot matching the visible Think/Know/Code
+layers. It contains bounded nodes, relationships, provider pointers, and at most one open-node detail
+record.
 
-Remaining publish TODOs are explicit: refresh/reconnect the development plugin only for external-client
-acceptance; run provider-opted-in Oracle read/write/persistence acceptance only after the
-operator enables MKT and authorizes test ledger writes; resolve the optional-feed SLO failures; rerun the
-frontend image build against the final dev-only lockfile after the last clean `npm ci` attempt stalled; reduce
-the five high-severity dev-only Next ESLint advisories when an upstream-compatible fix exists; complete
-browser visual acceptance; and keep agent Oracle/governance writes, autonomous agent monitoring, per-agent
-credentials, desktop distribution, and stateful Helm/HA as deferred work rather than release claims.
+The plugin validates and pre-renders the snapshot. Main, Builder, ThinkGraph, and KnowGraph receive an
+atomic pre-LLM string read. Main Send waits for synchronization and fails closed if the model would see
+a different map from the user. Reconnect republishes.
 
-## Cleaned source checkpoint — reached 2026-10-15
+The map is navigation context, not another graph. Engraphis, Graphiti, and CBM remain the deep-read
+tools and writers.
 
-The reduction/route/graph/tooling cleanup passed:
+### ThinkGraph completed-turn intake
 
-- all first-party Python tests: 420 passed; one upstream Graphiti Pydantic deprecation warning;
-- all repository TypeScript tests: 389 passed, one intentionally skipped; the focused Magnetic suite then
-  passed without its former React act warnings;
-- client/backend source and spec TypeScript checks: passed;
-- backend and client production builds: passed; the client retains browser-externalization and large God’s Eye
-  bundle warnings;
-- authenticated streamable-HTTP MCP proof invoked granted `calculator` and denied it to ungranted peers;
-- production dependency audit: zero vulnerabilities after non-breaking updates; 14 dev-only advisories remain
-  behind separate breaking Nx 23/Vitest 5 migrations;
-- `git diff --check`: passed; canonical Markdown links: passed.
+Hermes's `on_session_end` plugin hook observes a successful Main turn. The hook captures the exact
+profile/session context, then the Hermes plugin host uses `ctx.spawn_task` plus `asyncio.to_thread`;
+Main returns without waiting. Main does not supervise, invoke, steer, approve, or settle the work.
 
-The canonical launcher then loaded backend, Python rails, KnowGraph, MCP, Hermes, WorldView, WorldSignals,
-and the client. Health/readiness returned HTTP 200; MCP froze 55 unique tools with `sourceCurrent=true`,
-startup ID `333ca4c32261466aa05f0b248de6d74f`, and catalog hash
-`984322f92548fd5e3a0d5f467999b37673edd099a6ceae9cb506f2c8c5dfd6b47`. Preview loaded the restored Project
-with an enabled Main composer, Card canvas, Entity-only graph, and Rocket Lab Know inspector showing separate
-cited For/Against evidence and no console warnings. No new model turn, graph write, Team/Magnetic mission,
-trade, credential change, or saved Card mutation was performed.
+The hook captures the exact User/Main `state.db` row IDs at the completed-turn boundary. Python rails
+reads only those rows and prepares deterministic extraction input. Hermes's registered ThinkGraph
+auxiliary model returns structured candidates. Engraphis records the pair outcome and writes zero or
+more Thinks. There is no minimum count and no Python semantic validator.
 
-## Next acceptance boundary
+The deleted TypeScript conversation store is not replaced. There is no history polling, caller-supplied
+chat copy, Main route coupling, or duplicated transcript owner.
 
-Profile OAuth tool readback and Card Script success/failure recovery require their real external or saved
-prerequisites. A new model turn, Team, Magnetic, graph writes, external-client acceptance, and Jeremiah's final
-visual acceptance remain separate and must not be inferred from health, deterministic, or inspector proof.
-CodeGraph's historical authorized daemon recovery and canonical application reload completed successfully.
-No additional CBM lifecycle mutation is implied by that result.
-Any new CBM restart, repair, reindex, cache access, project mutation, or configuration change still requires
-a new exact owner instruction.
+### Memory
 
-## Conversation storage checkpoint before delivery
+Every retained Card profile selects Holographic. Built-in Markdown memory, user-profile Markdown,
+background review, curator work, and automatic skill creation are disabled. ThinkGraph and KnowGraph
+remain Project authorities rather than Hermes profile memory.
 
-Main keeps its existing conversation-store calls. Only the storage implementation changes underneath
-that interface. PostgreSQL remains the saved Project/Card authority, not a fallback conversation store.
-Pairs are read using explicit ordered user-message IDs and an exact assistant-message ID; preparation
-does not guess from the latest messages, call a model, or mutate Thinks. The existing structured extraction
-and Think/Jev settlement contracts remain in place. Complete and verify this stage before connecting
-the storage-side one-way handoff; Main's route, Bot Mode and vendored source stay unchanged.
+### Removed paths
 
-## Proof tiers still separate
+The following are deleted and must stay deleted:
 
-1. source and residue inspection;
-2. deterministic contract tests;
-3. typecheck/build;
-4. loaded service health and exact source identity;
-5. real saved Card behavior through the loaded Hermes path;
-6. persistence/readback;
-7. external client acceptance;
-8. owner visual acceptance.
+- `/api/main/session`, `mainSessionClient`, `useAgentBuilderMainChat`, backend Gateway Bot
+  requester, custom SSE decoder, transcript/history state machine;
+- application PTY/TUI spawn and WebSocket proxy;
+- private Desktop profile bridge and LiquidAIty Learning Graph editor;
+- TypeScript conversation copy/store;
+- IDF, Data Anchor, Card invocation preparation, automatic model/tool selection, and Jev prefilter;
+- duplicate profile policy and stale MCP metadata;
+- non-Trading experimental Project copies. The retained `agent-products/nrgsim` source is reference
+  material for later work, not a second active development Project.
 
-A lower tier never proves a higher one. No Magnetic mission, graph write, trading action, or service
-restart is authorized by this plan alone.
+`LiquidAIty.idd` remains the Card authoring dictionary only.
 
-## NRGSIM — restored modeler and explicit floors
+## Verification completed in this source turn
 
-The current owner-approved boundary is the restored Three.js modeler and the existing shared inspector
-in **Building Energy Modeler**, Project `38bd1429-e8e1-47ff-afef-d940aa8e8040`. The rejected Pascal/
-in-memory starter-model prototype is not current architecture and must not be restored.
+The proof ledger remains tiered:
 
-Saved OSM case files own engineering state. The authenticated Project route forwards to the single
-Python rails operation owner; transaction-scoped OpenStudio MCP/SDK operations stage, validate,
-save/reopen and revision-check edits. The original shoebox baseline, both glazing comparisons and their
-historical inputs/SQL remain preserved. Named cases, one core/perimeter floor and two explicit matched
-floors are implemented; actual annual runs completed with native zero-severe diagnostics. The upper
-story was edited through the loaded inspector and rerun. SQL comparisons retain exact channels/time,
-include building-energy aggregation with source keys and show floor area and energy intensity.
+- Complete active TypeScript suite: 522 passed; one explicitly skipped test remains skipped.
+- Complete first-party Python-model suite: 434 passed with one upstream Graphiti Pydantic deprecation warning.
+- Complete KnowGraph service suite: 31 passed with the same upstream warning class.
+- Focused Hermes `kanban_tools` plus Team/Magnetic suite: 76 passed.
+- LiquidAIty native-plugin suite: 10 passed.
+- Production and specification TypeScript checks: passed.
+- Backend, normal browser UI, and Hermes dashboard-plugin production builds: passed. The two existing
+  browser-externalized `node:fs` notices and large lazy WorldView/Monaco chunks remain packaging warnings.
+- Hermes Plugin Doctor passed discovery, manifest parsing, import, registration, two tools, and two hooks.
+- The exact catalog-admission checks over native/general plugin source passed with safe security verdict,
+  host-ready isolation, no tool collisions, no core overrides, and no private-import warnings.
+- Forbidden-residue scans, the 340-file first-party Entity/Relationship structural audit,
+  `git diff --check`, and six parent-to-commit delivery comparisons completed.
+- No loaded runtime, live provider prompt, persistence readback, remote connector refresh, or visual
+  acceptance is inferred from those results.
 
-The separate packaged-rooftop experiment uses the installed System 3 recipe on a shoebox copy, not an
-Appendix G transformation. Its executed diagnostic runs and remaining physics warnings are recorded in
-`agent-products/nrgsim/CoderReport.md`; engine completion alone is not equipment-model acceptance.
+## Remaining packaging review
 
-The owner subsequently authorized Modeler's narrow migration: its obsolete six-tool contract is
-replaced with `building_model.read_case` and `building_model.edit_inputs`, forwarding to the same
-Python rails case owner. The other six Cards and topology read back unchanged. Saved grants and
-catalog presence do not yet establish live session discovery; exact agent evidence remains in the
-report. The NRGSIM-only long-request dispatcher has also carried a real edit lasting over five minutes.
-Construction assignment/R-value controls, a named installed Office/5A library selection, existing
-schedule-value editing and Ideal Loads inputs are implemented. The comparison UI now shows baseline
-plus one selectable performance case, retaining other files/history. Full OpenStudio feature parity
-is not claimed. A new named single-zone HVAC case has now completed with retained design days plus
-EPW-defined extreme weeks. Its native outputs and remaining frost/unmet-hours findings belong in the
-CoderReport. A genuine multizone system remains the next domain increment; unchanged historical cases
-are not to be rerun. The baseline selector and comparison use exact completed-run identities.
-Normal whole-app reloads were authorized for this task; no Git
-mutation, new container, upstream-source edit or REA-hold change is included.
+The final dashboard bundle deliberately still contains the retained lazy WorldView/Cesium,
+NRGSIM/Monaco, graph, and domain-product assets: 455 scannable files, about 30.5 MB, with six files over
+the catalog scanner's generic 1 MB caution threshold. Hermes's complete package security scan is
+CPU-active for more than ten minutes on those generated single-line chunks and has not produced a final
+catalog verdict in a bounded run. The native/general source result above is clean; it is not represented as
+the final generated-bundle verdict.
+
+Post-v0.1 packaging should move substantial domain agents/products into independently versioned and
+scanned repositories/plugins as defined in CODEGRAPH.md. Do not remove retained UI or fabricate a
+core-only distributable merely to make this generic threshold disappear.
+
+## Later acceptance, not authorized in this run
+
+A separately authorized loaded pass must establish:
+
+- Hermes discovers and reloads the native/dashboard plugin;
+- each saved Card profile creates/configures and reads back correctly;
+- Main send/history/Stop/voice/images work through Hermes in the loaded UI;
+- direct specialist, Team, and Magnetic behavior use the intended native paths;
+- Holographic persistence and graph pointer navigation work with real providers;
+- the refreshed MCP catalog is visible to local and remote clients; and
+- Jeremiah accepts the rendered product.
+
+This source task performs no restart, live prompt, data migration, external connector change, or Git
+mutation.

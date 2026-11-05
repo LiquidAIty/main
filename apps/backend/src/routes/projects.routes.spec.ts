@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Projects
  * Relationship: This file verifies Project creation and deletion return exact owner-scoped identities and report partial-state failures honestly.
  *
@@ -183,6 +179,9 @@ describe('Project route lifecycle', () => {
     const client = {
       query: vi.fn(async (sql: string, values?: unknown[]) => {
         statements.push({ sql, values });
+        if (sql.startsWith('SELECT id FROM ag_catalog.projects')) {
+          return { rowCount: 1, rows: [{ id: 'project-canonical' }] };
+        }
         if (sql.startsWith('DELETE FROM ag_catalog.projects')) {
           return { rowCount: 1, rows: [{ id: 'project-canonical' }] };
         }

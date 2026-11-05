@@ -1,7 +1,3 @@
-// Graph + less = more: less code that does the same work as more code is more useful.
-// Entity names the feature; Relationship explains why this file belongs and what it contributes.
-// Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-// Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: Card Scripts
 // Relationship: Verifies the real single-file Python editor and source-owned activation contract.
 
@@ -30,7 +26,7 @@ describe('CardScriptEditor', () => {
     });
   });
 
-  it('derives activation only from real nonblank Python source', () => {
+  it('preserves explicit activation for nonblank source and disables blank source', () => {
     const script = {
       enabled: false,
       source: '',
@@ -42,7 +38,7 @@ describe('CardScriptEditor', () => {
       lastValidation: { status: 'valid' },
     };
     expect(scriptWithSource(script, 'print("ready")\n')).toMatchObject({
-      enabled: true,
+      enabled: false,
       source: 'print("ready")\n',
       sourceHash: '',
       compiledHash: '',
@@ -50,6 +46,7 @@ describe('CardScriptEditor', () => {
       compiled: {},
       lastValidation: {},
     });
+    expect(scriptWithSource({ ...script, enabled: true }, 'print("ready")\n').enabled).toBe(true);
     expect(scriptWithSource(script, '   ').enabled).toBe(false);
   });
 });

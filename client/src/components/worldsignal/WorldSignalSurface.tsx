@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: WorldSignals
  * Relationship: Mounts the unmodified WorldSignals product for one Project/Card generation and exposes its Inspector bridge only after the product reports readiness, with exact teardown and retryable module loading.
  */
@@ -10,6 +6,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 import { readLayerPrefs, writeLayerPrefs } from './worldSignalLayerPrefs';
+import { applicationFetch } from '../../lib/applicationApi';
 
 type WorldSignalsHealth = {
   enabled: boolean;
@@ -175,7 +172,7 @@ export default function WorldSignalSurface({
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/worldsignals/health', { signal: controller.signal })
+    applicationFetch('/api/worldsignals/health', { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`worldsignals_health_http_${response.status}`);
         setHealth((await response.json()) as WorldSignalsHealth);

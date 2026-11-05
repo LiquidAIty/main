@@ -1,7 +1,3 @@
-// Graph + less = more: less code that does the same work as more code is more useful.
-// Entity names the feature; Relationship explains why this file belongs and what it contributes.
-// Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-// Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: Projects
 // Relationship: This file requests the canonical deck only for the selected Project and rejects cross-Project, stale, aborted, or incomplete responses.
 // Entity: Saved Cards
@@ -10,6 +6,7 @@ import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
 import { guardedRequest, safeJson } from '../../../components/builder/requestGuards';
+import { applicationFetch } from '../../../lib/applicationApi';
 import type {
   DeckDocument,
 } from '../../../types/agentgraph';
@@ -86,7 +83,7 @@ export default function useAgentBuilderDeckLoad({
           dedupe: false,
           signal: controller.signal,
           fetcher: async (signal) => {
-            const response = await fetch(endpoint, { signal });
+            const response = await applicationFetch(endpoint, { signal });
             const data = await safeJson(response);
             return { response, data };
           },

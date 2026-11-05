@@ -1,15 +1,11 @@
 """Bounded read-only AgentGraph inspection contracts."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: AgentGraph
 # Relationship: This file verifies Project-scoped AgentGraph inspection is read-only, bounded, and sourced from exact saved Card and AGE records.
 # Entity: Card Topology
 # Relationship: This file verifies the inspection response preserves the current saved Card and relationship identity for the requested Project deck.
 # Entity: Run Ledger
-# Relationship: This file verifies Run, assignment, lineage, and artifact observations remain exact and omit synthetic telemetry and raw IDF content.
+# Relationship: This file verifies retained Run, assignment, lineage, and artifact observations remain exact and omit synthetic telemetry and raw model input.
 
 from __future__ import annotations
 

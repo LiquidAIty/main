@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Agent Builder
  * Relationship: This file serializes every Agent Builder deck write through one compare-and-swap coordinator and preserves newer local edits.
  * Entity: Saved Cards
@@ -17,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
 import { safeJson } from '../../../components/builder/requestGuards';
+import { applicationFetch } from '../../../lib/applicationApi';
 import type { DeckDocument } from '../../../types/agentgraph';
 
 type IntegrityResult = {
@@ -172,7 +169,7 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
     if (mountedRef.current) config.setDeckSaveBusy(true);
 
     try {
-      const response = await fetch(
+      const response = await applicationFetch(
         `${config.projectsApi}/${config.canvasProjectId}/decks/${config.builderDeckId}`,
         {
           method: 'PUT',

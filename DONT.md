@@ -1,8 +1,9 @@
 # DONT.md — preserve the real product
 
-Use this for prohibitions and known failure patterns. [AGENTS.md](AGENTS.md#scope-and-closed-features)
-owns execution law; [PLAN.md](PLAN.md) owns current status; [ARCHITECTURE.md](ARCHITECTURE.md)
-owns source boundaries. A historical report is evidence, never permission to act.
+Use this for prohibitions and known failure patterns. [plugin.md](plugin.md) owns the positive Hermes
+web-plugin contract; [AGENTS.md](AGENTS.md#scope-and-closed-features) owns execution law;
+[PLAN.md](PLAN.md) owns current status; [ARCHITECTURE.md](ARCHITECTURE.md) owns source boundaries.
+A historical report is evidence, never permission to act.
 
 ## Scope first
 
@@ -29,19 +30,21 @@ owns source boundaries. A historical report is evidence, never permission to act
    owning Card. Connected saved Cards never share a profile or become child Cards.
 5. Use existing Hermes, Mag One and graph capabilities through their real boundaries. No extra
    runtime, scheduler, graph writer, input format, artifact-ID prerequisite or fake terminal.
-6. IDD is the common definition source: a field list in Cards, a dictionary for Builder, and
-   dropdown/default definitions for templates. IDF is the actual bounded input for one Run.
-   Refer to existing catalogs and executable schemas; do not copy option lists between consumers.
+6. IDD is the authoring definition source: a field list in Cards, a dictionary for Builder, and
+   dropdown/default definitions for templates. It is not runtime input, an IDF, a prompt envelope,
+   an execution receipt, or a second tool catalog. Refer to existing catalogs and executable schemas;
+   do not copy option lists between consumers.
 7. No fake graph data, sample records, placeholder activity, simulated success or invented receipts.
    A saved record can still be the wrong data. Prove useful behavior using a real project.
 8. Product instructions belong in these documents, never automatic graph inserts or UI banners.
    Do not add explanatory panels, evidence panels or branding to Card controls.
 9. Main/Builder's established pull-up behavior is intentional. Preserve their session and input
    ownership. Do not change mounts, polling, panel dimensions or collapse behavior as a side effect.
-10. Keep saved tools available without Card Script. The current `tool_recipe` Card Script uses the
-    preserved Hermes child Python runner and saved grants; it does not replace or re-authorize ordinary profile tools. Do not invent a tool or
-    widen grants to make a proof succeed. WorldView layer visibility is not tool authorization, and
-    Hermes profile memory is not a Tools-tab grant or LiquidAIty-selected toolset.
+10. Keep saved tools available without Card Python. The current `tool_recipe` uses the official
+    LiquidAIty plugin's bounded child of the Hermes host interpreter and saved MCP grants; it does not
+    replace or re-authorize ordinary profile tools. Do not invent a tool or widen grants to make proof
+    succeed. WorldView layer visibility is not tool authorization, and Hermes profile memory is not a
+    Tools-tab grant or LiquidAIty-selected toolset.
 11. LiquidAIty owns the product CBM publication and its one application frontend. Codex owns one separately
     registered official development frontend and must not depend on GPT Web, the plugin, or the running
     application. Both use the same upstream daemon/cache/runtime identity. Product clients use the published
@@ -69,13 +72,16 @@ owns source boundaries. A historical report is evidence, never permission to act
 Engraphis owns ThinkGraph; Graphiti/Neo4j owns KnowGraph; CBM owns CodeGraph; AGE owns
 saved Card relationships and observed Run lineage. Do not resurrect Constellation or combine writers.
 
-Main and Bot Mode are not ThinkGraph processing owners. Store the full new application conversation in
-Engraphis, then read explicit saved pairs for the existing Think extraction/settlement path. Do not add
-agent tools, grants, prompts, or Main-session hooks for this workflow. No vendored edits and no migration
-or replay of old test conversations. The current stage stops before the storage-side one-way delivery.
-Do not infer an exact pair from the most recent two rows, fabricate a Run receipt, add an application or
-Hermes prompt queue, restore a generic child-Card executor, or substitute a regex-first graph skeleton,
-candidate/approval state, shadow graph, direct model edge writer or second extractor.
+Main and Bot Mode are not ThinkGraph processing owners. Hermes's plugin host may observe a completed Main
+session and run the one-way database-to-database intake through `ctx.spawn_task`; Main does not call,
+supervise, steer, approve, or settle it. The hook captures the exact User/Main `state.db` row IDs at the
+completed-turn boundary; Python rails reads only those rows, the registered auxiliary model extracts
+structured candidates, and Engraphis owns the pair marker plus zero-or-more settlement.
+Do not add Main tools, grants, prompt instructions, a Main session route, history polling, caller-supplied
+chat copies, a TypeScript conversation store, a minimum Think count, or a Python semantic validator.
+Do not migrate or replay old test conversations, fabricate a Run receipt, add an application/Hermes prompt
+queue, restore a generic child-Card executor, or substitute a regex-first skeleton, candidate/approval
+state, shadow graph, direct model edge writer, or second extractor.
 KnowGraph retains actual sourced research through its existing owner. Its dedicated queued Entity write stores
 one exact `entity_uuid` property and removes any Know `ABOUT` or `MENTIONS` attachment edge.
 One current Know is one first-class `Episodic:Know`: one verified source document and exact passage, one
@@ -105,7 +111,7 @@ does not authorize a renderer replacement, and a rendering problem does not auth
 
 | Failure | Prevention and disproof |
 | --- | --- |
-| PLAN headings leaked roadmap and audit prose into Builder input | Keep PLAN out of runtime input. Verify identical IDF bytes when PLAN changes or is absent; do not restore the removed loader. |
+| PLAN headings leaked roadmap and audit prose into Builder input | Keep PLAN out of profile SOUL, literal user input, and the visible navigation map; do not restore any documentation loader or IDF layer. |
 | Public Card fixtures contained revisions missing from real reads | Compare actual saved revision readback with the transport fixture before testing an edit. |
 | A mocked PTY never emitted exit and remained stopping | Fix the fixture's lifecycle fidelity; preserve real session reuse and stop behavior. |
 | A catalog import started provider discovery during unit tests | Guard non-subject CBM/Graphiti discovery; retain exact public/private schemas and authentication assertions. |
@@ -171,6 +177,260 @@ The owner's correction establishes the following permanent controls for this bou
 14. Report source, deterministic tests, build, loaded application, real Main/Card execution, persistence,
     real activity rendering and owner visual acceptance separately. A lower proof tier never fills a higher
     one, and a model statement that work started is not execution evidence.
+
+## Incident record — 2026-11-04 Never destroy the Hermes runtime boundary again
+
+This incident must be remembered as a runtime-ownership failure, not as an isolated bug in one route.
+The immediate symptom was a failed Main-to-KnowGraph handoff, but the destructive mistake was repeatedly
+treating that failure as permission to build, patch, or delete an application-owned imitation of Hermes.
+That approach consumed attention, reopened completed UI, confused source with the loaded runtime, and made
+the repair harder to reason about. Future work must begin from the architectural fact below and must stop
+the instant it starts recreating an owner Hermes already provides.
+
+### The architectural fact
+
+LiquidAIty is a **Hermes web-dashboard plugin and its own UI**. It is not a Hermes Desktop plugin, not a
+second agent runtime, and not a Gateway manager. The existing LiquidAIty React workspace stays intact
+inside its registered Hermes dashboard page. Hermes
+Desktop is useful reference evidence, but its renderer code, `host.request`, Electron bridges, private
+stores, and private hooks are not automatically public Hermes APIs and must never be copied merely because
+Desktop uses them. The canonical positive design is [`plugin.md`](plugin.md): reuse Hermes's documented
+Gateway JSON-RPC contract and its generated `@hermes/shared` TypeScript client instead of recreating that
+client in LiquidAIty.
+
+The ownership line for Main is literal:
+
+```text
+LiquidAIty TypeScript = pixels, exact Project/Card/wire configuration, structural validation,
+                       and the thinnest mapping from Hermes-generated events into those pixels
+Hermes = protocol client contract, chat session, composer submission, history, Stop, voice, images,
+         admission, execution, Bot Mode delivery, late replies, reply identity, and completion
+```
+
+Cards configure Hermes profiles. Saved enabled wires define the exact authorized Bot roster. Main receives
+the user's original input, including literal `@mentions`; the UI must not parse a mention into a direct
+target, manufacture a recipient-specific prompt, or prepend a synthetic `@Card` identity to a reply.
+Hermes decides whether Main invokes `message_agent`, performs the delivery, and reports who replied.
+
+The public Hermes entries are the directory-plugin and web-dashboard contracts Hermes itself discovers:
+
+```text
+plugin.yaml
++ __init__.py exposing register(ctx)
++ only documented PluginContext capabilities
+
+dashboard/manifest.json
++ a prebuilt bootstrap registered through window.__HERMES_PLUGINS__
++ window.__HERMES_PLUGIN_SDK__ for host React and authenticated browser helpers
+```
+
+Use `PluginContext` methods only for the capabilities they actually promise. For example,
+`ctx.inject_message(...)` is an in-process, profile-scoped, consent-gated request to an already-live Hermes
+host. It is not the browser chat API. Hermes separately documents Gateway JSON-RPC over WebSocket for a
+full custom UI and ships the generated request channel, event types, heartbeat and reconnect/replay logic in
+`HermesLatest/apps/shared`. Reuse those exact components. Do not fill a gap with a Desktop `plugin.js`, an
+Electron mount, an iframe, a private renderer import, a LiquidAIty-authored Gateway decoder, a backend
+requester, an SSE reconstruction, direct state-database access, or another session API.
+
+### What destroyed the boundary
+
+The rejected application path accumulated all the recognizable parts of a duplicate runtime:
+
+```text
+useAgentBuilderMainChat
+→ mainSessionClient
+→ /api/main/session
+→ mainSession.routes
+→ backend-owned Gateway connection and requestForBot
+→ application filtering of message.delta / message.complete
+→ application SSE text / done / error frames
+```
+
+That path opened sessions, retained session handles, submitted prompts, decoded completion, forwarded Stop,
+owned browser voice state, read history, filtered events, persisted selected replies, and attempted to
+discover later Bot activity. Calling it a “thin bridge” did not make it thin. The presence of admission IDs,
+session maps, event listeners, completion flags, response streams, history watermarks, activity refreshes,
+or reply-wait logic is sufficient evidence that LiquidAIty has crossed the boundary. Do not keep any such
+piece as a compatibility wrapper. Do not rename it and claim the runtime was removed. Do not move the same
+dispatcher from one route to another and call that deletion.
+
+The following replacements are equally prohibited:
+
+- a new `/api/main/session` equivalent under another route name;
+- a generic `requestForBot`, `runCard`, `submitToProfile`, or direct-target helper;
+- a LiquidAIty-authored JSON-RPC decoder, EventSource/SSE chat reader, transcript poller, or completion waiter
+  that replaces Hermes's generated client and replay contract;
+- a background listener that waits after Main's answer and injects a second application-owned response;
+- an iframe or embedded Hermes Desktop renderer;
+- a Desktop runtime `plugin.js` or `@hermes/plugin-sdk` conversion of LiquidAIty;
+- application discovery, startup, restart, ticket minting, or lifecycle management for the Gateway (calling
+  a documented host-supplied `buildWsUrl` or connection-descriptor function is consumption, not management);
+- direct reads or writes of Hermes SQLite state as a product integration;
+- a fallback model call, mock Card, duplicate transcript, or synthetic receipt when Hermes is unavailable.
+
+If a proposed repair contains one of those shapes, stop before writing it. The correct next action is to
+identify the missing public Hermes plugin capability, preserve every supported path, and report the exact
+unsupported seam. A blocked real boundary is better than a successful fake one.
+
+### Deleting transport must never delete the UI
+
+When the owner says to remove a duplicate transport, delete the transport—not the chat, composer, Card
+canvas, graph UI, voice control, image control, Builder surface, or layout. The Main chat component is a
+pixel surface and must remain present. Its visual component types may be made owner-local after transport
+files are deleted, but the UI must not be replaced with `null`, a blank pane, or a different product.
+
+At the same time, a mounted composer whose Send callback always returns `false` is not a preserved working
+chat. It is only preserved pixels and must be reported as unsupported at the live binding tier. Never use an
+inert Send button to make screenshots look intact or to claim that chat survived. Either bind the existing
+UI through a documented Hermes plugin capability or state that the capability is missing. Do not blur those
+two states.
+
+Use this deletion sequence whenever a duplicate runtime is found:
+
+1. Freeze all repair ideas. Do not design the replacement while deleting the rejected path.
+2. Name the exact transport files, route mounts, callers, shutdown hooks, tests, and dependent imports.
+3. Delete the transport owner, its client decoder, its hook/state machine, and its backend requester.
+4. Preserve frontend components and layout separately. Remove only type imports that belonged to the
+   deleted transport; keep presentation types with the presentation owner.
+5. Preserve unrelated Hermes-owned surfaces such as the Builder CLI. If a deleted helper was shared, move
+   the surviving behavior to an existing Hermes-owned entrance; never carry the deleted Gateway requester
+   forward under the CLI's name.
+6. Search the executable source for every deleted symbol, path, route, and replacement alias.
+7. Run source and spec typechecks, focused UI tests, builds, and `git diff --check` before considering a
+   new integration.
+8. Only after residue is zero may a new repair use the real public Hermes plugin and programmatic-integration
+   APIs, with `@hermes/shared` rather than a new protocol implementation.
+
+Do not interleave steps 1–7 with speculative fixes. That was the specific failure mode in this incident:
+each newly noticed possibility became another branch of work before the invalid branch had actually been
+removed. Deletion-first is not ceremony; it prevents the next layer from depending on residue that should
+not exist.
+
+### Follow the recorded failure, not a familiar substitute
+
+The retained Main admission `c32b6621fb7d4b43a03487296485ac99` is the diagnostic anchor for this incident.
+Hermes row 688 recorded the exact model-selected call:
+
+```text
+message_agent(target="knowgraph", message="...")
+```
+
+Hermes row 689 recorded:
+
+```text
+_handle() missing 1 required positional argument: 'names'
+```
+
+Those rows prove that Main selected `message_agent`, supplied a target and message, and failed inside the
+tool before delivery. They do not prove that KnowGraph ran, that a reply was lost, that the saved roster was
+wrong, or that LiquidAIty chose the wrong recipient. The Trading Project's saved Main profile configuration
+already included `knowgraph` in its exact Bot roster.
+
+The Hermes source transition must also be stated precisely. One vendor revision changed
+`bot_mode_probe._handle` from `_handle(name)` to `_handle(name, names)` and repaired most callers, while one
+`bot_mode_dm` self-target call remained `_handle(me)`. A later source change corrected that caller to
+`_handle(me, roster)`. Current source is already correct. Do not edit an already-correct line, pass a dummy
+list, patch LiquidAIty with a different workaround, or call a generated/install workspace “stale” without
+correlating it to the exact admission. A vendor checkout updated to the latest version can still contain a
+vendor defect; “latest,” “current checkout,” “installed copy,” and “code loaded by this admission” are four
+different claims.
+
+For every recorded runtime exception, report these facts separately:
+
+1. what the retained receipt or traceback proves;
+2. what current source proves;
+3. what exact loaded source identity is correlated, if any;
+4. whether the defect belongs to LiquidAIty, the public Hermes plugin contract, or Hermes vendor code;
+5. which proof is absent.
+
+Never infer loaded identity from a nearby environment directory, update receipt, process name, commit title,
+or matching error string. Never call code stale merely because another copy differs. Never claim a source
+fix resolved a live failure without a new authorized loaded run.
+
+### Main completion and a later Bot reply are independent
+
+Main's foreground answer must be allowed to finish immediately. A later authorized Bot Mode reply is a new
+Hermes-owned event with Hermes-owned sender identity. Do not hold Main's response open while research runs.
+Do not make Main wait for another profile. Do not convert `message_agent`'s queued acknowledgement into a
+completion receipt. Do not infer the sender from the original `@mention`, target roster, answer prose, or
+application Card selection.
+
+Displaying a later reply correctly requires Hermes's documented session event/replay contract, session/
+Project correlation, and Hermes sender identity. The display must append the authorized reply once, in the
+correct Project, and detach its pixel listener when the Project changes or the view closes. Use the generated
+Gateway event types and `session.events.since` replay already implemented by `@hermes/shared`; do not recreate
+Desktop's event store, write another listener protocol, or infer identity inside LiquidAIty. A reply-display
+fix also cannot repair a `message_agent` call that failed before delivery.
+
+### Saved Card memory and learning
+
+Saved Card profiles use the existing catalog `holographic` memory provider. They disable the built-in
+`MEMORY.md`/`USER.md` stores and the automatic background review that creates or edits skills. Do not restore
+the removed Hermes Learning Graph controls in the Card editor, another Markdown-memory manager, or automatic
+skill-making UI. Engraphis/ThinkGraph and Graphiti/KnowGraph remain separate MCP-backed graph authorities;
+they are not folded into Holographic and Holographic is not rendered as either graph.
+
+### Project cleanup is not runtime repair
+
+Project deletion and Bot Mode repair are separate authorities. On 2026-11-04 the owner explicitly deleted
+every saved development Project except `Trading` so future diagnosis could not drift into broken proof
+Projects. That deletion did not authorize deleting repository products or source evidence. In particular,
+`agent-products/nrgsim` remains source reference for later work even though its former saved Projects were
+deleted. Never treat a missing saved Project as permission to remove its repository folder, and never use a
+repository folder as evidence that a saved Project still exists.
+
+Before any destructive data action, list exact Project IDs, names, codes, and owner scope; state the survivor;
+use the current application deletion order in a transaction; and read the Project table back. Do not broaden
+that request into profile, graph, database, runtime, source-folder, or Git deletion. No destructive action is
+an acceptable way to make a runtime test easier.
+
+### History is evidence, not a restoration menu
+
+Review transport history with parent-to-commit diffs, not commit messages. This boundary repeatedly removed
+and reintroduced activity readers, history refreshes, response routes, direct recipient dispatch, session
+opening, and late-reply persistence. A dispatcher moved into a new helper is still present. A route removed
+from one commit and restored in a later commit is not an approved design merely because it once worked.
+
+When six relevant diffs are requested, report only diffs that actually change delivery behavior. For each,
+name the SHA, file and symbol, and the observable change. Say explicitly whether behavior was added, removed,
+reintroduced, or merely moved. Never infer intent from a title such as “restore,” “working,” “thin,” or
+“cleanup.” Current owner direction and current source decide what survives.
+
+### Proof and stop conditions
+
+The zero-regression requirement still applies, but it may only be claimed for exercised invariants. Report
+these tiers independently:
+
+```text
+SOURCE: exact owners, deletions, public plugin contract, and residue search
+OFFLINE: focused tests, typechecks, builds, and diff checks
+LOADED: the running application loaded the changed source
+LIVE HERMES: a real saved Main turn and real message_agent delivery completed
+PERSISTENCE: authoritative state was written and read back
+VISUAL: the loaded UI was inspected and accepted
+```
+
+A passing typecheck does not prove chat. A mounted composer does not prove Send. A queued tool response does
+not prove a reply. A saved roster does not prove delivery. A source correction does not prove the loaded
+runtime. A real Main answer does not prove a later KnowGraph reply. With no authorized new prompt, say
+`LIVE HERMES: NOT RUN` and do not soften it.
+
+Stop immediately and return to the owner boundary when any repair requires:
+
+- a Desktop plugin or private renderer API (the documented generated Gateway client is not a private renderer
+  API);
+- Gateway lifecycle management in LiquidAIty;
+- another Main route, client stream, session map, or reply waiter;
+- a vendor edit not explicitly authorized by the active PromptSpec;
+- deletion of chat pixels or another closed frontend feature;
+- a new data owner, transcript, state machine, scheduler, poller, or fallback;
+- an unproven claim that a generated environment executed a retained admission;
+- a live prompt, restart, Git mutation, or data change that the owner prohibited.
+
+The correct standard is not “make something answer.” It is: preserve the UI, preserve saved authority,
+remove duplicate runtime ownership completely, use only Hermes's documented plugin and programmatic
+contracts, and tell the truth when a required capability remains unavailable. Never destroy the real runtime
+again in order to produce a success-shaped demo.
 
 ## Evidence and completion
 

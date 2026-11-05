@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Authentication
  * Relationship: This file requests account and session creation, reports the server's refusal, and navigates successful signups into the application.
  * Entity: Credentials
@@ -11,6 +7,7 @@
 
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { applicationFetch } from '../lib/applicationApi';
 
 const C = {
   primary: "#4FA2AD",
@@ -36,7 +33,7 @@ export default function Signup() {
     setError('');
     
     try {
-      const response = await fetch('/api/auth/signup', {
+      const response = await applicationFetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

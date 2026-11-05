@@ -1,10 +1,6 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Authentication
- * Relationship: This file defines loopback, bootstrap-session, and CORS trust checks so local-development access cannot be authorized by spoofed headers.
+ * Relationship: This file defines loopback, bootstrap-session, and CORS trust checks for the standalone client and official Hermes dashboard host so local-development access cannot be authorized by spoofed headers.
  * Entity: Credentials
  * Relationship: This file reads and timing-safely compares the optional bootstrap token without accepting a missing or mismatched value.
  */
@@ -21,6 +17,8 @@ const DEFAULT_LOCAL_ORIGINS = [
   'http://127.0.0.1:4000',
   'http://localhost:4173',
   'http://127.0.0.1:4173',
+  'http://localhost:9119',
+  'http://127.0.0.1:9119',
 ];
 
 function normalizeHost(value: string): string {

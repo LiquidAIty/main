@@ -1,9 +1,5 @@
 """Shared validation for saved Card create and configuration operations."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Saved Cards
 # Relationship: This file validates create and update inputs against the saved Card contract before any deck persistence occurs.
 # Entity: Card Profiles
@@ -169,21 +165,3 @@ def _normalized_capability_selections(
             raise ApplicationToolError(f"{operation}_{field}_must_be_string_list")
         normalized[field] = list(dict.fromkeys(item.strip() for item in values))
     return normalized
-
-
-def _validate_auto_flags(
-    source: dict[str, Any],
-    *,
-    operation: str,
-    runtime_mode: str | None = None,
-) -> None:
-    for field, error_field in (
-        ("autoTools", "auto_tools"),
-        ("autoModel", "auto_model"),
-    ):
-        if field in source and not isinstance(source[field], bool):
-            raise ApplicationToolError(f"{operation}_{error_field}_invalid")
-        if field in source and runtime_mode == "magentic_one":
-            raise ApplicationToolError(
-                f"{operation}_{error_field}_requires_ordinary_card_runtime"
-            )

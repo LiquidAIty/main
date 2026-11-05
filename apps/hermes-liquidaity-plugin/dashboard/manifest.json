@@ -1,0 +1,14 @@
+{
+  "name": "liquidaity",
+  "label": "LiquidAIty",
+  "description": "LiquidAIty saved Cards, Main chat, graphs, and Trading workspace using Hermes-native sessions and profiles.",
+  "icon": "Activity",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/liquidaity",
+    "position": "after:chat"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

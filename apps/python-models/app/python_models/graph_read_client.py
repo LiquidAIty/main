@@ -1,0 +1,218 @@
+"""Authenticated client primitives for the one official Python MCP host."""
+# Entity: Project Knowledge Graph
+# Relationship: This file performs one bounded authenticated read session through the official MCP host for CodeGraph and other deliberately selected provider pointers.
+# Entity: MCP Host
+# Relationship: This file uses the one official loopback MCP host and official client transport instead of importing or duplicating provider catalogs.
+# Entity: Authentication
+# Relationship: This file signs a short-lived graph-read principal scoped to the exact Project, deck, Card, conversation, and requested read operations.
+# Entity: Credentials
+# Relationship: This file reads the supervised internal MCP secret only to sign the short-lived principal and rejects missing or non-loopback transport configuration.
+# Entity: Tool Catalog
+# Relationship: This file delegates read-only operation classification to the live MCP host and never mirrors the canonical catalog in Python rails.
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import time
+from typing import Any
+
+import httpx
+import jwt
+import anyio
+import httpx2
+from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
+
+_INTERNAL_MCP_ISSUER = "liquidaity-runtime"
+_INTERNAL_MCP_AUDIENCE = "liquidaity-internal-mcp"
+_DEFAULT_INTERNAL_MCP_URL = "http://127.0.0.1:8765/mcp"
+_GRAPH_READ_TOKEN_LIFETIME_SECONDS = 60
+
+
+def _required_secret() -> str:
+    secret = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "").strip()
+    if len(secret) < 32:
+        raise RuntimeError("graph_read_mcp_secret_missing")
+    return secret
+
+
+def graph_read_mcp_url() -> str:
+    value = os.environ.get("LIQUIDAITY_INTERNAL_MCP_URL", _DEFAULT_INTERNAL_MCP_URL).strip()
+    parsed = httpx.URL(value)
+    if parsed.scheme != "http" or parsed.host not in {"127.0.0.1", "localhost"}:
+        raise RuntimeError("graph_read_mcp_url_must_be_loopback_http")
+    if parsed.path != "/mcp":
+        raise RuntimeError("graph_read_mcp_url_path_invalid")
+    return value
+
+
+def create_graph_read_token(
+    *,
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    granted_tools: list[str],
+    conversation_id: str = "",
+) -> str:
+    """Issue a short-lived read-only principal for pre-dispatch graph hydration.
+
+    A graph projection read has no Run, so this token deliberately carries no
+    invented Run or conversation identity. The official MCP host accepts it
+    for saved read grants only and rejects every write/effect operation.
+    """
+    normalized_grants = sorted({
+        str(name or "").strip() for name in granted_tools
+        if str(name or "").strip()
+    })
+    principal = {
+        "kind": "graph-read",
+        "projectId": str(project_id or "").strip(),
+        "deckId": str(deck_id or "").strip(),
+        "callerCardId": str(card_id or "").strip(),
+        "grantedTools": normalized_grants,
+        **({"conversationId": conversation_id} if conversation_id else {}),
+    }
+    if any(not principal[field] for field in ("projectId", "deckId", "callerCardId")):
+        raise RuntimeError("graph_read_mcp_principal_incomplete")
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "iss": _INTERNAL_MCP_ISSUER,
+            "aud": _INTERNAL_MCP_AUDIENCE,
+            "sub": f"graph-read:{principal['callerCardId']}",
+            "iat": now,
+            "exp": now + _GRAPH_READ_TOKEN_LIFETIME_SECONDS,
+            "scope": "liquidaity.main",
+            "principal": principal,
+        },
+        _required_secret(),
+        algorithm="HS256",
+    )
+
+
+def _json_result(result: Any, tool_name: str) -> dict[str, Any]:
+    content = list(getattr(result, "content", None) or [])
+    text = str(getattr(content[0], "text", "") or "").strip() if content else ""
+    if not text:
+        raise RuntimeError(f"graph_read_mcp_empty_result: {tool_name}")
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError) as error:
+        # query_graph supplies a column-labelled text table, unlike CBM's
+        # JSON search/trace responses. Its reader validates those columns.
+        if tool_name == "cbm.query_graph":
+            return {"text": text}
+        raise RuntimeError(f"graph_read_mcp_invalid_json_result: {tool_name}") from error
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"graph_read_mcp_invalid_result: {tool_name}")
+    return parsed
+
+
+async def _call_graph_read_tools_async(
+    *,
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    calls: list[tuple[str, dict[str, Any]]],
+    concurrent: bool = False,
+    deadline_seconds: float | None = None,
+    conversation_id: str = "",
+) -> list[dict[str, Any]]:
+    # The MCP host owns the live provider catalogs and is therefore the only
+    # process that can classify a dynamically discovered operation correctly.
+    # Its graph-read principal rejects every operation whose live
+    # definition is not read-only before dispatch.  Do not mirror that catalog
+    # in Python rails or consult its process-local static registry here.
+    token = create_graph_read_token(
+        project_id=project_id,
+        deck_id=deck_id,
+        card_id=card_id,
+        granted_tools=[name for name, _arguments in calls],
+        conversation_id=conversation_id,
+    )
+    if deadline_seconds is not None and not 0 < deadline_seconds <= 30:
+        raise ValueError("graph_read_deadline_invalid")
+    started = time.monotonic()
+    results = [{"ok": False, "error": "read_timeout"} for _ in calls]
+    mcp_url = graph_read_mcp_url()
+
+    async def read():
+        async with httpx2.AsyncClient(
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=httpx2.Timeout(deadline_seconds or 30.0),
+            # graph_read_mcp_url rejects HTTPS and non-loopback hosts. There is
+            # no TLS connection here; loading the Windows CA store is wasted.
+            **({"verify": False} if deadline_seconds is not None else {}),
+        ) as http_client:
+            transport = streamable_http_client(mcp_url, http_client=http_client)
+            async with Client(
+                transport,
+                mode="auto",
+                read_timeout_seconds=deadline_seconds or 30.0,
+            ) as client:
+
+                async def call(index, name, arguments):
+                    try:
+                        result = await client.call_tool(
+                            name,
+                            dict(arguments or {}),
+                            read_timeout_seconds=deadline_seconds or 30.0,
+                        )
+                        if result.is_error:
+                            raise RuntimeError(f"graph_read_mcp_read_failed:{name}")
+                        results[index] = _json_result(result, name)
+                    except Exception:
+                        if deadline_seconds is None:
+                            raise
+                        results[index] = {"ok": False, "error": "read_failed"}
+                    if deadline_seconds is not None:
+                        results[index]["_readDurationMs"] = round((time.monotonic() - started) * 1000)
+
+                if concurrent:
+                    async with anyio.create_task_group() as group:
+                        for index, (name, arguments) in enumerate(calls):
+                            group.start_soon(call, index, name, arguments)
+                else:
+                    for index, (name, arguments) in enumerate(calls):
+                        await call(index, name, arguments)
+
+    if deadline_seconds is None:
+        await read()
+    else:
+        try:
+            with anyio.move_on_after(deadline_seconds):
+                await read()
+        except Exception:
+            # Optional preload must not discard sources which already returned.
+            for result in results:
+                if result.get("error") == "read_timeout":
+                    result["error"] = "read_failed"
+        for result in results:
+            result.setdefault("_readDurationMs", round((time.monotonic() - started) * 1000))
+    return results
+
+
+def call_graph_read_tools(
+    *,
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    calls: list[tuple[str, dict[str, Any]]],
+    concurrent: bool = False,
+    deadline_seconds: float | None = None,
+    conversation_id: str = "",
+) -> list[dict[str, Any]]:
+    """Use one authenticated session on the one official MCP host."""
+    if not calls:
+        return []
+    return asyncio.run(_call_graph_read_tools_async(
+        project_id=project_id,
+        deck_id=deck_id,
+        card_id=card_id,
+        calls=calls,
+        concurrent=concurrent,
+        deadline_seconds=deadline_seconds,
+        conversation_id=conversation_id,
+    ))

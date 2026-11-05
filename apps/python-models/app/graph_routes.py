@@ -1,8 +1,4 @@
 """ThinkGraph, KnowGraph, and Jev route owners."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Project Knowledge Graph
 # Relationship: This file mounts the established Python-rails graph read and settlement routes without combining graph writers.
 # Entity: ThinkGraph
@@ -161,31 +157,46 @@ async def thinkgraph_operation(payload: dict[str, Any]):
 
 @graph_settlement_router.post("/thinkgraph/completed-pair/prepare")
 async def thinkgraph_completed_pair_prepare(payload: dict[str, Any]):
-    """Prepare one completed Main pair for its saved ThinkGraph Card pass."""
-    from app.python_models.thinkgraph_completed_pair_preparation import (
-        prepare_completed_pair,
+    """Read and chunk the exact hook-captured Main pair from Hermes state.db."""
+    from app.python_models.thinkgraph_automatic import (
+        AutomaticThinkGraphError,
+        prepare_completed_turn,
     )
-    from app.python_models.thinkgraph_relationship_vocabulary import ThinkGraphIntakeError
     import asyncio
     try:
-        return await asyncio.to_thread(prepare_completed_pair, payload)
-    except (ValueError, KeyError) as err:
+        return await asyncio.to_thread(
+            prepare_completed_turn,
+            str(payload.get("projectId") or ""),
+            str(payload.get("profile") or ""),
+            str(payload.get("sessionId") or ""),
+            int(payload.get("userRowId") or 0),
+            int(payload.get("assistantRowId") or 0),
+        )
+    except (AutomaticThinkGraphError, ValueError, KeyError) as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
-    except (ThinkGraphIntakeError, RuntimeError) as err:
+    except RuntimeError as err:
         raise HTTPException(status_code=502, detail=str(err)) from err
 
 
 @graph_settlement_router.post("/thinkgraph/completed-pair/settle")
 async def thinkgraph_completed_pair_settle(payload: dict[str, Any]):
-    """Persist the saved Card's structured facts through Engraphis."""
-    from app.python_models.thinkgraph_completed_pair_settlement import (
-        settle_completed_pair,
+    """Give one Hermes plugin LLM result to Engraphis for settlement."""
+    from app.python_models.thinkgraph_automatic import (
+        AutomaticThinkGraphError,
+        settle_completed_turn,
     )
     from app.python_models.thinkgraph_relationship_vocabulary import ThinkGraphIntakeError
     import asyncio
     try:
-        return await asyncio.to_thread(settle_completed_pair, payload)
-    except (ValueError, KeyError) as err:
+        return await asyncio.to_thread(
+            settle_completed_turn,
+            str(payload.get("projectId") or ""),
+            str(payload.get("pairReference") or ""),
+            payload.get("structuredOutput"),
+            provider=str(payload.get("provider") or ""),
+            model=str(payload.get("model") or ""),
+        )
+    except (AutomaticThinkGraphError, ValueError, KeyError) as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
     except (ThinkGraphIntakeError, RuntimeError) as err:
         raise HTTPException(status_code=502, detail=str(err)) from err
@@ -212,14 +223,14 @@ def thinkgraph_projection(
 def knowgraph_projection_read(projectId: str, limit: int = 200):
     """Read the bounded Graphiti projection for one canonical Project."""
 
-    from app.python_models.data_anchor_contract import DataAnchorError
+    from app.python_models.graph_read_contract import GraphReadError
     from app.python_models.knowgraph_projection_reads import (
         read_knowgraph_projection,
     )
 
     try:
         return read_knowgraph_projection(projectId, limit)
-    except (DataAnchorError, ValueError) as err:
+    except (GraphReadError, ValueError) as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
@@ -231,14 +242,14 @@ def knowgraph_neighborhood_read(
 ):
     """Read one bounded one-hop Graphiti neighborhood."""
 
-    from app.python_models.data_anchor_contract import DataAnchorError
+    from app.python_models.graph_read_contract import GraphReadError
     from app.python_models.knowgraph_projection_reads import (
         read_knowgraph_neighborhood,
     )
 
     try:
         return read_knowgraph_neighborhood(projectId, nodeId, limit)
-    except (DataAnchorError, ValueError) as err:
+    except (GraphReadError, ValueError) as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
@@ -262,11 +273,11 @@ def codegraph_read(payload: dict[str, Any]):
     """Read one bounded CodeGraph view through the persisted Builder grants."""
 
     from app.python_models.codegraph_reference_reads import read_codegraph_view
-    from app.python_models.data_anchor_contract import DataAnchorError
+    from app.python_models.graph_read_contract import GraphReadError
 
     try:
         return read_codegraph_view(payload)
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
-    except DataAnchorError as err:
+    except GraphReadError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err

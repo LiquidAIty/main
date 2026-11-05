@@ -1,314 +1,144 @@
-# LiquidAIty Deferred Work
+# LiquidAIty deferred work
 
-Core v0 is defined in `PLAN.md` and `ARCHITECTURE.md`. This file contains only work intentionally
-deferred until the static baseline and explicitly approved live proofs pass.
+Core launch source is defined by [plugin.md](plugin.md), [PLAN.md](PLAN.md), and
+[ARCHITECTURE.md](ARCHITECTURE.md). This file records possible later work only. It is not execution
+authorization, runtime input, or permission to restore a removed layer.
 
-These are candidates, not execution authorization. PLAN and the current PromptSpec govern order.
-Core Main/Bot/Builder-terminal behavior passed a bounded loaded run on 2026-10-14. Later source cleanup
-still requires its own reload, and the unproven tiers below remain separate. Do not treat a deferred item
-as permission to add another runtime or route.
+The IDF/Data Anchor/invocation-preparation/AutoTools/AutoModel/Jev-prefilter stack is retired, not
+deferred. Application-owned Main transport, PTY hosting, Desktop bridging, copied chat history, and
+parallel task runtime are also retired.
 
-## Live proof sequence
+## Loaded acceptance sequence
 
-1. Reload the cleaned source and repeat exact source-identity/health plus a bounded Main/direct-Card/graph
-   UI regression; do not reuse the older loaded checkpoint as proof of newer bytes.
-2. After interactive OAuth consent exists, invoke one actually granted saved-Card MCP tool and read back
-   its real result without bypassing authorization.
-3. When an enabled saved Script version exists, prove its success and failure restoration through one real
-   Card Run; do not insert bad source merely to manufacture a case.
-4. One ordinary Hermes Card completes a bounded Team task with its actual saved configuration, Card Run/
-   Hermes-root correlation and durable rejoin. Do not restore the removed Card Team-policy overlay.
-5. Main approves one transient Mag One Card input and hands it to the saved Mag One Card through the official
-   MCP boundary; Hermes performs the headless task/dependency execution.
+After explicit owner authorization:
 
-These calls require explicit approval. Structural tests must not be presented as live proof.
+1. Reload the current native/dashboard plugin and verify exact source identity plus plugin discovery.
+2. Read back the six core saved profiles and their model, SOUL, skill, toolset, MCP, Holographic, roster,
+   task-mode, and optional Card Python configuration.
+3. Exercise one bounded Main send/history/Stop path, then voice and images separately.
+4. Exercise one direct saved specialist through native `message_agent`.
+5. Exercise Team directly and prove one Hermes-owned AutoTeam root through final synthesis.
+6. Have Builder prepare an exact PromptSpec, then have Main send it to Magnetic and prove blue-ceiling
+   enforcement, dependencies, same-root synthesis, and the optional Team child boundary.
+7. Prove navigation-map parity between the visible graph and model context, including one open node.
+8. Prove completed-turn ThinkGraph intake without Main involvement and read back the Engraphis result.
+9. Prove Holographic profile isolation and the intended disabled Markdown/background-learning settings.
+10. Refresh and verify the external MCP connector catalog.
+11. Obtain Jeremiah's visual/product acceptance.
 
-## NRGSIM — after the first general modeling checkpoint
+Each step is a separate proof tier. A later step cannot repair or conceal a failed earlier owner.
 
-- Investigate the installed, unchanged OpenStudio MCP `create_new_building` measure route: the
-  2026-10-20 attempt timed out in `create_bar` after its native five-minute limit. The public SDK
-  starter recipe works and is explicitly identified as a starter, not a standards-compliance result.
-  Do not patch upstream or disable its sandbox to conceal the failure.
-- Extend the bounded inspector only with verified setter/unit contracts. The generic upstream
-  Building-by-handle read currently calls its unique-object SDK getter with an unsupported argument;
-  use the existing typed Building read for now. Shared Material/Construction local exceptions need
-  supported copying and reassignment, not a second inheritance model.
-- After modeling acceptance, verify OpenStudio's actual Appendix G baseline-generation scope and
-  standard edition, preserve baseline/proposed OSM snapshots and weather/engine provenance, then
-  add DView-shaped channel comparison with shared time windows and scales. A template recipe is
-  not evidence of a baseline transformation.
-- Full CAD, curved towers, reconstruction, general HVAC drawing and jEPlus optimization remain later
-  work; none is a prerequisite for the first save/reopen modeling loop.
+## Graph navigation and observable telemetry
 
-## Development toolchain major upgrades — deferred maintenance
+The launch navigation map is intentionally small. Possible later refinements require real utility from
+multi-agent use:
 
-The production npm dependency audit is clean after the non-breaking 2026-10-15 updates. The remaining
-14 advisories are confined to development dependencies and require breaking Nx 21 → 23 and Vitest 3 → 5
-migrations. Upgrade each toolchain deliberately with its configuration migration, complete TypeScript suite,
-and both production builds; do not use `npm audit fix --force` as a recovery shortcut.
+- bounded progressive reveal over real provider events;
+- optional 3D presentation while retaining separate provider authorities;
+- exact read/write/handoff telemetry keyed by provider IDs;
+- clickable exact Entity references in Main chat;
+- current/latest-task Card tool-call counts; and
+- AGE aggregates over stable Card/task/reference/artifact IDs.
 
-## Project graph time exploration — unaccepted refinement
+No refinement may expose hidden chain-of-thought, infer access from prose, copy graph content into AGE,
+or make AGE a scheduler. Telemetry must remain removable without damaging saved topology.
 
-Provider candidate retrieval, Jev ranking, and automatic one-Relevant/one-distinct-Recent agent grounding are
-current. The UI inspector currently shows at most two provider-projected attached records; it has no
-Relevant/Recent switch, Search field, or Results selector. A later optional search/time interaction may expose
-requested chronological exploration without changing automatic agent grounding. Its exact gesture, time field,
-direction, result bound, entitlement, and reset behavior are not decided. Do not implement a second timeline,
-transcript, index, or TypeScript semantic sorter to approximate it.
+The former “attention” idea is now ordinary observable pointer use:
 
-## Quick Web evidence handoff — deferred
+- read: an actual provider read returned the exact ID;
+- context: the visible map or explicit handoff carried that ID;
+- write: the provider confirmed the exact record;
+- task: Hermes reported the exact task/agent identity.
 
-Hermes agents should not be crippled when fast current information is part of their saved role. The
-approved direction permits bounded quick Web use by Main, Builder, and deliberately granted saved Cards,
-while KnowGraph retains durable evidence correlation and Graphiti persistence.
+IDF, Data Anchor, synthetic attention, semantic TypeScript ranking, and guessed activity do not return.
 
-The handoff mechanism is not implemented. A later bounded design may carry the research question, exact
-Entity references, source-backed claim, bounded interpretation, source URL/metadata, and why the evidence
-mattered. It must not carry whole chats, hidden reasoning, or every search result, and it must reuse an
-existing background/Bot/Card path rather than create a queue.
+## Project graph time exploration
 
-## Project Knowledge Dashboard — deferred derived artifact
+A later Project-level time control may explore actual provider timestamps across ThinkGraph and
+KnowGraph. It must preserve source authority and make missing/unequal time semantics explicit. It may not
+rewrite records, fabricate alignment, or become a second temporal graph.
 
-A future Builder-created Project Knowledge Dashboard may combine exact current graph reads into:
+## Quick Web evidence handoff
 
-- a machine-consumable Project context or PromptSpec;
-- an attractive human-facing scientific, business, code, or other plan/report;
-- an exportable standalone HTML/data-document artifact that may temporarily replace the center view.
+Main may later need a deliberately bounded quick-Web path that hands verified evidence to KnowGraph.
+That work must use Hermes Web/Firecrawl and Graphiti's existing provenance owner. It may not add another
+retriever, citation ledger, research ticket database, or automatic persistence rule.
 
-Its deterministic layer may include canonical Entities, selected Relevant/Recent Think/Know context,
-relationships, references, provenance, and unresolved gaps. A generated layer may summarize current
-direction, tensions, decisions, opportunities, and mission-specific context.
+## Project Knowledge report
 
-This is a regenerable artifact. It is not another graph, memory, writer, authorization source, or
-persistence truth. A later ordinary-surface action may be labelled simply **Report** and send the selected
-Entity/Relationship context to Builder; the detailed artifact surface may use the technical controls needed
-for inspection and export. No report action, center-view replacement, export format, or dashboard
-implementation is authorized by this document.
+A regenerable report may summarize selected Entities, relationships, current Thinks, sourced Knows,
+provenance, and open questions. It is a derived artifact, not a graph, memory, authorization source, or
+persistence truth. No dashboard/report UI is approved merely by appearing here.
 
-## Reveal and graph attention
+## Memory evaluation
 
-- Tune progressive reveal pacing so fast provider reads remain understandable without slowing agents.
-- Add optional stacked 3D layers for ThinkGraph, KnowGraph, CodeGraph, and AgentGraph while preserving
-  separate provider authorities.
-- Illuminate transient call consumption only when a runtime receipt proves the referenced provider objects
-  were delivered or opened.
-- Add inspector detail for graph reads/writes, traversals, selections, handoffs, and artifacts without
-  exposing hidden chain-of-thought.
-- Develop bounded prompting recipes that reward useful graph context and reject irrelevant context.
+Measure Holographic recall quality and per-profile isolation over real Main, Builder, ThinkGraph, and
+KnowGraph work. If it does not produce enough useful “Hermes learns” behavior, reconsider only after
+evidence. Do not pre-emptively restore Markdown memory, automatic review, curator work, auto-skill
+creation, or a Learning Graph UI.
 
-## Hermes memory
+## Delegation depth
 
-- Measure recall quality and profile isolation across longer real Main, Builder, and
-  KnowGraph sessions without copying data between profiles.
-- Test Honcho cloud or self-hosted recall/write only after its intended setup flow supplies the
-  owning profile's real OAuth/API-key or base-URL configuration.
-- Compare the already-installed external-memory providers only through their Hermes profile
-  selections; do not add a Card-level provider field, SQLite store, or parallel provider registry.
-- Keep memory separation intentional; do not create one automatic cross-agent memory dump.
+Launch permits narrowed sequential descendants within Magnetic and depth-one AutoTeam workers.
+Cross-profile nested orchestrators remain deferred. Any later expansion must prove an exact authority
+ceiling, termination, failure behavior, and comprehensible telemetry without adding another scheduler
+or worker registry.
 
 ## Voice
 
-- Main's voice control and backend route use Hermes' existing voice contracts; they remain unaccepted in the
-  current loaded proof. Any expansion requires separate approval.
-- Keep voice outside the next bounded cleanup regression unless the owner explicitly brings it into scope.
-  Its inactive state must not affect text chat.
+Voice requires its own loaded browser/microphone/provider acceptance. Text chat must remain independent
+when voice is unavailable. No voice-specific session owner or transport may be introduced.
 
-## Hermes delegation options
+## Tool-call presentation
 
-- Keep Leaf available through Hermes' existing internal contract; expose no Leaf UI until its Card-level
-  purpose and honest configuration fields are proven.
-- Keep recursive/orchestrator delegation internal and reserve product space without shipping a selector.
-- Main Stop now uses one exact Run-scoped Hermes cancellation contract. Any future Stop expansion must reuse
-  that ownership pattern rather than become saved Team policy.
+A compact truthful tool-call indicator on Card faces may be useful after real multi-agent runs. It must
+come from Hermes events/receipts, not planned tools or prompt mentions, and must not turn the Canvas into
+a second task board.
 
-## AgentGraph swarm telemetry
+## Development toolchain maintenance
 
-Saved orange/blue Card topology is current authorization, not an experiment. AGE Run/artifact observations
-are source-wired but their lasting product value and presentation remain unproven until real Team and
-Magnetic work is exercised. Keep that boundary narrow: stable Card/Run/task/reference/artifact identities and
-truthful state only—never prompts, transcripts, IDFs, provider secrets, scheduling authority, or inferred
-meaning. After representative swarms, retain only observations that the Canvas/Inspector makes genuinely
-useful; the topology owner must survive independently if execution telemetry is later narrowed or removed.
+Major Node, TypeScript, Vite, React, Python, database, or vendor upgrades remain separate maintenance
+tasks. They require their own compatibility proof and may not be mixed into runtime acceptance.
 
-The retained product idea formerly described as “attention” is an observable knowledge/work flow, not a
-separate AttentionGraph or an application guess about model thought:
+## Repository-to-agent-product digestion
 
-- `read`: a graph tool returned the exact provider ID, the reference plus bounded data entered the Run IDF,
-  or a Hermes handoff explicitly delivered that reference;
-- `write`: the provider confirmed creation/change of the exact Think/Know record;
-- `delivery`: a Context Selection/Data Anchor carrying the exact reference reached another Card/task.
+[CODEGRAPH.md](CODEGRAPH.md) defines the bounded future workflow for understanding an exact Git revision,
+identifying a coherent capability and public extension seam, and producing a reviewable saved-Card or
+agent-product proposal. It is not a launch requirement and does not authorize automatic repository
+execution, index-scope changes, grants, profile creation, or vendor import.
 
-The knowledge front door may temporarily illuminate real reads and ring real writes (including the established
-purple write treatment), retaining only current/latest Run attention long enough to inspect. When a graph is
-large, Main/ThinkGraph/KnowGraph or a bounded Jev decision may select a small real-entity/relationship frontier;
-TypeScript must not rank prose or infer relevance. The Agent Canvas may project current/latest active-agent and
-tool-call counts on Card faces from the same observed events, without queue text or another dashboard.
+The preferred packaging target is a small LiquidAIty core plus independently versioned and scanned domain
+agent products. Kronos, TradingAgents, NRGSIM, WorldView/ShadowBroker, and future products may each own a
+repository, CodeGraph, Hermes-facing package, dependencies, grants, and acceptance ledger while saved Cards
+and wires connect them into a Project. Moving their current lazy UI chunks out of the core requires a real
+Hermes dashboard-composition contract and is a separate post-v0.1 refactor; do not simulate it with private
+cross-plugin imports or an iframe.
 
-Keep the attention palette semantically small and consistent with the existing Solarpunk material: blue remains
-Think authority, orange remains Know authority, purple marks a confirmed provider write/change, green marks a
-confirmed read/context delivery/use, and cyan/white remains explicit user Focus/selection. Activity rings never
-replace the node's authority color. A canonical Entity mention in Main chat should be an exact clickable Entity:
-clicking it focuses the real Combined provider member(s) and opens the existing right inspector with recent
-Thinks, current Knows, relationships, source/provenance, provider IDs and current/latest Run attention evidence.
-Implement this as ordinary React state over provider records and observed events, never DOM scraping or prose
-inference.
+## NRGSIM
 
-A later collective-attention projection may expose transparent structural aggregates per exact provider
-reference: current-Run actors, recent distinct actors, Runs that used it, read/write/handoff counts, and last
-read/write/delivery timestamps. Deduplicate repeated identical reads by actor + Run + provider reference so one
-looping worker cannot outweigh independent attention from the user, Main and several Cards. These facts may
-inform a model/Jev context choice and graph heat, but they are not semantic importance, authorization, or
-automatic context inclusion. Keep detailed activity bounded to current/latest work and derive longer-lived heat
-from stable Run/reference relationships rather than an unbounded copied event/content store.
+`agent-products/nrgsim` remains source/reference material for later product work. It is not a second
+active LiquidAIty development Project and is not part of the Hermes plugin launch acceptance. Any later
+work must recover its current source and explicit owner goal rather than restoring an old persistent
+session, Docker, Pascal, IDF, or Card Run architecture.
 
-For deliberate team work, one approved Magnetic root IDF may carry the bounded Think/Know entity and
-relationship selection, exact provider IDs, hydrated content and provenance. Hermes then owns decomposition,
-task messages, worker sessions, retries and synthesis for the exact blue-connected roster. Do not manufacture
-application-owned per-worker IDFs, copy subgraphs into AGE, restore AutoGen/Magentic-One as a fallback, or make
-Jev a scheduler. Data Anchors remain the explicit selection/handoff mechanism; AGE may relate stable IDs and
-timestamps while Engraphis, Graphiti, CBM, Hermes, PostgreSQL and the artifact store retain their own content.
-Do not restore provider-ID aliases, deterministic semantic ranking, hidden context assembly, or chain-of-thought
-capture.
-- Evaluate saved Team profiles only when they have one durable Card-owned schema, invocation projection,
-  restart recovery, and observable applied configuration.
-- Preserve current/last Card Run context after workers stop; do not create a Team history database,
-  duplicate SQL task table, or user-facing receipt product.
+## Trading and domain products
 
-## Card cost-control selection
-
-Card-level AutoTools and Auto Model are current saved configuration. AutoTools may narrow only the
-Card's authorized effective tool set; Auto Model may choose only among the explicitly configured
-eligible 5.6 Sol/Luna candidates. Their selected values and availability belong in the latest/current
-Run projection without creating another selector controller.
-
-Future work is calibration, not restoration: use real completed Runs to decide whether either selector
-reduces total token/cost/latency without worse completion or reliability. The compact inspector may keep
-showing the latest selector outcome and confidence. Do not add deterministic content routing, another
-model registry, fallback model, wider tool authority, or a selector lifecycle controller.
-
-## KnowGraph evolution — unaccepted proposal
-
-No consolidation of graph Cards or change of graph write authority is approved by this proposal.
-
-Keep one ordinary visible `card_knowgraph` KnowGraph Card mapped one-to-one to its fresh Hermes
-`knowgraph` profile. Do not revive the retired Steward/Stuart identity or carry its abandoned Team
-delegation and PDF-ingest coupling forward.
-Do not add capability profiles, prompt overlays, temporary personas, or a second selectable profile store
-inside it. ThinkGraph, CodeGraph, KnowGraph/research, prompt design, and cross-graph synthesis should evolve
-through the ordinary Card's saved prompt, skills, tools, graph selections, Script, grants, and explicit Card
-revisions. If a responsibility later requires genuinely separate identity, memory, authority, or lifecycle,
-evaluate a separate ordinary Card through the normal orange-edge contract instead of hiding another agent
-inside KnowGraph.
-
-If existing Graphiti facts later need bulk Jev-annotation maintenance, design it as an explicit,
-authenticated Builder administration operation with bounded preview and exact Project/fact scope. Do not
-restore the uncalled `/reconcile_jev_annotations` service route as ordinary KnowGraph behavior; live
-ingestion already performs its own bounded reconciliation.
-
-## Retired experiments
-
-Constellation autonomy, seed expansion and bulk re-embedding are superseded proposals, not current
-owners or future tasks. Their historical description remains in Git; do not revive them during
-Engraphis work. A separate owner decision would be required to reconsider any such capability.
-
-## UI after runtime proof
-
-- Refine Chat/Graphs as the primary modality and Agent Canvas as the build/test modality.
-- Preserve the existing Builder terminal beneath Chat.
-- Explore distinct visual treatment for ordinary Cards versus the Mag One bus without creating new
-  runtime types.
-- Preserve the current bus layout for now: protected System 3 Cards above it, ordinary information/source/
-  processor/support Cards on one side, and sandboxed strategy Trading Cards on the other. Explore a
-  magnetic plus/X presentation later, with slim collapsed Cards and optional visual quadrants, only after
-  saved topology and execution remain stable. Position and quadrant must never imply Card type, grant,
-  edge direction, or execution authority.
-
-## Data and trading
-
-- Trading remains paper/simulated until evidence, risk, approval, and receipt boundaries are proven.
-- WorldSignals remains parked unless a current saved edge and product test bring it into scope.
-- Do not connect trading execution to experimental graph or memory paths.
-- Add real LumiBot backtesting only through an explicit Trading Card tool that receives a saved
-  strategy/configuration and a provenance-bound recorded market dataset, then returns the actual
-  upstream analysis and artifacts. Never restore the removed fixed symbol, hardcoded twelve-bar series,
-  fixed one-share round trip, or `/trading/lifecycle/backtest` proof route as product behavior.
-
-### WorldView space-infrastructure research views — design, not shipped capability
-
-The September 29 space-infrastructure PromptSpec proposes testable research views, not a pro-SpaceX
-conclusion or permission to integrate more providers. One controlled God’s Eye WorldView remains the spatial
-surface. WorldSignals may later supply bounded history/dependency queries; WorldMonitor remains later
-macro context. Saved Cards retain agent authority and KnowGraph retains sourced-knowledge authority.
-
-**Attention contract:** Normal retains the relevant population with subdued, mostly unlabeled context.
-Focus retains that context and emphasizes only a bounded result set, its labels and relevant paths.
-Isolate explicitly hides unrelated context; it is never the default. Clear removes transient focus and
-returns to Normal without overriding an explicit selection/tracking target or saved display preference.
-Future context-strength control may continuously deemphasize the background; no such control, new glyph
-style, relationship paths or isolate action is implemented by the current label pass.
-
-**Evidence contract:** each future focused item references its provider entity/layer ID and source identity,
-not a copied graph or a name-derived ownership claim. Each relation carries its source URL/reference,
-provider, observed/fetched times, validity/freshness and source-supported status. Derived relations also
-expose method, input references and time window; missing evidence remains unknown. The current exact-NORAD
-label focus is transient presentation state, not a durable research result or relationship store.
-
-Future sourced relationships include `OWNED_BY`, `OPERATED_BY`, `LAUNCHED_BY`,
-`DEPENDS_ON_LAUNCH_PROVIDER`, `COMMUNICATES_WITH`, `SERVES`, `USES_GATEWAY`, `USES_GROUND_STATION`,
-`USES_SPECTRUM`, `SHARES_ORBITAL_SHELL`, `COMPETES_WITH`, `ALTERNATIVE_TO` and `SUPPLIED_BY`.
-These are proposed research relations, not a deterministic ontology/router. Models and the existing
-sourced-knowledge owner establish meaning from evidence; proximity never establishes a relation.
-OWNED, DEPENDENT, CUSTOMER, COMPETITOR and ALTERNATIVE remain distinguishable classes without a
-legend-heavy globe. A customer is not automatically dependent. Launch-, network- and infrastructure-
-dependence each need an explicit measurable definition and supporting sources.
-
-| Future view | Spatial result and comparison | Evidence/derivation needed later |
-| --- | --- | --- |
-| SpaceX Infrastructure | Separate owned/operated assets, Starlink, pads/vehicles/missions, sourced gateways, customer payloads and dependents; retain competitors/alternatives as context. | Verified ownership/operator and service/dependency relations, including counterevidence. Names alone are insufficient. |
-| Launch Dependency / Provider Alternatives | Payload or constellation → provider → vehicle → site → mission date; compare alternative routes to orbit. | Historical and contracted launches, payload identity, mass where sourced, cadence, compatible capacity and regulatory limits. Expose historical/recent provider share and alternative availability on demand; no opaque permanent dependency score. |
-| Starlink / Constellation / Operator | Focus operator, constellation, country or mission class; compare active populations by altitude/inclination and analytical shell bands. | Authoritative classification, operational status and longitudinal deployment/deorbit records. A visible catalog count is not active fleet size. |
-| Orbital Shell Crowding | Show object distributions, operator share and time-windowed conjunction/debris pressure in specified useful regimes. | Validated orbital grouping, real close-approach/maneuver/debris data, spectrum coordination, coverage/latency and insertion constraints. Do not draw physical shell boundaries from analytical bins or equate raw count with collision risk or space itself being finite. |
-| LEO Broadband Competition / Ground Network | Compare LEO/GEO communications, gateways/ground stations, footprints, service regions, fiber, IXs, subsea routes/landing points, wireless and maritime/aviation utility. | Sourced service/communications links, capacity, coverage, ownership and substitutability. Satellite internet must not be assumed preferable everywhere. |
-| Global Data Centers — terrestrial counterview | Locations/industrial clusters plus sourced cloud regions, grid/generation, fiber/IX access and cooling/climate context. | Capacity and power/network connections where documented; location alone does not establish compute capacity or a grid/fiber dependency. |
-| Space Compute Feasibility / Terrestrial vs Orbital Compute | Globe: orbital/ground geometry, exposure, coverage and dependencies. Inspector: mass/cost, power/storage, thermal/radiators, radiation, maintenance/upgrades, latency/bandwidth, security/jurisdiction and disposal. | Explicit technical assumptions, sourced engineering/economic inputs and sensitivity/time windows; expose tradeoffs rather than one winner score. |
-| Launch + Communications Thesis / Substitutes | Compare cadence, deployment velocity, constellation/service scale, customers/dependents and alternative capacity. | Evidence supporting and weakening the thesis, including national launch systems, other constellations, GEO, fiber, subsea cables and terrestrial wireless. No BUY/SELL or “good investment” map fact. |
-| Temporal comparison | Deployment/retirement, provider share, launch cadence, gateway expansion and datacenter construction over a chosen interval. | Time-stamped history and coverage/completeness disclosures. Use timelines/sparklines when clearer than globe animation. |
-
-**Current source inventory and gaps:** `satellites.js` supplies CelesTrak core groups plus optional dense
-Starlink points and SGP4 positions, not verified ownership, dependence, spectrum or conjunction risk.
-`rocketLaunches.js` supplies the existing Launch Library 2 thirty-day mission/pad/provider/payload view,
-not complete launch history or alternative-provider capacity. Bundled OSM datacenters contain 4,351
-features and source-tagged geometry/name/operator/capacity metadata where present; their extraction date
-and query were not recorded. Bundled local layers also include USACE dams, not a complete power-grid dataset.
-The distribution currently omits TeleGeography’s cable dataset from `localLayers.js`; it is not an active
-network evidence source here. Future cable/fiber/IX, gateways, ground stations, cloud capacity, grid and
-orbital-risk inputs require separately approved providers/research and applicable data rights.
-
-**Current safe delta:** focus-only satellite names, an explicit saved Focus only/All preference, and a
-replaceable/clearable label focus of at most 50 exact renderable NORAD IDs through the existing action
-path. Points, brackets, propagation, DENSE, selection/tracking, Earth/providers and Space Missions remain
-unchanged. Semantic operator/shell/dependency queries, multi-layer typed focus, isolate, context-strength,
-new classifications, histories, provider integration and saved research presets are deferred. Future
-proof must show sourced OWNED/DEPENDENT/CUSTOMER/COMPETITOR/ALTERNATIVE sets, orbital context and terrestrial
-counterevidence on this same globe; design and visual acceptance remain pending owner review.
+Trading is the retained active saved development Project. Domain-specific market data, Kronos,
+ShadowBroker, WorldView, and other controlled imports keep their own provider/runtime contracts. Core
+plugin work must not reset their data, rewrite their UI, or use them as a reason to restore a generic
+parallel runtime.
 
 ## Cleanup decisions intentionally deferred
 
-- Define Card removal as two explicit operations before restoring Canvas node deletion: detach one
-  reusable Card from one Project, or permanently delete the Card/library identity after exact reference
-  checks. A Canvas Delete key must never guess between those authorities or silently turn a layout edit
-  into durable Card deletion.
-- Replace existing `liquidaity-*` technical identities only through one coordinated, branding-neutral
-  migration covering saved Cards, Hermes profile homes, source guards, routes, tool/config references,
-  and persistence readback. Until that migration is explicitly approved, preserve exact load-bearing
-  identifiers and do not create new branded technical names, aliases, or fallbacks.
-- Do not recreate retired Card IDs as part of an identity migration. Preserve references needed
-  for historical readback; current saved identities require exact migration scope.
-- The September 10 domain-route migration is implemented with coordinated Python/browser callers,
-  focused preservation tests and canonical loaded route/catalog readback recorded in PLAN.md.
-  Fresh selected-plugin and agent execution acceptance remain separate; do not repeat the rename
-  as a future workstream.
-- Replace the current dev supervisor only if its dev-only advisory cannot be contained and the
-  replacement preserves one attached six-service process tree.
-- Upgrade React-three/Drei only as a measured compatibility task because the active CodeGraph renderer
-  depends on the current React 18/Three cohort.
+Do not opportunistically:
+
+- rename existing compatibility identifiers;
+- migrate databases or profile homes;
+- merge ThinkGraph and KnowGraph;
+- redesign the Card/Canvas visual language;
+- remove controlled imported product source;
+- change external OAuth/publication topology;
+- convert cross-provider pointers into copied records; or
+- perform repository-wide source-header work.
+
+Each requires an explicit owner-approved task and independent rollback/proof.

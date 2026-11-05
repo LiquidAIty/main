@@ -1,0 +1,36 @@
+manifest_version: 2
+api_version: 1
+name: liquidaity
+version: 1.0.0
+description: "LiquidAIty web UI integration, saved Card Python, wire-reduced taskgraphs, and automatic Engraphis ThinkGraph intake for Hermes."
+requires_hermes: ">=0.22.7"
+license: MIT
+tags:
+  - dashboard
+  - cards
+  - graphs
+  - trading
+requires_plugins:
+  - holographic
+provides_hooks:
+  - pre_llm_call
+  - on_session_end
+provides_tools:
+  - card_python
+  - taskgraph_start
+config_schema:
+  python_rails_url:
+    type: str
+    default: "http://127.0.0.1:8003"
+    label: Python rails URL
+    description: "Loopback LiquidAIty Python rails origin used for database-to-database ThinkGraph intake."
+  card_script:
+    type: dict
+    default: {}
+    label: Card Python runtime
+    description: "Immutable compiled Card Script projected from the LiquidAIty saved deck."
+  task_mode:
+    type: str
+    default: ""
+    label: TaskGraph mode
+    description: "Availability hint mirroring the saved Team or Magnetic Hermes task mode."

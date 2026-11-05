@@ -1,7 +1,3 @@
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Saved Cards
 # Relationship: This file verifies canonical saved Card serialization, explicit runtime ownership, stable grants, and revision validation.
 # Entity: Card Profiles
@@ -10,8 +6,8 @@
 # Relationship: This file verifies only eligible ordinary agent Cards may save the orchestrator switch.
 # Entity: Magnetic Membership
 # Relationship: This file verifies the Magnetic runtime remains distinct from ordinary agent Cards and rejects ordinary automatic selectors and orange orchestration.
-# Entity: Jev Decisions
-# Relationship: This file verifies AutoTools and AutoModel remain strict optional booleans on eligible non-Magnetic Cards.
+# Entity: Retired Runtime Fields
+# Relationship: This file verifies removed automatic model and tool selectors cannot survive new Card configuration or canonical persistence.
 # Entity: Card Scripts
 # Relationship: This file verifies a disabled invalid Card Script remains readable and inert without suppressing the Card's ordinary tools.
 # Entity: Team
@@ -23,7 +19,6 @@ import pytest
 from pydantic import ValidationError
 
 from app.python_models import (
-    card_invocation_configuration,
     saved_card_contract,
     saved_cards,
 )
@@ -43,6 +38,7 @@ def _agent(card_id: str, **overrides):
             "providerModelId": "deepseek/deepseek-v4-flash-0731",
             "accessMode": "openrouter-api",
             "tools": [],
+            "skills": ["hermes-agent"],
         },
         "position": {"x": 0, "y": 0},
     }
@@ -97,18 +93,16 @@ def test_saved_profiles_stay_unique_and_stable_grants_are_preserved():
 
 
 @pytest.mark.parametrize("effort", ("low", "medium", "high", "xhigh", "max", "ultra"))
-def test_reasoning_effort_uses_one_saved_and_invocation_enum(effort: str) -> None:
+def test_reasoning_effort_uses_one_saved_enum(effort: str) -> None:
     card = _agent("reasoning-card")
     card["runtimeOptions"]["reasoningEffort"] = effort
 
     saved_card_contract.validate_new_card_revision(card)
 
-    assert card_invocation_configuration.saved_invocation_configuration(card)[
-        "reasoningEffort"
-    ] == effort
+    assert saved_card_contract.stable_card_record(card)["reasoningEffort"] == effort
 
 
-def test_invalid_historical_reasoning_effort_is_readable_but_cannot_save_or_run() -> None:
+def test_invalid_historical_reasoning_effort_is_readable_but_cannot_save() -> None:
     card = _agent("reasoning-card")
     card["runtimeOptions"]["reasoningEffort"] = "extreme"
 
@@ -118,12 +112,6 @@ def test_invalid_historical_reasoning_effort_is_readable_but_cannot_save_or_run(
         match="card_reasoning_effort_invalid",
     ):
         saved_card_contract.validate_new_card_revision(card)
-    with pytest.raises(
-        saved_card_contract.CardDomainError,
-        match="card_reasoning_effort_invalid",
-    ):
-        card_invocation_configuration.saved_invocation_configuration(card)
-
 def test_existing_saved_hermes_card_profile_is_immutable() -> None:
     previous = saved_card_contract.stable_card_record(_agent(
         "helper",
@@ -161,43 +149,25 @@ def test_new_card_revision_validates_saved_orchestrator_authority():
         saved_card_contract.validate_new_card_revision(magnetic)
 
 @pytest.mark.parametrize("field", ["autoTools", "autoModel"])
-def test_new_card_revision_validates_auto_flags_without_availability(field):
+def test_retired_auto_flags_are_removed_from_canonical_card_state(field):
     delegate = _agent(
         "delegate",
         runtime={"kind": "hermes", "mode": "delegate", "profile": "delegate"},
     )
     delegate["runtimeOptions"][field] = True
     saved_card_contract.validate_new_card_revision(delegate)
-    assert saved_card_contract.stable_card_record(delegate)["runtimeExtensions"][field] is True
+    assert field not in saved_card_contract.stable_card_record(delegate)["runtimeExtensions"]
 
-    delegate["runtimeOptions"][field] = "yes"
-    with pytest.raises(
-        saved_card_contract.CardDomainError,
-        match=f"card_{'auto_tools' if field == 'autoTools' else 'auto_model'}_invalid",
-    ):
-        saved_card_contract.validate_new_card_revision(delegate)
 
-    magnetic = _agent(
-        "magnetic",
-        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "magnetic"},
-    )
-    magnetic["runtimeOptions"][field] = True
-    with pytest.raises(
-        saved_card_contract.CardDomainError,
-        match="requires_ordinary_card_runtime",
-    ):
-        saved_card_contract.validate_new_card_revision(magnetic)
-
-def test_card_configuration_auto_flags_are_optional_strict_booleans():
+@pytest.mark.parametrize("field", ["autoTools", "autoModel"])
+def test_card_configuration_rejects_retired_auto_flags(field):
     configuration = {
         "runtimeKind": "hermes",
         "runtimeMode": "delegate",
         "accessMode": "chatgpt-account",
     }
-    assert CardConfiguration(**configuration).autoTools is None
-    assert CardConfiguration(**configuration, autoTools=True).autoTools is True
     with pytest.raises(ValidationError):
-        CardConfiguration(**configuration, autoModel=1)
+        CardConfiguration(**configuration, **{field: True})
 
 def test_disabled_invalid_script_remains_readable_and_inert(monkeypatch):
     loaded = _destination_fixture(monkeypatch)

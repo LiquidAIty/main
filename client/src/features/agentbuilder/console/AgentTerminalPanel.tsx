@@ -1,75 +1,56 @@
-// Graph + less = more: less code that does the same work as more code is more useful.
-// Entity names the feature; Relationship explains why this file belongs and what it contributes.
-// Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-// Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: Card Terminals
-// Relationship: This file owns the xterm view, forwards input and resize events, renders streamed output, and disposes terminal resources on unmount.
-// Entity: Card Sessions
-// Relationship: Opens a CLI viewer bound to the server-resolved Project, deck, Card, profile, and existing Hermes conversation, ignoring stale openings and output after retargeting.
+// Relationship: Attaches the existing xterm surface directly to Hermes's authenticated /api/pty endpoint for the selected saved profile.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
-import {
-  agentTerminalClient,
-  type AgentTerminalClient,
-  type AgentTerminalIdentity,
-  type AgentTerminalSession,
-  type AgentTerminalStream,
-} from './agentTerminalClient';
+import { hermesPtyUrl } from '../../hermes/hermesHost';
+
+type AgentTerminalIdentity = {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  profile: string;
+};
 
 type AgentTerminalPanelProps = {
   identity: AgentTerminalIdentity;
-  client?: AgentTerminalClient;
 };
 
-const DEFAULT_SIZE = { cols: 80, rows: 24 };
+const KEEPALIVE_MS = 20_000;
 
-type PendingOpen = {
-  key: string;
-  promise: Promise<AgentTerminalSession>;
-};
-
-function isConnected(session: AgentTerminalSession | null): session is AgentTerminalSession {
-  return session?.status === 'connected';
+function attachToken(identity: AgentTerminalIdentity): string {
+  const key = `hermes.pty.attach:${identity.projectId}:${identity.deckId}:${identity.cardId}:${identity.profile}`;
+  const existing = window.sessionStorage.getItem(key);
+  if (existing) return existing;
+  const created = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  window.sessionStorage.setItem(key, created);
+  return created;
 }
 
-export default function AgentTerminalPanel({
-  identity,
-  client = agentTerminalClient,
-}: AgentTerminalPanelProps) {
+function resumeControl(value: string): boolean {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed?.type === 'resume' && typeof parsed.id === 'string';
+  } catch {
+    return false;
+  }
+}
+
+export default function AgentTerminalPanel({ identity }: AgentTerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const terminalRef = useRef<Terminal | null>(null);
-  const sizeRef = useRef(DEFAULT_SIZE);
-  const sessionRef = useRef<AgentTerminalSession | null>(null);
-  const streamRef = useRef<AgentTerminalStream | null>(null);
-  const lastResizeRef = useRef('');
-  const pendingOpenRef = useRef<PendingOpen | null>(null);
-  const identityKeyRef = useRef('');
-  const [terminalReady, setTerminalReady] = useState(false);
-  const [session, setSession] = useState<AgentTerminalSession | null>(null);
+  const [status, setStatus] = useState<'opening' | 'connected' | 'closed' | 'failed'>('opening');
   const [error, setError] = useState<string | null>(null);
-  const stableIdentity = useMemo<AgentTerminalIdentity>(() => ({
-    projectId: identity.projectId,
-    deckId: identity.deckId,
-    cardId: identity.cardId,
-  }), [identity.cardId, identity.deckId, identity.projectId]);
-  const identityKey = `${stableIdentity.projectId}:${stableIdentity.deckId}:${stableIdentity.cardId}`;
-
-  sessionRef.current = session;
-  identityKeyRef.current = identityKey;
-
-  useEffect(() => {
-    setSession(null);
-    setError(null);
-    lastResizeRef.current = '';
-  }, [identityKey]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    let disposed = false;
+    let socket: WebSocket | null = null;
+    let keepalive: ReturnType<typeof setInterval> | null = null;
+    let frame: number | null = null;
     const terminal = new Terminal({
       convertEol: false,
       fontSize: 12,
@@ -79,25 +60,18 @@ export default function AgentTerminalPanel({
       theme: { background: '#0b0f14', foreground: '#d7e0ea' },
     });
     const fit = new FitAddon();
-    let frame: number | null = null;
+    const sendResize = () => {
+      if (socket?.readyState === WebSocket.OPEN && terminal.cols >= 2 && terminal.rows >= 1) {
+        socket.send(`\x1b[RESIZE:${terminal.cols};${terminal.rows}]`);
+      }
+    };
     const resize = () => {
-      if (!terminalRef.current) return;
       const bounds = container.getBoundingClientRect();
       if (bounds.width <= 0 || bounds.height <= 0) return;
       try {
         fit.fit();
-        if (terminal.cols >= 2 && terminal.rows >= 1) {
-          sizeRef.current = { cols: terminal.cols, rows: terminal.rows };
-          const active = sessionRef.current;
-          const sizeKey = `${terminal.cols}x${terminal.rows}`;
-          if (isConnected(active) && lastResizeRef.current !== sizeKey) {
-            lastResizeRef.current = sizeKey;
-            streamRef.current?.resize(terminal.cols, terminal.rows);
-          }
-        }
-      } catch {
-        // A later layout notification retries once this panel is measurable.
-      }
+        sendResize();
+      } catch { /* A later layout notification retries. */ }
     };
     const scheduleResize = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -108,84 +82,74 @@ export default function AgentTerminalPanel({
     };
     terminal.loadAddon(fit);
     terminal.open(container);
-    terminalRef.current = terminal;
-    const input = terminal.onData((data) => streamRef.current?.write(data));
+    const input = terminal.onData((data) => {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(data);
+    });
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleResize);
     observer?.observe(container);
     window.addEventListener('resize', scheduleResize);
     scheduleResize();
-    terminal.focus();
-    setTerminalReady(true);
-    return () => {
-      if (frame !== null) window.cancelAnimationFrame(frame);
-      observer?.disconnect();
-      window.removeEventListener('resize', scheduleResize);
-      terminal.dispose();
-      input.dispose();
-      terminalRef.current = null;
-      setTerminalReady(false);
-    };
-  }, [client, identityKey, stableIdentity]);
-
-  useEffect(() => {
-    const needsOpen = !session;
-    if (!terminalReady || !needsOpen || error) return;
-    const key = `${identityKey}:new:card-terminal`;
-    let pending = pendingOpenRef.current;
-    if (!pending || pending.key !== key) {
-      pending = { key, promise: client.open(stableIdentity, sizeRef.current) };
-      pendingOpenRef.current = pending;
-    }
-    let active = true;
-    void pending.promise.then((opened) => {
-      if (!active || pendingOpenRef.current !== pending || identityKeyRef.current !== identityKey) return;
-      pendingOpenRef.current = null;
-      lastResizeRef.current = '';
-      setSession(opened);
-      setError(opened.error || null);
+    setStatus('opening');
+    setError(null);
+    const channel = `card:${identity.projectId}:${identity.deckId}:${identity.cardId}`;
+    void hermesPtyUrl(identity.profile, {
+      channel,
+      attach: attachToken(identity),
+    }).then((url) => {
+      if (disposed) return;
+      const ws = new WebSocket(url);
+      socket = ws;
+      ws.binaryType = 'arraybuffer';
+      const decoder = new TextDecoder();
+      ws.onopen = () => {
+        if (disposed) return;
+        setStatus('connected');
+        sendResize();
+        keepalive = setInterval(sendResize, KEEPALIVE_MS);
+        terminal.focus();
+      };
+      ws.onmessage = (event) => {
+        if (disposed) return;
+        if (typeof event.data === 'string' && resumeControl(event.data)) return;
+        const output = typeof event.data === 'string'
+          ? event.data
+          : decoder.decode(new Uint8Array(event.data as ArrayBuffer), { stream: true });
+        if (output) terminal.write(output);
+      };
+      ws.onerror = () => {
+        if (!disposed) setStatus('failed');
+      };
+      ws.onclose = (event) => {
+        if (keepalive) clearInterval(keepalive);
+        keepalive = null;
+        if (disposed) return;
+        const expected = event.code === 1000 || event.code === 4409 || event.code === 4410;
+        setStatus(expected ? 'closed' : 'failed');
+        if (!expected) setError(event.reason || `Hermes terminal closed (${event.code}).`);
+      };
     }).catch((cause) => {
-      if (!active || pendingOpenRef.current !== pending || identityKeyRef.current !== identityKey) return;
-      pendingOpenRef.current = null;
+      if (disposed) return;
+      setStatus('failed');
       setError(cause instanceof Error ? cause.message : String(cause));
     });
-    return () => { active = false; };
-  }, [client, error, identityKey, session, stableIdentity, terminalReady]);
-
-  useEffect(() => {
-    if (!session) return;
-    let lastSequence = 0;
-    const streamIdentityKey = identityKey;
-    const stream = client.stream(session, {
-      onOutput: ({ sequence, data }) => {
-        if (identityKeyRef.current !== streamIdentityKey || sequence <= lastSequence) return;
-        lastSequence = sequence;
-        terminalRef.current?.write(data);
-      },
-      onState: (next) => {
-        if (identityKeyRef.current !== streamIdentityKey) return;
-        setSession((current) => current?.sessionId === session.sessionId
-          ? { ...current, ...next }
-          : current);
-        if (typeof next.error === 'string' && next.error) setError(next.error);
-      },
-      onTransportError: () => undefined,
-    });
-    streamRef.current = stream;
     return () => {
-      if (streamRef.current === stream) streamRef.current = null;
-      stream.close();
+      disposed = true;
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      if (keepalive) clearInterval(keepalive);
+      observer?.disconnect();
+      window.removeEventListener('resize', scheduleResize);
+      input.dispose();
+      socket?.close();
+      terminal.dispose();
     };
-  }, [client, identityKey, session?.sessionId, session?.websocketUrl]);
+  }, [identity.cardId, identity.deckId, identity.profile, identity.projectId]);
 
-  const connectionStatus = session?.status || (error ? 'failed' : 'opening');
   return (
     <section
       data-testid="agent-terminal-panel"
-      data-session-id={session?.sessionId || ''}
-      data-card-id={session?.cardId || identity.cardId}
-      data-profile={session?.profile || ''}
-      data-close-code={session?.closeCode ?? ''}
-      data-status={connectionStatus}
+      data-card-id={identity.cardId}
+      data-profile={identity.profile}
+      data-status={status}
       aria-label="Card terminal"
       style={{
         display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,

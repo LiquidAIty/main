@@ -1,18 +1,12 @@
-"""CBM file-edge queries for CodeGraph and exact symbol hydration for Data Anchors."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
+"""CBM file-edge queries and exact symbol reads for CodeGraph."""
 # Entity: CodeGraph
 # Relationship: This file reads source annotations and file text; CBM set queries own structural traversal and return directed file relationships for the selected file set.
-# Entity: Data Anchors
-# Relationship: This file hydrates one exact CodeGraph reference and optional bounded call neighborhood for canonical IDF materialization.
 # Entity: Builder Card
 # Relationship: This file fixes in-app CodeGraph reads to the persisted Builder Card identity, revision, deck, and exact saved CBM grants.
 # Entity: Tool Catalog
-# Relationship: This file checks each required CBM operation against Builder's saved tool ceiling before opening the authenticated materializer-read session.
+# Relationship: This file checks each required CBM operation against Builder's saved tool ceiling before opening the authenticated graph-read session.
 # Entity: Project Knowledge Graph
-# Relationship: This file projects source categories, Files, and structural edges for the shared graph workspace without replacing CBM as structural authority.
+# Relationship: This file projects source categories, exact symbols, Files, and structural edges for the shared graph workspace and MCP pointer reads without replacing CBM as structural authority.
 
 from __future__ import annotations
 
@@ -26,13 +20,13 @@ from typing import Any
 from urllib.parse import quote
 
 from app.python_models import saved_cards
-from app.python_models.data_anchor_contract import (
-    ANCHOR_BODY_LIMIT,
-    MAX_GRAPH_REFERENCE_RESULTS,
-    DataAnchorError,
+from app.python_models.graph_read_contract import (
+    GRAPH_RECORD_BODY_LIMIT,
+    MAX_GRAPH_READ_RESULTS,
+    GraphReadError,
     utc_now_text,
 )
-from app.python_models.materializer_read_tools import call_materializer_read_tools
+from app.python_models.graph_read_client import call_graph_read_tools
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -60,17 +54,17 @@ def read_codegraph_exact(
     requested_qualified_name: str,
     *,
     bounded_expansion: int = 0,
-    result_limit: int = MAX_GRAPH_REFERENCE_RESULTS,
+    result_limit: int = MAX_GRAPH_READ_RESULTS,
     include_tests: bool = False,
 ) -> dict[str, Any] | None:
     """Read one qualified current symbol through the official MCP/CBM seam."""
 
     if bounded_expansion < 0 or bounded_expansion > 3:
-        raise DataAnchorError("data_anchor_expansion_invalid")
-    if result_limit < 1 or result_limit > MAX_GRAPH_REFERENCE_RESULTS:
-        raise DataAnchorError("data_anchor_result_limit_invalid")
+        raise GraphReadError("graph_read_expansion_invalid")
+    if result_limit < 1 or result_limit > MAX_GRAPH_READ_RESULTS:
+        raise GraphReadError("graph_read_result_limit_invalid")
     if not deck_id or not card_id:
-        raise DataAnchorError("data_anchor_codegraph_context_missing")
+        raise GraphReadError("codegraph_context_missing")
     calls: list[tuple[str, dict[str, Any]]] = [
         ("cbm.get_code_snippet", {
             "project": _CODEGRAPH_PROJECT,
@@ -91,16 +85,16 @@ def read_codegraph_exact(
             "format": "json",
         }))
     try:
-        results = call_materializer_read_tools(
+        results = call_graph_read_tools(
             project_id=project_id,
             deck_id=deck_id,
             card_id=card_id,
             calls=calls,
         )
     except Exception as error:
-        raise DataAnchorError("data_anchor_codegraph_read_failed") from error
+        raise GraphReadError("codegraph_read_failed") from error
     if len(results) != len(calls):
-        raise DataAnchorError("data_anchor_codegraph_result_invalid")
+        raise GraphReadError("codegraph_result_invalid")
     snippet = results[0]
     qualified_name = str(snippet.get("qualified_name") or "").strip()
     source = str(snippet.get("source") or "")
@@ -122,7 +116,7 @@ def read_codegraph_exact(
         "recordKind": "symbol",
         "type": str(snippet.get("label") or "Symbol"),
         "title": str(snippet.get("name") or qualified_name.rsplit(".", 1)[-1]),
-        "content": source[:ANCHOR_BODY_LIMIT],
+        "content": source[:GRAPH_RECORD_BODY_LIMIT],
         "properties": {
             "project": _CODEGRAPH_PROJECT,
             "file": file_path,
@@ -213,10 +207,10 @@ def _saved_builder_context(
     try:
         loaded = saved_cards.load_deck(project_id, deck_id)
     except Exception as error:
-        raise DataAnchorError("codegraph_saved_deck_unavailable") from error
+        raise GraphReadError("codegraph_saved_deck_unavailable") from error
     deck = loaded.get("deck")
     if not isinstance(deck, dict):
-        raise DataAnchorError("codegraph_saved_deck_invalid")
+        raise GraphReadError("codegraph_saved_deck_invalid")
     cards = [
         card for card in deck.get("nodes") or []
         if isinstance(card, dict)
@@ -227,7 +221,7 @@ def _saved_builder_context(
         and card["runtime"].get("profile") == "builder"
     ]
     if len(cards) != 1:
-        raise DataAnchorError("codegraph_saved_builder_unavailable")
+        raise GraphReadError("codegraph_saved_builder_unavailable")
     card = cards[0]
     runtime_options = card.get("runtimeOptions")
     tools = {
@@ -522,7 +516,7 @@ def _read_codegraph_files(context: dict[str, Any], requested_paths: list[str]) -
     # and file aggregation, irrespective of how many selected files or symbols exist.
     while pending:
         try:
-            results = call_materializer_read_tools(
+            results = call_graph_read_tools(
                 project_id=context["projectId"], deck_id=context["deckId"], card_id=context["cardId"],
                 calls=[("cbm.query_graph", arguments) for _, arguments in pending],
                 concurrent=True, deadline_seconds=30,

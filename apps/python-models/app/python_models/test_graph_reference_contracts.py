@@ -1,18 +1,9 @@
+# Entity: Project Knowledge Graph
+# Relationship: This file verifies the shared graph-reference schema preserves an optional exact Engraphis relationship identity.
+
 from __future__ import annotations
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
-# Entity: Data Anchors
-# Relationship: This file verifies generic graph outputs retain Engraphis relationship identities while selected anchors reject non-selectable relationship records.
-
-import pytest
-from pydantic import ValidationError
-
 from app.python_models.graph_reference_contracts import (
-    DATA_ANCHOR_ID_FIELDS,
-    DataAnchorReference,
     GraphRecordReference,
 )
 
@@ -23,16 +14,3 @@ def test_generic_graph_output_retains_engraphis_relationship_identity() -> None:
     )
 
     assert reference.engraphisRelationshipId == "relationship-one"
-
-
-def test_selected_data_anchor_excludes_engraphis_relationship_identity() -> None:
-    assert "engraphisRelationshipId" not in DATA_ANCHOR_ID_FIELDS
-    with pytest.raises(ValidationError):
-        DataAnchorReference.model_validate({
-            "engraphisRelationshipId": "relationship-one",
-            "reason": "Not a selectable direct record.",
-            "priority": 0,
-            "boundedExpansion": 0,
-            "resultLimit": 1,
-            "required": True,
-        })

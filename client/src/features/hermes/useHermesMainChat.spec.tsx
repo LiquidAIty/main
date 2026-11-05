@@ -1,0 +1,210 @@
+// @vitest-environment jsdom
+// Entity: Main Chat
+// Relationship: Verifies native Bot Chat request/event mapping and Hermes-history author projection against a mocked generated Gateway client.
+
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const host = vi.hoisted(() => ({
+  handlers: new Map<string, (event: any) => void>(),
+  requestHandler: null as null | ((request: any) => boolean | void),
+  request: vi.fn(),
+}));
+
+vi.mock('./hermesHost', () => ({
+  hermesGateway: async () => ({
+    on: (name: string, handler: (event: any) => void) => {
+      host.handlers.set(name, handler);
+      return () => host.handlers.delete(name);
+    },
+    onRequest: (handler: (request: any) => boolean | void) => {
+      host.requestHandler = handler;
+      return () => { if (host.requestHandler === handler) host.requestHandler = null; };
+    },
+    request: host.request,
+  }),
+}));
+
+import useHermesMainChat, { HERMES_MAIN_SESSION_TITLE } from './useHermesMainChat';
+
+describe('Hermes Main chat binding', () => {
+  beforeEach(() => {
+    host.handlers.clear();
+    host.requestHandler = null;
+    host.request.mockReset();
+  });
+
+  it('creates the native Bot Chat and sends literal input through prompt.submit', async () => {
+    host.request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === 'session.list') return { sessions: [] };
+      if (method === 'session.create') return { session_id: 'main-session', messages: [] };
+      if (method === 'prompt.submit') return { accepted: true };
+      throw new Error(`Unexpected method ${method}: ${JSON.stringify(params)}`);
+    });
+
+    const { result } = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+
+    expect(host.request).toHaveBeenCalledWith('session.list', expect.objectContaining({
+      profile: 'main',
+      title: HERMES_MAIN_SESSION_TITLE,
+    }));
+    expect(host.request).toHaveBeenCalledWith('session.create', expect.objectContaining({
+      profile: 'main',
+      title: HERMES_MAIN_SESSION_TITLE,
+      idempotency_key: 'main:bot-chat',
+    }));
+
+    await act(async () => {
+      expect(await result.current.send('  @KnowGraph exact text  ')).toBe(true);
+    });
+    expect(host.request).toHaveBeenCalledWith('prompt.submit', {
+      session_id: 'main-session',
+      profile: 'main',
+      text: '  @KnowGraph exact text  ',
+    });
+  });
+
+  it('resumes Hermes history and retains the author Hermes reports', async () => {
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') {
+        return { sessions: [{ id: 'stored-main', resolved_id: 'resolved-main' }] };
+      }
+      if (method === 'session.resume') {
+        return {
+          session_id: 'main-session',
+          messages: [{
+            role: 'user',
+            text: 'KnowGraph result',
+            display_metadata: {
+              turn_author: { id: 'bot:knowgraph', name: 'knowgraph', is_bot: true },
+            },
+          }],
+          running: false,
+        };
+      }
+      if (method === 'session.history') {
+        return {
+          count: 2,
+          messages: [{
+            role: 'user',
+            text: 'KnowGraph result',
+            display_metadata: {
+              turn_author: { id: 'bot:knowgraph', name: 'knowgraph', is_bot: true },
+            },
+          }, {
+            role: 'assistant',
+            text: 'Later reply',
+            display_metadata: {
+              turn_author: { id: 'bot:knowgraph', name: 'knowgraph', is_bot: true },
+            },
+          }],
+        };
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    const { result } = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+    expect(result.current.messages).toEqual([expect.objectContaining({
+      role: 'assistant',
+      speaker: 'knowgraph',
+      text: 'KnowGraph result',
+    })]);
+
+    act(() => host.handlers.get('message.complete')?.({
+      type: 'message.complete',
+      session_id: 'main-session',
+      payload: { text: 'Later reply', status: 'complete' },
+    }));
+    await waitFor(() => expect(result.current.messages.at(-1)).toEqual(expect.objectContaining({
+      speaker: 'knowgraph',
+      text: 'Later reply',
+    })));
+  });
+
+  it('answers a Hermes approval request on the same generated request channel', async () => {
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: [] };
+      if (method === 'session.create') return { session_id: 'main-session', messages: [] };
+      throw new Error(`Unexpected method ${method}`);
+    });
+    const respond = vi.fn();
+    const { result } = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+
+    act(() => {
+      expect(host.requestHandler?.({
+        id: 'approval-1',
+        method: 'approval',
+        params: {
+          session_id: 'main-session',
+          command: 'python card.py',
+          choices: ['once', 'deny'],
+        },
+        respond,
+        fail: vi.fn(),
+      })).toBe(true);
+    });
+    expect(result.current.pendingRequest).toEqual(expect.objectContaining({
+      id: 'approval-1', kind: 'approval', command: 'python card.py',
+    }));
+    act(() => { expect(result.current.answerApproval('approval-1', 'once')).toBe(true); });
+    expect(respond).toHaveBeenCalledWith({ choice: 'once' });
+    expect(result.current.pendingRequest).toBeNull();
+  });
+
+  it('rejects sessionless events and interactive requests', async () => {
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: [] };
+      if (method === 'session.create') return { session_id: 'main-session', messages: [] };
+      throw new Error(`Unexpected method ${method}`);
+    });
+    const respond = vi.fn();
+    const { result } = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+
+    act(() => host.handlers.get('message.complete')?.({
+      type: 'message.complete',
+      payload: { text: 'foreign', status: 'complete' },
+    }));
+    expect(result.current.messages).toEqual([]);
+    expect(host.requestHandler?.({
+      id: 'approval-foreign',
+      method: 'approval',
+      params: { choices: ['once', 'deny'] },
+      respond,
+      fail: vi.fn(),
+    })).toBe(false);
+    expect(result.current.pendingRequest).toBeNull();
+  });
+
+  it('drops replayed delta bytes by Hermes turn segment and offset', async () => {
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: [] };
+      if (method === 'session.create') return { session_id: 'main-session', messages: [] };
+      throw new Error(`Unexpected method ${method}`);
+    });
+    const { result } = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+
+    act(() => {
+      host.handlers.get('message.start')?.({
+        type: 'message.start', session_id: 'main-session', payload: {},
+      });
+      host.handlers.get('message.delta')?.({
+        type: 'message.delta', session_id: 'main-session',
+        payload: { text: 'Hello', turn_id: 'turn-1', segment: 0, offset: 0 },
+      });
+      host.handlers.get('message.delta')?.({
+        type: 'message.delta', session_id: 'main-session',
+        payload: { text: 'Hello', turn_id: 'turn-1', segment: 0, offset: 0 },
+      });
+      host.handlers.get('message.delta')?.({
+        type: 'message.delta', session_id: 'main-session',
+        payload: { text: ' world', turn_id: 'turn-1', segment: 0, offset: 5 },
+      });
+    });
+    expect(result.current.messages.at(-1)?.text).toBe('Hello world');
+  });
+});

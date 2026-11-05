@@ -1,9 +1,5 @@
 """Canonical MCP request authorization, dispatch, timeout, and typed results."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: MCP Host
 # Relationship: This file dispatches one MCP request under a bounded timeout and returns protocol-declared outcomes without interpreting result prose.
 # Entity: Tool Catalog
@@ -69,7 +65,7 @@ def request_tool_is_allowed(
     ):
         return False
     # The public host preserves the canonical unknown-tool error from dispatch.
-    # Internal catalog/materializer principals remain read-only infrastructure.
+    # Internal catalog/graph-read principals remain read-only infrastructure.
     if access is None:
         return principal is None
     if principal is None:
@@ -97,7 +93,7 @@ def request_tool_is_allowed(
             name in mcp_catalog_runtime.published_mcp_tool_names()
             and name in granted
         )
-    if kind == "materializer-read":
+    if kind == "graph-read":
         grants = mcp_auth.validated_principal_tool_names(
             principal.get("grantedTools")
         )
@@ -134,7 +130,7 @@ async def dispatch_tool(
 ) -> Any:
     context = mcp_auth.authenticated_project_context()
     principal = mcp_auth.internal_mcp_principal()
-    if context is None and principal and principal.get("kind") == "materializer-read":
+    if context is None and principal and principal.get("kind") == "graph-read":
         # Pre-dispatch reads have real project/Card identity but no Run yet.
         # Keep their provider graph scope without fabricating runtime telemetry.
         context = {

@@ -1130,23 +1130,83 @@ def _handle_create(args: dict, **kw) -> str:
         if project_id is None and workspace_kind is None and workspace_path is None:
             if self_task is not None and self_task.project_id:
                 project_id, project_source_task_id = self_task.project_id, self_task.id
-        new_tid = kb.create_task(
-            conn, title=str(title).strip(), body=args.get("body"), assignee=str(assignee),
-            parents=tuple(parents), tenant=args.get("tenant") or os.environ.get("HERMES_TENANT"),
-            priority=_opt_int(args.get("priority"), 0),
-            workspace_kind=workspace_kind, workspace_path=workspace_path, project_id=project_id,
+        create_kwargs = {
+            "title": str(title).strip(),
+            "body": args.get("body"),
+            "assignee": str(assignee),
+            "parents": tuple(parents),
+            "tenant": args.get("tenant") or os.environ.get("HERMES_TENANT"),
+            "priority": _opt_int(args.get("priority"), 0),
+            "workspace_kind": workspace_kind,
+            "workspace_path": workspace_path,
+            "project_id": project_id,
             # Board-project inheritance must read the board this call opened, not the
             # session's current board.
-            board=args.get("board"),
-            project_source_task_id=project_source_task_id, triage=triage,
-            creator_task_id=self_tid,
-            idempotency_key=args.get("idempotency_key"),
-            max_runtime_seconds=_opt_int(args.get("max_runtime_seconds")), skills=skills,
-            model_override=model_override, provider_override=provider_override,
-            goal_mode=goal_mode, goal_max_turns=_opt_int(args.get("goal_max_turns")),
-            completion_contract=args.get("completion_contract"),
-            initial_status=str(args.get("initial_status") or "running"),
-            created_by=_persisted_identity(), session_id=session_id)
+            "board": args.get("board"),
+            "project_source_task_id": project_source_task_id,
+            "creator_task_id": self_tid,
+            "idempotency_key": args.get("idempotency_key"),
+            "max_runtime_seconds": _opt_int(args.get("max_runtime_seconds")),
+            "skills": skills,
+            "model_override": model_override,
+            "provider_override": provider_override,
+            "goal_mode": goal_mode,
+            "goal_max_turns": _opt_int(args.get("goal_max_turns")),
+            "completion_contract": args.get("completion_contract"),
+            "initial_status": str(args.get("initial_status") or "running"),
+            "created_by": _persisted_identity(),
+            "session_id": session_id,
+        }
+        from hermes_cli import kanban_team
+
+        task_mode = kanban_team.profile_task_mode(str(assignee))
+        if task_mode == kanban_team.TEAM_TASK_MODE:
+            # Team is structural profile authority. The model selects only the
+            # exact assignee; no workflow field exists in the public schema.
+            new_tid = kanban_team.create_team_root(conn, **create_kwargs).id
+        elif task_mode == kanban_team.MAGNETIC_TASK_MODE:
+            # Magnetic admission uses this same public kanban_create doorway.
+            # The calling profile's exact Bot roster is the saved blue-wire
+            # ceiling; the root remains blocked until the ceiling is read back.
+            if (
+                parents
+                or self_tid
+                or workspace_kind not in {None, "scratch"}
+                or workspace_path is not None
+                or project_id not in {None, ""}
+                or model_override is not None
+                or provider_override is not None
+            ):
+                raise ValueError(
+                    "Magnetic root admission does not accept parents, a creator task, "
+                    "workspace/project overrides, or model overrides"
+                )
+            from hermes_constants import get_hermes_home
+            from hermes_cli.kanban_magnetic import (
+                activate_staged_magnetic_root,
+                create_magnetic_root,
+            )
+            from tools.bot_mode_probe import configured_bot_roster
+
+            profile_home = get_hermes_home()
+            magnetic = create_magnetic_root(
+                conn,
+                assignee=str(assignee),
+                worker_profiles=configured_bot_roster(profile_home) or [],
+                profile_home=profile_home,
+                title=str(title).strip(),
+                body=str(args.get("body") or ""),
+                created_by=_persisted_identity(),
+                session_id=str(session_id or ""),
+                idempotency_key=args.get("idempotency_key"),
+            )
+            if magnetic.status == "blocked" and not activate_staged_magnetic_root(
+                conn, magnetic.id,
+            ):
+                raise RuntimeError("Magnetic root activation failed")
+            new_tid = magnetic.id
+        else:
+            new_tid = kb.create_task(conn, triage=triage, **create_kwargs)
         landed = _fields(kb.get_task(conn, new_tid), _CREATED_FIELDS)
         wait = [e for e in kb.list_events(conn, new_tid) if e.kind == "dependency_wait"]
         gate = {"gated": True, "gated_by": wait[-1].payload["parent"]} if wait else {"gated": False}
@@ -1255,6 +1315,12 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
             "_maybe_auto_subscribe failed: %r (platform=%r key_set=%r)",
             _exc, target["platform"] if target else "", bool(target and target["chat_id"]))
         return False
+
+
+def auto_subscribe_task(conn: Any, task_id: str) -> bool:
+    """Public owner-local entrance for a plugin-created task root subscription."""
+
+    return _maybe_auto_subscribe(conn, task_id)
 
 
 @_kanban_handler("kanban_unblock")

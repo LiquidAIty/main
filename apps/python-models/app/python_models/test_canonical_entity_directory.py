@@ -1,9 +1,5 @@
 """Focused contracts for the complete cross-authority Entity directory."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Project Knowledge Graph
 # Relationship: This file verifies the complete shared directory preserves provider identities, rejects incomplete or ambiguous inputs, and joins only exact canonical-name bytes.
 # Entity: ThinkGraph
@@ -18,9 +14,9 @@ import pytest
 from app.python_models.canonical_entity_directory import (
     assemble_canonical_entity_directory,
 )
-from app.python_models.data_anchor_contract import (
+from app.python_models.graph_read_contract import (
     GRAPH_CONTEXT_BYTE_LIMIT,
-    DataAnchorError,
+    GraphReadError,
 )
 
 
@@ -115,7 +111,7 @@ def test_entity_directory_rejects_incomplete_or_count_mismatch(
     think = {"complete": True, "count": 1, "revision": "think-r1",
              "entities": [_entity("ThinkGraph", 1)]}
     mutate(think)
-    with pytest.raises(DataAnchorError, match=error):
+    with pytest.raises(GraphReadError, match=error):
         assemble_canonical_entity_directory(
             "project-1", think,
             {"complete": True, "count": 0, "revision": "know-empty", "entities": []},
@@ -124,7 +120,7 @@ def test_entity_directory_rejects_incomplete_or_count_mismatch(
 
 def test_entity_directory_rejects_duplicate_authority_provider_identity() -> None:
     duplicate = _entity("ThinkGraph", 1)
-    with pytest.raises(DataAnchorError, match="entity_duplicate"):
+    with pytest.raises(GraphReadError, match="entity_duplicate"):
         assemble_canonical_entity_directory(
             "project-1",
             {"complete": True, "count": 2, "revision": "think-r1",
@@ -149,7 +145,7 @@ def test_entity_directory_rejects_duplicate_authority_provider_identity() -> Non
 def test_entity_directory_source_rejects_dual_or_missing_provider_id(
     malformed: dict[str, str],
 ) -> None:
-    with pytest.raises(DataAnchorError, match="entity_invalid"):
+    with pytest.raises(GraphReadError, match="entity_invalid"):
         assemble_canonical_entity_directory(
             "project-1",
             {"complete": True, "count": 1, "revision": "think-r1",
@@ -161,7 +157,7 @@ def test_entity_directory_source_rejects_dual_or_missing_provider_id(
 def test_entity_directory_rejects_ambiguous_same_authority_canonical_name() -> None:
     first = _entity("ThinkGraph", 1)
     second = {**_entity("ThinkGraph", 2), "canonicalName": first["canonicalName"]}
-    with pytest.raises(DataAnchorError, match="entity_name_duplicate"):
+    with pytest.raises(GraphReadError, match="entity_name_duplicate"):
         assemble_canonical_entity_directory(
             "project-1",
             {"complete": True, "count": 2, "revision": "think-r1",

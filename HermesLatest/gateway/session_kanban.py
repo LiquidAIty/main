@@ -61,6 +61,8 @@ def build_kanban_policy(connection, params, config):
     context = dict(params, workspace=cwd, branch=task.branch_name, tenant=task.tenant,
         profile=task.assignee, workspaces_root=str(kb.workspaces_root(board=board).resolve()),
         skills=skills, goal_mode=task.goal_mode, goal_max_turns=task.goal_max_turns,
+        workflow_template_id=task.workflow_template_id,
+        current_step_key=task.current_step_key,
         goal_text='\n\n'.join(p for p in (task.title, task.body) if p), context=context,
         max_runtime_seconds=task.max_runtime_seconds, accept_hooks=True)
     context['db'] = str(path)
@@ -165,6 +167,11 @@ def bind_worker_context(frame):
         'HERMES_KANBAN_CLAIM_LOCK': context['claim_lock'], 'HERMES_KANBAN_WORKSPACE': context['workspace'],
         'HERMES_KANBAN_WORKSPACES_ROOT': context['workspaces_root'], 'HERMES_PROFILE': context['profile'],
         'HERMES_SESSION_SOURCE': 'kanban'}
+    env.update(_taskgraph_worker_environment(context))
+    from hermes_cli.kanban_team import TEAM_WORKFLOW_ID
+    if context.get('workflow_template_id') == TEAM_WORKFLOW_ID:
+        env['HERMES_KANBAN_TEAM_WORKER'] = '1'
+        env['HERMES_KANBAN_TEAM_STEP'] = str(context.get('current_step_key') or '')
     for key, value in (('HERMES_KANBAN_BRANCH', context['branch']), ('HERMES_TENANT', context['tenant'])):
         if value:
             env[key] = value
@@ -200,6 +207,19 @@ def bind_worker_context(frame):
     _watch_submitter(Path(context['db']), context['run_id'])
     os.environ.update(env)
     os.chdir(context['workspace'])
+
+
+def _taskgraph_worker_environment(context):
+    """Project only marked AutoTeam identity into the adopted Hermes worker."""
+
+    from hermes_cli.kanban_team import TEAM_WORKFLOW_ID
+
+    if context.get('workflow_template_id') != TEAM_WORKFLOW_ID:
+        return {}
+    return {
+        'HERMES_KANBAN_TEAM_WORKER': '1',
+        'HERMES_KANBAN_TEAM_STEP': str(context.get('current_step_key') or ''),
+    }
 
 
 _TURNS_DONE = threading.Event()

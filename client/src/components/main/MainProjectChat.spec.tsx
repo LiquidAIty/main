@@ -1,15 +1,11 @@
 // @vitest-environment jsdom
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Main Chat
  * Relationship: This file verifies the bounded conversation viewport, draft-preserving composer, voice controls, and visible transport-error presentation.
  * Entity: Agent Messaging
  * Relationship: This file verifies @Card suggestions come only from the supplied direct roster.
- * Entity: Card Invocation
- * Relationship: Verifies unchanged text and accepted images reach the supplied callback, invalid image selections are rejected, and rejected submissions preserve the draft; it does not prove Hermes execution or IDF materialization.
+ * Entity: Main Attachments
+ * Relationship: Verifies unchanged text and accepted images reach the supplied callback, invalid image selections are rejected, and rejected submissions preserve the draft without claiming Hermes execution.
  * Entity: Project Knowledge Graph
  * Relationship: This file verifies current assistant Entity names open exact graph focus targets without exposing markup or linking user text.
  */
@@ -673,5 +669,53 @@ describe('MainProjectChat', () => {
     expect(screen.getByTestId('main-chat-error').textContent)
       .toBe('card_tools_unavailable:cbm.search_graph');
     expect(screen.queryAllByText('card_tools_unavailable:cbm.search_graph')).toHaveLength(1);
+  });
+
+  it('renders and answers the Hermes approval request without replacing the composer', () => {
+    const onApproval = vi.fn();
+    render(
+      <MainProjectChat
+        messages={[]}
+        pendingRequest={{
+          id: 'approval-1', kind: 'approval', command: 'python card.py',
+          description: 'Run the enabled Card script.', choices: ['once', 'deny'],
+        }}
+        onApproval={onApproval}
+        onSend={vi.fn()}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    expect(screen.getByTestId('main-chat-input')).not.toBeNull();
+    expect(screen.getByText('python card.py')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve once' }));
+    expect(onApproval).toHaveBeenCalledWith('approval-1', 'once');
+  });
+
+  it('returns a multi-select clarify answer in Hermes JSON-array form', () => {
+    const onClarify = vi.fn();
+    render(
+      <MainProjectChat
+        messages={[]}
+        pendingRequest={{
+          id: 'clarify-1', kind: 'clarify', questions: [{
+            qid: 'checks', question: 'Which checks?',
+            choices: ['lint', 'tests'], multi_select: true,
+          }],
+        }}
+        onClarify={onClarify}
+        onSend={vi.fn()}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText('lint'));
+    fireEvent.click(screen.getByLabelText('tests'));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and continue' }));
+    expect(onClarify).toHaveBeenCalledWith('clarify-1', {
+      checks: JSON.stringify(['lint', 'tests']),
+    });
   });
 });

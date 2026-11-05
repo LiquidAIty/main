@@ -1,15 +1,11 @@
 """Behavioral MCP provider-publication and request-dispatch contracts."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: MCP Host
 # Relationship: This file verifies provider requests retain protocol-declared schemas, arguments, error state, timeout behavior, and recoverable dispatch through the MCP host.
 # Entity: Tool Catalog
 # Relationship: This file verifies canonical catalog publication, exact access annotations, hidden-operation refusal, and saved Card grant enforcement.
 # Entity: Authentication
-# Relationship: This file verifies external Main entry and materializer-read requests receive only their authenticated Project and tool authority.
+# Relationship: This file verifies external Main entry and graph-read requests receive only their authenticated Project and tool authority.
 # Entity: KnowGraph
 # Relationship: This file verifies the KnowGraph MCP projection verifies one atomic sourced Know and dispatches it to the exact Graphiti Entity operation.
 
@@ -64,7 +60,7 @@ def test_saved_card_tools_share_one_authenticated_mcp_projection(monkeypatch):
     assert {tool.name for tool in authenticated} == expected
 
     principal = {
-        "kind": "materializer-read",
+        "kind": "graph-read",
         "projectId": "project-one",
         "deckId": "deck_builder",
         "callerCardId": "trading",
@@ -300,7 +296,7 @@ def test_ungranted_and_destructive_tools_are_not_callable(
     ))
 
     principal = {
-        "kind": "materializer-read",
+        "kind": "graph-read",
         "projectId": "project-one",
         "deckId": "deck_builder",
         "callerCardId": "builder",

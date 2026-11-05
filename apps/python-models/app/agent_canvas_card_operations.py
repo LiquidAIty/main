@@ -1,8 +1,4 @@
 """AgentGraph, Canvas, and saved Card operation definitions."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Tool Catalog
 # Relationship: This file publishes the explicit grantable operation definitions, schemas, access modes, annotations, and injected scope for Card and topology capabilities.
 #
@@ -120,7 +116,9 @@ def canvas_card_operation_definitions(
                 "openWorldHint": False,
             },
             server_injected_arguments=frozenset({"projectId", "deckId"}),
-            dispatcher_context_arguments=frozenset({"projectId", "deckId"}),
+            dispatcher_context_arguments=frozenset({
+                "projectId", "deckId", "_callerCardId",
+            }),
         ),
         OperationDefinition(
             canonical_id="card.update_configuration",
@@ -170,6 +168,8 @@ def canvas_card_operation_definitions(
                 "openWorldHint": False,
             },
             server_injected_arguments=frozenset({"projectId", "deckId"}),
-            dispatcher_context_arguments=frozenset({"projectId", "deckId"}),
+            dispatcher_context_arguments=frozenset({
+                "projectId", "deckId", "_callerCardId",
+            }),
         ),
     ]

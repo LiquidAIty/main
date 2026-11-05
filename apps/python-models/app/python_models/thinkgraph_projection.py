@@ -1,9 +1,5 @@
 """ThinkGraph presentation projection from the Engraphis service."""
 
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
 # Relationship: This file projects Engraphis Entities, relationships, bounded Think evidence, Jev semantics, and provider identity without becoming a second graph owner.
 # Entity: Project Knowledge Graph
@@ -57,11 +53,11 @@ def _projection_entity_directory(project: str) -> dict[str, Any] | None:
     from app.python_models.canonical_entity_directory import (
         build_canonical_entity_directory,
     )
-    from app.python_models.data_anchor_contract import DataAnchorError
+    from app.python_models.graph_read_contract import GraphReadError
 
     try:
         return build_canonical_entity_directory(project)
-    except DataAnchorError:
+    except GraphReadError:
         # ThinkGraph remains independently readable when KnowGraph is unavailable.
         # Cross-authority Entity focus stays unavailable without a complete directory.
         return None

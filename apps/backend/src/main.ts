@@ -1,11 +1,5 @@
-// Graph + less = more: less code that does the same work as more code is more useful.
-// Entity names the feature; Relationship explains why this file belongs and what it contributes.
-// Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-// Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: Application Startup
 // Relationship: This file boots the loopback backend, applies request boundaries, waits for required migrations, mounts the API, and closes supervised connections during shutdown.
-// Entity: Card Terminals
-// Relationship: Attaches authenticated terminal upgrades to the existing HTTP server and disposes CLI viewers during shutdown.
 
 import "./config/env";
 import express from "express";
@@ -15,8 +9,6 @@ import routes from "./routes";
 import { requestJsonBodyLimit } from "./services/requestPayloadLimits";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closeToolCatalogMcpClient } from "./services/mcp/toolCatalogMcpClient";
-import { closeMainConnection } from './routes/mainSession.routes';
-import { closeCardTerminals, installCardTerminals } from './routes/cardTerminal.routes';
 import { listenAfterRequiredMigrations } from "./db/migrations";
 
 const app = express();
@@ -153,8 +145,6 @@ function installShutdownHooks() {
 
   const shutdown = async () => {
     try {
-      closeCardTerminals();
-      closeMainConnection();
       if (backendServer) await closeServer(backendServer);
       await closeToolCatalogMcpClient();
     } catch {
@@ -195,7 +185,6 @@ async function startServer() {
     if (backendServer === server) backendServer = null;
   });
   backendServer = server;
-  installCardTerminals(server);
   installShutdownHooks();
 }
 

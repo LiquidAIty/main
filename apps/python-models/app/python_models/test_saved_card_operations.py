@@ -1,7 +1,3 @@
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Saved Cards
 # Relationship: This file verifies exact-revision Card creation and configuration persist accepted reasoning choices and reject unrecognized values.
 # Entity: Card Profiles
@@ -37,6 +33,7 @@ def _card() -> dict:
             "providerModelId": "gpt-6.1-sol",
             "accessMode": "chatgpt-account",
             "tools": [],
+            "skills": ["hermes-agent"],
         },
         "position": {"x": 0, "y": 0},
         "_cardRevisionId": "card-revision-one",
@@ -90,10 +87,71 @@ def test_card_create_persists_reasoning_effort_in_the_saved_runtime_options(
             "accessMode": "chatgpt-account",
         },
         "reasoningEffort": "ultra",
+        "skills": ["hermes-agent"],
     }))
 
     assert result["ok"] is True
     assert captured["nodes"][0]["runtimeOptions"]["reasoningEffort"] == "ultra"
+
+
+def test_builder_card_create_atomically_adds_exact_blue_magnetic_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+    deck = {
+        "nodes": [{
+            "id": "card_magentic",
+            "kind": "agent",
+            "title": "Magnetic",
+            "runtime": {
+                "kind": "hermes",
+                "mode": "magentic_one",
+                "profile": "card_magentic",
+            },
+        }],
+        "edges": [],
+        "promptTemplates": [],
+    }
+    monkeypatch.setattr(
+        saved_card_create,
+        "_load_saved_deck",
+        lambda _project, _deck: (deepcopy(deck), "deck-one"),
+    )
+
+    def save(_project: str, _deck: str, document: dict, _revision: str) -> dict:
+        captured.update(deepcopy(document))
+        saved = deepcopy(document)
+        saved["nodes"][-1]["_cardRevisionId"] = "card-revision-new"
+        return {"deck": saved, "meta": {"deckRevision": "deck-two"}}
+
+    monkeypatch.setattr(saved_card_create, "_save_saved_deck", save)
+    result = asyncio.run(saved_card_create.card_create({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "expectedRevision": "deck-one",
+        "templateId": "template_assist",
+        "title": "NewHelper",
+        "role": "Assistant",
+        "prompt": "Help with the task.",
+        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "new-helper"},
+        "model": {
+            "provider": "openai",
+            "modelKey": "gpt-6.1-sol",
+            "providerModelId": "gpt-6.1-sol",
+            "accessMode": "chatgpt-account",
+        },
+        "skills": ["hermes-agent"],
+    }, caller_card_id="builder"))
+
+    created = captured["nodes"][-1]
+    assert result["cardId"] == created["id"]
+    assert captured["edges"] == [{
+        "id": f"edge_{created['id']}_magentic",
+        "source": "card_magentic",
+        "target": created["id"],
+        "edgeType": "magentic_option",
+    }]
+    assert result["wire"] == captured["edges"][0]
 
 
 def test_card_update_persists_reasoning_effort_and_rejects_unknown_levels(

@@ -1,12 +1,9 @@
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: MCP Host
-# Relationship: This file verifies the public MCP server advertises its exact purpose, stable initialization metadata, and current source-backed catalog identity.
+# Relationship: This file verifies the public MCP server advertises its exact purpose, shared plugin version, stable initialization metadata, and current source-backed catalog identity.
 # Entity: Tool Catalog
 # Relationship: This file verifies provider tools have human-readable titles and every source-default Card tool belongs to the canonical catalog.
 
+import json
 import re
 from pathlib import Path
 
@@ -30,6 +27,44 @@ def test_public_server_metadata_is_goal_directed_and_uses_only_advertised_tools(
         exclude_none=True,
     )
     assert initialization["capabilities"]["tools"]["listChanged"] is False
+
+
+def test_plugin_and_mcp_metadata_share_one_versioned_catalog_identity():
+    repo_root = Path(__file__).resolve().parents[4]
+    package_version = json.loads(
+        (repo_root / "package.json").read_text(encoding="utf-8")
+    )["version"]
+    dashboard_version = json.loads(
+        (
+            repo_root
+            / "apps"
+            / "hermes-liquidaity-plugin"
+            / "dashboard"
+            / "manifest.json"
+        ).read_text(encoding="utf-8")
+    )["version"]
+    plugin_source = (
+        repo_root / "apps" / "hermes-liquidaity-plugin" / "plugin.yaml"
+    ).read_text(encoding="utf-8")
+    plugin_version = re.search(r"(?m)^version:\s*([^\s]+)\s*$", plugin_source)
+
+    assert plugin_version is not None
+    assert package_version == dashboard_version == plugin_version.group(1) == "1.0.0"
+    assert mcp_host._MCP_IMPLEMENTATION_VERSION == (
+        f"{package_version}+catalog.{mcp_observability.STARTUP_SOURCE_SHA256[:12]}"
+    )
+
+
+def test_current_catalog_metadata_cannot_advertise_retired_plugin_operations():
+    catalog_ids = {
+        descriptor["canonicalId"] for descriptor in code_owned_tool_projection()
+    }
+    assert catalog_ids.isdisjoint({
+        "run_mag_one",
+        "write_mag_one_instructions",
+        "card.load_graph_references",
+        "web_search",
+    })
 
 
 def test_source_current_hash_covers_every_code_owned_catalog_owner():

@@ -1,8 +1,4 @@
 /**
- * Graph + less = more: less code that does the same work as more code is more useful.
- * Entity names the feature; Relationship explains why this file belongs and what it contributes.
- * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
- * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file owns the single renderer lifecycle, camera, settings, selection and Inspector shared by the Project graph views.
  * Entity: ThinkGraph
@@ -83,6 +79,9 @@ import {
 } from './KnowledgeGraphInspector';
 import type { CanonicalEntityDirectory } from './canonicalEntityDirectory';
 import { CodeGraphChangeReview } from './CodeGraphChangeReview';
+import useHermesNavigationMap, {
+  type HermesNavigationMapState,
+} from '../../features/hermes/useHermesNavigationMap';
 import './knowledgeAuthorityGraphSurface.css';
 
 export function JoinedKnowledgeGraphSurface({
@@ -119,6 +118,7 @@ export function JoinedKnowledgeGraphSurface({
   }));
   const [codeFeatureIds, setCodeFeatureIds] = useState<string[]>([]);
   const [codeConnections, setCodeConnections] = useState('');
+  const [focusedVisualNodeId, setFocusedVisualNodeId] = useState<string | null>(null);
   const codeLayer = codeGraph || {
     projection: {
       schemaVersion: 'codegraph.projection.v1',
@@ -173,6 +173,7 @@ export function JoinedKnowledgeGraphSurface({
     ),
     [layerVisibility, projections.knowgraph, projections.thinkgraph, visibleCodeProjection],
   );
+  const navigationMapState = useHermesNavigationMap(presentation, focusedVisualNodeId);
   const visibleStatuses = [
     ...(layerVisibility.thinkgraph
       ? [errors?.thinkgraph ? 'error' : statuses?.thinkgraph || 'ready']
@@ -256,6 +257,8 @@ export function JoinedKnowledgeGraphSurface({
       codeLayerStatus={codeLayer.status}
       codeLayerFreshness={codeLayer.freshness}
       codeConnections={codeConnections}
+      navigationMapState={navigationMapState}
+      onFocusedVisualNodeChange={setFocusedVisualNodeId}
     />
   );
 }
@@ -314,6 +317,8 @@ export function KnowledgeGraphProjectionSurface({
   codeLayerStatus,
   codeLayerFreshness,
   codeConnections,
+  navigationMapState,
+  onFocusedVisualNodeChange,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -342,6 +347,8 @@ export function KnowledgeGraphProjectionSurface({
   codeLayerStatus?: 'idle' | 'loading' | 'ready' | 'error';
   codeLayerFreshness?: string;
   codeConnections?: string;
+  navigationMapState?: HermesNavigationMapState;
+  onFocusedVisualNodeChange?: (visualNodeId: string | null) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<EngraphisRenderer | null>(null);
@@ -438,6 +445,11 @@ export function KnowledgeGraphProjectionSurface({
       || (authority !== 'joined' ? { authority, edge: selectedEdgeVisual } : undefined)
     : undefined;
   const selectedEdge = selectedCodeEdge || selectedEdgeVariant?.edge;
+  useEffect(() => {
+    onFocusedVisualNodeChange?.(
+      inspectorOpen && selectedVisual && !selectedEdge ? selectedVisual.id : null,
+    );
+  }, [inspectorOpen, onFocusedVisualNodeChange, selectedEdge, selectedVisual]);
   const inspectedAuthority: GraphAuthority | 'codegraph' | null = selectedCodeNode || selectedCodeEdge
     ? 'codegraph'
     : selectedEdgeVariant?.authority || selectedNodeVariant?.authority || null;
@@ -1065,6 +1077,21 @@ export function KnowledgeGraphProjectionSurface({
                     ? ` · ${codeLayerStatus || 'idle'} · ${codeLayerFreshness || 'unverified'}`
                     : ''}
                 </small>
+                {navigationMapState ? (
+                  <small
+                    className="graph-layer-scope"
+                    data-testid="hermes-navigation-map-status"
+                    role={navigationMapState.status === 'error' ? 'alert' : 'status'}
+                  >
+                    {navigationMapState.status === 'synced'
+                      ? `Model map · synced · ${navigationMapState.nodes} nodes · ${navigationMapState.relationships} relationships · ${navigationMapState.sha256.slice(0, 10)}${navigationMapState.focused ? ' · open node included' : ''}`
+                      : navigationMapState.status === 'publishing'
+                        ? 'Model map · synchronizing'
+                        : navigationMapState.status === 'error'
+                          ? `Model map · unsynchronized · ${navigationMapState.error}`
+                          : 'Model map · idle'}
+                  </small>
+                ) : null}
                 {onResetLayerVisibility ? <button
                   type="button"
                   aria-label="Reset graph sources"

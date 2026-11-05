@@ -1,11 +1,7 @@
-// Graph + less = more: less code that does the same work as more code is more useful.
-// Entity names the feature; Relationship explains why this file belongs and what it contributes.
-// Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-// Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 // Entity: Card Topology
 // Relationship: This file embeds the shared Card-and-connection canvas in large or companion workspace shells and forwards topology selection and persistence actions.
 // Entity: Saved Cards
-// Relationship: This file supplies the current deck, selected identity, and document updater to the one canvas implementation.
+// Relationship: This file supplies the current deck, selected identity, Hermes runtime activity, and document updater to the one canvas implementation.
 
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
 
@@ -22,6 +18,8 @@ type AgentCanvasPaneProps = {
     detail?: Record<string, unknown>,
   ) => void;
   activeEdgeIds: string[];
+  activeCardIds?: string[];
+  activeAgentCounts?: Record<string, number>;
   selectedCardId: string | null;
   selectedEdgeId: string | null;
   onSelectCard: (cardId: string | null) => void;
@@ -38,6 +36,8 @@ export default function AgentCanvasPane({
   setDocument,
   onPersistGraphMutation,
   activeEdgeIds,
+  activeCardIds,
+  activeAgentCounts,
   selectedCardId,
   selectedEdgeId,
   onSelectCard,
@@ -55,6 +55,8 @@ export default function AgentCanvasPane({
         document={document}
         setDocument={setDocument}
         onPersistGraphMutation={onPersistGraphMutation}
+        activeCardIds={activeCardIds}
+        activeAgentCounts={activeAgentCounts}
         activeEdgeIds={activeEdgeIds}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}

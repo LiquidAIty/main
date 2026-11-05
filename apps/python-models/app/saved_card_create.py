@@ -1,8 +1,4 @@
 """Saved Card creation through the canonical optimistic deck authority."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Saved Cards
 # Relationship: This file validates one explicit Card definition and persists a new immutable saved identity through the optimistic deck authority.
 # Entity: IDD
@@ -12,7 +8,9 @@
 # Entity: Tool Catalog
 # Relationship: This file validates and stores the new Card's exact tools, skills, toolsets, and MCP connection selections without widening grants.
 # Entity: Card Topology
-# Relationship: This file stores the new Card's initial Project-canvas position without creating any orange or blue edge.
+# Relationship: This file stores the new Card's initial Project-canvas position and atomically gives a Builder-created worker its one blue Magnetic membership.
+# Entity: Builder Card
+# Relationship: This file lets authenticated Builder create only new ordinary worker candidates and rejects new system-agent identities.
 
 from __future__ import annotations
 
@@ -32,7 +30,6 @@ from app.saved_card_operation_validation import (
     _reasoning_effort_selection,
     _save_saved_deck,
     _subagent_model_selection,
-    _validate_auto_flags,
     _validate_card_runtime_authority,
     _validate_tool_selections,
 )
@@ -43,7 +40,7 @@ _CARD_CREATE_KEYS = {
     "templateId", "projectId", "deckId", "expectedRevision", "title", "role",
     "prompt", "runtime", "model", "subagentType",
     "subagentModel", "tools", "skills", "toolsets", "mcpConnectionIds",
-    "autoTools", "autoModel", "reasoningEffort", "position",
+    "reasoningEffort", "position",
 }
 _CARD_CREATE_RUNTIME_KEYS = {"kind", "mode", "profile"}
 _CARD_CREATE_MODEL_KEYS = {
@@ -55,7 +52,11 @@ _DEFAULT_SUBAGENT_MODEL = {
     "modelKey": "gpt-5.6-luna",
     "providerModelId": "gpt-5.6-luna",
 }
-async def card_create(args: dict[str, Any]) -> dict[str, Any]:
+async def card_create(
+    args: dict[str, Any],
+    *,
+    caller_card_id: str = "",
+) -> dict[str, Any]:
     """Create one saved Card through the canonical optimistic deck authority."""
 
     _require(
@@ -98,8 +99,13 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
         or runtime_profile in {"hermes", "test", "tmp", "root", "sudo"}
     ):
         raise ApplicationToolError("card_create_profile_invalid")
-    _validate_auto_flags(
-        args, operation="card_create", runtime_mode=runtime_mode,
+    from app.builder_worker_policy import require_builder_worker_creation
+
+    require_builder_worker_creation(
+        caller_card_id,
+        runtime_kind=runtime_kind,
+        runtime_mode=runtime_mode,
+        runtime_profile=runtime_profile,
     )
     reasoning_effort = (
         _reasoning_effort_selection(
@@ -152,6 +158,8 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
     _validate_tool_selections(
         normalized_selections["tools"], operation="card_create"
     )
+    if len(normalized_selections["skills"]) != 1:
+        raise ApplicationToolError("card_create_skill_exactly_one_required")
 
     position = args.get("position") or {"x": 0, "y": 0}
     if not isinstance(position, dict) or set(position) - {"x", "y"}:
@@ -202,9 +210,6 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
             "accessMode": access_mode,
             **normalized_selections,
         }
-        for field in ("autoTools", "autoModel"):
-            if field in args:
-                runtime_options[field] = args[field]
         if reasoning_effort:
             runtime_options["reasoningEffort"] = reasoning_effort
         if subagent_model is not None:
@@ -230,6 +235,19 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
             "runtimeOptions": runtime_options,
         }
         deck["nodes"] = [*(deck.get("nodes") or []), card]
+        if str(caller_card_id or "").strip() == "builder":
+            if not any(
+                str(node.get("id") or "") == "card_magentic"
+                for node in deck.get("nodes") or []
+                if isinstance(node, dict)
+            ):
+                raise ApplicationToolError("builder_magnetic_card_missing")
+            deck["edges"] = [*(deck.get("edges") or []), {
+                "id": f"edge_{card_id}_magentic",
+                "source": "card_magentic",
+                "target": card_id,
+                "edgeType": "magentic_option",
+            }]
         saved = _save_saved_deck(
             project_id, deck_id, deck, expected_revision
         )
@@ -245,6 +263,11 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
             "cardId": card_id,
             "deckRevision": saved_revision,
             "card": saved_card,
+            "wire": next((
+                edge for edge in saved_deck.get("edges") or []
+                if isinstance(edge, dict)
+                and edge.get("id") == f"edge_{card_id}_magentic"
+            ), None),
             "created": True,
             "started": False,
         }

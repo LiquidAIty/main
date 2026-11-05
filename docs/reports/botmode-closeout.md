@@ -1,5 +1,9 @@
 # Bot Mode closeout — 2026-10-26
 
+> **Historical evidence only.** This report describes the retired application-owned Main route and
+> PTY bridge. Those paths were deleted. [plugin.md](../../plugin.md) and
+> [PLAN.md](../../PLAN.md) are the current contract; nothing below authorizes restoration.
+
 ## Status
 
 Working text/image checkpoint preserved. Local application repairs are implemented; voice input has an evidenced Windows policy blocker, and some live acceptance remains unproven. This is **not** a claim of complete Hermes Desktop parity or Oracle deployment acceptance. This dated report retains evidence; [ARCHITECTURE.md](../../ARCHITECTURE.md#bot-mode-application-boundary) owns the current implementation description and root [nextturn.md](../../nextturn.md) is the replaceable scratch handoff.

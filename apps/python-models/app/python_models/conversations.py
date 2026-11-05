@@ -1,12 +1,6 @@
 """Canonical conversation events, prepared chunk snapshots, and Engraphis source indexing."""
-# Graph + less = more: less code that does the same work as more code is more useful.
-# Entity names the feature; Relationship explains why this file belongs and what it contributes.
-# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
-# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
-# Entity: Main Chat
-# Relationship: Preserves ordered conversation content and attribution, reading completed Main bodies as one exact persisted Hermes turn before committing them to Engraphis.
 # Entity: ThinkGraph
-# Relationship: Prepares immutable source chunks in the Engraphis conversation ledger, indexes those same chunks after extraction, and resolves exact citations without creating Thinks or Entity nodes.
+# Relationship: Owns exact completed-pair source pointers, immutable chunks, indexing, and citation provenance in the Engraphis event ledger without becoming a Main chat store.
 
 from __future__ import annotations
 
@@ -14,7 +8,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import re
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from .engraphis import SERVICE_LOCK, get_service, project_id
 
@@ -67,8 +61,8 @@ def _message(project: str, conversation: str, seq: int, write: dict) -> dict:
     evidence = [item.strip() for item in evidence]
     if len(set(evidence)) != len(evidence):
         raise ValueError("conversation_evidence_ids_invalid")
-    now = _now()
-    return {
+    now = str(write.get("_createdAt") or _now())
+    record = {
         "messageId": identifier, "projectId": project, "conversationId": conversation,
         "parentMessageId": None, "role": write["role"], "content": write["content"],
         "status": status, "createdAt": now, "completedAt": None if status == "pending" else now,
@@ -79,6 +73,9 @@ def _message(project: str, conversation: str, seq: int, write: dict) -> dict:
         "visibleActivities": [_activity("conversation_speaker", write.get("speaker", {}))]
         + ([_activity("conversation_target", write["target"])] if write.get("target") else []),
     }
+    if isinstance(write.get("_hermesSource"), dict):
+        record["hermesSource"] = dict(write["_hermesSource"])
+    return record
 
 
 def _append(service, project: str, kind: str, record: dict) -> None:
@@ -92,27 +89,10 @@ def conversation_operation(project: str, action: str, arguments: dict):
     conversation = arguments.get("conversationId")
     if not isinstance(conversation, str) or not conversation.strip():
         raise ValueError("conversation_id_invalid")
-    if action not in {"read", "append", "reply", "settle", "process"}:
+    if action not in {"read", "append", "reply", "settle"}:
         raise ValueError("conversation_operation_invalid")
     if arguments.get("seedMessages"):
         raise ValueError("conversation_history_import_disabled")
-    if action == "process":
-        from .thinkgraph_automatic import process_completed_conversation
-        users = arguments.get("userMessageIds")
-        assistant = arguments.get("assistantMessageId")
-        read_pair(project, conversation, users, assistant)
-        wanted = {*users, assistant}
-        saved = [item for item in conversation_operation(project, "read", {"conversationId": conversation})
-                 if item["messageId"] in wanted]
-        if any(not item.get("hermesSource") for item in saved):
-            raise ValueError("conversation_database_source_required")
-        return process_completed_conversation(project, arguments, saved)
-    canonical = None
-    if action == "append":
-        from .thinkgraph_automatic import database_turn_writes
-        canonical = database_turn_writes(project, arguments)
-        if canonical == []:
-            return []
     with SERVICE_LOCK:
         service = get_service(project)
         store = service.store
@@ -122,22 +102,6 @@ def conversation_operation(project: str, action: str, arguments: dict):
                 return []
             workspace = str(scope["id"]) if scope else store.get_or_create_workspace(project)
             messages = _messages(store, workspace, conversation)
-            recovered = {}
-            if canonical is not None:
-                prior = next((item for item in messages if
-                              item.get("providerMessageId") == canonical[0]["providerMessageId"]), None)
-                if prior and prior.get("hermesSource"):
-                    return []  # The same committed admission cannot start another processing pass.
-                if prior:
-                    # Resume an explicitly identified pair saved before database-owned intake.
-                    # Preserve its visible IDs/order and the original append-only source events.
-                    by_id = {item["messageId"]: item for item in messages}
-                    for write in canonical:
-                        old = by_id.get(write["messageId"])
-                        if (not old or old["role"] != write["role"] or old.get("hermesSource")
-                                or old.get("providerContinuationRef") != write["providerContinuationRef"]):
-                            raise ValueError("conversation_recovery_reference_required")
-                        recovered[write["messageId"]] = old
             if action == "read":
                 return messages
             if action == "settle":
@@ -159,27 +123,112 @@ def conversation_operation(project: str, action: str, arguments: dict):
                     return {"inserted": False, "message": existing}
                 writes = [{**write, "providerMessageId": provider.strip(), "status": "complete"}]
             else:
-                writes = canonical if canonical is not None else arguments.get("messages")
+                writes = arguments.get("messages")
                 if not isinstance(writes, list) or not writes:
                     raise ValueError("conversation_turn_invalid")
             sequence = max((item["seq"] for item in messages), default=0)
             saved = []
             for offset, write in enumerate(writes, 1):
                 record = _message(project, conversation, sequence + offset, write)
-                if canonical is not None:
-                    record.update(createdAt=write["_savedAt"], completedAt=write["_savedAt"],
-                                  hermesSource=write["_hermesSource"])
-                    if record["messageId"] in recovered:
-                        record["seq"] = recovered[record["messageId"]]["seq"]
                 duplicate = store.conn.execute(
                     "SELECT 1 FROM events WHERE workspace_id=? AND kind='conversation_message' "
                     "AND json_extract(content,'$.messageId')=? LIMIT 1", (workspace, record["messageId"]),
                 ).fetchone()
-                if duplicate and record["messageId"] not in recovered:
+                if duplicate:
                     raise ValueError("conversation_message_id_duplicate")
                 _append(service, project, "conversation_message", record)
                 saved.append(record)
             return {"inserted": True, "message": saved[0]} if action == "reply" else saved
+
+
+def record_state_db_pair(
+    project: str,
+    *,
+    profile: str,
+    session_id: str,
+    user_row: dict,
+    assistant_row: dict,
+) -> list[dict]:
+    """Record one exact committed Hermes pair in Engraphis, idempotently.
+
+    The caller supplies rows read directly from one profile's ``state.db``.  No
+    browser or TypeScript message body is accepted on this path.
+    """
+
+    def message_id(row_id: int) -> str:
+        return "msg_" + str(uuid5(
+            NAMESPACE_URL,
+            f"hermes:{profile}:{session_id}:row:{row_id}",
+        ))
+
+    def saved_at(value: object) -> str:
+        return datetime.fromtimestamp(
+            float(value), timezone.utc,
+        ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    conversation = str(session_id or "").strip()
+    profile = str(profile or "").strip().lower()
+    if not conversation or not profile:
+        raise ValueError("hermes_pair_identity_invalid")
+    rows = (user_row, assistant_row)
+    if any(
+        type(row.get("id")) is not int
+        or row["id"] <= 0
+        or row.get("role") != role
+        or not isinstance(row.get("content"), str)
+        or not row["content"].strip()
+        for row, role in zip(rows, ("user", "assistant"), strict=True)
+    ):
+        raise ValueError("hermes_pair_rows_invalid")
+    identifiers = [message_id(row["id"]) for row in rows]
+    existing = conversation_operation(project, "read", {"conversationId": conversation})
+    found = [item for item in existing if item["messageId"] in identifiers]
+    if found:
+        if len(found) != 2:
+            raise ValueError("hermes_pair_partial_write")
+        by_id = {item["messageId"]: item for item in found}
+        if any(
+            by_id[identifier]["content"] != row["content"]
+            or by_id[identifier]["role"] != row["role"]
+            for identifier, row in zip(identifiers, rows, strict=True)
+        ):
+            raise ValueError("hermes_pair_content_changed")
+        return sorted(found, key=lambda item: item["seq"])
+    user_id, assistant_id = identifiers
+    return conversation_operation(project, "append", {
+        "conversationId": conversation,
+        "messages": [
+            {
+                "messageId": user_id,
+                "role": "user",
+                "content": user_row["content"],
+                "speaker": {"kind": "user", "label": "You"},
+                "target": {
+                    "kind": "card", "label": "Main",
+                    "cardId": "card_main_chat", "profile": profile,
+                },
+                "status": "complete",
+                "providerContinuationRef": conversation,
+                "providerMessageId": f"hermes:{profile}:row:{user_row['id']}",
+                "_createdAt": saved_at(user_row.get("timestamp")),
+                "_hermesSource": {"profile": profile, "rowId": user_row["id"]},
+            },
+            {
+                "messageId": assistant_id,
+                "role": "assistant",
+                "content": assistant_row["content"],
+                "speaker": {
+                    "kind": "card", "label": "Main",
+                    "cardId": "card_main_chat", "profile": profile,
+                },
+                "status": "complete",
+                "providerContinuationRef": conversation,
+                "providerMessageId": f"hermes:{profile}:row:{assistant_row['id']}",
+                "_createdAt": saved_at(assistant_row.get("timestamp")),
+                "_hermesSource": {"profile": profile, "rowId": assistant_row["id"]},
+            },
+        ],
+    })
 
 
 def read_pair(project: str, conversation: str, user_ids: list[str], assistant_id: str) -> dict:
@@ -354,6 +403,56 @@ def register_source_pair(project: str, pair: str, reference: dict) -> None:
             return
         service.record_event("conversation_pair", json.dumps(record, ensure_ascii=False),
                              workspace=project, refs=[pair, *reference["userMessageIds"], reference["assistantMessageId"]])
+
+
+def completed_pair_settlement(project: str, pair: str) -> dict | None:
+    """Read the durable zero-or-more Think settlement marker for one exact pair."""
+
+    service = get_service(project)
+    workspace = service.store.conn.execute(
+        "SELECT id FROM workspaces WHERE name=?", (project,),
+    ).fetchone()
+    if workspace is None:
+        return None
+    row = service.store.conn.execute(
+        "SELECT content FROM events WHERE workspace_id=? "
+        "AND kind='conversation_pair_settlement' "
+        "AND json_extract(content,'$.pairReference')=? ORDER BY id DESC LIMIT 1",
+        (workspace["id"], pair),
+    ).fetchone()
+    return json.loads(row["content"]) if row else None
+
+
+def register_pair_settlement(project: str, pair: str, result: dict) -> None:
+    """Record successful zero-or-more settlement so zero-Think pairs do not rerun."""
+
+    service = get_service(project)
+    record = {"pairReference": pair, **result}
+    with SERVICE_LOCK, service.store.write_transaction():
+        workspace = service.store.conn.execute(
+            "SELECT id FROM workspaces WHERE name=?", (project,),
+        ).fetchone()
+        if workspace is None:
+            service.store.get_or_create_workspace(project)
+            workspace = service.store.conn.execute(
+                "SELECT id FROM workspaces WHERE name=?", (project,),
+            ).fetchone()
+        row = service.store.conn.execute(
+            "SELECT content FROM events WHERE workspace_id=? "
+            "AND kind='conversation_pair_settlement' "
+            "AND json_extract(content,'$.pairReference')=? ORDER BY id DESC LIMIT 1",
+            (workspace["id"], pair),
+        ).fetchone()
+        if row:
+            if json.loads(row["content"]) != record:
+                raise ValueError("conversation_pair_settlement_conflict")
+            return
+        service.record_event(
+            "conversation_pair_settlement",
+            json.dumps(record, ensure_ascii=False),
+            workspace=project,
+            refs=[pair, *list(result.get("thinkMemoryIds") or [])],
+        )
 
 
 def index_source_chunks(project: str, chunks: list[dict]) -> dict:
