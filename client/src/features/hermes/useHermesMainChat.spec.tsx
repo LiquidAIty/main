@@ -114,10 +114,8 @@ describe('Hermes Main chat binding', () => {
           session_id: 'main-session',
           messages: [{
             role: 'user',
-            text: 'KnowGraph result',
-            display_metadata: {
-              turn_author: { id: 'bot:knowgraph', name: 'knowgraph', is_bot: true },
-            },
+            text: 'Message from 🤖 KnowGraph (@knowgraph): KnowGraph result',
+            display_kind: 'internal_notification',
           }],
           running: false,
         };
@@ -127,16 +125,12 @@ describe('Hermes Main chat binding', () => {
           count: 2,
           messages: [{
             role: 'user',
-            text: 'KnowGraph result',
-            display_metadata: {
-              turn_author: { id: 'bot:knowgraph', name: 'knowgraph', is_bot: true },
-            },
+            text: 'Message from 🤖 KnowGraph (@knowgraph): KnowGraph result',
+            display_kind: 'internal_notification',
           }, {
-            role: 'assistant',
-            text: 'Later reply',
-            display_metadata: {
-              turn_author: { id: 'bot:knowgraph', name: 'knowgraph', is_bot: true },
-            },
+            role: 'user',
+            text: 'Message from 🤖 KnowGraph (@knowgraph): Later reply',
+            display_kind: 'internal_notification',
           }],
         };
       }
@@ -152,7 +146,7 @@ describe('Hermes Main chat binding', () => {
     });
     expect(result.current.messages).toEqual([expect.objectContaining({
       role: 'assistant',
-      speaker: 'knowgraph',
+      speaker: 'KnowGraph',
       text: 'KnowGraph result',
     })]);
 
@@ -162,7 +156,7 @@ describe('Hermes Main chat binding', () => {
       payload: { text: 'Later reply', status: 'complete' },
     }));
     await waitFor(() => expect(result.current.messages.at(-1)).toEqual(expect.objectContaining({
-      speaker: 'knowgraph',
+      speaker: 'KnowGraph',
       text: 'Later reply',
     })));
   });

@@ -1,5 +1,5 @@
 # Entity: Hermes Webapp Integration
-# Relationship: Installs only the repo-owned native plugin runtime, builds the existing LiquidAIty UI for standalone and Webapp hosting, then starts the official Hermes browser host.
+# Relationship: Installs only the repo-owned native plugin runtime, builds the existing LiquidAIty UI once in its existing dist directory, then starts the official Hermes browser host against that exact bundle.
 
 $ErrorActionPreference = 'Stop'
 
@@ -18,7 +18,7 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $hermesRoot = Join-Path $repoRoot 'HermesLatest'
 $hermesHome = Join-Path $hermesRoot '.hermes'
 $hermesPython = Join-Path $hermesRoot '.venv\Scripts\python.exe'
-$webappDist = Join-Path $repoRoot 'client\dist-webapp'
+$webappDist = Join-Path $repoRoot 'client\dist'
 $nativePluginSource = Join-Path $repoRoot 'apps\hermes-liquidaity-plugin'
 $nativePluginRoot = Join-Path $hermesHome 'plugins\liquidaity'
 $nativePlugin = Join-Path $nativePluginRoot 'plugin.yaml'
@@ -71,11 +71,17 @@ try {
 }
 
 $env:HERMES_HOME = $hermesHome
+$webappDist = (Resolve-Path -LiteralPath $webappDist).Path
 $env:HERMES_WEBAPP_DIST = $webappDist
+Write-Output "LiquidAIty Webapp renderer: $webappDist"
 
 Push-Location $hermesRoot
 try {
-  & $hermesPython -X utf8 -m hermes_cli.main webapp --skip-build
+  & $hermesPython -X utf8 -m hermes_cli.main gateway ensure --timeout 180
+  if ($LASTEXITCODE -ne 0) {
+    throw "Hermes Gateway did not become ready within 180 seconds."
+  }
+  & $hermesPython -X utf8 -m hermes_cli.main webapp --no-open --skip-build
   exit $LASTEXITCODE
 } finally {
   Pop-Location

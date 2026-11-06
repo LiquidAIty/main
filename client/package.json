@@ -23,9 +23,7 @@
     "use-sync-external-store": "1.6.0"
   },
   "scripts": {
-    "build": "npm run build:standalone && npm run build:webapp",
-    "build:standalone": "vite build --outDir dist",
-    "build:webapp": "vite build --outDir dist-webapp",
+    "build": "vite build --outDir dist",
     "dev": "vite dev",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",

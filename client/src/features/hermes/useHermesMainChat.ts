@@ -46,6 +46,12 @@ export type HermesChatRequest = {
 
 type VoicePhase = 'idle' | 'requesting' | 'listening' | 'processing' | 'speaking' | 'error';
 export const HERMES_MAIN_SESSION_TITLE = 'Bot Chat';
+// Hermes Bot Mode persists an inbound teammate delivery as a user-role
+// internal_notification so the recipient model can answer it. The exact
+// transport prefix is the same contract Hermes Desktop renders as an
+// inter-agent notice; it is not the human speaking.
+const HERMES_AGENT_MESSAGE_RE =
+  /^(?:Message from (?:🤖\s*)?([^:\n(]{1,64}?)(?:\s*\(@([a-z0-9][a-z0-9_-]{0,63})(?:@[a-zA-Z0-9][a-zA-Z0-9_-]{0,63})?\))?:\s*|\[Message from agent '([^']{1,64})'\]\s*)([\s\S]*)$/u;
 
 function objectRecord(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -65,6 +71,17 @@ function transcriptMessage(row: TranscriptMessage): HermesChatMessage | null {
   const displayText = text(metadata.display_text);
   const body = displayText || text(row.text ?? row.content);
   if (!body.trim() || displayKind === 'hidden' || displayKind === 'process_complete') return null;
+  if (displayKind === 'internal_notification') {
+    const delivery = HERMES_AGENT_MESSAGE_RE.exec(body);
+    if (!delivery) return null;
+    return {
+      role: 'assistant',
+      text: text(delivery[4]),
+      speaker: text(delivery[1] || delivery[3] || delivery[2]) || 'Agent',
+      status: 'complete',
+      rowId: typeof row.row_id === 'number' ? row.row_id : undefined,
+    };
+  }
   const role = botAuthored ? 'assistant' : text(row.role).trim().toLowerCase();
   if (role !== 'user' && role !== 'assistant') return null;
   return {
