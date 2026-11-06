@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from itertools import islice
 from pathlib import Path
@@ -185,6 +184,7 @@ def read_codegraph_view(payload: dict[str, Any]) -> dict[str, Any]:
 
     context = {"projectId": project_id, "deckId": deck_id, "cardId": card_id}
     if mode == "projection":
+        context = _saved_builder_context(project_id, deck_id, card_id)
         return _read_codegraph_projection(context)
     if "qualifiedName" in payload:
         raise ValueError("codegraph_symbol_selection_not_supported")
@@ -351,22 +351,42 @@ def _feature_id(name: str) -> str:
     return "feature:" + quote(name, safe="")
 
 
-def _source_file_paths() -> list[str]:
-    paths: list[str] = []
-    for directory in ("apps", "client", "services"):
-        for current, directories, files in os.walk(_REPO_ROOT / directory):
-            directories[:] = sorted(name for name in directories if name not in _EXCLUDED_SOURCE_PARTS)
-            for name in sorted(files):
-                path = (Path(current) / name).relative_to(_REPO_ROOT).as_posix()
-                if _eligible_source_path(path):
-                    paths.append(path)
-    if (_REPO_ROOT / "vite.config.ts").is_file():
-        paths.append("vite.config.ts")
-    return sorted(paths)
+def _category_source_paths(context: dict[str, Any]) -> list[str]:
+    """Ask CBM for authored category declarations, never walk the repository."""
+    paths: set[str] = set()
+    offset = 0
+    while True:
+        results = call_graph_read_tools(
+            project_id=context["projectId"], deck_id=context["deckId"], card_id=context["cardId"],
+            calls=[("cbm.search_code", {
+                "project": _CODEGRAPH_PROJECT, "pattern": "Entity:",
+                "path_filter": r"^(apps|client|services)/|^vite\.config\.ts$",
+                "mode": "files", "format": "json", "result_limit": 200,
+                "result_offset": offset, "raw_limit": 0, "max_output_tokens": 16000,
+            })],
+        )
+        result = results[0] if len(results) == 1 else {}
+        if result.get("error") or not isinstance(result.get("files"), list):
+            raise GraphReadError("codegraph_categories_unavailable")
+        paths.update(path for value in result["files"] if isinstance(value, str)
+                     and (path := _repository_path(value)) and _eligible_source_path(path))
+        if not result.get("has_more"):
+            return sorted(paths)
+        following = result.get("next_offset")
+        if type(following) is not int or following <= offset:
+            raise GraphReadError("codegraph_category_cursor_not_advancing")
+        offset = following
 
 
 def _read_codegraph_projection(context: dict[str, Any]) -> dict[str, Any]:
-    file_paths = _source_file_paths()
+    denied = _missing_grants(context, {"cbm.search_code"}, mode="projection")
+    if denied:
+        return denied
+    try:
+        file_paths = _category_source_paths(context)
+    except Exception:
+        return _provider_failure(context, mode="projection", operation="cbm.search_code",
+                                 code="codegraph_categories_unavailable")
     contributions, header_errors = _feature_contributions(file_paths)
     contributions_by_path: dict[str, list[dict[str, Any]]] = {}
     feature_members: dict[str, set[str]] = {}
@@ -374,7 +394,6 @@ def _read_codegraph_projection(context: dict[str, Any]) -> dict[str, Any]:
         path = contribution["filePath"]
         contributions_by_path.setdefault(path, []).append(contribution)
         feature_members.setdefault(contribution["feature"], set()).add(path)
-    files_by_path = {path: "source-file:" + path for path in contributions_by_path}
 
     nodes: list[dict[str, Any]] = []
     for feature in sorted(feature_members):
@@ -393,43 +412,7 @@ def _read_codegraph_projection(context: dict[str, Any]) -> dict[str, Any]:
                 "sourceAuthority": "inline-source-comments",
             },
         })
-    for path in sorted(files_by_path):
-        file_contributions = contributions_by_path.get(path, [])
-        nodes.append({
-            "id": files_by_path[path],
-            "label": Path(path).name,
-            "title": path,
-            "type": "File",
-            "etype": "File",
-            "authority": "codegraph",
-            "properties": {
-                "recordKind": "file",
-                "filePath": path,
-                "sourceReference": files_by_path[path],
-                "features": sorted({item["feature"] for item in file_contributions}),
-                "contributions": file_contributions,
-                "sourceAuthority": "repository-file",
-            },
-        })
     edges: list[dict[str, Any]] = []
-    for contribution in contributions:
-        feature_node_id = _feature_id(contribution["feature"])
-        file_node_id = files_by_path[contribution["filePath"]]
-        edges.append({
-            "id": f"feature-membership:{feature_node_id}:{file_node_id}",
-            "source": feature_node_id,
-            "target": file_node_id,
-            "predicate": "FEATURE_CONTRIBUTION",
-            "layer": "source-annotation",
-            "properties": {
-                "recordKind": "feature-membership",
-                "relationship": contribution["relationship"],
-                "filePath": contribution["filePath"],
-                "entityLine": contribution["entityLine"],
-                "relationshipLine": contribution["relationshipLine"],
-                "sourceAuthority": "inline-source-comments",
-            },
-        })
 
     revision_material = "\n".join(
         f"{item['filePath']}\t{item['feature']}\t{item['relationship']}"
@@ -446,12 +429,12 @@ def _read_codegraph_projection(context: dict[str, Any]) -> dict[str, Any]:
         "nodes": nodes,
         "edges": edges,
         "metadata": {
-            "inventoryAuthority": "repository-source",
+            "discoveryAuthority": "cbm.search_code",
             "featureAuthority": "inline-source-comments",
             "eligibleFileCount": len(file_paths),
             "classifiedFileCount": len(contributions_by_path),
             "featureCount": len(feature_members),
-            "contributionCount": len(edges),
+            "contributionCount": len(contributions),
             "revisionPurpose": "presentation-staleness-only",
         },
     }

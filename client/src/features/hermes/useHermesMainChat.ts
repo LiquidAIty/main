@@ -110,7 +110,15 @@ function base64(dataUrl: string): string {
   return marker >= 0 ? dataUrl.slice(marker + 1) : dataUrl;
 }
 
-export default function useHermesMainChat(projectId: string) {
+async function selectedTurnContext(literal: string, prepare?: () => Promise<string | undefined>) {
+  const context = await prepare?.();
+  // Hermes's supported per-turn model text leaves the literal transcript unchanged.
+  return context ? { api_text: `${literal}\n\n${context}` } : {};
+}
+
+export default function useHermesMainChat(projectId: string, prepareSelectedContext?: () => Promise<string | undefined>) {
+  const selectedContextRef = useRef(prepareSelectedContext);
+  selectedContextRef.current = prepareSelectedContext;
   const profile = 'main';
   const generationRef = useRef(0);
   const sessionRef = useRef('');
@@ -399,6 +407,7 @@ export default function useHermesMainChat(projectId: string) {
             profile,
             submission_id: randomUuid(),
             text: literal,
+            ...await selectedTurnContext(literal, selectedContextRef.current),
             voice_turn: true,
           });
           setMessages((current) => [...current, {
@@ -466,6 +475,7 @@ export default function useHermesMainChat(projectId: string) {
         profile,
         submission_id: randomUuid(),
         text: body,
+        ...await selectedTurnContext(body, selectedContextRef.current),
       });
       setMessages((current) => [...current, {
         role: 'user', text: body, speaker: 'You', status: 'complete',

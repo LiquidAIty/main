@@ -146,8 +146,11 @@ def test_codegraph_projection_preserves_one_file_with_multiple_feature_membershi
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
-                        lambda **_: pytest.fail("annotation projection must not call CBM"))
+    def categories(**kwargs):
+        assert kwargs["calls"][0][0] == "cbm.search_code"
+        assert kwargs["calls"][0][1]["pattern"] == "Entity:"
+        return [{"files": ["client/src/example.ts"], "has_more": False}]
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools", categories)
     result = read_codegraph_view({
         "projectId": "project-1",
         "deckId": "deck_builder",
@@ -159,20 +162,18 @@ def test_codegraph_projection_preserves_one_file_with_multiple_feature_membershi
     projection = result["projection"]
     files = [node for node in projection["nodes"] if node["type"] == "File"]
     features = [node for node in projection["nodes"] if node["type"] == "Feature"]
-    assert len(files) == 1
+    assert files == []  # Categories are selectors. Files load only when a category is on.
     assert len(features) == 2
-    assert len(projection["edges"]) == 2
-    assert files[0]["properties"]["features"] == ["CodeGraph", "Graph Presentation"]
-    assert files[0]["id"] == "source-file:client/src/example.ts"
-    assert files[0]["properties"]["sourceAuthority"] == "repository-file"
-    assert "qualifiedName" not in files[0]["properties"]
+    assert projection["edges"] == []
+    assert all(node["properties"]["memberFilePaths"] == ["client/src/example.ts"] for node in features)
 
 
 def test_projection_does_not_report_ready_when_source_headers_are_unreadable(monkeypatch, tmp_path):
     monkeypatch.setattr(codegraph_reference_reads, "_REPO_ROOT", tmp_path)
     monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
                         lambda *_args: _saved_builder(tools=["cbm.search_graph", "cbm.search_code"]))
-    monkeypatch.setattr(codegraph_reference_reads, "_source_file_paths", lambda: ["client/file.ts"])
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
+                        lambda **_: [{"files": ["client/file.ts"], "has_more": False}])
     result = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder",
                                  "cardId": "builder", "mode": "projection"})
     assert result["status"] == "unavailable"
@@ -198,7 +199,7 @@ def test_header_reads_preserve_the_line_80_boundary_and_reject_outside_paths(mon
     assert errors[0]["filePath"] == "../outside.py"
 
 
-def test_annotation_graph_and_file_text_are_independent_of_cbm_and_builder_grants(
+def test_categories_require_saved_cbm_grants_but_exact_file_text_is_independent(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -207,7 +208,7 @@ def test_annotation_graph_and_file_text_are_independent_of_cbm_and_builder_grant
     source.parent.mkdir()
     source.write_text("// Entity: Example\n// Relationship: Explains this file.\nexport const value = 1;", encoding="utf-8")
     monkeypatch.setattr(codegraph_reference_reads.saved_cards, "load_deck",
-                        lambda *_: pytest.fail("annotation graph must not depend on a saved agent"))
+                        lambda *_: _saved_builder(tools=[]))
     monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools",
                         lambda **_: pytest.fail("annotation graph must not call CBM"))
 
@@ -218,14 +219,28 @@ def test_annotation_graph_and_file_text_are_independent_of_cbm_and_builder_grant
         "mode": "projection",
     })
 
-    assert result["status"] == "ready"
-    assert result["projection"]["counts"] == {"nodes": 2, "edges": 1}
+    assert result["status"] == "unavailable"
+    assert result["errors"][0]["operation"] == "cbm.search_code"
     opened = read_codegraph_view({"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder",
                                  "mode": "source", "filePath": "client/example.ts"})
     assert opened["status"] == "ready"
     assert opened["fileSource"]["content"] == source.read_text(encoding="utf-8")
     assert opened["fileSource"]["graphSystem"] == "repository"
     assert "cbmQualifiedName" not in opened["fileSource"]
+
+
+def test_category_discovery_uses_complete_cbm_pages_not_a_directory_scan(monkeypatch):
+    offsets = []
+    def reader(**kwargs):
+        offset = kwargs["calls"][0][1]["result_offset"]
+        offsets.append(offset)
+        return [{"files": ["client/a.ts" if offset == 0 else "client/b.ts"],
+                 "has_more": offset == 0, "next_offset": 1}]
+    monkeypatch.setattr(codegraph_reference_reads, "call_graph_read_tools", reader)
+    result = codegraph_reference_reads._category_source_paths(
+        {"projectId": "project-1", "deckId": "deck_builder", "cardId": "builder"})
+    assert result == ["client/a.ts", "client/b.ts"]
+    assert offsets == [0, 1]
 
 
 def _query_rows(rows, **pagination):

@@ -40,6 +40,8 @@ import {
   CODE_GRAPH_LAYER_COLOR,
   DEFAULT_GRAPH_LAYER_VISIBILITY,
   composeVisibleGraphLayers,
+  displayedEntityMap,
+  type GraphViewContext,
   providerMemberKey,
   solarpunkMaterialFields,
   combinedCyberMaterialFields,
@@ -99,6 +101,7 @@ export function JoinedKnowledgeGraphSurface({
   onOpenCodeGraph,
   onReadCodeGraphFiles,
   onReadCodeGraphSource,
+  onViewContext,
 }: {
   projections: Record<GraphAuthority, GraphProjectionV1>;
   statuses?: Partial<Record<GraphAuthority, 'idle' | 'loading' | 'ready' | 'error'>>;
@@ -109,6 +112,7 @@ export function JoinedKnowledgeGraphSurface({
     error: string | null;
     warning: string | null;
     freshness: string;
+    activatedCategoryIds?: string[];
   };
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
   onRemoveKnowGraphEvidence?: (episodeId: string) => Promise<void>;
@@ -116,6 +120,7 @@ export function JoinedKnowledgeGraphSurface({
   onOpenCodeGraph?: () => Promise<GraphProjectionV1 | null>;
   onReadCodeGraphFiles?: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;
   onReadCodeGraphSource?: (filePath: string) => Promise<CodeGraphFileSource | null>;
+  onViewContext?: (context: GraphViewContext) => void;
 }) {
   const [layerVisibility, setLayerVisibility] = useState<GraphLayerVisibility>(() => ({
     ...DEFAULT_GRAPH_LAYER_VISIBILITY,
@@ -139,6 +144,11 @@ export function JoinedKnowledgeGraphSurface({
   useEffect(() => {
     setCodeFeatureIds([]);
   }, [codeLayer.projection.projectId]);
+  const activatedCategories = JSON.stringify(codeGraph?.activatedCategoryIds || []);
+  useEffect(() => {
+    const ids: string[] = JSON.parse(activatedCategories);
+    if (ids.length) setCodeFeatureIds(current => [...new Set([...current, ...ids])]);
+  }, [activatedCategories]);
   const visibleCodeProjection = useMemo(
     () => codeGraphCategoryProjection(codeLayer.projection, codeFeatureIds),
     [codeFeatureIds, codeLayer.projection],
@@ -230,6 +240,7 @@ export function JoinedKnowledgeGraphSurface({
       entityFocusRequest={entityFocusRequest}
       projection={presentation.projection}
       joinedPresentation={presentation}
+      onViewContext={onViewContext}
       status={status}
       error={error}
       warning={warning}
@@ -307,6 +318,7 @@ export function KnowledgeGraphProjectionSurface({
   onReadCodeGraphSource,
   codeFeatures,
   selectedCodeFeatureIds,
+  onViewContext,
   onToggleCodeGraphFeature,
   onClearCodeGraphFeature,
   onSelectAllCodeGraphFeatures,
@@ -332,6 +344,7 @@ export function KnowledgeGraphProjectionSurface({
   onReadCodeGraphSource?: (filePath: string) => Promise<CodeGraphFileSource | null>;
   codeFeatures?: GraphProjectionNode[];
   selectedCodeFeatureIds?: string[];
+  onViewContext?: (context: GraphViewContext) => void;
   onToggleCodeGraphFeature?: (featureId: string) => void;
   onClearCodeGraphFeature?: () => void;
   onSelectAllCodeGraphFeatures?: () => void;
@@ -940,6 +953,24 @@ export function KnowledgeGraphProjectionSurface({
       ? [focusedKnowItem, ...directKnowItems.filter(item => item !== focusedKnowItem)]
       : directKnowItems
   ).slice(0, INSPECTOR_RECORD_LIMIT);
+  const viewContextText = activeJoinedPresentation ? JSON.stringify({
+    map: displayedEntityMap(activeJoinedPresentation),
+    openNode: inspectorOpen && selected && !selectedEdge ? {
+      id: selected.id, name: selected.label, authority: inspectedAuthority,
+      ...(inspectedAuthority === 'thinkgraph' ? { thinks: visibleThinks.map(item => ({
+        id: item.id, title: item.title, text: item.summary || item.content || '',
+      })) } : {}),
+      ...(inspectedAuthority === 'knowgraph' ? { knows: visibleKnowItems.map(item => ({
+        id: item.episodeId, ...item.know,
+      })) } : {}),
+      ...(inspectedAuthority === 'codegraph' ? { filePath: selected.properties?.filePath,
+        categories: selected.properties?.features, contributions: selected.properties?.contributions,
+        ...(codeSource?.properties.file === selected.properties?.filePath ? { source: codeSource } : {}) } : {}),
+    } : null,
+  } satisfies GraphViewContext) : '';
+  useEffect(() => {
+    if (viewContextText) onViewContext?.(JSON.parse(viewContextText));
+  }, [onViewContext, viewContextText]);
   const jev = selectedEdge?.properties?.jev
     && typeof selectedEdge.properties.jev === 'object'
     && !Array.isArray(selectedEdge.properties.jev)

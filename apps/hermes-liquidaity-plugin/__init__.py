@@ -233,12 +233,13 @@ def register(ctx: Any) -> None:
 
     ctx.register_hook("pre_llm_call", project_entity_map_context)
 
-    def on_main_turn_complete(*, session_id: str = "",
-                              assistant_response: str = "", **_: Any) -> None:
+    def on_main_turn_complete(*, session_id: str = "", completed: bool = False,
+                              failed: bool = False, interrupted: bool = False,
+                              **_: Any) -> None:
         if (
             ctx.profile_name != "main"
             or not str(session_id or "").strip()
-            or not str(assistant_response or "").strip()
+            or completed is not True or failed or interrupted
         ):
             return
         profile_name = ctx.profile_name
@@ -275,4 +276,6 @@ def register(ctx: Any) -> None:
                 error,
             )
 
-    ctx.register_hook("post_llm_call", on_main_turn_complete)
+    # Hermes fires this per-turn hook after its transcript persistence step.
+    # Do not capture rows from a streaming/composer completion callback.
+    ctx.register_hook("on_session_end", on_main_turn_complete)

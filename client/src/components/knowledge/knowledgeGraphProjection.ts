@@ -173,6 +173,45 @@ export type JoinedGraphPresentation = {
   layerVisibility?: GraphLayerVisibility;
 };
 
+export type GraphViewContext = {
+  map: {
+    schemaVersion: 'project-entity-map';
+    projectId: string;
+    sources: GraphLayerVisibility;
+    entities: Array<{ id: string; name: string; providers: Array<{ authority: GraphVisualLayer; id: string }>;
+      filePath?: string; categories?: string[] }>;
+    relationships: Array<{ id: string; source: string; target: string; authority: GraphVisualLayer;
+      label: string; probability?: number }>;
+  };
+  openNode: Record<string, unknown> | null;
+};
+
+/** Serialize the existing drawing, not another graph or an inventory of hidden records. */
+export function displayedEntityMap(presentation: JoinedGraphPresentation): GraphViewContext['map'] {
+  const entities = presentation.projection.nodes.map(node => {
+    const providers: Array<{ authority: GraphVisualLayer; id: string }> =
+      (presentation.nodeVariants.get(node.id) || []).map(item => ({ authority: item.authority, id: item.node.id }));
+    const code = presentation.codeNodeVariants?.get(node.id);
+    if (code) providers.push({ authority: 'codegraph', id: code.id });
+    return { id: node.id, name: node.label, providers,
+      ...(code && typeof code.properties?.filePath === 'string'
+        ? { filePath: code.properties.filePath, categories: Array.isArray(code.properties.features)
+          ? code.properties.features.filter((name): name is string => typeof name === 'string') : [] } : {}),
+    };
+  });
+  const relationships = presentation.projection.edges.map(edge => {
+    const variant = presentation.edgeVariants.get(edge.id);
+    const authority: GraphVisualLayer = variant?.authority || 'codegraph';
+    const jev = edge.properties?.jev as { winner?: string; distribution?: Record<string, number> } | undefined;
+    const label = jev?.winner || edge.predicate;
+    const probability = jev?.distribution?.[label];
+    return { id: edge.id, source: edge.source, target: edge.target, authority, label,
+      ...(typeof probability === 'number' && Number.isFinite(probability) ? { probability } : {}) };
+  });
+  return { schemaVersion: 'project-entity-map', projectId: presentation.projection.projectId,
+    sources: { ...(presentation.layerVisibility || DEFAULT_GRAPH_LAYER_VISIBILITY) }, entities, relationships };
+}
+
 export function solarpunkMaterialFields(
   source: 'think' | 'know' | 'paired',
   thinkActive = false,

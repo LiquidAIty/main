@@ -203,6 +203,15 @@ async def project_entity_map_read(payload: dict[str, Any]):
             "context": render_project_entity_map(entity_map)}
 
 
+@graph_read_router.post("/project/entity-map/view")
+async def project_entity_map_view(payload: dict[str, Any]):
+    from app.python_models.project_entity_map import publish_project_entity_map
+    try:
+        return publish_project_entity_map(str(payload["projectId"]), payload["map"])
+    except (ValueError, KeyError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
 @graph_settlement_router.post("/thinkgraph/completed-pair/settle")
 async def thinkgraph_completed_pair_settle(payload: dict[str, Any]):
     """Persist the saved Card's structured facts through Engraphis."""

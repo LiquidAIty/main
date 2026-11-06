@@ -20,6 +20,7 @@ import type { KnowledgeGraphKind } from '../../types/agentgraph';
 import type { CanonicalEntityFocusRequest } from '../builder/canonicalEntityLinks';
 import type {
   GraphProjectionV1,
+  GraphViewContext,
 } from './knowledgeGraphProjection';
 import type { CodeGraphFileSource } from './codeGraphProjection';
 
@@ -43,10 +44,12 @@ type Props = {
     error: string | null;
     warning: string | null;
     freshness: string;
+    activatedCategoryIds?: string[];
   };
   onOpenCodeGraph: () => Promise<GraphProjectionV1 | null>;
   onReadCodeGraphFiles: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;
   onReadCodeGraphSource: (filePath: string) => Promise<CodeGraphFileSource | null>;
+  onViewContext?: (context: GraphViewContext) => void;
 };
 
 export default function KnowledgeGraphFramework({
@@ -62,6 +65,7 @@ export default function KnowledgeGraphFramework({
   onOpenCodeGraph,
   onReadCodeGraphFiles,
   onReadCodeGraphSource,
+  onViewContext,
 }: Props) {
   return (
     <div
@@ -105,6 +109,7 @@ export default function KnowledgeGraphFramework({
             onOpenCodeGraph={onOpenCodeGraph}
             onReadCodeGraphFiles={onReadCodeGraphFiles}
             onReadCodeGraphSource={onReadCodeGraphSource}
+            onViewContext={onViewContext}
           />
       </Suspense>
     </div>

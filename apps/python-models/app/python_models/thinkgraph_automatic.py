@@ -135,7 +135,7 @@ def _speaker(message: dict[str, Any], kind: str) -> dict[str, Any] | None:
 
 
 def _saved_authority(project: str, saved: list[dict[str, Any]], *, require_target: bool = True) -> dict[str, Any] | None:
-    """Resolve the exact saved Main and its flow-connected ThinkGraph Card in Python."""
+    """Resolve the exact saved Main and its enabled wired ThinkGraph Card."""
     assistants = [item for item in saved if item.get("role") == "assistant"]
     users = [item for item in saved if item.get("role") == "user"]
     if len(assistants) != 1 or not users:
@@ -182,11 +182,9 @@ def _saved_authority(project: str, saved: list[dict[str, Any]], *, require_targe
                 "assistant": assistant, "users": users}
 
     targets = direct_orchestrator_targets(main_id, cards, edges)
-    matches = [
-        target for target in targets
-        if target.get("cardId") == _THINKGRAPH_CARD_ID
-        and str(target.get("profile") or "").lower() == "thinkgraph"
-    ]
+    matches = [target for target in targets
+               if target.get("cardId") == _THINKGRAPH_CARD_ID
+               and str(target.get("profile") or "").lower() == "thinkgraph"]
     if len(matches) != 1:
         raise AutomaticThinkGraphError("saved_thinkgraph_connection_unavailable")
     target = matches[0]

@@ -65,7 +65,7 @@ def test_plugin_reads_project_entity_map_from_python_rails(monkeypatch) -> None:
     )]
 
 
-def test_plugin_schedules_thinkgraph_from_successful_post_llm_turn(
+def test_plugin_schedules_thinkgraph_only_after_successful_persisted_turn(
     monkeypatch,
 ) -> None:
     plugin = _load_plugin()
@@ -95,14 +95,36 @@ def test_plugin_schedules_thinkgraph_from_successful_post_llm_turn(
     context = Context()
     plugin.register(context)
 
-    assert set(hooks) == {"pre_llm_call", "post_llm_call"}
-    hooks["post_llm_call"](
+    assert set(hooks) == {"pre_llm_call", "on_session_end"}
+    for outcome in ({}, {"completed": False}, {"completed": True, "failed": True},
+                    {"completed": True, "interrupted": True}):
+        hooks["on_session_end"](session_id="main-session", **outcome)
+    assert scheduled == []
+    hooks["on_session_end"](
         session_id="main-session",
-        assistant_response="Completed Main answer",
+        completed=True,
     )
 
     assert scheduled[0][0] == "liquidaity-thinkgraph:main-session"
     scheduled[0][1].close()
+
+
+def test_automatic_thinkgraph_requires_saved_wire(monkeypatch):
+    from app.python_models import saved_cards, thinkgraph_automatic
+
+    deck = {"nodes": [
+        {"id": "main", "runtime": {"kind": "hermes", "mode": "main", "profile": "main"}},
+        {"id": "card_thinkgraph", "_cardRevisionId": "saved-revision",
+         "runtime": {"kind": "hermes", "profile": "thinkgraph"}},
+    ], "edges": []}
+    monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: {"deck": deck})
+    saved = [
+        {"role": "user", "target": {"cardId": "main", "profile": "main"}},
+        {"role": "assistant", "speaker": {"cardId": "main", "profile": "main"}},
+    ]
+    import pytest
+    with pytest.raises(thinkgraph_automatic.AutomaticThinkGraphError, match="saved_thinkgraph_connection_unavailable"):
+        thinkgraph_automatic._saved_authority("project-one", saved)
 
 
 def test_completed_turn_calls_saved_thinkgraph_path_without_auxiliary_model(monkeypatch):

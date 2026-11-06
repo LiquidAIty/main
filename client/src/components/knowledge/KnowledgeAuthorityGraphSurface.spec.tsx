@@ -790,9 +790,11 @@ describe('knowledge authority graph surfaces', () => {
           authority: 'codegraph', etype: 'Feature', properties: { recordKind: 'feature', featureName: label, memberFilePaths: label === 'Other' ? ['client/other.ts'] : ['client/shared.ts'] } })),
         { id: 'file:shared', label: 'shared.ts', authority: 'codegraph', etype: 'File', properties: {
           recordKind: 'file', filePath: 'client/shared.ts', qualifiedName: 'file:shared',
+          features: ['CodeGraph', 'Source headers'],
         } },
         { id: 'file:other', label: 'other.ts', authority: 'codegraph', etype: 'File', properties: {
           recordKind: 'file', filePath: 'client/other.ts', qualifiedName: 'file:other',
+          features: ['Other'],
         } },
       ],
       edges: ['CodeGraph', 'Source headers', 'Other'].map(label => ({ id: `${label}-file`, source: `feature:${label}`,

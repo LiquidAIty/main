@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GraphProjectionV1 } from '../../../components/knowledge/knowledgeGraphProjection';
 import {
   emptyCodeGraphProjection,
+  codeGraphInspectedPaths,
   mergeCodeGraphProjections,
   validateCodeGraphReadEnvelope,
   type CodeGraphFileSource,
@@ -27,6 +28,7 @@ import {
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 import { applicationApiUrl, applicationFetch } from '../../../lib/applicationApi';
 import type { KnowledgeGraphKind } from '../../../types/agentgraph';
+import { onHermesEvent } from '../../hermes/hermesHost';
 
 type KnowledgeGraphState = {
   projections: Record<KnowledgeGraphKind, GraphProjectionV1>;
@@ -41,6 +43,7 @@ type KnowledgeGraphState = {
     error: string | null;
     warning: string | null;
     freshness: string;
+    activatedCategoryIds?: string[];
   };
   loadCodeGraph: () => Promise<GraphProjectionV1 | null>;
   readCodeGraphFiles: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;
@@ -352,13 +355,17 @@ export default function useAgentBuilderKnowledgeGraphs({
       const warning = envelope.status === 'partial'
         ? codeGraphMessage(envelope, 'codegraph_projection_partial')
         : null;
-      setCodeGraph({
-        projection: envelope.projection,
+      setCodeGraph(current => ({
+        ...current,
+        projection: mergeCodeGraphProjections({ ...current.projection,
+          nodes: current.projection.nodes.filter(node => node.properties?.recordKind === 'file'),
+          edges: current.projection.edges.filter(edge => edge.properties?.structuralAuthority === 'cbm'),
+        }, envelope.projection!),
         status: 'ready',
         error: null,
         warning,
         freshness: envelope.freshness.status,
-      });
+      }));
       return envelope.projection;
     } catch (error) {
       if (controller.signal.aborted || requestId !== codeProjectionRequestRef.current) return null;
@@ -369,6 +376,29 @@ export default function useAgentBuilderKnowledgeGraphs({
       return null;
     }
   }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    let disposed = false;
+    let remove: (() => void) | undefined;
+    void onHermesEvent('builder', 'tool.complete', event => {
+      if (!event.payload) return;
+      const paths = codeGraphInspectedPaths(event.payload.name,
+        event.payload.result ?? event.payload.result_text);
+      if (!paths.length || disposed) return;
+      void loadCodeGraph().then(projection => {
+        if (disposed || !projection) return;
+        const activated = projection.nodes.filter(node => node.properties?.recordKind === 'feature'
+          && Array.isArray(node.properties.memberFilePaths)
+          && node.properties.memberFilePaths.some(path => typeof path === 'string' && paths.includes(path)))
+          .map(node => node.id);
+        setCodeGraph(current => ({ ...current, activatedCategoryIds:
+          [...new Set([...(current.activatedCategoryIds || []), ...activated])] }));
+      });
+    }).then(unsubscribe => { if (disposed) unsubscribe(); else remove = unsubscribe; })
+      .catch(() => { /* The existing Hermes connection surfaces its own failure. */ });
+    return () => { disposed = true; remove?.(); };
+  }, [projectId, loadCodeGraph]);
 
   const readCodeGraphFiles = useCallback(async (
     filePaths: string[],

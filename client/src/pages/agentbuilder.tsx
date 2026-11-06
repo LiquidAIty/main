@@ -66,6 +66,7 @@ import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWor
 import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
+import type { GraphViewContext } from '../components/knowledge/knowledgeGraphProjection';
 import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
 import MainBuilderSplitPanel from '../features/agentbuilder/console/MainBuilderSplitPanel';
 import useHermesMainChat from '../features/hermes/useHermesMainChat';
@@ -288,7 +289,32 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     workspaceView,
     openCanvasWorkspace: () => setWorkspaceView('canvas'),
   });
-  const mainChat = useHermesMainChat(canvasProjectId);
+  const graphViewRef = useRef<GraphViewContext | null>(null);
+  const publishGraphView = useCallback(async (view: GraphViewContext) => {
+    const response = await applicationFetch('/api/thinkgraph/view-context', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: view.map.projectId, map: view.map }),
+    });
+    if (!response.ok) throw new Error('The displayed graph context could not be delivered.');
+  }, []);
+  const graphMapKeyRef = useRef('');
+  const onGraphViewContext = useCallback((view: GraphViewContext) => {
+    if (view.map.projectId !== canvasProjectId) return;
+    graphViewRef.current = view;
+    const key = JSON.stringify(view.map);
+    if (graphMapKeyRef.current !== key) {
+      graphMapKeyRef.current = key;
+      void publishGraphView(view).catch(() => { graphMapKeyRef.current = ''; });
+    }
+  }, [canvasProjectId, publishGraphView]);
+  const prepareSelectedGraphContext = useCallback(async () => {
+    const view = graphViewRef.current;
+    if (!view || view.map.projectId !== canvasProjectId) return undefined;
+    await publishGraphView(view);
+    return view.openNode ? 'Selected graph node at submission (context only, not permission to edit or execute):\n'
+      + JSON.stringify(view.openNode) : undefined;
+  }, [canvasProjectId, publishGraphView]);
+  const mainChat = useHermesMainChat(canvasProjectId, prepareSelectedGraphContext);
   const {
     chatMinWidth,
     chatPanelWidth,
@@ -1488,6 +1514,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
             onOpenCodeGraph={knowledgeGraphs.loadCodeGraph}
             onReadCodeGraphFiles={knowledgeGraphs.readCodeGraphFiles}
             onReadCodeGraphSource={knowledgeGraphs.readCodeGraphSource}
+            onViewContext={onGraphViewContext}
           />
         </KnowledgeSurfaceErrorBoundary>
       </div>

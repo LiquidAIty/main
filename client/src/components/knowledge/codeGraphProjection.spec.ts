@@ -11,6 +11,7 @@ import type { GraphProjectionV1 } from './knowledgeGraphProjection';
 import {
   applyCodeGraphPhysics,
   codeGraphCategoryProjection,
+  codeGraphInspectedPaths,
   mergeCodeGraphProjections,
   validateCodeGraphProjection,
 } from './codeGraphProjection';
@@ -34,6 +35,16 @@ function projection(): GraphProjectionV1 {
 }
 
 describe('CodeGraph projection', () => {
+  it('activates only exact files returned by successful CBM operations, never answer prose', () => {
+    expect(codeGraphInspectedPaths('mcp__liquidaity__cbm_search_graph', JSON.stringify({
+      results: [{ file_path: 'client/shared.ts' }],
+    }))).toEqual(['client/shared.ts']);
+    expect(codeGraphInspectedPaths('cbm.search_code', { files: ['apps/example.py', '../outside.py'] }))
+      .toEqual(['apps/example.py']);
+    expect(codeGraphInspectedPaths('terminal', { files: ['client/shared.ts'] })).toEqual([]);
+    expect(codeGraphInspectedPaths('cbm.search_code', { isError: true, files: ['client/shared.ts'] })).toEqual([]);
+    expect(codeGraphInspectedPaths('cbm.search_code', 'I read client/shared.ts')).toEqual([]);
+  });
   it('retains source memberships internally but renders only selected files, once', () => {
     const source = validateCodeGraphProjection(projection(), 'project-1');
     const before = JSON.stringify(source);
@@ -46,7 +57,7 @@ describe('CodeGraph projection', () => {
     expect(JSON.stringify(source)).toBe(before);
   });
 
-  it('includes real directed cross-category calls and imports, never symbols or membership spokes', () => {
+  it('excludes off-category neighbors and their edges even when CBM reports a connection', () => {
     const source = projection();
     source.nodes.push({ id: 'symbol', label: 'symbol', properties: { recordKind: 'symbol' } });
     const properties = { recordKind: 'structural-relationship', structuralAuthority: 'cbm' };
@@ -56,10 +67,11 @@ describe('CodeGraph projection', () => {
       { id: 'usage', source: 'file:shared', target: 'symbol', predicate: 'USAGE', properties },
     );
     const view = codeGraphCategoryProjection(source, ['feature:a']);
-    expect(view.nodes.map(node => node.id)).toEqual(['file:shared', 'file:plain']);
-    expect(view.edges.map(edge => [edge.id, edge.source, edge.target])).toEqual([
-      ['call', 'file:plain', 'file:shared'], ['import', 'file:shared', 'file:plain'],
-    ]);
+    expect(view.nodes.map(node => node.id)).toEqual(['file:shared']);
+    expect(view.edges).toEqual([]);
+    source.nodes[3].properties!.features = ['A'];
+    expect(codeGraphCategoryProjection(source, ['feature:a']).edges.map(edge => edge.id))
+      .toEqual(['call', 'import']);
   });
 
   it('refreshes complete incident structure without erasing another file or annotations', () => {
@@ -108,7 +120,7 @@ describe('CodeGraph projection', () => {
     const source = projection();
     for (let index = 0; index < 1100; index++) {
       const id = 'file:' + index;
-      source.nodes.push({ id, label: id, authority: 'codegraph', properties: { recordKind: 'file' } });
+      source.nodes.push({ id, label: id, authority: 'codegraph', properties: { recordKind: 'file', features: ['A'] } });
       source.edges.push({ id: 'call:' + index, source: id, target: 'file:shared', predicate: 'CALLS',
         properties: { structuralAuthority: 'cbm' } });
     }

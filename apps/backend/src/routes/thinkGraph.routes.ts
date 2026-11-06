@@ -23,6 +23,20 @@ import { requireOwnedProject } from './projectAccess';
 const thinkGraphRoutes = Router();
 const graphStreams = new Map<Response, string>();
 
+thinkGraphRoutes.post('/view-context', async (req, res) => {
+  const projectId = String(req.body?.projectId || '').trim();
+  const scope = await requireOwnedProject(req, res, projectId);
+  if (!scope) return undefined;
+  try {
+    return res.json(await requestPythonRailsJson('/project/entity-map/view', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: scope.projectId, map: req.body?.map }),
+    }));
+  } catch (error) {
+    return res.status(502).json({ error: error instanceof Error ? error.message : 'graph_view_context_unavailable' });
+  }
+});
+
 
 thinkGraphRoutes.get('/sources', async (req, res) => {
   const projectId = String(req.query.projectId || '').trim();

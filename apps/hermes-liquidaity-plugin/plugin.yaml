@@ -13,7 +13,7 @@ requires_plugins:
   - holographic
 provides_hooks:
   - pre_llm_call
-  - post_llm_call
+  - on_session_end
 provides_tools:
   - card_python
   - taskgraph_start
