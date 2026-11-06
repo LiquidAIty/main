@@ -7,7 +7,7 @@ import type {
   GraphProjectionNode,
   JoinedGraphPresentation,
 } from '../../components/knowledge/knowledgeGraphProjection';
-import { hermesDashboardSdk, onHermesEvent } from './hermesHost';
+import { hermesWebappHost, onHermesEvent } from './hermesHost';
 
 export const NAVIGATION_MAP_SCHEMA = 'liquidaity.navigation-map.v1';
 export const NAVIGATION_MAP_PROFILES = ['main', 'builder', 'thinkgraph', 'knowgraph'] as const;
@@ -196,8 +196,8 @@ function ensureReconnectPublication(): void {
 }
 
 async function clearProfile(profile: string): Promise<void> {
-  const fetchJSON = hermesDashboardSdk().fetchJSON;
-  if (!fetchJSON) throw new Error('Hermes dashboard fetchJSON is unavailable.');
+  const fetchJSON = hermesWebappHost().fetchJSON;
+  if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
   await fetchJSON(`/api/plugins/liquidaity/navigation-map?profile=${encodeURIComponent(profile)}`, {
     method: 'DELETE',
   });
@@ -207,8 +207,8 @@ async function publishHermesNavigationMapNow(
   map: HermesNavigationMap,
   serialized: string,
 ): Promise<HermesNavigationMapSync> {
-  const fetchJSON = hermesDashboardSdk().fetchJSON;
-  if (!fetchJSON) throw new Error('Hermes dashboard fetchJSON is unavailable.');
+  const fetchJSON = hermesWebappHost().fetchJSON;
+  if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
   await Promise.all(NAVIGATION_MAP_PROFILES.map(clearProfile));
   try {
     const responses = await Promise.all(NAVIGATION_MAP_PROFILES.map((profile) => (

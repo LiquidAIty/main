@@ -34,22 +34,13 @@ def test_plugin_and_mcp_metadata_share_one_versioned_catalog_identity():
     package_version = json.loads(
         (repo_root / "package.json").read_text(encoding="utf-8")
     )["version"]
-    dashboard_version = json.loads(
-        (
-            repo_root
-            / "apps"
-            / "hermes-liquidaity-plugin"
-            / "dashboard"
-            / "manifest.json"
-        ).read_text(encoding="utf-8")
-    )["version"]
     plugin_source = (
         repo_root / "apps" / "hermes-liquidaity-plugin" / "plugin.yaml"
     ).read_text(encoding="utf-8")
     plugin_version = re.search(r"(?m)^version:\s*([^\s]+)\s*$", plugin_source)
 
     assert plugin_version is not None
-    assert package_version == dashboard_version == plugin_version.group(1) == "1.0.0"
+    assert package_version == plugin_version.group(1) == "1.0.0"
     assert mcp_host._MCP_IMPLEMENTATION_VERSION == (
         f"{package_version}+catalog.{mcp_observability.STARTUP_SOURCE_SHA256[:12]}"
     )

@@ -27,13 +27,6 @@ _APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 CATALOG_SOURCE_PATHS = (
     os.path.join(_REPO_ROOT, "package.json"),
     os.path.join(_REPO_ROOT, "apps", "hermes-liquidaity-plugin", "plugin.yaml"),
-    os.path.join(
-        _REPO_ROOT,
-        "apps",
-        "hermes-liquidaity-plugin",
-        "dashboard",
-        "manifest.json",
-    ),
     os.path.join(_APP_ROOT, "mcp_host.py"),
     os.path.join(_APP_ROOT, "mcp_auth.py"),
     os.path.join(_APP_ROOT, "mcp_catalog_runtime.py"),

@@ -420,6 +420,30 @@ describe('MainProjectChat', () => {
     expect(onSend).toHaveBeenCalledWith('  Exact user text.  ');
   });
 
+  it('admits one submission while the owner promise is unsettled', async () => {
+    let settle: ((accepted: boolean) => void) | null = null;
+    const onSend = vi.fn(() => new Promise<boolean>((resolve) => { settle = resolve; }));
+    render(
+      <MainProjectChat
+        messages={[]}
+        onSend={onSend}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('main-chat-input'), {
+      target: { value: 'Send exactly once.' },
+    });
+    const button = screen.getByRole('button', { name: 'Send' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(onSend).toHaveBeenCalledTimes(1);
+    await act(async () => { settle?.(true); });
+    expect((screen.getByTestId('main-chat-input') as HTMLTextAreaElement).value).toBe('');
+  });
+
   it('retains the draft when the owner rejects submission before acceptance', () => {
     const onSend = vi.fn(() => false);
     render(

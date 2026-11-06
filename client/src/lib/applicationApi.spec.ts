@@ -7,10 +7,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applicationApiUrl, applicationFetch } from './applicationApi';
 
 afterEach(() => {
-  delete (window as Window & {
-    __HERMES_PLUGIN_SDK__?: unknown;
-    __HERMES_UI_SURFACE__?: string;
-  }).__HERMES_PLUGIN_SDK__;
   delete (window as Window & { __HERMES_UI_SURFACE__?: string }).__HERMES_UI_SURFACE__;
   vi.unstubAllGlobals();
 });
@@ -23,20 +19,6 @@ describe('LiquidAIty application API location', () => {
     expect(applicationApiUrl('/api/projects')).toBe('/api/projects');
     await applicationFetch('/api/projects', { method: 'GET' });
     expect(fetcher).toHaveBeenCalledWith('/api/projects', { method: 'GET' });
-  });
-
-  it('uses the existing loopback backend with credentials inside Hermes dashboard', async () => {
-    (window as Window & { __HERMES_PLUGIN_SDK__?: unknown }).__HERMES_PLUGIN_SDK__ = {};
-    const fetcher = vi.fn(async () => new Response('{}'));
-    vi.stubGlobal('fetch', fetcher);
-
-    expect(applicationApiUrl('/api/projects?active=1'))
-      .toBe('http://127.0.0.1:4000/api/projects?active=1');
-    await applicationFetch('/api/projects', { method: 'POST' });
-    expect(fetcher).toHaveBeenCalledWith('http://127.0.0.1:4000/api/projects', {
-      method: 'POST',
-      credentials: 'include',
-    });
   });
 
   it('uses the existing loopback backend with credentials inside Hermes Webapp', async () => {

@@ -5,7 +5,7 @@
 // Entity: IDD
 // Relationship: This file loads the current Card-editor field and choice projection instead of maintaining a second runtime configuration dictionary.
 // Entity: Card Profiles
-// Relationship: Publishes compiled PromptBlocks to SOUL.md and edits the profile-scoped Card SKILL.md, skill auto-load, toolsets, MCP grants, and Bot roster through public Hermes surfaces.
+// Relationship: Publishes compiled PromptBlocks to SOUL.md, edits the Card's logically named profile skill, and selects optional Hermes library skills without exposing storage paths.
 // Entity: Tool Catalog
 // Relationship: Displays selected application capabilities from IDD, preserves unavailable saved selections, and edits the Card's explicit grants through checkboxes.
 // Entity: Card Scripts
@@ -21,6 +21,7 @@ import type {
 } from '../types/agentgraph';
 import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
 import { applicationFetch } from '../lib/applicationApi';
+import { buildBasicHermesCardSkill } from '../features/hermes/hermesCardSkill';
 import type { HermesRuntimeSnapshot } from '../features/hermes/hermesRuntimeClient';
 import {
   configureHermesProfile,
@@ -373,13 +374,6 @@ function parseListText(value: string): string[] {
     .filter(Boolean);
 }
 
-const CARD_SKILL_NAME = 'card-skill';
-
-function cardSkillTemplate(cardName: string, profile: string): string {
-  const title = String(cardName || profile || 'Card').replace(/\s+/g, ' ').trim();
-  return `---\nname: ${CARD_SKILL_NAME}\ndescription: Procedures this saved Hermes Card follows for every run.\n---\n\n# ${title} skill\n\nDescribe the procedures this Card should follow during its runs.\n`;
-}
-
 async function loadCardScriptRuntime(
   projectId: string,
   deckId: string,
@@ -650,9 +644,13 @@ export function CardEditor({
     return () => { active = false; };
   }, [cardId, isLocalConfigMode, localConfig?.runtime]);
 
-  const cardSkillInstalled = hermesProfile?.skills.some(
-    (skill) => skill.name === CARD_SKILL_NAME,
-  ) === true;
+  const cardSkillName = localConfig?.runtime.kind === 'hermes'
+    ? localConfig.runtime.profile.trim().toLowerCase()
+    : '';
+  const cardSkillInstalled = Boolean(
+    cardSkillName
+    && hermesProfile?.skills.some((skill) => skill.name === cardSkillName),
+  );
 
   useEffect(() => {
     const profile = localConfig?.runtime.kind === 'hermes'
@@ -661,8 +659,12 @@ export function CardEditor({
     if (activeTab !== 'Skills' || !profile || hermesProfileStatus !== 'ready') return;
     if (!cardSkillInstalled) {
       setSkillEditor({
-        name: CARD_SKILL_NAME,
-        content: cardSkillTemplate(cardName, profile),
+        name: cardSkillName,
+        content: buildBasicHermesCardSkill({
+          profile,
+          title: cardName,
+          mode: localConfig?.runtime.mode || '',
+        }),
         savedContent: '',
         exists: false,
         status: 'ready',
@@ -671,13 +673,13 @@ export function CardEditor({
     }
     let active = true;
     setSkillEditor({
-      name: CARD_SKILL_NAME,
+      name: cardSkillName,
       content: '',
       savedContent: '',
       exists: true,
       status: 'loading',
     });
-    void loadHermesSkill(profile, CARD_SKILL_NAME).then((result) => {
+    void loadHermesSkill(profile, cardSkillName).then((result) => {
       if (!active) return;
       setSkillEditor({
         name: result.name,
@@ -689,12 +691,12 @@ export function CardEditor({
     }).catch((error) => {
       if (!active) return;
       setSkillEditor({
-        name: CARD_SKILL_NAME,
+        name: cardSkillName,
         content: '',
         savedContent: '',
         exists: true,
         status: 'failed',
-        error: error instanceof Error ? error.message : 'Hermes Card skill unavailable.',
+        error: error instanceof Error ? error.message : 'Custom skill unavailable.',
       });
     });
     return () => { active = false; };
@@ -702,6 +704,7 @@ export function CardEditor({
     activeTab,
     cardId,
     cardName,
+    cardSkillName,
     cardSkillInstalled,
     hermesProfileStatus,
     localConfig?.runtime,
@@ -847,10 +850,8 @@ export function CardEditor({
       setHermesProfile(activeProfile);
       setHermesProfileStatus('ready');
       const selectedTools = parseListText(String((payload.tools || []).join('\n')));
-      const selectedSkills = parseListText(String((payload.skills || []).join('\n')));
-      if (selectedSkills.length !== 1) {
-        throw new Error('Select exactly one Card or Hermes skill before publishing its profile.');
-      }
+      const librarySkills = parseListText(String((payload.skills || []).join('\n')));
+      const selectedSkills = [...new Set([payload.runtime.profile, ...librarySkills])];
       const cardScript = await loadCardScriptRuntime(projectId, deckId, cardId);
       const enabledMcpServers = new Set(parseListText(String(
         (payload.mcp_connection_ids || []).join('\n'),
@@ -962,26 +963,25 @@ export function CardEditor({
       ? { ...current, status: 'saving', error: undefined }
       : current);
     try {
-      if (existed) await saveHermesSkill(profile, CARD_SKILL_NAME, content);
-      else await createHermesSkill(profile, CARD_SKILL_NAME, content);
+      if (existed) await saveHermesSkill(profile, cardSkillName, content);
+      else await createHermesSkill(profile, cardSkillName, content);
       writeCompleted = true;
       setSkillEditor((current) => current
         ? { ...current, exists: true, savedContent: content }
         : current);
-      const selectedSkills = [CARD_SKILL_NAME];
+      const selectedSkills = [...new Set([cardSkillName, ...parseListText(skillsText)])];
       const state = await configureHermesProfile({
         profile,
         enabledSkills: selectedSkills,
         autoLoadSkills: selectedSkills,
       });
       setHermesProfile(state);
-      setSkillsText(selectedSkills.join('\n'));
       setSkillEditor((current) => current
         ? { ...current, exists: true, savedContent: content, status: 'ready', error: undefined }
         : current);
       markDraftDirty();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Card skill save failed.';
+      const message = error instanceof Error ? error.message : 'Custom skill save failed.';
       setHermesProfileError(message);
       setSkillEditor((current) => current
         ? {
@@ -1417,19 +1417,47 @@ export function CardEditor({
       );
     }
     if (sectionTab === 'Skills') {
+      const selectedLibrarySkills = new Set(parseListText(skillsText));
+      const librarySkills = (hermesProfile?.skills || [])
+        .filter((skill) => skill.name !== cardSkillName)
+        .sort((left, right) => left.name.localeCompare(right.name));
       return (
         <section data-testid="agent-manager-skills" style={{ display: 'grid', gap: 12 }}>
-          <strong>Card skill</strong>
+          <strong>Skills</strong>
           <div style={{ color: '#91A9B8', fontSize: 11 }}>
-            Hermes stores this profile-scoped SKILL.md and auto-loads it into every new Card session.
-            PromptBlocks remain in SOUL.md.
+            Edit this Card&apos;s own skill and optionally include any discovered Hermes library skills.
+            PromptBlocks remain in SOUL.md; storage paths are managed by Hermes.
           </div>
-          {hermesProfileStatus === 'loading' ? <div role="status">Loading Card skill…</div> : null}
+          {hermesProfileStatus === 'loading' ? <div role="status">Loading skills…</div> : null}
           {hermesProfileStatus === 'failed' ? <div role="alert">{hermesProfileError}</div> : null}
           {hermesProfileError && hermesProfileStatus !== 'failed' ? <div role="alert">{hermesProfileError}</div> : null}
+          {hermesProfileStatus === 'ready' ? (
+            <fieldset aria-label="Hermes skill library" style={{ display: 'grid', gap: 6 }}>
+              <legend style={{ color: '#E0DED5', fontSize: 12 }}>Optional Hermes library skills</legend>
+              {librarySkills.map((skill) => (
+                <label key={skill.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedLibrarySkills.has(skill.name)}
+                    onChange={(event) => {
+                      const next = new Set(selectedLibrarySkills);
+                      if (event.target.checked) next.add(skill.name);
+                      else next.delete(skill.name);
+                      setSkillsText([...next].join('\n'));
+                      markDraftDirty();
+                    }}
+                  />
+                  <span>{skill.name}</span>
+                </label>
+              ))}
+              {!librarySkills.length ? (
+                <span style={{ color: '#91A9B8', fontSize: 11 }}>No optional Hermes skills are available.</span>
+              ) : null}
+            </fieldset>
+          ) : null}
           {skillEditor ? (
             <section style={{ display: 'grid', gap: 8 }} aria-label="Skill editor">
-              <strong>{skillEditor.exists ? 'Edit' : 'Create'} {skillEditor.name}/SKILL.md</strong>
+              <strong>{skillEditor.exists ? 'Edit' : 'Create'} {skillEditor.name}</strong>
               {skillEditor.status === 'loading' ? <div role="status">Loading skill…</div> : null}
               {skillEditor.error ? <div role="alert">{skillEditor.error}</div> : null}
               {skillEditor.status === 'ready' || skillEditor.status === 'saving' ? <>
@@ -1442,7 +1470,7 @@ export function CardEditor({
                   <button type="button"
                     disabled={skillEditor.status === 'saving'
                       || (skillEditor.exists && skillEditor.content === skillEditor.savedContent)}
-                    onClick={() => void saveCardSkill()}>Save Card Skill</button>
+                    onClick={() => void saveCardSkill()}>Save Skill</button>
                 </div>
               </> : null}
             </section>

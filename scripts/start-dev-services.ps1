@@ -53,15 +53,32 @@ if ($LASTEXITCODE -ne 0) {
   throw "Database services failed to start with exit code $LASTEXITCODE."
 }
 
-$secretBytes = New-Object byte[] 32
-$generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-try {
-  $generator.GetBytes($secretBytes)
-} finally {
-  $generator.Dispose()
+$internalMcpSecret = if (-not [string]::IsNullOrWhiteSpace($env:LIQUIDAITY_INTERNAL_MCP_SECRET)) {
+  $env:LIQUIDAITY_INTERNAL_MCP_SECRET
+} else {
+  Read-SelectedEnvValue -Path $backendEnvPath -Name 'LIQUIDAITY_INTERNAL_MCP_SECRET'
+}
+if ([string]::IsNullOrWhiteSpace($internalMcpSecret)) {
+  $secretBytes = New-Object byte[] 32
+  $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  try {
+    $generator.GetBytes($secretBytes)
+  } finally {
+    $generator.Dispose()
+  }
+  $internalMcpSecret = [Convert]::ToBase64String($secretBytes)
+  $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+  [System.IO.File]::AppendAllText(
+    (Resolve-Path -LiteralPath $backendEnvPath),
+    [Environment]::NewLine + "LIQUIDAITY_INTERNAL_MCP_SECRET=$internalMcpSecret" + [Environment]::NewLine,
+    $utf8NoBom
+  )
+}
+if ($internalMcpSecret.Length -lt 32) {
+  throw 'LIQUIDAITY_INTERNAL_MCP_SECRET must contain at least 32 characters.'
 }
 
-$env:LIQUIDAITY_INTERNAL_MCP_SECRET = [Convert]::ToBase64String($secretBytes)
+$env:LIQUIDAITY_INTERNAL_MCP_SECRET = $internalMcpSecret
 $env:LIQUIDAITY_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp'
 # Supervised startup must never pause the backend build for an editor-extension
 # installation prompt. The extension is optional and unrelated to runtime

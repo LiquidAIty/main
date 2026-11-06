@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { hermesDashboardSdk } from './hermesHost';
+import { hermesWebappHost } from './hermesHost';
 
 type HermesHostWindow = Window & {
   __HERMES_AUTH_REQUIRED__?: boolean;
@@ -37,7 +37,7 @@ describe('Hermes Webapp host', () => {
     }));
     vi.stubGlobal('fetch', fetcher);
 
-    const url = new URL(await hermesDashboardSdk().buildWsUrl('/api/ws', { profile: 'main' }));
+    const url = new URL(await hermesWebappHost().buildWsUrl('/api/ws', { profile: 'main' }));
 
     expect(url.pathname).toBe('/api/ws');
     expect(url.searchParams.get('profile')).toBe('main');
@@ -65,7 +65,7 @@ describe('Hermes Webapp host', () => {
     }));
     vi.stubGlobal('fetch', fetcher);
 
-    await expect(hermesDashboardSdk().fetchJSON?.('/api/plugins/liquidaity/navigation-map'))
+    await expect(hermesWebappHost().fetchJSON?.('/api/plugins/liquidaity/navigation-map'))
       .resolves.toEqual({ ok: true });
     const headers = fetcher.mock.calls[0][1]?.headers as Headers;
     expect(headers.get('X-Hermes-Session-Token')).toBe('browser-session');

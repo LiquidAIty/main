@@ -24,7 +24,7 @@ import {
   graphDrawerSectionStyle,
   graphGlassPillStyle,
 } from '../../../components/graph/graphVisualTokens';
-import { hermesDashboardSdk } from '../../hermes/hermesHost';
+import { hermesWebappHost } from '../../hermes/hermesHost';
 
 export const TASK_STATUSES = [
   'triage',
@@ -519,8 +519,8 @@ export default function MagneticTasksTab({
       requestController.abort();
     }, STATUS_REQUEST_TIMEOUT_MS);
     try {
-      const fetchJSON = hermesDashboardSdk().fetchJSON;
-      if (!fetchJSON) throw new Error('Hermes dashboard fetchJSON is unavailable.');
+      const fetchJSON = hermesWebappHost().fetchJSON;
+      if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
       const board = await fetchJSON<unknown>('/api/plugins/kanban/board?include_archived=true', {
         signal: requestController.signal,
       });

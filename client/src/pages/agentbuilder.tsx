@@ -71,6 +71,8 @@ import MainBuilderSplitPanel from '../features/agentbuilder/console/MainBuilderS
 import useHermesMainChat from '../features/hermes/useHermesMainChat';
 import useHermesCardRuntime from '../features/hermes/useHermesCardRuntime';
 import { synchronizeHermesTopologyProfiles } from '../features/hermes/hermesTopologyProfileSync';
+import { synchronizeHermesSavedCardProfiles } from '../features/hermes/hermesSavedCardProfileSync';
+import { synchronizeHermesProjectProfileCredentials } from '../features/hermes/hermesProfileClient';
 import { applicationFetch } from '../lib/applicationApi';
 import useAgentBuilderAutosave, {
   projectDeckForPersistence,
@@ -366,14 +368,35 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     if (topologyProfileRevisionRef.current === identity) return;
     let cancelled = false;
     const snapshot = cloneDeckDocument(currentDeckRef.current);
-    void synchronizeHermesTopologyProfiles(snapshot).then(() => {
+    void (async () => {
+      const failures: string[] = [];
+      try {
+        await synchronizeHermesSavedCardProfiles(snapshot, canvasProjectId);
+      } catch (error) {
+        failures.push(`profiles: ${error instanceof Error ? error.message : 'publication failed'}`);
+      }
+      try {
+        await synchronizeHermesTopologyProfiles(snapshot);
+      } catch (error) {
+        failures.push(`rosters: ${error instanceof Error ? error.message : 'publication failed'}`);
+      }
+      try {
+        await synchronizeHermesProjectProfileCredentials({
+          projectId: canvasProjectId,
+          deckId: snapshot.id,
+        });
+      } catch (error) {
+        failures.push(`credentials: ${error instanceof Error ? error.message : 'refresh failed'}`);
+      }
+      if (failures.length) throw new Error(failures.join('; '));
+    })().then(() => {
       if (!cancelled) topologyProfileRevisionRef.current = identity;
     }).catch((error) => {
       if (!cancelled) {
         setDeckStatusMessage(
           error instanceof Error
-            ? `Hermes topology publication failed: ${error.message}`
-            : 'Hermes topology publication failed.',
+            ? `Hermes profile publication failed: ${error.message}`
+            : 'Hermes profile publication failed.',
         );
       }
     });

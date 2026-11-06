@@ -628,13 +628,17 @@ export default function MainProjectChat({
   const [images, setImages] = useState<ComposerImage[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
   const [readingImages, setReadingImages] = useState(false);
+  const [submissionPending, setSubmissionPending] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const imageReadRef = useRef(false);
   const imageReadEpochRef = useRef(0);
-  const interactionDisabled = historyLoading;
+  const submissionRef = useRef(false);
+  const interactionDisabled = historyLoading || submissionPending;
   useEffect(() => {
     imageReadEpochRef.current += 1;
     imageReadRef.current = false;
+    submissionRef.current = false;
+    setSubmissionPending(false);
     setReadingImages(false);
     setImages([]);
     setImageError(null);
@@ -785,15 +789,22 @@ export default function MainProjectChat({
   }, []);
 
   const send = async () => {
-    if (!value.trim() || interactionDisabled || imageReadRef.current) return;
-    const submission = images.length ? onSend(value, { images }) : onSend(value);
-    const accepted = submission && typeof (submission as Promise<unknown>).then === 'function'
-      ? await submission
-      : submission;
-    if (accepted === false) return;
-    setImages([]);
-    setImageError(null);
-    setValue("");
+    if (!value.trim() || interactionDisabled || imageReadRef.current || submissionRef.current) return;
+    submissionRef.current = true;
+    setSubmissionPending(true);
+    try {
+      const submission = images.length ? onSend(value, { images }) : onSend(value);
+      const accepted = submission && typeof (submission as Promise<unknown>).then === 'function'
+        ? await submission
+        : submission;
+      if (accepted === false) return;
+      setImages([]);
+      setImageError(null);
+      setValue("");
+    } finally {
+      submissionRef.current = false;
+      setSubmissionPending(false);
+    }
   };
   return (
     <div data-testid="main-chat-panel" className="h-full flex flex-col" style={{ gap: 12 }}>

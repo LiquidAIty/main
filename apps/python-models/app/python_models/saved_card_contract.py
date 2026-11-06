@@ -345,8 +345,9 @@ def validate_new_card_revision(card: dict[str, Any]) -> None:
     options = json_object(card.get("runtimeOptions"), "runtime_options")
     runtime = card_runtime(card)
     is_supported_runtime = runtime["kind"] == "hermes"
-    if len(string_list(options.get("skills"), "skills")) != 1:
-        raise CardDomainError("card_skill_exactly_one_required")
+    # Saved skills are optional Hermes-library additions. Every Hermes Card's
+    # one editable custom skill is derived from its stable profile identity.
+    string_list(options.get("skills"), "skills")
     validate_saved_card_runtime_authority(
         options.get("provider"),
         options.get("accessMode"),

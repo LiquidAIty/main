@@ -167,6 +167,63 @@ describe('Hermes Main chat binding', () => {
     })));
   });
 
+  it('does not render process telemetry, tool receipts, or delivery hashes as chat', async () => {
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') {
+        return { sessions: [{ id: 'stored-main', resolved_id: 'resolved-main' }] };
+      }
+      if (method === 'session.resume') {
+        return {
+          session_id: 'main-session',
+          messages: [{
+            role: 'assistant',
+            text: 'Background Process Finished: python.exe',
+            display_kind: 'process_complete',
+            display_metadata: { display_text: 'Background Process Finished: python.exe' },
+          }, {
+            role: 'tool',
+            text: '{"status":"queued","delivery_id":"abc123"}',
+          }, {
+            role: 'user',
+            text: 'Do the research.',
+          }, {
+            role: 'assistant',
+            text: 'I will check.',
+          }],
+          running: false,
+        };
+      }
+      if (method === 'session.history') {
+        return { count: 1, messages: [{ role: 'assistant', text: 'I will check.' }] };
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    const { result } = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+    expect(result.current.messages.map((message) => message.text)).toEqual([
+      'Do the research.',
+      'I will check.',
+    ]);
+
+    act(() => {
+      host.handlers.get('message.start')?.({
+        type: 'message.start', session_id: 'main-session',
+        payload: { display_kind: 'process_complete', turn_id: 'process-one' },
+      });
+      host.handlers.get('message.delta')?.({
+        type: 'message.delta', session_id: 'main-session',
+        payload: { text: 'Background Process Finished', turn_id: 'process-one', segment: 0, offset: 0 },
+      });
+      host.handlers.get('message.complete')?.({
+        type: 'message.complete', session_id: 'main-session',
+        payload: { text: 'Background Process Finished', status: 'complete' },
+      });
+    });
+    await waitFor(() => expect(result.current.messages.map((message) => message.text))
+      .toEqual(['I will check.']));
+  });
+
   it('answers a Hermes approval request on the same generated request channel', async () => {
     host.request.mockImplementation(async (method: string) => {
       if (method === 'session.list') return { sessions: [] };

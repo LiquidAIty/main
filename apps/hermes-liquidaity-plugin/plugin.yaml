@@ -2,11 +2,10 @@ manifest_version: 2
 api_version: 1
 name: liquidaity
 version: 1.0.0
-description: "LiquidAIty web UI integration, saved Card Python, wire-reduced taskgraphs, and automatic Engraphis ThinkGraph intake for Hermes."
+description: "LiquidAIty saved Card Python, wire-reduced taskgraphs, navigation context, and automatic Engraphis ThinkGraph intake for Hermes."
 requires_hermes: ">=0.22.7"
 license: MIT
 tags:
-  - dashboard
   - cards
   - graphs
   - trading

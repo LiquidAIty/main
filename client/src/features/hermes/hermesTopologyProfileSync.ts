@@ -10,7 +10,7 @@ import {
   hasAgentOrchestratorAuthority,
   wiredBotTargets,
 } from '../agentbuilder/deck/deckPrimitives';
-import { configureHermesProfile } from './hermesProfileClient';
+import { configureHermesBotRoster } from './hermesProfileClient';
 
 export type HermesTopologyPlan = {
   cardId: string;
@@ -42,10 +42,7 @@ export async function synchronizeHermesTopologyProfiles(
 ): Promise<HermesTopologyPlan[]> {
   const plans = hermesTopologyPlans(deck);
   for (const plan of plans) {
-    await configureHermesProfile({
-      profile: plan.profile,
-      botModeRoster: plan.botModeRoster,
-    });
+    await configureHermesBotRoster(plan.profile, plan.botModeRoster);
   }
   return plans;
 }

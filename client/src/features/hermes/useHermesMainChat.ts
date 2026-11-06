@@ -18,7 +18,6 @@ import type { GatewayEvent } from '../../../../HermesLatest/apps/shared/src/gate
 import type { ServerRequest } from '../../../../HermesLatest/apps/shared/src/json-rpc-channel';
 import { randomUuid } from '../../../../HermesLatest/apps/shared/src/session-http-mutations';
 import { hermesGateway } from './hermesHost';
-import { awaitHermesNavigationMapReady } from './hermesNavigationMapClient';
 
 type ComposerImage = {
   name: string;
@@ -62,12 +61,12 @@ function transcriptMessage(row: TranscriptMessage): HermesChatMessage | null {
   const metadata = objectRecord(row.display_metadata);
   const author = objectRecord(metadata.turn_author || row.turn_author);
   const botAuthored = author.is_bot === true;
+  const displayKind = text(row.display_kind).trim().toLowerCase();
   const displayText = text(metadata.display_text);
   const body = displayText || text(row.text ?? row.content);
-  if (!body.trim() || row.display_kind === 'hidden') return null;
-  const role = botAuthored || row.display_kind === 'process_complete'
-    ? 'assistant'
-    : row.role;
+  if (!body.trim() || displayKind === 'hidden' || displayKind === 'process_complete') return null;
+  const role = botAuthored ? 'assistant' : text(row.role).trim().toLowerCase();
+  if (role !== 'user' && role !== 'assistant') return null;
   return {
     role,
     text: body,
@@ -99,6 +98,7 @@ export default function useHermesMainChat(projectId: string) {
   const generationRef = useRef(0);
   const sessionRef = useRef('');
   const streamingIndexRef = useRef<number | null>(null);
+  const visibleTurnRef = useRef(true);
   const deltaCursorRef = useRef({ turnId: '', segment: -1, offset: 0 });
   const pendingVoiceRef = useRef<{ draft: string; images: ComposerImage[] } | null>(null);
   const serverRequestsRef = useRef(new Map<string, ServerRequest>());
@@ -162,6 +162,7 @@ export default function useHermesMainChat(projectId: string) {
     const generation = generationRef.current;
     sessionRef.current = '';
     streamingIndexRef.current = null;
+    visibleTurnRef.current = true;
     deltaCursorRef.current = { turnId: '', segment: -1, offset: 0 };
     pendingVoiceRef.current = null;
     serverRequestsRef.current.clear();
@@ -238,13 +239,16 @@ export default function useHermesMainChat(projectId: string) {
         return false;
       }));
       unsubscribers.push(gateway.on('message.start', (event) => {
-        if (!belongs(event) || event.payload?.display_kind === 'hidden') return;
+        if (!belongs(event)) return;
+        const displayKind = text(event.payload?.display_kind).trim().toLowerCase();
+        visibleTurnRef.current = displayKind !== 'hidden' && displayKind !== 'process_complete';
+        if (!visibleTurnRef.current) return;
         streamingIndexRef.current = null;
         deltaCursorRef.current = { turnId: '', segment: -1, offset: 0 };
         setBusy(true);
       }));
       unsubscribers.push(gateway.on('message.delta', (event) => {
-        if (!belongs(event)) return;
+        if (!belongs(event) || !visibleTurnRef.current) return;
         let chunk = text(event.payload?.text);
         const turnId = text(event.payload?.turn_id);
         const segment = typeof event.payload?.segment === 'number'
@@ -271,11 +275,18 @@ export default function useHermesMainChat(projectId: string) {
         appendAssistantDelta(chunk);
       }));
       unsubscribers.push(gateway.on('message.interim', (event) => {
-        if (!belongs(event) || event.payload?.already_streamed) return;
+        if (!belongs(event) || !visibleTurnRef.current || event.payload?.already_streamed) return;
         appendAssistantDelta(text(event.payload?.text));
       }));
       unsubscribers.push(gateway.on('message.complete', (event) => {
         if (!belongs(event)) return;
+        if (!visibleTurnRef.current) {
+          visibleTurnRef.current = true;
+          streamingIndexRef.current = null;
+          deltaCursorRef.current = { turnId: '', segment: -1, offset: 0 };
+          void refreshHistory().catch(() => undefined);
+          return;
+        }
         const finalText = text(event.payload?.text);
         const failed = event.payload?.status === 'error' || event.payload?.status === 'interrupted';
         setMessages((current) => {
@@ -289,10 +300,7 @@ export default function useHermesMainChat(projectId: string) {
             };
             return next;
           }
-          return finalText ? [...current, {
-            role: 'assistant', text: finalText,
-            status: failed ? 'error' : 'complete',
-          }] : current;
+          return current;
         });
         streamingIndexRef.current = null;
         deltaCursorRef.current = { turnId: '', segment: -1, offset: 0 };
@@ -329,7 +337,6 @@ export default function useHermesMainChat(projectId: string) {
         const literal = [pending.draft.trim(), spoken].filter(Boolean).join('\n');
         if (!literal) return;
         void (async () => {
-          await awaitHermesNavigationMapReady();
           for (const image of pending.images) {
             await gateway.request('image.attach_bytes', {
               session_id: sessionRef.current, profile,
@@ -395,7 +402,6 @@ export default function useHermesMainChat(projectId: string) {
     const body = String(literal || '');
     if (!body.trim() || !sessionRef.current) return false;
     try {
-      await awaitHermesNavigationMapReady();
       const gateway = await hermesGateway(profile);
       for (const image of input?.images || []) {
         await gateway.request('image.attach_bytes', {

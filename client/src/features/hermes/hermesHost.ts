@@ -1,6 +1,6 @@
 /**
  * Entity: Hermes UI Integration
- * Relationship: Connects the unchanged LiquidAIty web UI to Hermes through either its browser-hosted Webapp tickets or dashboard SDK, then reuses Hermes's generated JSON-RPC client without another decoder or backend requester.
+ * Relationship: Connects the unchanged LiquidAIty UI through Hermes Webapp launch-session authentication and Hermes's generated JSON-RPC client without a dashboard SDK, another decoder, or a backend requester.
  */
 
 import {
@@ -13,14 +13,13 @@ import type {
 } from '../../../../HermesLatest/apps/shared/src/gateway-contract.generated';
 import { buildHermesWebSocketUrl, normalizeBasePath } from '../../../../HermesLatest/apps/shared/src/websocket-url';
 
-type DashboardPluginSdk = {
+type HermesWebappHost = {
   buildWsUrl(path: string, params?: Record<string, string>): Promise<string>;
   fetchJSON?<T>(path: string, init?: RequestInit): Promise<T>;
   authedFetch?(path: string, init?: RequestInit): Promise<Response>;
 };
 
 type HermesWindow = Window & {
-  __HERMES_PLUGIN_SDK__?: DashboardPluginSdk;
   __HERMES_AUTH_REQUIRED__?: boolean;
   __HERMES_BASE_PATH__?: string;
   __HERMES_UI_SURFACE__?: string;
@@ -78,7 +77,7 @@ async function webappFetch(
   });
 }
 
-function webappHost(bootstrap: WebappBootstrap): DashboardPluginSdk {
+function webappHost(bootstrap: WebappBootstrap): HermesWebappHost {
   return {
     async buildWsUrl(path, params = {}) {
       if (path === '/api/ws') {
@@ -131,9 +130,7 @@ const reconnectAttempts = new Map<string, number>();
 const stateUnsubscribers = new Map<string, () => void>();
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
-export function hermesDashboardSdk(): DashboardPluginSdk {
-  const sdk = (window as HermesWindow).__HERMES_PLUGIN_SDK__;
-  if (sdk?.buildWsUrl) return sdk;
+export function hermesWebappHost(): HermesWebappHost {
   const bootstrap = webappBootstrap();
   if (bootstrap) return webappHost(bootstrap);
   throw new Error('LiquidAIty must run through Hermes Webapp.');
@@ -157,7 +154,7 @@ function connectClient(
 ): Promise<JsonRpcGatewayClient> {
   const pending = connections.get(profile);
   if (pending) return pending;
-  const connecting = hermesDashboardSdk().buildWsUrl('/api/ws', {
+  const connecting = hermesWebappHost().buildWsUrl('/api/ws', {
     profile,
   }).then(async (url) => {
     await client.connect(url);
@@ -214,7 +211,7 @@ export async function hermesPtyUrl(
   profile: string,
   params: Record<string, string>,
 ): Promise<string> {
-  return hermesDashboardSdk().buildWsUrl('/api/pty', { ...params, profile });
+  return hermesWebappHost().buildWsUrl('/api/pty', { ...params, profile });
 }
 
 export async function onHermesEvent<K extends GatewayEventName>(

@@ -50,8 +50,8 @@ const EXPECTED_PROMPT_CONTRACTS = [
     asset: 'main.md',
     templateId: 'prompt_main_chat',
     cardId: 'card_main_chat',
-    bytes: 8069,
-    sha256: 'e5ce56b309a874ac06be2c27ab0782fa76254520d7944c27daf673fe8126bf0d',
+    bytes: 8229,
+    sha256: '2a0602d7d4a5a511c16b82e2c801545e639abc698c36006675f396971c0fae2f',
   },
   {
     asset: 'builder.md',
@@ -78,8 +78,8 @@ const EXPECTED_PROMPT_CONTRACTS = [
     asset: 'knowgraph.md',
     templateId: 'prompt_knowgraph',
     cardId: 'card_knowgraph',
-    bytes: 6888,
-    sha256: '750fa84c6c2023dcab8397acb2a797b0beb6d0272174d388662d9e8a46a5b1d0',
+    bytes: 7007,
+    sha256: '86d8929c521513a067daed72f647b816b4919279228f33eb79a5ef81af24e265',
   },
 ] as const;
 
@@ -265,7 +265,7 @@ describe('backend-owned default Project deck', () => {
         'graphiti.get_status',
         'graphiti.search_knows',
       ]),
-      toolsets: ['web'],
+      toolsets: ['web', 'terminal', 'code_execution'],
     });
     expect(Object.fromEntries(DEFAULT_PROJECT_DECK.nodes.map((card) => [
       card.id,
@@ -275,7 +275,7 @@ describe('backend-owned default Project deck', () => {
       builder: ['codebase-inspection'],
       card_thinkgraph: ['hermes-agent'],
       card_magentic: ['hermes-agent'],
-      card_team: ['grounded-citations'],
+      card_team: ['hermes-agent'],
       card_knowgraph: ['grounded-citations'],
     });
     expect(byId.get('card_knowgraph')?.runtimeOptions?.skills).toEqual([
@@ -290,6 +290,10 @@ describe('backend-owned default Project deck', () => {
     expect(byId.get('card_knowgraph')?.prompt).toContain(
       'preserve the returned final or resolved URL exactly',
     );
+    expect(byId.get('card_knowgraph')?.prompt).toContain(
+      'from hermes_constants import get_hermes_home',
+    );
+    expect(byId.get('card_knowgraph')?.prompt).not.toContain('hermes_cli.__file__');
     expect(byId.get('card_knowgraph')?.prompt).toContain(
       'When retrieval does not return a usable final URL and matching passage, do not persist that finding',
     );

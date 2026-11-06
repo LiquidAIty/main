@@ -1,0 +1,47 @@
+import { n as e, r as t, t as n } from "./core-67iayTEC.mjs";
+//#region node_modules/@tauri-apps/plugin-updater/dist-js/index.js
+var r = class extends e {
+	constructor(e) {
+		super(e.rid), this.available = !0, this.currentVersion = e.currentVersion, this.version = e.version, this.date = e.date, this.body = e.body, this.rawJson = e.rawJson;
+	}
+	async download(r, i) {
+		a(i);
+		let o = new n();
+		r && (o.onmessage = r);
+		let s = await t("plugin:updater|download", {
+			onEvent: o,
+			rid: this.rid,
+			...i
+		});
+		this.downloadedBytes = new e(s);
+	}
+	async install() {
+		if (!this.downloadedBytes) throw Error("Update.install called before Update.download");
+		await t("plugin:updater|install", {
+			updateRid: this.rid,
+			bytesRid: this.downloadedBytes.rid
+		}), this.downloadedBytes = void 0;
+	}
+	async downloadAndInstall(e, r) {
+		a(r);
+		let i = new n();
+		e && (i.onmessage = e), await t("plugin:updater|download_and_install", {
+			onEvent: i,
+			rid: this.rid,
+			...r
+		});
+	}
+	async close() {
+		await this.downloadedBytes?.close(), await super.close();
+	}
+};
+async function i(e) {
+	a(e);
+	let n = await t("plugin:updater|check", { ...e });
+	return n ? new r(n) : null;
+}
+function a(e) {
+	e?.headers && (e.headers = Array.from(new Headers(e.headers).entries()));
+}
+//#endregion
+export { r as Update, i as check };

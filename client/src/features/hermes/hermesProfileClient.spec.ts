@@ -1,5 +1,5 @@
 // Entity: Card Profiles
-// Relationship: Verifies public profile and dashboard request/readback mapping against mocked Hermes responses without claiming loaded profile writes.
+// Relationship: Verifies public profile and Webapp request/readback mapping against mocked Hermes responses without claiming loaded profile writes.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,11 +9,12 @@ const host = vi.hoisted(() => ({
 }));
 
 vi.mock('./hermesHost', () => ({
-  hermesDashboardSdk: () => ({ fetchJSON: host.fetchJSON }),
+  hermesWebappHost: () => ({ fetchJSON: host.fetchJSON }),
   hermesRequest: host.request,
 }));
 
 import {
+  configureHermesBotRoster,
   configureHermesProfile,
   createHermesProfile,
   createHermesSkill,
@@ -51,7 +52,7 @@ describe('Hermes profile skill binding', () => {
       model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
       skills: [
         { name: 'research', enabled: true },
-        { name: 'card-skill', enabled: true },
+        { name: 'trading', enabled: true },
       ],
       toolsets: [{ name: 'web', enabled: true }],
       bot_mode_roster: [],
@@ -83,7 +84,13 @@ describe('Hermes profile skill binding', () => {
         if (params.delegation && typeof params.delegation === 'object') {
           described.delegation = structuredClone(params.delegation);
         }
-        return { ok: true, applied: { skills: true } };
+        return {
+          ok: true,
+          applied: {
+            skills: true,
+            bot_mode_roster: Array.isArray(params.bot_mode_roster),
+          },
+        };
       }
       throw new Error(`Unexpected Hermes method: ${method}`);
     });
@@ -100,6 +107,17 @@ describe('Hermes profile skill binding', () => {
         if (body.curator) config.curator = { ...(config.curator || {}), ...body.curator };
         if (body.web) config.web = { ...(config.web || {}), ...body.web };
         if (body.kanban) config.kanban = { ...(config.kanban || {}), ...body.kanban };
+        if (body.platform_toolsets) {
+          config.platform_toolsets = {
+            ...(config.platform_toolsets || {}),
+            ...body.platform_toolsets,
+          };
+          const selected = new Set(body.platform_toolsets.cli || []);
+          described.toolsets = described.toolsets.map((toolset: Record<string, any>) => ({
+            ...toolset,
+            enabled: selected.has(toolset.name),
+          }));
+        }
         if (body.plugins) config.plugins = {
           ...(config.plugins || {}),
           ...body.plugins,
@@ -128,7 +146,7 @@ describe('Hermes profile skill binding', () => {
     expect(profile.autoLoadSkills).toEqual(['research']);
     expect(profile.skills).toEqual([
       { name: 'research', enabled: true },
-      { name: 'card-skill', enabled: true },
+      { name: 'trading', enabled: true },
     ]);
     expect(profile.memory).toEqual({
       provider: '',
@@ -145,11 +163,27 @@ describe('Hermes profile skill binding', () => {
     });
   });
 
-  it('publishes the selected Card skill as enabled and auto-loaded with readback', async () => {
+  it('publishes and reads back Bot Mode roster without loading tools, MCP, or skills', async () => {
+    const roster = await configureHermesBotRoster('main', [
+      'builder', 'thinkgraph', 'knowgraph', 'builder',
+    ]);
+
+    expect(host.request).toHaveBeenNthCalledWith(1, 'main', 'profiles.configure', {
+      name: 'main',
+      bot_mode_roster: ['builder', 'thinkgraph', 'knowgraph'],
+    });
+    expect(host.request).toHaveBeenNthCalledWith(2, 'main', 'profiles.describe', {
+      name: 'main',
+    });
+    expect(host.fetchJSON).not.toHaveBeenCalled();
+    expect(roster).toEqual(['builder', 'thinkgraph', 'knowgraph']);
+  });
+
+  it('publishes the profile-named custom skill as enabled and auto-loaded with readback', async () => {
     const profile = await configureHermesProfile({
       profile: 'trading',
-      enabledSkills: ['card-skill'],
-      autoLoadSkills: ['card-skill'],
+      enabledSkills: ['trading'],
+      autoLoadSkills: ['trading'],
       applicationTools: ['graphiti.search_nodes'],
       cardScript: { version: 1, compiled_hash: 'a'.repeat(64) },
     });
@@ -174,7 +208,7 @@ describe('Hermes profile skill binding', () => {
             mcp_servers: {
               liquidaity: { tools: { include: ['graphiti.search_nodes'] } },
             },
-            skills: { auto_load: ['card-skill'] },
+            skills: { auto_load: ['trading'] },
             plugins: {
               enabled: ['existing-plugin', 'liquidaity'],
               entries: {
@@ -190,7 +224,7 @@ describe('Hermes profile skill binding', () => {
         }),
       }),
     );
-    expect(profile.autoLoadSkills).toEqual(['card-skill']);
+    expect(profile.autoLoadSkills).toEqual(['trading']);
     expect(profile.applicationTools).toEqual(['graphiti.search_nodes']);
     expect(profile.cardScript).toEqual({ version: 1, compiled_hash: 'a'.repeat(64) });
     expect(profile.enabledPlugins).toEqual(['existing-plugin', 'liquidaity']);
@@ -201,7 +235,7 @@ describe('Hermes profile skill binding', () => {
       backgroundReviewEnabled: false,
       curatorEnabled: false,
     });
-    expect(profile.skills.find((skill) => skill.name === 'card-skill')?.enabled).toBe(true);
+    expect(profile.skills.find((skill) => skill.name === 'trading')?.enabled).toBe(true);
   });
 
   it('pins KnowGraph web search to Hermes Firecrawl and verifies profile readback', async () => {
@@ -218,6 +252,22 @@ describe('Hermes profile skill binding', () => {
       }),
     );
     expect(profile.webSearchBackend).toBe('firecrawl');
+  });
+
+  it('preserves an explicit empty Hermes toolset selection instead of restoring defaults', async () => {
+    const profile = await configureHermesProfile({
+      profile: 'trading',
+      enabledToolsets: [],
+    });
+
+    expect(host.fetchJSON).toHaveBeenCalledWith(
+      '/api/config?profile=trading',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"platform_toolsets":{"cli":[]}'),
+      }),
+    );
+    expect(profile.toolsets.filter((toolset) => toolset.enabled)).toEqual([]);
   });
 
   it('materializes structural Team mode and the saved parent model without a UI controller', async () => {
@@ -246,18 +296,18 @@ describe('Hermes profile skill binding', () => {
   });
 
   it('uses Hermes skill create and content-update endpoints with profile scope', async () => {
-    const content = '---\nname: card-skill\ndescription: Card procedures.\n---\n\n# Card skill\n\nWork carefully.\n';
-    await createHermesSkill('trading', 'card-skill', content);
-    await saveHermesSkill('trading', 'card-skill', content.replace('carefully', 'precisely'));
+    const content = '---\nname: trading\ndescription: Trading procedures.\n---\n\n# Trading\n\nWork carefully.\n';
+    await createHermesSkill('trading', 'trading', content);
+    await saveHermesSkill('trading', 'trading', content.replace('carefully', 'precisely'));
 
     expect(host.fetchJSON).toHaveBeenCalledWith('/api/skills', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ name: 'card-skill', content, profile: 'trading' }),
+      body: JSON.stringify({ name: 'trading', content, profile: 'trading' }),
     }));
     expect(host.fetchJSON).toHaveBeenCalledWith('/api/skills/content', expect.objectContaining({
       method: 'PUT',
       body: JSON.stringify({
-        name: 'card-skill',
+        name: 'trading',
         content: content.replace('carefully', 'precisely'),
         profile: 'trading',
       }),

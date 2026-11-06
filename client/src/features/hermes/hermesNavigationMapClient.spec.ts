@@ -8,7 +8,7 @@ import type { JoinedGraphPresentation } from '../../components/knowledge/knowled
 
 const host = vi.hoisted(() => ({ fetchJSON: vi.fn(), onEvent: vi.fn() }));
 vi.mock('./hermesHost', () => ({
-  hermesDashboardSdk: () => ({ fetchJSON: host.fetchJSON }),
+  hermesWebappHost: () => ({ fetchJSON: host.fetchJSON }),
   onHermesEvent: host.onEvent,
 }));
 

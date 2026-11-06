@@ -28,11 +28,11 @@ const config = { runtime: { kind: 'hermes' as const, mode: 'delegate' as const, 
   tools: ['engraphis_get_memory'], toolsets: ['web'], skills: ['research'] };
 
 const cardSkill = `---
-name: card-skill
-description: Procedures this saved Hermes Card follows for every run.
+name: trading
+description: Procedures Trader follows for every run.
 ---
 
-# Trader skill
+# Trader
 
 Verify market evidence.
 `;
@@ -45,9 +45,10 @@ function profileView(overrides: Record<string, unknown> = {}) {
     model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
     skills: [
       { name: 'research', enabled: true },
-      { name: 'card-skill', enabled: true },
+      { name: 'hermes-agent', enabled: false },
+      { name: 'trading', enabled: true },
     ],
-    autoLoadSkills: ['research', 'card-skill'],
+    autoLoadSkills: ['trading', 'research'],
     toolsets: [{ name: 'web', label: 'Web', enabled: true, toolCount: 2 }],
     enabledMcpServers: ['liquidaity'],
     botModeRoster: [],
@@ -62,12 +63,12 @@ function profileView(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   hermes.loadProfile.mockResolvedValue(profileView());
-  hermes.loadSkill.mockResolvedValue({ name: 'card-skill', content: cardSkill });
+  hermes.loadSkill.mockResolvedValue({ name: 'trading', content: cardSkill });
   hermes.createSkill.mockResolvedValue(undefined);
   hermes.saveSkill.mockResolvedValue(undefined);
   hermes.configureProfile.mockImplementation(async (input: Record<string, any>) => profileView({
     soul: input.soul ?? config.prompt_template,
-    autoLoadSkills: input.autoLoadSkills ?? ['research', 'card-skill'],
+    autoLoadSkills: input.autoLoadSkills ?? ['trading', 'research'],
     cardScript: input.cardScript ?? null,
     toolsets: [{
       name: 'web', label: 'Web', toolCount: 2,
@@ -148,15 +149,16 @@ describe('restored Card settings surfaces', () => {
     expect(vi.mocked(fetch).mock.calls.some(([path]) => path === '/api/cards/runs/read')).toBe(false);
   });
 
-  it('edits the Card-owned SKILL.md and binds it to Hermes auto-load', async () => {
+  it('edits the logically named custom skill and keeps optional Hermes skills separate', async () => {
     const save = vi.fn();
     render(<CardEditor cardId="trader" cardName="Trader" projectId="project" deckId="deck" activeTab="Skills" localConfig={config} onSaveLocalConfig={save} />);
     const editor = await screen.findByLabelText('Skill content');
     fireEvent.change(editor, { target: { value: cardSkill.replace('Verify market evidence.', 'Verify exact market evidence.') } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save Card Skill' }));
+    expect(screen.queryByText(/SKILL\.md/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save Skill' }));
     await waitFor(() => expect(hermes.saveSkill).toHaveBeenCalledWith(
       'trading',
-      'card-skill',
+      'trading',
       expect.stringContaining('Verify exact market evidence.'),
     ));
     await waitFor(() => expect(hermes.configureProfile).toHaveBeenCalledWith(expect.objectContaining({
@@ -165,30 +167,41 @@ describe('restored Card settings surfaces', () => {
       model: 'gpt-5.6-sol',
       provider: 'openai-codex',
       taskMode: '',
-      enabledSkills: ['card-skill'],
-      autoLoadSkills: ['card-skill'],
+      enabledSkills: ['trading', 'research'],
+      autoLoadSkills: ['trading', 'research'],
     })));
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
-      skills: ['card-skill'],
+      skills: ['research'],
     })));
     expect(screen.queryByLabelText('Skill graph')).toBeNull();
     expect(screen.queryByLabelText('Learning')).toBeNull();
-    expect(screen.queryByLabelText('Card skill grants')).toBeNull();
+    expect(screen.queryByLabelText('Custom skill grants')).toBeNull();
   });
 
-  it('creates the profile-scoped Card skill when Hermes does not have one yet', async () => {
+  it('creates the profile-scoped custom skill when Hermes does not have one yet', async () => {
     hermes.loadProfile.mockResolvedValue(profileView({
       skills: [{ name: 'research', enabled: true }],
       autoLoadSkills: ['research'],
     }));
     render(<CardEditor cardId="trader" cardName="Trader" projectId="project" deckId="deck" activeTab="Skills" localConfig={config} onSaveLocalConfig={vi.fn()} />);
     const editor = await screen.findByLabelText('Skill content');
-    expect((editor as HTMLTextAreaElement).value).toContain('name: card-skill');
-    fireEvent.click(screen.getByRole('button', { name: 'Save Card Skill' }));
+    expect((editor as HTMLTextAreaElement).value).toContain('name: trading');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Skill' }));
     await waitFor(() => expect(hermes.createSkill).toHaveBeenCalledWith(
       'trading',
-      'card-skill',
-      expect.stringContaining('# Trader skill'),
+      'trading',
+      expect.stringContaining('# Trader'),
     ));
+  });
+
+  it('allows multiple optional Hermes library skills without replacing the custom skill', async () => {
+    const save = vi.fn();
+    render(<CardEditor cardId="trader" cardName="Trader" projectId="project" deckId="deck" activeTab="Skills" localConfig={config} onSaveLocalConfig={save} />);
+    const optional = await screen.findByLabelText('hermes-agent');
+    fireEvent.click(optional);
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
+      skills: ['research', 'hermes-agent'],
+    })));
+    expect(screen.getByText('Edit trading')).toBeTruthy();
   });
 });

@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const hermesHost = vi.hoisted(() => ({ fetchJSON: vi.fn() }));
 
 vi.mock('../../hermes/hermesHost', () => ({
-  hermesDashboardSdk: () => ({ fetchJSON: hermesHost.fetchJSON }),
+  hermesWebappHost: () => ({ fetchJSON: hermesHost.fetchJSON }),
 }));
 
 vi.mock('@xyflow/react', () => ({
