@@ -1,4 +1,8 @@
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file owns the Project graph workspace's independent provider load, error, refresh, removal, and opt-in Code state.
  * Entity: ThinkGraph
@@ -298,19 +302,22 @@ export default function useAgentBuilderKnowledgeGraphs({
     const query = new URLSearchParams({ projectId });
     const stream = new EventSource(applicationApiUrl(`/api/thinkgraph/events?${query}`), { withCredentials: true });
     const refresh = () => { void refreshThinkGraph(); };
+    const refreshKnow = () => { void refreshKnowGraph(); };
     const disconnected = () => {
       setErrors(current => ({ ...current, thinkgraph: 'ThinkGraph live updates disconnected. Reconnecting.' }));
     };
     stream.addEventListener('ready', refresh);
     stream.addEventListener('changed', refresh);
+    stream.addEventListener('knowgraph-changed', refreshKnow);
     stream.addEventListener('error', disconnected);
     return () => {
       stream.removeEventListener('ready', refresh);
       stream.removeEventListener('changed', refresh);
+      stream.removeEventListener('knowgraph-changed', refreshKnow);
       stream.removeEventListener('error', disconnected);
       stream.close();
     };
-  }, [projectId, refreshThinkGraph]);
+  }, [projectId, refreshKnowGraph, refreshThinkGraph]);
 
   const loadCodeGraph = useCallback(async (): Promise<GraphProjectionV1 | null> => {
     const requestId = ++codeProjectionRequestRef.current;

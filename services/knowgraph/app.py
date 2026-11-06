@@ -1,17 +1,26 @@
 """FastAPI entrypoint for KnowGraph ingestion."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
-# Relationship: This file contributes bounded PDF ingestion, Project-scoped episode deletion, provider-safe errors, and runtime health to the KnowGraph feature.
+# Relationship: This file exposes bounded PDF ingestion, Project-scoped episode deletion, process-authenticated research settlement, provider-safe ingestion errors, and runtime health.
+# Entity: Jev Decisions
+# Relationship: This file loads one persisted Know and its actual Graphiti facts, then supplies web evidence and Project vocabulary to the existing Jev settlement owner.
 
 from __future__ import annotations
 
 import logging
+import hmac
+import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from graphiti_core.errors import NodeNotFoundError
+from graphiti_core.helpers import parse_db_date
 
 import graphiti_runtime
 import ingest as knowgraph_ingest
@@ -27,6 +36,39 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 class GraphitiEpisodeDeleteRequest(BaseModel):
     project_id: str
     graphiti_episode_uuid: str
+
+
+class ResearchSettlementRequest(BaseModel):
+    project_id: str
+    know_uuid: str
+
+
+@app.post("/research/settle")
+async def settle_research(payload: ResearchSettlementRequest, request: Request):
+    secret = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "")
+    if len(secret) < 32 or not hmac.compare_digest(secret, request.headers.get("X-LiquidAIty-Internal-MCP-Secret", "")):
+        raise HTTPException(403, "internal_process_authorization_required")
+    import jev_fact_settlement
+    _runtime, graphiti, _database = graphiti_runtime.create_graphiti_runtime()
+    try:
+        # Settlement reads the stored Know, not a newer Graphiti client method.
+        result = await graphiti.driver.execute_query(
+            "MATCH (k:Episodic:Know {uuid:$uuid,group_id:$group}) "
+            "RETURN k.content AS content,k.valid_at AS valid_at,k.citation_title AS title,"
+            "coalesce(k.citation_resolved_url,k.citation_url) AS source_url",
+            uuid=payload.know_uuid, group=graphiti_project_group_id(payload.project_id), routing_="r")
+        rows = graphiti_runtime.graphiti_records(result)
+        if len(rows) != 1:
+            raise HTTPException(404, "research_know_not_found")
+        know = rows[0]
+        edges, nodes = await jev_fact_settlement.read_episode_facts(graphiti, episode_id=payload.know_uuid)
+        return await jev_fact_settlement.classify_episode_facts_with_jev(
+            graphiti, project_id=payload.project_id, edges=edges, nodes=nodes, episode_id=payload.know_uuid,
+            source_name=know["title"], source_reference=know["source_url"],
+            text=know["content"], reference_time=parse_db_date(know["valid_at"]), source_type="web_research",
+            relationship_vocabulary=await jev_fact_settlement.read_project_relationship_vocabulary(payload.project_id))
+    finally:
+        await graphiti.driver.close()
 
 
 def _ingest_error(error: Exception) -> tuple[int, str, str]:

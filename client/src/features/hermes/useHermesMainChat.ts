@@ -118,6 +118,7 @@ export default function useHermesMainChat(projectId: string) {
   const visibleTurnRef = useRef(true);
   const deltaCursorRef = useRef({ turnId: '', segment: -1, offset: 0 });
   const pendingVoiceRef = useRef<{ draft: string; images: ComposerImage[] } | null>(null);
+  const resumePromiseRef = useRef<Promise<void> | null>(null);
   const serverRequestsRef = useRef(new Map<string, ServerRequest>());
   const [messages, setMessages] = useState<HermesChatMessage[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -182,6 +183,7 @@ export default function useHermesMainChat(projectId: string) {
     visibleTurnRef.current = true;
     deltaCursorRef.current = { turnId: '', segment: -1, offset: 0 };
     pendingVoiceRef.current = null;
+    resumePromiseRef.current = null;
     serverRequestsRef.current.clear();
     setPendingRequests([]);
     setMessages([]);
@@ -215,6 +217,37 @@ export default function useHermesMainChat(projectId: string) {
         ) return;
         setMessages(historyMessages(history.messages));
       };
+      const resumeAfterReconnect = (sessionId: string): Promise<void> => {
+        const pending = gateway.request<SessionResumeResult>('session.resume', {
+          session_id: sessionId,
+          profile,
+          source: 'gui',
+        }).then((opened) => {
+          if (
+            disposed
+            || generationRef.current !== generation
+            || sessionRef.current !== sessionId
+          ) return;
+          sessionRef.current = opened.session_id;
+          setMessages(historyMessages(opened.messages));
+          setBusy(opened.running === true);
+          setError(null);
+        });
+        const tracked = pending.finally(() => {
+          if (resumePromiseRef.current === tracked) resumePromiseRef.current = null;
+        });
+        resumePromiseRef.current = tracked;
+        return tracked;
+      };
+      unsubscribers.push(gateway.onState((state) => {
+        const sessionId = sessionRef.current;
+        if (state !== 'open' || !sessionId || resumePromiseRef.current) return;
+        void resumeAfterReconnect(sessionId).catch((cause) => {
+          if (!disposed && generationRef.current === generation) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+          }
+        });
+      }));
       unsubscribers.push(gateway.onRequest((request) => {
         const requestSession = typeof request.params.session_id === 'string'
           ? request.params.session_id : '';
@@ -354,6 +387,7 @@ export default function useHermesMainChat(projectId: string) {
         const literal = [pending.draft.trim(), spoken].filter(Boolean).join('\n');
         if (!literal) return;
         void (async () => {
+          if (resumePromiseRef.current) await resumePromiseRef.current;
           for (const image of pending.images) {
             await gateway.request('image.attach_bytes', {
               session_id: sessionRef.current, profile,
@@ -420,6 +454,7 @@ export default function useHermesMainChat(projectId: string) {
     if (!body.trim() || !sessionRef.current) return false;
     try {
       const gateway = await hermesGateway(profile);
+      if (resumePromiseRef.current) await resumePromiseRef.current;
       for (const image of input?.images || []) {
         await gateway.request('image.attach_bytes', {
           session_id: sessionRef.current, profile,
@@ -458,6 +493,7 @@ export default function useHermesMainChat(projectId: string) {
     pendingVoiceRef.current = { draft, images: input.images || [] };
     try {
       const gateway = await hermesGateway(profile);
+      if (resumePromiseRef.current) await resumePromiseRef.current;
       const result = await gateway.request<VoiceRecordResult>('voice.record', {
         action: 'start', session_id: sessionRef.current, profile,
       });

@@ -18,6 +18,7 @@ import {
   configureHermesProfile,
   createHermesProfile,
   createHermesSkill,
+  ensureHermesPluginEnabled,
   loadHermesProfile,
   saveHermesSkill,
 } from './hermesProfileClient';
@@ -30,6 +31,7 @@ describe('Hermes profile skill binding', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     config = {
+      mcp_servers: { liquidaity: { headers: { Authorization: 'Bearer ${MCP_LIQUIDAITY_API_KEY}' } } },
       skills: { auto_load: ['research'] },
       memory: {
         provider: '',
@@ -127,6 +129,18 @@ describe('Hermes profile skill binding', () => {
           },
         };
         const include = body.mcp_servers?.liquidaity?.tools?.include;
+        if (body.mcp_servers?.liquidaity?.headers) {
+          config.mcp_servers = {
+            ...config.mcp_servers,
+            liquidaity: {
+              ...config.mcp_servers?.liquidaity,
+              headers: {
+                ...config.mcp_servers?.liquidaity?.headers,
+                ...body.mcp_servers.liquidaity.headers,
+              },
+            },
+          };
+        }
         if (Array.isArray(include)) {
           servers = servers.map((server) => server.name === 'liquidaity'
             ? { ...server, tools: { include } }
@@ -161,6 +175,19 @@ describe('Hermes profile skill binding', () => {
       provider: 'openai-codex',
       default: 'gpt-5.6-sol',
     });
+  });
+
+  it('binds the current Project even when the plugin was already enabled', async () => {
+    config.plugins.enabled = ['existing-plugin', 'liquidaity'];
+    config.plugins.entries.liquidaity.settings.project_id = 'old-project';
+
+    await ensureHermesPluginEnabled('main', 'current-project');
+
+    expect(config.plugins.entries.liquidaity.settings.project_id).toBe('current-project');
+    expect(config.plugins.isolation).toBe('host');
+    expect(config.mcp_servers.liquidaity.headers['X-LiquidAIty-Hermes-Profile']).toBe('main');
+    expect(host.request).not.toHaveBeenCalled();
+    expect(servers[0].tools.include).toEqual(['engraphis_get_memory']);
   });
 
   it('publishes and reads back Bot Mode roster without loading tools, MCP, or skills', async () => {

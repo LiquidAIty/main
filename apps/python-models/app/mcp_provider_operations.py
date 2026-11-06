@@ -31,6 +31,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
 _CBM_HOST_REPO_ROOT = os.path.normpath(_REPO_ROOT)
 CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _PROVIDER_TOOL_TIMEOUT_SECONDS = 30.0
+GRAPHITI_KNOW_WRITE_TIMEOUT_SECONDS = 600.0
 PROVIDER_PREFIXES = {
     "cbm": "cbm.",
     "graphiti": "graphiti.",
@@ -126,6 +127,12 @@ def _inline_graphiti_know_schema(payload: dict[str, Any]) -> None:
             and isinstance(definitions.get("KnowDirection"), dict)
             else item
             for item in direction["anyOf"]
+        ]
+    properties.pop("update_communities", None)
+    required = schema.get("required")
+    if isinstance(required, list):
+        schema["required"] = [
+            item for item in required if item != "update_communities"
         ]
     payload["inputSchema"] = schema
 
@@ -442,7 +449,11 @@ async def call_graphiti_operation(name: str, arguments: dict[str, Any]) -> Any:
     try:
         result = await asyncio.wait_for(
             mcp_graphiti_provider.call_graphiti_tool(name, arguments),
-            timeout=_PROVIDER_TOOL_TIMEOUT_SECONDS,
+            timeout=(
+                GRAPHITI_KNOW_WRITE_TIMEOUT_SECONDS
+                if name == "add_know"
+                else _PROVIDER_TOOL_TIMEOUT_SECONDS
+            ),
         )
     except TimeoutError as error:
         raise RuntimeError(f"graphiti_timeout:{name}") from error

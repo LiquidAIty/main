@@ -19,6 +19,7 @@ import { getDeckDocument } from '../decks/deckDomainClient';
 import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
 import { assertCardProfileOwner, getOwnedProjectByReference } from '../services/projectStore';
 import { materializeCardEditor } from './builderIdd.routes';
+import { notifyThinkGraphChanged } from './thinkGraph.routes';
 import {
   exactStrings,
   objectRecord,
@@ -30,6 +31,21 @@ const mcpInternalRoutes = Router();
 function processAuthorized(req: Request): boolean {
   return internalMcpProcessSecretAuthorized(req.headers['x-liquidaity-internal-mcp-secret']);
 }
+
+mcpInternalRoutes.post('/graph-changed', async (req, res) => {
+  if (!processAuthorized(req)) {
+    return res.status(403).json({ ok: false, error: 'internal_mcp_authorization_required' });
+  }
+  const { projectId, ownerUserId, authority } = req.body || {};
+  if (typeof projectId !== 'string' || typeof ownerUserId !== 'string'
+    || !['thinkgraph', 'knowgraph'].includes(authority)) {
+    return res.status(400).json({ ok: false, error: 'graph_change_scope_required' });
+  }
+  const project = await getOwnedProjectByReference(projectId, ownerUserId);
+  if (!project) return res.status(403).json({ ok: false, error: 'graph_project_access_denied' });
+  notifyThinkGraphChanged(project.id, authority);
+  return res.json({ ok: true });
+});
 
 mcpInternalRoutes.post('/context', async (req, res) => {
   if (!processAuthorized(req)) {

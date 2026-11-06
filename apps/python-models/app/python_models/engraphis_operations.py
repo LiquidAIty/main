@@ -1,10 +1,14 @@
 """Engraphis Smart operation contracts, invocation, and application-only actions."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
 # Relationship: This file binds Engraphis Smart operations and application-only reads or retirements to the authenticated Project's ThinkGraph scope.
 # Entity: Tool Catalog
 # Relationship: This file projects the installed Smart operation schemas, explicit effects, grant eligibility, and ThinkGraph-only update ceiling into canonical definitions.
-# Entity: Project Knowledge Graph
-# Relationship: This file inspects exact Engraphis Entity and Memory identities with bounded evidence and relationships for the graph UI and MCP pointer reads.
+# Entity: Data Anchors
+# Relationship: This file inspects exact Engraphis Entity and Memory identities with bounded evidence and relationship records for provider reference hydration.
 from __future__ import annotations
 
 import asyncio

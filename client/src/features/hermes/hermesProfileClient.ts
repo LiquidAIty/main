@@ -68,6 +68,7 @@ export type HermesProfileView = {
 };
 
 type ProfileConfig = {
+  mcp_servers?: Record<string, { headers?: Record<string, string> }>;
   skills?: { auto_load?: unknown };
   memory?: {
     provider?: unknown;
@@ -85,10 +86,11 @@ type ProfileConfig = {
   };
   plugins?: {
     enabled?: unknown;
+    isolation?: unknown;
     entries?: {
       liquidaity?: {
         mcp_allowlist?: unknown;
-        settings?: { card_script?: unknown; task_mode?: unknown };
+        settings?: { card_script?: unknown; task_mode?: unknown; project_id?: unknown };
       };
     };
   };
@@ -142,12 +144,17 @@ async function profileConfig(profile: string): Promise<ProfileConfig> {
   );
 }
 
-export async function ensureHermesPluginEnabled(profile: string): Promise<void> {
+export async function ensureHermesPluginEnabled(profile: string, projectId?: string): Promise<void> {
   const name = String(profile || '').trim().toLowerCase();
   if (!name) throw new Error('Hermes profile is required.');
   const before = await profileConfig(name);
   const enabled = strings(before.plugins?.enabled);
-  if (enabled.includes(APPLICATION_MCP_SERVER)) return;
+  const applicationConnection = before.mcp_servers?.[APPLICATION_MCP_SERVER];
+  if (enabled.includes(APPLICATION_MCP_SERVER)
+    && (!applicationConnection || applicationConnection.headers?.['X-LiquidAIty-Hermes-Profile'] === name)
+    && (name !== 'main' || before.plugins?.isolation === 'host')
+    && (projectId === undefined
+      || before.plugins?.entries?.liquidaity?.settings?.project_id === projectId)) return;
   const fetchJSON = hermesWebappHost().fetchJSON;
   if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
   await fetchJSON(`/api/config?profile=${encodeURIComponent(name)}`, {
@@ -155,13 +162,34 @@ export async function ensureHermesPluginEnabled(profile: string): Promise<void> 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       config: {
-        plugins: { enabled: [...new Set([...enabled, APPLICATION_MCP_SERVER])] },
+        ...(applicationConnection ? { mcp_servers: {
+          [APPLICATION_MCP_SERVER]: {
+            headers: { 'X-LiquidAIty-Hermes-Profile': name },
+          },
+        } } : {}),
+        plugins: {
+          enabled: [...new Set([...enabled, APPLICATION_MCP_SERVER])],
+          ...(name === 'main' ? { isolation: 'host' } : {}),
+          ...(projectId === undefined ? {} : {
+            entries: { liquidaity: { settings: { project_id: projectId } } },
+          }),
+        },
       },
     }),
   });
   const after = await profileConfig(name);
+  if (applicationConnection && after.mcp_servers?.[APPLICATION_MCP_SERVER]?.headers?.['X-LiquidAIty-Hermes-Profile'] !== name) {
+    throw new Error(`MCP profile binding failed for ${name}.`);
+  }
   if (!strings(after.plugins?.enabled).includes(APPLICATION_MCP_SERVER)) {
     throw new Error(`Hermes plugin enablement failed for ${name}.`);
+  }
+  if (projectId !== undefined
+    && after.plugins?.entries?.liquidaity?.settings?.project_id !== projectId) {
+    throw new Error(`Project context configuration failed for ${name}.`);
+  }
+  if (name === 'main' && after.plugins?.isolation !== 'host') {
+    throw new Error('ThinkGraph completion hook requires the Hermes plugin host.');
   }
 }
 
@@ -207,7 +235,7 @@ export async function synchronizeHermesProjectProfileCredentials(input: {
     const fingerprint = credentialFingerprint(credential.bearer);
     if (appliedCredentialFingerprints.get(key) === fingerprint) continue;
     try {
-      await ensureHermesPluginEnabled(credential.profile);
+      await ensureHermesPluginEnabled(credential.profile, projectId);
       const saved = await fetchJSON<{ ok?: boolean }>(
         `/api/env?profile=${encodeURIComponent(credential.profile)}`,
         {

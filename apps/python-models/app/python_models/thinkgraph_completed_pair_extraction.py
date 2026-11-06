@@ -1,5 +1,9 @@
 """Saved ThinkGraph Card structured extraction contract and result projection."""
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
 # Relationship: Defines one chunk-grounded Think per Entity with an optional same-pass research indication, never a separate question or preference classification pass.
 
@@ -123,8 +127,8 @@ class ThinkGraphStructuredOutput(_StructuredModel):
     facts: list[ThinkGraphStructuredFact] = Field(max_length=20)
 
 
-class _PluginStructuredResult:
-    """LLM protocol bridge: Hermes's plugin LLM already performed the call."""
+class _SavedCardStructuredResult:
+    """LLM protocol bridge: the saved Card already performed the model call."""
 
     def __init__(self, value: Any, provider: str, model: str) -> None:
         self.value = value
@@ -284,25 +288,33 @@ def extract_saved_card_facts(
     *,
     pair_text: str,
     context: dict[str, Any],
-    model_run: dict[str, str],
+    card_run: dict[str, str],
 ) -> list[Any]:
-    # A valid empty result is a completed model decision, not an extraction
-    # failure. Engraphis's generic fail-soft extractor otherwise converts an
-    # empty list into deterministic chunks, which would fabricate Thinks.
-    if isinstance(value, dict) and value.get("facts") == []:
+    if (
+        not isinstance(value, dict)
+        or set(value) - {"facts"}
+        or not isinstance(value.get("facts"), list)
+        or not 0 <= len(value["facts"]) <= 20
+    ):
+        raise ThinkGraphIntakeError("thinkgraph_card_entity_think_count_invalid")
+    try:
+        ThinkGraphStructuredOutput.model_validate(value)
+    except ValueError as error:
+        raise ThinkGraphIntakeError("thinkgraph_card_llm_structured_invalid") from error
+    if not value["facts"]:
         return []
     extractor = _engraphis_structured_extractor(
-        _PluginStructuredResult(
-            value,
-            model_run["provider"],
-            model_run["model"],
+        _SavedCardStructuredResult(
+            {"facts": value["facts"]},
+            card_run["resolvedProvider"],
+            card_run["resolvedModel"],
         )
     )
     facts = extractor.extract(
         pair_text,
         context=json.dumps(context, ensure_ascii=False, sort_keys=True),
     )
-    if any(
+    if len(facts) != len(value["facts"]) or any(
         isinstance(fact.metadata, dict)
         and fact.metadata.get("extraction_fallback")
         for fact in facts
@@ -312,20 +324,62 @@ def extract_saved_card_facts(
 
 
 def project_saved_card_thinks(facts: list[Any]) -> list[dict[str, Any]]:
-    """Project Engraphis-validated structured facts without a second filter."""
+    """Mechanically project one validated Think per distinct Entity."""
 
+    if not 0 <= len(facts) <= 20:
+        raise ThinkGraphIntakeError("thinkgraph_card_entity_think_count_invalid")
     outputs: list[dict[str, Any]] = []
+    entity_keys: set[str] = set()
+    think_bodies: set[tuple[str, str]] = set()
+    relationship_keys: set[tuple[str, str, str]] = set()
+    relationship_count = 0
     for fact in facts:
-        structured = fact.metadata["structured_extraction"]
-        raw_think = structured["think"]
+        if fact.mtype != MemoryType.EPISODIC:
+            raise ThinkGraphIntakeError("thinkgraph_card_entity_think_count_invalid")
+        metadata = fact.metadata if isinstance(fact.metadata, dict) else {}
+        structured = metadata.get("structured_extraction")
+        if not isinstance(structured, dict):
+            raise ThinkGraphIntakeError("thinkgraph_card_think_payload_invalid")
+        raw_think = structured.get("think")
+        entity = structured.get("entity")
+        relationships = structured.get("relations", [])
+        if (
+            not isinstance(raw_think, dict)
+            or raw_think.get("summary") != fact.content
+            or not isinstance(entity, str)
+            or not entity.strip()
+            or not isinstance(relationships, list)
+        ):
+            raise ThinkGraphIntakeError("thinkgraph_card_think_payload_invalid")
+        entity_key = entity.casefold()
+        if entity_key in entity_keys:
+            raise ThinkGraphIntakeError("thinkgraph_card_entity_duplicate")
+        entity_keys.add(entity_key)
+        think_body = (str(fact.content), str(raw_think.get("detail") or ""))
+        if think_body in think_bodies:
+            raise ThinkGraphIntakeError("thinkgraph_card_think_duplicate")
+        think_bodies.add(think_body)
+        for relationship in relationships:
+            if not isinstance(relationship, dict):
+                raise ThinkGraphIntakeError("thinkgraph_card_think_payload_invalid")
+            identity = tuple(
+                str(relationship.get(key) or "").casefold()
+                for key in ("source", "relation", "target")
+            )
+            if identity in relationship_keys:
+                raise ThinkGraphIntakeError("thinkgraph_card_pair_duplicate")
+            relationship_keys.add(identity)
+        relationship_count += len(relationships)
+        if relationship_count > 20:
+            raise ThinkGraphIntakeError("thinkgraph_card_relationship_limit_invalid")
         outputs.append({
             "summary": str(fact.content),
             "detail": raw_think.get("detail"),
             "title": str(fact.title or ""),
             "importance": float(fact.importance),
             "keywords": list(fact.keywords),
-            "entity": structured["entity"],
-            "relationships": deepcopy(structured.get("relations", [])),
+            "entity": entity,
+            "relationships": deepcopy(relationships),
             "sourceChunkIds": list(raw_think.get("sourceChunkIds", [])),
             **({"researchRequested": True} if raw_think.get("researchRequested") is True else {}),
         })

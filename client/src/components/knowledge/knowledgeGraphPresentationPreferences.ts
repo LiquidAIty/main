@@ -1,4 +1,8 @@
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file validates authority-scoped saved renderer presentation and material contracts without owning graph data.
  */
@@ -22,10 +26,11 @@ export type PresentationStyle = 'classic' | 'cyber' | 'galaxy' | 'solar' | 'sola
 export type RendererStyle = Exclude<PresentationStyle, 'solarpunk'>;
 
 export type GraphPresentationPreferences = {
-  schemaVersion?: 2 | 3 | 4 | 5 | 6;
+  schemaVersion?: 2 | 3 | 4 | 5 | 6 | 7;
   layout?: RendererLayout;
   physicsProfile?: JevGraphPhysicsProfile;
-  settings?: Partial<Record<'repel' | 'link' | 'gravity' | 'linkw', number>>;
+  style?: PresentationStyle;
+  settings?: Partial<Record<'repel' | 'link' | 'gravity' | 'linkw' | 'size' | 'font' | 'labelDensity', number>> & { labels?: boolean };
 };
 
 const KNOWLEDGE_PRESENTATION_LAYOUTS = new Set<RendererLayout>([
@@ -37,6 +42,9 @@ const PRESENTATION_SETTING_BOUNDS = {
   link: [4, 80],
   gravity: [0, 400],
   linkw: [0.1, 2],
+  size: [1, 12],
+  font: [6, 24],
+  labelDensity: [1, 100],
 } as const;
 
 export function presentationStorageKey(authority: GraphSurfaceAuthority): string {
@@ -56,6 +64,7 @@ function safePresentationSettings(
       settings[key as keyof typeof PRESENTATION_SETTING_BOUNDS] = candidate;
     }
   }
+  if (typeof source.labels === 'boolean') settings.labels = source.labels;
   return settings;
 }
 
@@ -70,8 +79,8 @@ export function safePresentationPreferences(
     const settings = safePresentationSettings(source.settings);
     return {
       ...(typeof source.schemaVersion === 'number'
-        && [2, 3, 4, 5, 6].includes(source.schemaVersion)
-        ? { schemaVersion: source.schemaVersion as 2 | 3 | 4 | 5 | 6 }
+        && [2, 3, 4, 5, 6, 7].includes(source.schemaVersion)
+        ? { schemaVersion: source.schemaVersion as 2 | 3 | 4 | 5 | 6 | 7 }
         : {}),
       ...(KNOWLEDGE_PRESENTATION_LAYOUTS.has(source.layout as RendererLayout)
         ? { layout: source.layout as RendererLayout }
@@ -79,6 +88,8 @@ export function safePresentationPreferences(
       ...(JEV_PHYSICS.has(source.physicsProfile as JevGraphPhysicsProfile)
         ? { physicsProfile: source.physicsProfile as JevGraphPhysicsProfile }
         : {}),
+      ...(['classic', 'cyber', 'galaxy', 'solar', 'solarpunk'].includes(String(source.style))
+        ? { style: source.style as PresentationStyle } : {}),
       ...(settings ? { settings } : {}),
     };
   } catch {

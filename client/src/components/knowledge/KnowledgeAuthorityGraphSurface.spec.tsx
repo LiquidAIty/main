@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file verifies one joined renderer, provider-status isolation, settings, selection, and shared Inspector without inventing graph identity or mutation.
  * Entity: ThinkGraph
@@ -500,8 +504,8 @@ describe('knowledge authority graph surfaces', () => {
     expect(graph.fit).toHaveBeenCalledOnce();
     expect(paper.style.backgroundSize.startsWith('24px 24px')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.queryByRole('combobox', { name: 'Layout' })).toBeNull();
-    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
+    expect(screen.getByRole('slider', { name: 'Node size' })).toBeTruthy();
     expect(graph.setCollapse).toHaveBeenCalledWith(false);
     expect(graph.data.nodes).toEqual([]);
     expect(screen.queryByRole('button', { name: /Freeze|Resume|Reheat|Focus/ })).toBeNull();
@@ -538,7 +542,7 @@ describe('knowledge authority graph surfaces', () => {
         rest_length: 22.639999999999997,
       });
       fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-      expect(screen.queryByRole('combobox', { name: 'Physics profile' })).toBeNull();
+      expect(screen.getByRole('combobox', { name: 'Physics profile' })).toBeTruthy();
       expect(container.querySelector('[data-physics-profile="galaxy"]')).toBeTruthy();
       expect(graph.data.links[0].visual_width).toBeCloseTo(2.35);
       act(() => graph.nodeClick(graph.data.nodes[1]));
@@ -856,7 +860,7 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.getByTestId('thinkgraph-edge-inspector').textContent).toContain('Recorded relationship.');
   });
 
-  it('keeps the shared canvas and source controls without exposing renderer tuning', async () => {
+  it('restores graph controls on the shared canvas without changing provider data', async () => {
     const { container } = render(<KnowledgeGraphFramework
       projections={{ thinkgraph: empty('thinkgraph'), knowgraph: empty('knowgraph') }}
       errors={{}} {...codeProps()} />);
@@ -869,18 +873,24 @@ describe('knowledge authority graph surfaces', () => {
     for (const source of ['Think source', 'Know source', 'Code source']) {
       expect(screen.getByRole('button', { name: source })).toBeTruthy();
     }
-    expect(screen.queryByRole('slider')).toBeNull();
-    expect(screen.queryByRole('combobox')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Reset to preset defaults' })).toBeNull();
+    expect(screen.getByRole('slider', { name: 'Node size' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reset to preset defaults' })).toBeTruthy();
     expect(graph.setSettings).toHaveBeenCalledWith({
       size: 5, font: 13, linkw: 1, labelDensity: 40,
       repel: 120, link: 30, gravity: 14, labels: true,
     });
     expect(graph.data.nodes).toEqual([]);
     expect(graph.data.links).toEqual([]);
+    fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '3' } });
+    expect(graph.setSettings).toHaveBeenLastCalledWith({ size: 3 });
+    const saved = JSON.parse(window.localStorage.getItem('liquidaity.graph.joined.presentation.v1') || '{}');
+    expect(saved.settings.size).toBe(3);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Physics profile' }), { target: { value: 'open' } });
+    expect((screen.getByRole('slider', { name: 'Node size' }) as HTMLInputElement).value).toBe('3');
   });
 
-  it('restores the saved layout, Jev profile, force settings and line multiplier without exposing tuning', () => {
+  it('restores the saved layout, Jev profile, node size, labels and force settings', () => {
     const key = 'liquidaity.graph.thinkgraph.presentation.v1';
     const stored = JSON.stringify({ schemaVersion: 6, layout: 'radial', style: 'classic',
       physicsProfile: 'open', settings: {
@@ -900,16 +910,16 @@ describe('knowledge authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     expect(graph.setPreset).toHaveBeenCalledWith('radial');
     expect(graph.setSettings).toHaveBeenCalledWith({
-      size: 5, font: 13, linkw: 0.6, labelDensity: 40,
-      repel: 80, link: 44, gravity: 20, labels: true,
+      size: 3, font: 13, linkw: 0.6, labelDensity: 40,
+      repel: 80, link: 44, gravity: 20, labels: false,
     });
     expect(container.querySelector('[data-style="solarpunk"][data-physics-profile="open"]')).toBeTruthy();
     expect(graph.data.links[0].visual_width).toBeCloseTo(1.8);
     expect(graph.data.links[0].spring_strength).toBeCloseTo(0.121);
     expect(graph.data.links[0].rest_length).toBeCloseTo(24.4);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.queryByRole('combobox')).toBeNull();
-    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
+    expect(screen.getByRole('slider', { name: 'Node size' })).toBeTruthy();
     expect(window.localStorage.getItem(key)).toBe(stored);
   });
 
@@ -987,7 +997,7 @@ describe('knowledge authority graph surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     expect(screen.queryByRole('group', { name: 'Solarpunk colors' })).toBeNull();
-    expect(screen.queryByRole('combobox', { name: 'Style' })).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Style' })).toBeTruthy();
   });
 
   it('keeps internal presentation stable on remount and leaves old saved keys untouched', () => {
@@ -1005,15 +1015,15 @@ describe('knowledge authority graph surfaces', () => {
     expect(window.localStorage.getItem(oldKey)).toBe('leave-this-untouched');
   });
 
-  it('ignores malformed legacy tuning and exposes no physics controls', () => {
+  it('ignores malformed legacy tuning while restoring graph controls', () => {
     const key = 'liquidaity.graph.knowgraph.presentation.v1';
     window.localStorage.setItem(key, JSON.stringify({ style: 'unknown', layout: 'everything',
       physicsProfile: 'unsafe', settings: { size: 99, gravity: Infinity } }));
     render(<KnowledgeGraphProjectionSurface authority="knowgraph"
       projection={empty('knowgraph')} status="ready" error={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.queryByRole('combobox')).toBeNull();
-    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
+    expect(screen.getByRole('slider', { name: 'Node size' })).toBeTruthy();
     expect(forceGraphMocks.instances.at(-1).setSettings)
       .toHaveBeenCalledWith({
         size: 5, font: 13, linkw: 1, labelDensity: 40,
@@ -1403,9 +1413,9 @@ describe('knowledge authority graph surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
     act(() => graph.backgroundClick());
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.queryByRole('slider', { name: 'Node size' })).toBeNull();
+    expect(screen.getByRole('slider', { name: 'Node size' })).toBeTruthy();
     expect(screen.getByRole('complementary').style.width).toBe('340px');
-    expect(screen.queryByRole('combobox', { name: 'Style' })).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Style' })).toBeTruthy();
     expect(graph.data.nodes[0].material_kind).toBe('solarpunk');
     expect(screen.queryByRole('group', { name: 'Solarpunk colors' })).toBeNull();
     expect(graph.setStyle).toHaveBeenLastCalledWith('cyber');
@@ -1421,7 +1431,7 @@ describe('knowledge authority graph surfaces', () => {
     act(() => graph.backgroundClick());
     expect(screen.getByRole('complementary', { hidden: true }).getAttribute('data-open')).toBe('false');
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.queryByRole('combobox', { name: 'Layout' })).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
     expect(screen.getByRole('complementary').style.width).toBe('340px');
   });
 });

@@ -1,4 +1,8 @@
 """Real disposable Engraphis storage checks; no product conversations or agent runs."""
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: Main Chat
 # Relationship: Verifies exact message storage, transactions, deduplication, isolation and persistent readback.
 # Entity: ThinkGraph
@@ -7,7 +11,6 @@
 # Relationship: Verifies direct private-context quotation and ownership constraints remain separate from Entities and the completed-pair Think flow.
 
 from concurrent.futures import ThreadPoolExecutor
-import sqlite3
 from uuid import uuid4
 
 import pytest
@@ -17,7 +20,6 @@ from app.python_models import conversations
 from app.python_models import engraphis, engraphis_operations
 from app.python_models import thinkgraph_completed_pair_settlement as settlement
 from app.python_models import thinkgraph_completed_pair_preparation as preparation
-from app.python_models import thinkgraph_automatic as automatic
 
 
 @pytest.fixture
@@ -76,6 +78,41 @@ def test_concurrent_duplicate_replies_and_scope_isolation(archive):
     assert sum(item["inserted"] for item in receipts) == 1
     assert len(call("read")) == 2
     assert call("read", project="project-two") == []
+
+
+def test_plugin_captured_rows_reuse_saved_thinkgraph_process(archive, tmp_path, monkeypatch):
+    import sqlite3
+    from app.python_models import thinkgraph_automatic as automatic
+
+    database = sqlite3.connect(tmp_path / "state.db")
+    database.execute("CREATE TABLE messages (id INTEGER, session_id TEXT, active INTEGER, role TEXT, content TEXT, tool_calls TEXT, timestamp REAL, display_kind TEXT)")
+    database.executemany("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?)", [
+        (41, "session-one", 1, "user", "Kronos forecasts prices.", None, 1700000000.0, None),
+        (42, "session-one", 1, "assistant", "Forecasts need out-of-sample testing.", None, 1700000001.0, None),
+        (43, "session-one", 1, "user", "Do not include this later question.", None, 1700000002.0, None),
+    ])
+    database.commit()
+    database.close()
+    monkeypatch.setattr(automatic, "_profile_home", lambda _: tmp_path)
+    received = []
+
+    def process(project, arguments, saved):
+        received.append((project, arguments, saved))
+        return {"status": "completed", "thinkMemoryIds": []}
+
+    monkeypatch.setattr(automatic, "_automatic_run", process)
+    result = automatic.process_completed_turn("project-one", "main", "session-one", 41, 42)
+    assert result["ok"] is True
+    saved = received[0][2]
+    assert [item["content"] for item in saved] == [
+        "Kronos forecasts prices.", "Forecasts need out-of-sample testing.",
+    ]
+    assert [item["hermesSource"]["rowId"] for item in saved] == [41, 42]
+    assert saved[0]["createdAt"] == "2023-11-14T22:13:20.000Z"
+    automatic.process_completed_turn("project-one", "main", "session-one", 41, 42)
+    assert len(call("read", conversation="session-one")) == 2
+    with pytest.raises(automatic.AutomaticThinkGraphError, match="main_completed_pair_invalid"):
+        automatic.process_completed_turn("project-one", "main", "wrong-session", 41, 42)
     assert call("read", conversation="chat-two") == []
     assert call("reply", project="project-two", message=reply())["inserted"] is True
 
@@ -163,58 +200,6 @@ def test_stored_pair_reuses_preparation_without_tool_or_graph_write(archive, mon
     assert service.store.conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0] == 0
 
 
-def test_automatic_intake_reads_exact_hook_captured_pair_once_without_history_polling(
-    archive, tmp_path, monkeypatch,
-):
-    profiles = tmp_path / "profiles"
-    home = profiles / "main"
-    home.mkdir(parents=True)
-    database = home / "state.db"
-    with sqlite3.connect(database) as connection:
-        connection.execute(
-            "CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, "
-            "content TEXT, tool_calls TEXT, timestamp REAL, display_kind TEXT, active INTEGER)"
-        )
-        connection.executemany(
-            "INSERT INTO messages VALUES (?,?,?,?,?,?,?,1)",
-            [
-                (1, "session-one", "user", "Old question.", None, 1.0, None),
-                (2, "session-one", "assistant", "Old answer.", None, 2.0, None),
-                (3, "session-one", "user", "Exact latest question.", None, 3.0, None),
-                (4, "session-one", "assistant", "tool", "[]", 4.0, None),
-                (5, "session-one", "assistant", "Exact latest answer.", None, 5.0, None),
-            ],
-        )
-    monkeypatch.setattr(automatic, "_HERMES_PROFILES", profiles)
-
-    prepared = automatic.prepare_completed_turn(
-        "project-one", "main", "session-one", 3, 5,
-    )
-    assert prepared["status"] == "ready"
-    assert "Exact latest question." in prepared["instructions"]
-    assert "Exact latest answer." in prepared["instructions"]
-    assert "Old question." not in prepared["instructions"]
-    assert [item["content"] for item in call(
-        "read", conversation="session-one",
-    )] == ["Exact latest question.", "Exact latest answer."]
-
-    settled = automatic.settle_completed_turn(
-        "project-one",
-        prepared["pairReference"],
-        {"facts": []},
-        provider="openai-codex",
-        model="gpt-5.6-luna",
-    )
-    assert settled["status"] == "completed"
-    assert settled["thinkMemoryIds"] == []
-    assert settled["sourceIndex"]["chunks"] == 2
-    repeated = automatic.prepare_completed_turn(
-        "project-one", "main", "session-one", 3, 5,
-    )
-    assert repeated["status"] == "already_settled"
-    assert repeated["thinkMemoryIds"] == []
-
-
 def test_source_index_is_repeatable_and_preserves_canonical_messages(archive):
     service, _ = archive
     question = call("append", messages=[user()])[0]
@@ -246,9 +231,10 @@ def test_research_indication_settles_with_chunks_without_private_classification_
     source = conversations.read_pair("project-one", "chat-one", [question["messageId"]], answer["messageId"])
     chunks = conversations.source_chunks("project-one", source["sourceReferences"], prepare=True)
     user_chunk = chunks[0]["id"]
-    payload = {**source, "pairReference": preparation.pair_reference(source), "modelRun": {
-        "provider": "test", "model": "mechanics-only", "task": "thinkgraph",
-        "purpose": "automatic_completed_main_pair",
+    payload = {**source, "pairReference": preparation.pair_reference(source), "cardRun": {
+        "runId": "test-saved-card-result", "cardId": "card_thinkgraph", "revisionId": "test-revision",
+        "profile": "thinkgraph", "hermesSessionId": "session-one", "resolvedProvider": "test",
+        "resolvedModel": "mechanics-only",
     }, "structuredOutput": {"facts": [{"content": "Funding is unresolved.", "title": "Funding",
         "entity": "Space stocks", "entities": ["Space stocks"], "relations": [],
         "think": {"summary": "Funding is unresolved.", "detail": "Committed funding would clarify the dilution concern.",

@@ -1,4 +1,8 @@
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file owns the single renderer lifecycle, camera, settings, selection and Inspector shared by the Project graph views.
  * Entity: ThinkGraph
@@ -21,6 +25,8 @@ import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCan
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
 import {
   applyJevGraphPhysics,
+  JEV_GRAPH_PHYSICS_PROFILE_LABELS,
+  JEV_GRAPH_PHYSICS_PROFILES,
   type JevGraphPhysicsProfile,
 } from './jevGraphPhysics';
 import {
@@ -57,6 +63,7 @@ import {
 import {
   responsiveRepelForce,
   safePresentationPreferences,
+  presentationStorageKey,
   solarpunkEdgeFields,
   withoutSolarpunkEdgeMaterial,
   withoutSolarpunkMaterial,
@@ -79,9 +86,6 @@ import {
 } from './KnowledgeGraphInspector';
 import type { CanonicalEntityDirectory } from './canonicalEntityDirectory';
 import { CodeGraphChangeReview } from './CodeGraphChangeReview';
-import useHermesNavigationMap, {
-  type HermesNavigationMapState,
-} from '../../features/hermes/useHermesNavigationMap';
 import './knowledgeAuthorityGraphSurface.css';
 
 export function JoinedKnowledgeGraphSurface({
@@ -118,7 +122,6 @@ export function JoinedKnowledgeGraphSurface({
   }));
   const [codeFeatureIds, setCodeFeatureIds] = useState<string[]>([]);
   const [codeConnections, setCodeConnections] = useState('');
-  const [focusedVisualNodeId, setFocusedVisualNodeId] = useState<string | null>(null);
   const codeLayer = codeGraph || {
     projection: {
       schemaVersion: 'codegraph.projection.v1',
@@ -173,7 +176,6 @@ export function JoinedKnowledgeGraphSurface({
     ),
     [layerVisibility, projections.knowgraph, projections.thinkgraph, visibleCodeProjection],
   );
-  const navigationMapState = useHermesNavigationMap(presentation, focusedVisualNodeId);
   const visibleStatuses = [
     ...(layerVisibility.thinkgraph
       ? [errors?.thinkgraph ? 'error' : statuses?.thinkgraph || 'ready']
@@ -257,8 +259,6 @@ export function JoinedKnowledgeGraphSurface({
       codeLayerStatus={codeLayer.status}
       codeLayerFreshness={codeLayer.freshness}
       codeConnections={codeConnections}
-      navigationMapState={navigationMapState}
-      onFocusedVisualNodeChange={setFocusedVisualNodeId}
     />
   );
 }
@@ -317,8 +317,6 @@ export function KnowledgeGraphProjectionSurface({
   codeLayerStatus,
   codeLayerFreshness,
   codeConnections,
-  navigationMapState,
-  onFocusedVisualNodeChange,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -347,8 +345,6 @@ export function KnowledgeGraphProjectionSurface({
   codeLayerStatus?: 'idle' | 'loading' | 'ready' | 'error';
   codeLayerFreshness?: string;
   codeConnections?: string;
-  navigationMapState?: HermesNavigationMapState;
-  onFocusedVisualNodeChange?: (visualNodeId: string | null) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<EngraphisRenderer | null>(null);
@@ -363,15 +359,20 @@ export function KnowledgeGraphProjectionSurface({
     () => safePresentationPreferences(authority),
     [authority],
   );
-  const savedPresentationIsCurrent = savedPresentation.schemaVersion === 6;
+  const savedPresentationIsCurrent = savedPresentation.schemaVersion === 6 || savedPresentation.schemaVersion === 7;
   const codeOnly = authority === 'codegraph' || (authority === 'joined'
     && layerVisibility?.codegraph === true
     && !layerVisibility.thinkgraph && !layerVisibility.knowgraph);
-  const layout: RendererLayout = codeOnly ? 'communities' : savedPresentation.layout || 'compact';
-  const style: PresentationStyle = codeOnly ? 'cyber' : 'solarpunk';
+  const [preferredLayout, setLayout] = useState<RendererLayout>(savedPresentation.layout || 'compact');
+  const [preferredStyle, setStyle] = useState<PresentationStyle>(savedPresentation.schemaVersion === 7 ? savedPresentation.style || 'solarpunk' : 'solarpunk');
+  const [preferredPhysics, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(savedPresentation.physicsProfile || 'galaxy');
+  const [settings, setSettings] = useState<Record<string, number | boolean | string>>({ size: 5, labels: true, ...(savedPresentation.settings || {}) });
+  const settingsOverrides = useRef<Record<string, number | boolean | string>>({ ...(savedPresentation.settings || {}) });
+  const layout: RendererLayout = codeOnly ? 'communities' : preferredLayout;
+  const style: PresentationStyle = codeOnly ? 'cyber' : preferredStyle;
   const physicsProfile: JevGraphPhysicsProfile = codeOnly
     ? 'galaxy'
-    : savedPresentation.physicsProfile || 'galaxy';
+    : preferredPhysics;
   const presentationKey = `${authority}:${layout}:${physicsProfile}:${codeOnly ? 'code' : 'knowledge'}`;
   const [repelSource, setRepelSource] = useState<{
     key: string;
@@ -445,11 +446,6 @@ export function KnowledgeGraphProjectionSurface({
       || (authority !== 'joined' ? { authority, edge: selectedEdgeVisual } : undefined)
     : undefined;
   const selectedEdge = selectedCodeEdge || selectedEdgeVariant?.edge;
-  useEffect(() => {
-    onFocusedVisualNodeChange?.(
-      inspectorOpen && selectedVisual && !selectedEdge ? selectedVisual.id : null,
-    );
-  }, [inspectorOpen, onFocusedVisualNodeChange, selectedEdge, selectedVisual]);
   const inspectedAuthority: GraphAuthority | 'codegraph' | null = selectedCodeNode || selectedCodeEdge
     ? 'codegraph'
     : selectedEdgeVariant?.authority || selectedNodeVariant?.authority || null;
@@ -562,18 +558,37 @@ export function KnowledgeGraphProjectionSurface({
       ...defaults,
       labels: true,
       size: 5,
-      ...(savedPresentation.settings || {}),
+      ...settingsOverrides.current,
     };
     if (!savedPresentationIsCurrent) {
       restoredSettings.linkw = Math.max(1, Number(restoredSettings.linkw) || 1);
     }
     graph.setSettings(restoredSettings);
+    setSettings(restoredSettings);
     const baseRepel = Number(restoredSettings.repel);
     setRepelSource({
       key: presentationKey,
       base: Number.isFinite(baseRepel) ? baseRepel : null,
     });
   }, [codeOnly, layout, presentationKey, savedPresentation, savedPresentationIsCurrent]);
+
+  const savePresentation = (patch: Record<string, unknown>) => {
+    window.localStorage.setItem(presentationStorageKey(authority), JSON.stringify({
+      schemaVersion: 7, layout, style, physicsProfile, settings, ...patch,
+    }));
+  };
+  const changeSettings = (patch: Record<string, number | boolean>) => {
+    const next = { ...settings, ...patch };
+    settingsOverrides.current = { ...settingsOverrides.current, ...patch };
+    graphRef.current?.setSettings(patch);
+    setSettings(next);
+    if (typeof patch.repel === 'number') setRepelSource({ key: presentationKey, base: patch.repel });
+    savePresentation({ settings: next });
+  };
+
+  useEffect(() => {
+    graphRef.current?.setStyle(style === 'solarpunk' ? 'cyber' : style);
+  }, [style]);
 
   useEffect(() => {
     if (authority === 'codegraph') return;
@@ -1014,7 +1029,7 @@ export function KnowledgeGraphProjectionSurface({
             setControlsOpen(!reopenInspector);
             setInspectorOpen(reopenInspector);
           }}
-          collapsedLabel={null}
+          collapsedLabel="Graph controls"
           openAriaLabel="Open graph settings"
           movable
           defaultWidth={340} minWidth={280} maxWidth={520}
@@ -1077,21 +1092,6 @@ export function KnowledgeGraphProjectionSurface({
                     ? ` · ${codeLayerStatus || 'idle'} · ${codeLayerFreshness || 'unverified'}`
                     : ''}
                 </small>
-                {navigationMapState ? (
-                  <small
-                    className="graph-layer-scope"
-                    data-testid="hermes-navigation-map-status"
-                    role={navigationMapState.status === 'error' ? 'alert' : 'status'}
-                  >
-                    {navigationMapState.status === 'synced'
-                      ? `Model map · synced · ${navigationMapState.nodes} nodes · ${navigationMapState.relationships} relationships · ${navigationMapState.sha256.slice(0, 10)}${navigationMapState.focused ? ' · open node included' : ''}`
-                      : navigationMapState.status === 'publishing'
-                        ? 'Model map · synchronizing'
-                        : navigationMapState.status === 'error'
-                          ? `Model map · unsynchronized · ${navigationMapState.error}`
-                          : 'Model map · idle'}
-                  </small>
-                ) : null}
                 {onResetLayerVisibility ? <button
                   type="button"
                   aria-label="Reset graph sources"
@@ -1101,6 +1101,36 @@ export function KnowledgeGraphProjectionSurface({
                 </button> : null}
               </fieldset>
               : null}
+            {authority !== 'codegraph' ? <label>Physics profile<select aria-label="Physics profile" value={physicsProfile}
+              onChange={event => { setPhysicsProfile(event.target.value as JevGraphPhysicsProfile); savePresentation({ physicsProfile: event.target.value }); }}>
+              {JEV_GRAPH_PHYSICS_PROFILES.map(profile => <option key={profile} value={profile}>{JEV_GRAPH_PHYSICS_PROFILE_LABELS[profile]}</option>)}
+            </select></label> : null}
+            <label>Layout<select aria-label="Layout" value={layout}
+              onChange={event => { setLayout(event.target.value as RendererLayout); savePresentation({ layout: event.target.value }); }}>
+              <option value="compact">Compact</option><option value="original">Original</option>
+              <option value="communities">Communities</option><option value="radial">Radial</option>
+            </select></label>
+            <label>Style<select aria-label="Style" value={style}
+              onChange={event => { setStyle(event.target.value as PresentationStyle); savePresentation({ style: event.target.value }); }}>
+              <option value="classic">Classic</option><option value="cyber">Cyberpunk</option>
+              <option value="solarpunk">Solarpunk</option><option value="galaxy">Galaxy</option><option value="solar">Solar</option>
+            </select></label>
+            <label><input type="checkbox" checked={settings.labels === true}
+              onChange={event => changeSettings({ labels: event.target.checked })} />Entity labels</label>
+            {([
+              ['Node size', 'size', 1, 12, 1], ['Text size', 'font', 6, 24, 1],
+              ['Line width', 'linkw', 0.1, 2, 0.01], ['Label density', 'labelDensity', 1, 100, 1],
+              ['Repel force', 'repel', 0, 400, 1], ['Link distance', 'link', 4, 80, 1],
+              ['Center gravity', 'gravity', 0, 400, 1],
+            ] as const).map(([label, key, min, max, step]) => <label key={key}>
+              <span>{label}</span><input aria-label={label} type="range" min={min} max={max} step={step}
+                value={Number(settings[key] ?? min)} onChange={event => changeSettings({ [key]: Number(event.target.value) })} />
+              <output>{settings[key]}</output>
+            </label>)}
+            <button type="button" onClick={() => {
+              const defaults = graphRef.current?.setPreset(layout) || {};
+              changeSettings({ ...defaults, labels: true, size: 5, linkw: Math.max(1, Number(defaults.linkw) || 1) } as Record<string, number | boolean>);
+            }}>Reset to preset defaults</button>
           </div> : (selected || selectedEdge) ? <div ref={panelBodyRef} className="knowledge-authority-controls" role="region" aria-label={`${entryTitle} details`}>
         {authority === 'joined' && selected && availableNodeAuthorities.length > 0
           && (availableNodeAuthorities.length > 1 || visibleThinks.length > 0 || visibleKnowItems.length > 0) ? (

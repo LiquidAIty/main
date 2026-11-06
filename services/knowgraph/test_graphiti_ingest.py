@@ -1,5 +1,9 @@
 """Deterministic proof for the Graphiti KnowGraph ingestion boundary."""
 
+# Graph + less = more: less code that does the same work as more code is more useful.
+# Entity names the feature; Relationship explains why this file belongs and what it contributes.
+# Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+# Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
 # Relationship: This file contributes proof of deterministic episode identity, duplicate exclusion, interrupted settlement recovery, and exact authority readback to the KnowGraph feature.
 # Entity: Jev Decisions
@@ -195,7 +199,7 @@ def _decision(graphiti_fact_uuid: str = "fact-1") -> dict:
         "evaluated_at": "2026-09-24T12:00:00Z",
         "question_schema_version": "knowgraph.relationship-choice.v3",
         "vocabulary_version": "project.relationship-vocabulary.v1",
-        "vocabulary_hash": "hash-1",
+        "vocabulary_hash": "vocabulary-hash",
         "vocabulary_count": 20,
         "vocabulary_after_hash": "vocabulary-hash",
         "vocabulary_after_count": 20,
@@ -271,6 +275,20 @@ def _run(
 
 
 class GraphitiIngestTests(unittest.TestCase):
+    def test_promoted_vocabulary_does_not_change_the_scored_choice_identity(self) -> None:
+        graphiti = FakeGraphiti()
+        decision = _decision()
+        decision.update(vocabulary_after_hash="promoted-vocabulary", vocabulary_after_count=21,
+                        vocabulary_promotion="promoted")
+        result = _run(graphiti, decisions=[decision])
+        self.assertEqual(result["jev_classification"]["status"], "success")
+        persisted = next(params for cypher, params in graphiti.driver.queries
+                         if "SET fact.jev_relation_winner" in cypher)
+        self.assertEqual(persisted["ontology_hash"], "vocabulary-hash")
+        self.assertEqual(persisted["vocabulary_count"], 20)
+        self.assertEqual(persisted["vocabulary_after_hash"], "promoted-vocabulary")
+        self.assertEqual(persisted["vocabulary_after_count"], 21)
+
     def test_runtime_version_is_resolved_from_the_loaded_distribution(self) -> None:
         versions = graphiti_runtime.graphiti_runtime_versions()
         self.assertRegex(str(versions["graphiti_core"]), r"^\d+\.\d+\.\d+")

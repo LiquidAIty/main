@@ -13,11 +13,12 @@ from __future__ import annotations
 import asyncio
 import copy
 import inspect
+import json
 import os
 from importlib import metadata as importlib_metadata
 from typing import Any
 
-from mcp.types import Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 
 _GRAPHITI_MODULE: Any | None = None
@@ -236,7 +237,79 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
     graphiti_module_ref = _GRAPHITI_MODULE
     if graphiti_module_ref is None:
         raise RuntimeError("graphiti_not_initialized")
+    if name == "add_know":
+        from app import mcp_auth
+        from graphiti_core.knows import KnowCitation, KnowDirection
+        from graphiti_core.utils.datetime_utils import utc_now
+
+        context = mcp_auth.authenticated_project_context() or {}
+        principal = mcp_auth.internal_mcp_principal() or {}
+        project_id = str(context.get("projectId") or principal.get("projectId") or "")
+        if not project_id or arguments.get("group_id") != f"liquidaity-{project_id}":
+            raise PermissionError("know_project_scope_mismatch")
+        args = dict(arguments)
+        args["citation"] = KnowCitation.model_validate(args["citation"])
+        if args.get("direction"):
+            args["direction"] = KnowDirection.model_validate(args["direction"])
+        args["reference_time"] = graphiti_module_ref.parse_reference_time(args.get("reference_time")) or utc_now()
+        for field in ("entity_types", "edge_types", "edge_type_map"):
+            args.setdefault(field, getattr(graphiti_module_ref.graphiti_service, field))
+        args["update_communities"] = False
+        written = await graphiti_module_ref.graphiti_client.add_know(**args)
+        payload = {
+            "status": "completed", "know_uuid": written.know.uuid,
+            "message": "Know stored; verifying relationship settlement and exact read.",
+            "content_hash": written.know.content_hash,
+            "group_id": written.know.group_id,
+            "entity_name": args["entity_name"],
+            "entity_uuid": written.know.entity_uuid,
+            "know": graphiti_module_ref._know_result(written.know),
+            "created": written.created, "entity_created": written.entity_created,
+        }
+        try:
+            payload["jev"] = await _settle_research_relationships(project_id, written.know.uuid)
+            known = await graphiti_module_ref.graphiti_client.get_know(
+                written.know.uuid, group_id=args["group_id"],
+            )
+            payload["know"] = graphiti_module_ref._know_result(known)
+            if payload["jev"].get("status") not in {"success", "current"}:
+                payload["status"] = "partial"
+        except Exception as error:
+            payload.update(status="partial", error=str(error))
+        try:
+            from app.backend_operation_transport import notify_graph_changed
+            from app.python_models.engraphis import project_principal
+            await asyncio.to_thread(
+                notify_graph_changed, project_id, project_principal(project_id)["id"], "knowgraph",
+            )
+        except Exception as error:
+            payload.update(status="partial", visibility="notification_failed", notificationError=str(error))
+        payload["message"] = (
+            "Know stored and exact-read after Jev settlement."
+            if payload["status"] == "completed"
+            else "Know stored; settlement, exact read, or graph notification is incomplete."
+        )
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
+            structuredContent={"result": payload}, isError=payload["status"] != "completed",
+        )
     return await graphiti_module_ref.mcp.call_tool(name, dict(arguments))
+
+
+async def _settle_research_relationships(project_id: str, know_id: str) -> dict[str, Any]:
+    """Apply the existing Jev owner after Graphiti's completed hybrid extraction."""
+    import httpx
+    from app import mcp_auth
+
+    origin = os.environ.get("KNOWGRAPH_URL", "http://127.0.0.1:8001").rstrip("/")
+    async with httpx.AsyncClient(timeout=300, follow_redirects=False) as client:
+        response = await client.post(
+            origin + "/research/settle",
+            headers={"X-LiquidAIty-Internal-MCP-Secret": mcp_auth.INTERNAL_MCP_SECRET},
+            json={"project_id": project_id, "know_uuid": know_id},
+        )
+        response.raise_for_status()
+        return response.json()
 
 
 async def close_graphiti() -> None:

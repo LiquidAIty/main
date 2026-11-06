@@ -115,6 +115,17 @@ def request_backend_json(
     return value
 
 
+def notify_graph_changed(project_id: str, owner_user_id: str, authority: str) -> None:
+    """Notify the existing Project graph stream only after a provider write."""
+    result = request_backend_json(
+        "POST", "/api/mcp/graph-changed",
+        {"projectId": project_id, "ownerUserId": owner_user_id, "authority": authority},
+        require_internal_secret=True,
+    )
+    if result.get("ok") is not True:
+        raise ApplicationToolError("graph_change_notification_failed")
+
+
 def post_backend_text_sync(
     route: str,
     payload: dict[str, Any],

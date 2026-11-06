@@ -1,22 +1,20 @@
 # Entity: Hermes Plugin
-# Relationship: Registers LiquidAIty's declared native tools, auxiliary model work, and lifecycle hooks through the public Hermes plugin context.
+# Relationship: Registers LiquidAIty's declared tools and lifecycle hooks through the public Hermes plugin context.
 # Entity: TaskGraphs
 # Relationship: Registers the one categorized Team/Magnetic admission tool while Hermes retains the task ledger, dispatch, workers, and completion.
-# Entity: Graph Navigation Context
-# Relationship: Injects only the pre-rendered in-memory visible graph map into the four authorized profiles before inference.
+# Entity: Project Knowledge Graph
+# Relationship: Reads the provider-owned Project Entity map into Main, Builder, ThinkGraph, and KnowGraph before inference without accepting graph meaning from the UI.
 # Entity: ThinkGraph
-# Relationship: Observes a completed Main session and asks the Hermes plugin host to schedule independent completed-pair extraction and Engraphis settlement.
+# Relationship: Observes each successful completed Main turn and asks the Hermes plugin host to schedule independent completed-pair extraction and Engraphis settlement.
 """Official Hermes binding for UI context, Card Python, taskgraphs, and ThinkGraph."""
 
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import logging
 from pathlib import Path
 import sqlite3
-import sys
 from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -52,25 +50,9 @@ except ImportError:  # Directory-plugin validators may import __init__.py direct
 
 _LOGGER = logging.getLogger(__name__)
 _DEFAULT_PYTHON_RAILS_URL = "http://127.0.0.1:8003"
-_NAVIGATION_PROFILES = frozenset({"main", "builder", "thinkgraph", "knowgraph"})
-
-
-def _navigation_runtime():
-    key = "_liquidaity_navigation_map_runtime"
-    if key in sys.modules:
-        return sys.modules[key]
-    path = Path(__file__).resolve().parent / "navigation_map.py"
-    spec = importlib.util.spec_from_file_location(key, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("liquidaity_navigation_map_loader_unavailable")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[key] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        sys.modules.pop(key, None)
-        raise
-    return module
+_PROJECT_ENTITY_MAP_PROFILES = frozenset({
+    "main", "builder", "thinkgraph", "knowgraph",
+})
 
 
 def _loopback_origin(value: Any) -> str:
@@ -103,14 +85,32 @@ def _post_json(origin: str, path: str, payload: dict[str, Any], *, timeout: floa
     return result
 
 
-def _main_project_id(ctx: Any) -> str:
-    result = ctx.call_mcp("liquidaity", "main.context", {}, timeout=15)
-    payload = result.get("result") if isinstance(result, dict) else None
-    context = payload.get("context") if isinstance(payload, dict) else None
-    project_id = str(context.get("projectId") or "").strip() if isinstance(context, dict) else ""
-    if result.get("ok") is not True or not project_id:
-        raise RuntimeError("liquidaity_main_context_unavailable")
+def _project_id(ctx: Any) -> str:
+    project_id = str(ctx.get_config("project_id", "") or "").strip()
+    if not project_id:
+        raise RuntimeError("project_context_unavailable")
     return project_id
+
+
+def _project_entity_map_context(ctx: Any) -> str:
+    project_id = _project_id(ctx)
+    origin = _loopback_origin(
+        ctx.get_config("python_rails_url", _DEFAULT_PYTHON_RAILS_URL)
+    )
+    result = _post_json(
+        origin,
+        "/project/entity-map/read",
+        {"projectId": project_id},
+        timeout=30,
+    )
+    context = str(result.get("context") or "")
+    if (
+        result.get("ok") is not True
+        or result.get("projectId") != project_id
+        or not context.strip()
+    ):
+        raise RuntimeError("liquidaity_project_entity_map_unavailable")
+    return context
 
 
 def _completed_pair_row_ids(session_id: str) -> tuple[int, int]:
@@ -159,14 +159,14 @@ def _process_completed_turn(
     user_row_id: int,
     assistant_row_id: int,
 ) -> None:
-    project_id = _main_project_id(ctx)
+    project_id = _project_id(ctx)
     profile_name = profile_name or ctx.profile_name
     origin = origin or _loopback_origin(
         ctx.get_config("python_rails_url", _DEFAULT_PYTHON_RAILS_URL)
     )
-    prepared = _post_json(
+    settled = _post_json(
         origin,
-        "/thinkgraph/completed-pair/prepare",
+        "/thinkgraph/completed-pair/process",
         {
             "projectId": project_id,
             "profile": profile_name,
@@ -174,36 +174,7 @@ def _process_completed_turn(
             "userRowId": user_row_id,
             "assistantRowId": assistant_row_id,
         },
-        timeout=30,
-    )
-    if prepared.get("status") == "already_settled":
-        return
-    if prepared.get("ok") is not True or prepared.get("status") != "ready":
-        raise RuntimeError("liquidaity_thinkgraph_prepare_failed")
-    result = ctx.llm.complete_structured(
-        instructions=str(prepared["instructions"]),
-        input=list(prepared["input"]),
-        json_schema=dict(prepared["jsonSchema"]),
-        schema_name="thinkgraph.thinks",
-        purpose="automatic_completed_main_pair",
-        task="thinkgraph",
-        temperature=0.0,
-        max_tokens=8_192,
-        timeout=600,
-    )
-    if result.parsed is None:
-        raise RuntimeError("liquidaity_thinkgraph_structured_output_invalid")
-    settled = _post_json(
-        origin,
-        "/thinkgraph/completed-pair/settle",
-        {
-            "projectId": project_id,
-            "pairReference": prepared["pairReference"],
-            "structuredOutput": result.parsed,
-            "provider": result.provider,
-            "model": result.model,
-        },
-        timeout=120,
+        timeout=1_830,
     )
     if settled.get("ok") is not True:
         raise RuntimeError("liquidaity_thinkgraph_settle_failed")
@@ -255,32 +226,19 @@ def register(ctx: Any) -> None:
         ),
         emoji="🕸️",
     )
-    ctx.register_auxiliary_task(
-        "thinkgraph",
-        display_name="ThinkGraph",
-        description="Extract Entity-specific Thinks from one completed Main exchange.",
-        defaults={
-            "provider": "openai-codex",
-            "model": "gpt-5.6-luna",
-            "timeout": 600,
-        },
-    )
-
-    def navigation_context(**_: Any) -> dict[str, str] | None:
-        if ctx.profile_name not in _NAVIGATION_PROFILES:
+    def project_entity_map_context(**_: Any) -> dict[str, str] | None:
+        if ctx.profile_name not in _PROJECT_ENTITY_MAP_PROFILES:
             return None
-        context = _navigation_runtime().navigation_context(ctx.profile_name)
-        return {"context": context} if context else None
+        return {"context": _project_entity_map_context(ctx)}
 
-    ctx.register_hook("pre_llm_call", navigation_context)
+    ctx.register_hook("pre_llm_call", project_entity_map_context)
 
-    def on_session_end(*, session_id: str = "", completed: bool = False,
-                       interrupted: bool = False, **_: Any) -> None:
+    def on_main_turn_complete(*, session_id: str = "",
+                              assistant_response: str = "", **_: Any) -> None:
         if (
             ctx.profile_name != "main"
-            or completed is not True
-            or interrupted is True
             or not str(session_id or "").strip()
+            or not str(assistant_response or "").strip()
         ):
             return
         profile_name = ctx.profile_name
@@ -317,4 +275,4 @@ def register(ctx: Any) -> None:
                 error,
             )
 
-    ctx.register_hook("on_session_end", on_session_end)
+    ctx.register_hook("post_llm_call", on_main_turn_complete)

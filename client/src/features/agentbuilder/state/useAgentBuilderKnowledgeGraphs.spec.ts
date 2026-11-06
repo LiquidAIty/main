@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: KnowGraph
  * Relationship: This file verifies accepted Know deletion refreshes the provider projection exactly once while refusal preserves the current graph and avoids false refresh.
  * Entity: Project Knowledge Graph
@@ -46,6 +50,24 @@ beforeEach(() => {
 });
 
 describe('KnowGraph route contracts', () => {
+  it('refreshes KnowGraph only when the existing stream reports a KnowGraph commit', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      return new Response(JSON.stringify(url.startsWith('/api/thinkgraph/projection?')
+        ? projection() : { nodes: [], relationships: [] }), { status: 200 });
+    }));
+    const { result } = renderHook(() => useAgentBuilderKnowledgeGraphs({
+      projectId: 'project-one', deckId: 'deck-one', conversationId: 'conversation-one',
+    }));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+    const thinkReads = calls.filter(url => url.startsWith('/api/thinkgraph/projection?')).length;
+    await act(async () => { GraphStream.connections[0].dispatchEvent(new Event('knowgraph-changed')); });
+    await waitFor(() => expect(calls.filter(url => url.startsWith('/api/knowgraph/graph?'))).toHaveLength(2));
+    expect(calls.filter(url => url.startsWith('/api/thinkgraph/projection?'))).toHaveLength(thinkReads);
+  });
+
   it('refreshes committed ThinkGraph data without Main, a Run ID, or a KnowGraph reload', async () => {
     const calls: string[] = [];
     let currentProjection = projection();

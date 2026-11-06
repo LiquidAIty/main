@@ -31,7 +31,7 @@ describe('Hermes Webapp host', () => {
     host.__HERMES_UI_SURFACE__ = 'webapp';
     host.__HERMES_AUTH_REQUIRED__ = false;
     window.sessionStorage.setItem(sessionKey(), 'browser-session');
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ ticket: 'one-use-ticket' }), {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ticket: 'one-use-ticket' }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     }));
@@ -59,13 +59,13 @@ describe('Hermes Webapp host', () => {
     const host = window as HermesHostWindow;
     host.__HERMES_UI_SURFACE__ = 'webapp';
     window.sessionStorage.setItem(sessionKey(), 'browser-session');
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     }));
     vi.stubGlobal('fetch', fetcher);
 
-    await expect(hermesWebappHost().fetchJSON?.('/api/plugins/liquidaity/navigation-map'))
+    await expect(hermesWebappHost().fetchJSON?.('/api/plugins'))
       .resolves.toEqual({ ok: true });
     const headers = fetcher.mock.calls[0][1]?.headers as Headers;
     expect(headers.get('X-Hermes-Session-Token')).toBe('browser-session');

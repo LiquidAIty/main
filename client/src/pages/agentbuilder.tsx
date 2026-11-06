@@ -371,6 +371,14 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     void (async () => {
       const failures: string[] = [];
       try {
+        await synchronizeHermesProjectProfileCredentials({
+          projectId: canvasProjectId,
+          deckId: snapshot.id,
+        });
+      } catch (error) {
+        failures.push(`credentials: ${error instanceof Error ? error.message : 'refresh failed'}`);
+      }
+      try {
         await synchronizeHermesSavedCardProfiles(snapshot, canvasProjectId);
       } catch (error) {
         failures.push(`profiles: ${error instanceof Error ? error.message : 'publication failed'}`);
@@ -379,14 +387,6 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
         await synchronizeHermesTopologyProfiles(snapshot);
       } catch (error) {
         failures.push(`rosters: ${error instanceof Error ? error.message : 'publication failed'}`);
-      }
-      try {
-        await synchronizeHermesProjectProfileCredentials({
-          projectId: canvasProjectId,
-          deckId: snapshot.id,
-        });
-      } catch (error) {
-        failures.push(`credentials: ${error instanceof Error ? error.message : 'refresh failed'}`);
       }
       if (failures.length) throw new Error(failures.join('; '));
     })().then(() => {

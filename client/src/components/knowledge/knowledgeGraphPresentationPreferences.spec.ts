@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
 /**
+ * Graph + less = more: less code that does the same work as more code is more useful.
+ * Entity names the feature; Relationship explains why this file belongs and what it contributes.
+ * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
+ * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
  * Relationship: This file verifies authority-scoped saved presentation and material fields without mutating provider records.
  */
@@ -65,8 +69,9 @@ describe('knowledge graph presentation preferences', () => {
     expect(safePresentationPreferences('thinkgraph')).toEqual({
       schemaVersion: 6,
       layout: 'radial',
+      style: 'classic',
       physicsProfile: 'open',
-      settings: { repel: 80, link: 44, gravity: 20, linkw: 0.6 },
+      settings: { repel: 80, link: 44, gravity: 20, linkw: 0.6, size: 3, labels: false },
     });
     expect(safePresentationPreferences('joined')).toEqual({});
     expect(safePresentationPreferences('knowgraph')).toEqual({

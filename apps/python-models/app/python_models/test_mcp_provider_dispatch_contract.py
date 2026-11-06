@@ -553,7 +553,7 @@ def test_entity_know_dispatch_preserves_grounded_citation_and_typed_fields(
     projected = mcp_provider_operations.namespace_provider_tools(
         "graphiti", [provider_tool],
     )[0]
-    assert projected.input_schema == provider_tool.input_schema
+    assert "update_communities" not in projected.input_schema["properties"]
 
     mcp_provider_operations.register_graphiti_catalog([projected])
     definition = operation_definition("graphiti.add_know")
@@ -575,7 +575,6 @@ def test_entity_know_dispatch_preserves_grounded_citation_and_typed_fields(
             "proposition": "Rocket Lab can compound launch revenue.",
             "relation": "supports",
         },
-        update_communities=True,
     ))
 
     assert result["episode_uuid"] == "episode-one"
@@ -599,7 +598,97 @@ def test_entity_know_dispatch_preserves_grounded_citation_and_typed_fields(
     assert "source_description" not in arguments
 
 
-@pytest.mark.parametrize("operation", ["add_know", "get_know", "get_entity_knows", "search_knows"])
+def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return(
+    monkeypatch,
+):
+    import asyncio
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock
+
+    know_payload = {
+        "uuid": "know-one",
+        "name": "Bounded finding",
+        "entity_uuid": "entity-one",
+        "observation": "One source-backed observation.",
+        "interpretation": "One bounded interpretation.",
+        "citation": {"url": "https://example.test/source"},
+        "content_hash": "a" * 64,
+        "group_id": "liquidaity-project-one",
+    }
+    know = SimpleNamespace(
+        uuid="know-one",
+        entity_uuid="entity-one",
+        content_hash="a" * 64,
+        group_id="liquidaity-project-one",
+    )
+    graphiti_client = SimpleNamespace(
+        add_know=AsyncMock(return_value=SimpleNamespace(
+            know=know,
+            created=True,
+            entity_created=False,
+        )),
+        get_know=AsyncMock(return_value=know),
+    )
+    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE", SimpleNamespace(
+        graphiti_client=graphiti_client,
+        graphiti_service=SimpleNamespace(
+            entity_types={}, edge_types={}, edge_type_map={},
+        ),
+        parse_reference_time=lambda value: None if value is None else datetime(2026, 10, 19, tzinfo=timezone.utc),
+        _know_result=lambda _know: dict(know_payload),
+    ))
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: {
+        "kind": "card-runtime", "profile": "knowgraph",
+    })
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: {
+        "projectId": "project-one",
+    })
+    settle = AsyncMock(return_value={"status": "current"})
+    from app import backend_operation_transport
+    from app.python_models import engraphis
+    from unittest.mock import Mock
+    notification = Mock()
+    monkeypatch.setattr(backend_operation_transport, "notify_graph_changed", notification)
+    monkeypatch.setattr(engraphis, "project_principal", lambda _: {"id": "owner-one"})
+    monkeypatch.setattr(
+        mcp_graphiti_provider,
+        "_settle_research_relationships",
+        settle,
+    )
+
+    result = asyncio.run(mcp_graphiti_provider.call_graphiti_tool("add_know", {
+        "group_id": "liquidaity-project-one",
+        "entity_name": "Rocket Lab",
+        "name": "Bounded finding",
+        "observation": "One source-backed observation.",
+        "interpretation": "One bounded interpretation.",
+        "citation": {
+            "url": "https://example.test/source",
+            "title": "Source",
+            "publisher": "Publisher",
+            "evidence": "One exact source-backed evidence passage.",
+            "publishedAt": "2026-10-19",
+        },
+    }))
+
+    assert isinstance(result, CallToolResult)
+    assert result.is_error is False
+    assert result.structured_content["result"]["status"] == "completed"
+    graphiti_client.add_know.assert_awaited_once()
+    assert graphiti_client.add_know.await_args.kwargs["update_communities"] is False
+    assert graphiti_client.add_know.await_args.kwargs["reference_time"].tzinfo is not None
+    receipt = result.structured_content["result"]
+    assert all(key in receipt for key in (
+        "message", "know_uuid", "content_hash", "group_id", "entity_name", "entity_uuid",
+    ))
+    settle.assert_awaited_once_with("project-one", "know-one")
+    notification.assert_called_once_with("project-one", "owner-one", "knowgraph")
+    graphiti_client.get_know.assert_awaited_once_with(
+        "know-one", group_id="liquidaity-project-one",
+    )
+
+
+@pytest.mark.parametrize("operation", ["get_know", "get_entity_knows", "search_knows"])
 @pytest.mark.parametrize("profile", ["builder", "knowgraph"])
 def test_saved_cards_use_the_existing_graphiti_tool_contract(monkeypatch, operation, profile):
     import asyncio

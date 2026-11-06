@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const host = vi.hoisted(() => ({
   handlers: new Map<string, (event: any) => void>(),
+  stateHandlers: new Set<(state: string) => void>(),
   requestHandler: null as null | ((request: any) => boolean | void),
   request: vi.fn(),
 }));
@@ -21,6 +22,11 @@ vi.mock('./hermesHost', () => ({
       host.requestHandler = handler;
       return () => { if (host.requestHandler === handler) host.requestHandler = null; };
     },
+    onState: (handler: (state: string) => void) => {
+      host.stateHandlers.add(handler);
+      handler('open');
+      return () => host.stateHandlers.delete(handler);
+    },
     request: host.request,
   }),
 }));
@@ -32,6 +38,7 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 describe('Hermes Main chat binding', () => {
   beforeEach(() => {
     host.handlers.clear();
+    host.stateHandlers.clear();
     host.requestHandler = null;
     host.request.mockReset();
   });
@@ -69,6 +76,39 @@ describe('Hermes Main chat binding', () => {
       submission_id: expect.stringMatching(UUID_V4),
       text: '  @KnowGraph exact text  ',
     }));
+  });
+
+  it('resumes the same Bot Chat before Send after a Gateway reconnect', async () => {
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: [] };
+      if (method === 'session.create') return { session_id: 'main-session', messages: [] };
+      if (method === 'session.resume') {
+        return { session_id: 'main-session', messages: [], running: false };
+      }
+      if (method === 'prompt.submit') return { accepted: true };
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    const { result } = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+
+    act(() => {
+      for (const handler of host.stateHandlers) handler('closed');
+      for (const handler of host.stateHandlers) handler('open');
+    });
+    await waitFor(() => expect(host.request).toHaveBeenCalledWith('session.resume', {
+      session_id: 'main-session',
+      profile: 'main',
+      source: 'gui',
+    }));
+
+    await act(async () => {
+      expect(await result.current.send('literal after reconnect')).toBe(true);
+    });
+    const methods = host.request.mock.calls.map(([method]) => method);
+    expect(methods.lastIndexOf('session.resume')).toBeLessThan(
+      methods.lastIndexOf('prompt.submit'),
+    );
   });
 
   it('gives a voice transcript its own Hermes submission identity', async () => {
