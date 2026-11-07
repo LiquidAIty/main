@@ -100,7 +100,7 @@ task copy, scheduler, board, worker selector, or dispatcher. The Task tab reads 
 authenticated Kanban board/task APIs and reconstructs only the exact root creator lineage.
 
 The plugin admits through documented `ctx.dispatch_tool("kanban_create", ...)`. The retained Hermes
-0.22.7 fork contains the smallest policy delta needed because upstream `kanban_create` has no structural
+0.23.0 fork retains the policy delta needed because upstream `kanban_create` has no structural
 Team/Magnetic root or mission-scoped assignee ceiling. Ordinary Kanban and Bot Mode behavior are
 regression-tested.
 

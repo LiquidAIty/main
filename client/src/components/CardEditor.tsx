@@ -850,8 +850,11 @@ export function CardEditor({
       setHermesProfile(activeProfile);
       setHermesProfileStatus('ready');
       const selectedTools = parseListText(String((payload.tools || []).join('\n')));
-      const librarySkills = parseListText(String((payload.skills || []).join('\n')));
-      const selectedSkills = [...new Set([payload.runtime.profile, ...librarySkills])];
+      const savedSkills = parseListText(String((payload.skills || []).join('\n')));
+      const selectedSkills = [
+        ...savedSkills.filter((name) => name === payload.runtime.profile),
+        ...savedSkills.filter((name) => name !== payload.runtime.profile),
+      ];
       const cardScript = await loadCardScriptRuntime(projectId, deckId, cardId);
       const enabledMcpServers = new Set(parseListText(String(
         (payload.mcp_connection_ids || []).join('\n'),
@@ -885,8 +888,8 @@ export function CardEditor({
       const enabledToolsets = new Set(
         parseListText(String((payload.toolsets || []).join('\n'))),
       );
-      if (cardScript || taskMode) enabledToolsets.add('liquidaity');
-      else enabledToolsets.delete('liquidaity');
+      if (cardScript || taskMode) enabledToolsets.add('card-tools');
+      else enabledToolsets.delete('card-tools');
       const state = await configureHermesProfile({
         profile: payload.runtime.profile,
         soul: String(payload.prompt_template || ''),
@@ -969,7 +972,11 @@ export function CardEditor({
       setSkillEditor((current) => current
         ? { ...current, exists: true, savedContent: content }
         : current);
-      const selectedSkills = [...new Set([cardSkillName, ...parseListText(skillsText)])];
+      const savedSkills = parseListText(skillsText);
+      const selectedSkills = [
+        ...savedSkills.filter((name) => name === cardSkillName),
+        ...savedSkills.filter((name) => name !== cardSkillName),
+      ];
       const state = await configureHermesProfile({
         profile,
         enabledSkills: selectedSkills,
@@ -1417,7 +1424,14 @@ export function CardEditor({
       );
     }
     if (sectionTab === 'Skills') {
-      const selectedLibrarySkills = new Set(parseListText(skillsText));
+      const selectedSkills = new Set(parseListText(skillsText));
+      const selectSkill = (name: string, checked: boolean) => {
+        const next = new Set(selectedSkills);
+        if (checked) next.add(name);
+        else next.delete(name);
+        setSkillsText([...next].join('\n'));
+        markDraftDirty();
+      };
       const librarySkills = (hermesProfile?.skills || [])
         .filter((skill) => skill.name !== cardSkillName)
         .sort((left, right) => left.name.localeCompare(right.name));
@@ -1431,33 +1445,15 @@ export function CardEditor({
           {hermesProfileStatus === 'loading' ? <div role="status">Loading skills…</div> : null}
           {hermesProfileStatus === 'failed' ? <div role="alert">{hermesProfileError}</div> : null}
           {hermesProfileError && hermesProfileStatus !== 'failed' ? <div role="alert">{hermesProfileError}</div> : null}
-          {hermesProfileStatus === 'ready' ? (
-            <fieldset aria-label="Hermes skill library" style={{ display: 'grid', gap: 6 }}>
-              <legend style={{ color: '#E0DED5', fontSize: 12 }}>Optional Hermes library skills</legend>
-              {librarySkills.map((skill) => (
-                <label key={skill.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedLibrarySkills.has(skill.name)}
-                    onChange={(event) => {
-                      const next = new Set(selectedLibrarySkills);
-                      if (event.target.checked) next.add(skill.name);
-                      else next.delete(skill.name);
-                      setSkillsText([...next].join('\n'));
-                      markDraftDirty();
-                    }}
-                  />
-                  <span>{skill.name}</span>
-                </label>
-              ))}
-              {!librarySkills.length ? (
-                <span style={{ color: '#91A9B8', fontSize: 11 }}>No optional Hermes skills are available.</span>
-              ) : null}
-            </fieldset>
-          ) : null}
           {skillEditor ? (
             <section style={{ display: 'grid', gap: 8 }} aria-label="Skill editor">
               <strong>{skillEditor.exists ? 'Edit' : 'Create'} {skillEditor.name}</strong>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" aria-label="Use custom skill"
+                  checked={selectedSkills.has(cardSkillName)}
+                  onChange={(event) => selectSkill(cardSkillName, event.target.checked)} />
+                <span>Use custom skill</span>
+              </label>
               {skillEditor.status === 'loading' ? <div role="status">Loading skill…</div> : null}
               {skillEditor.error ? <div role="alert">{skillEditor.error}</div> : null}
               {skillEditor.status === 'ready' || skillEditor.status === 'saving' ? <>
@@ -1474,6 +1470,21 @@ export function CardEditor({
                 </div>
               </> : null}
             </section>
+          ) : null}
+          {hermesProfileStatus === 'ready' ? (
+            <fieldset aria-label="Hermes skill library" style={{ display: 'grid', gap: 6 }}>
+              <legend style={{ color: '#E0DED5', fontSize: 12 }}>Optional Hermes library skills</legend>
+              {librarySkills.map((skill) => (
+                <label key={skill.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={selectedSkills.has(skill.name)}
+                    onChange={(event) => selectSkill(skill.name, event.target.checked)} />
+                  <span>{skill.name}</span>
+                </label>
+              ))}
+              {!librarySkills.length ? (
+                <span style={{ color: '#91A9B8', fontSize: 11 }}>No optional Hermes skills are available.</span>
+              ) : null}
+            </fieldset>
           ) : null}
         </section>
       );

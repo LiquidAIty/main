@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from pm.environment import PythonEnvironment
 
 from pm import paths
+from pm.filesystem import long_root
 from pm.package import InstallError
 from pm.plugin_declarations import read_python_declaration, manifest_version_error
 
@@ -122,7 +123,7 @@ def _copy_core_inputs(source: Path, destination: Path) -> None:
                 and not entry.name.startswith(".") and entry.resolve() != destination.resolve()
                 and any(fnmatch.fnmatchcase(entry.name, pattern) for pattern in package_roots)):
             target = destination / entry.name
-            shutil.copytree(entry, target, ignore=ignore)
+            shutil.copytree(long_root(entry), long_root(target), ignore=ignore)
     for name in files:
         entry = source / name
         if not entry.is_file() or entry.is_symlink():

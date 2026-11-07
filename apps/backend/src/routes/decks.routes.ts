@@ -15,12 +15,10 @@ import {
 } from '../decks/deckDomainClient';
 import type { DeckDocument } from '../types';
 import {
-  assertCardProfileOwner,
   attachSavedCardToProject,
   discardFreshMembership,
   listSavedCardsForProject,
 } from '../services/projectStore';
-import { createInternalMcpBearer } from '../services/mcp/internalMcpAuth';
 import { requireOwnedProject } from './projectAccess';
 
 const router = Router();
@@ -88,54 +86,6 @@ router.get('/:projectId/decks/:deckId/saved-cards', async (req, res) => {
     return res.json({ ok: true, cards });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'saved_card_list_failed' });
-  }
-});
-
-router.post('/:projectId/decks/:deckId/profile-credentials', async (req, res) => {
-  try {
-    const access = await requireOwnedProject(req, res, req.params.projectId);
-    if (!access) return;
-    const loaded = await getDeckDocument(access.projectId, req.params.deckId);
-    const deckId = String(loaded.deck?.id || '').trim();
-    const profileCounts = new Map<string, number>();
-    for (const card of loaded.deck?.nodes || []) {
-      if (card.enabled === false || card.runtime?.kind !== 'hermes') continue;
-      const profile = String(card.runtime.profile || '').trim().toLowerCase();
-      if (!profile) throw new Error('persisted_card_profile_unavailable');
-      profileCounts.set(profile, (profileCounts.get(profile) || 0) + 1);
-    }
-    if (!deckId || profileCounts.size === 0 || [...profileCounts.values()].some(count => count !== 1)) {
-      throw new Error('persisted_card_profile_unavailable');
-    }
-    const profiles = [...profileCounts.keys()].sort();
-    await Promise.all(profiles.map(profile => assertCardProfileOwner(profile, access.ownerUserId)));
-    res.setHeader('Cache-Control', 'no-store');
-    return res.json({
-      ok: true,
-      projectId: access.projectId,
-      deckId,
-      credentials: profiles.map(profile => ({
-        profile,
-        bearer: createInternalMcpBearer({
-          kind: 'card-runtime',
-          ownerUserId: access.ownerUserId,
-          projectId: access.projectId,
-          deckId,
-          profile,
-        }),
-      })),
-    });
-  } catch (err: any) {
-    const message = String(err?.message || 'profile_credentials_unavailable');
-    const status = message === 'deck_not_found'
-      ? 404
-      : message === 'persisted_card_profile_unavailable'
-        || message === 'card_profile_owner_conflict'
-        ? 409
-        : message === 'internal_mcp_secret_missing'
-          ? 503
-          : 500;
-    return res.status(status).json({ ok: false, error: message });
   }
 });
 

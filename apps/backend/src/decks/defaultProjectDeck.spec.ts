@@ -189,7 +189,7 @@ describe('backend-owned default Project deck', () => {
     expect(byId.get('builder')?.runtimeOptions).toMatchObject({
       subagentType: 'none',
       modelKey: 'gpt-5.6-sol',
-      skills: ['codebase-inspection'],
+      skills: ['builder', 'codebase-inspection'],
       tools: [
         'canvas.inspect',
         'canvas.upsert_wire',
@@ -206,7 +206,7 @@ describe('backend-owned default Project deck', () => {
         'cbm.search_code',
         'cbm.query_graph',
       ],
-      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
+      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution', 'skills'],
     });
     expect(byId.get('card_thinkgraph')?.runtimeOptions?.tools).toEqual([
       'engraphis_recall_context',
@@ -249,11 +249,11 @@ describe('backend-owned default Project deck', () => {
         'graphiti.search_memory_facts',
         'graphiti.get_episodes',
       ],
-      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution', 'liquidaity'],
+      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution', 'card-tools', 'skills'],
     });
     expect(byId.get('card_magentic')?.runtimeOptions).toMatchObject({
       modelKey: 'gpt-5.6-sol',
-      toolsets: ['liquidaity'],
+      toolsets: ['card-tools', 'skills'],
     });
     expect(byId.get('card_knowgraph')?.runtimeOptions).toMatchObject({
       modelKey: 'gpt-5.6-sol',
@@ -265,21 +265,21 @@ describe('backend-owned default Project deck', () => {
         'graphiti.get_status',
         'graphiti.search_knows',
       ]),
-      toolsets: ['web', 'terminal', 'code_execution'],
+      toolsets: ['web', 'terminal', 'code_execution', 'skills'],
     });
     expect(Object.fromEntries(DEFAULT_PROJECT_DECK.nodes.map((card) => [
       card.id,
       card.runtimeOptions?.skills,
     ]))).toEqual({
-      card_main_chat: ['hermes-agent'],
-      builder: ['codebase-inspection'],
-      card_thinkgraph: ['hermes-agent'],
-      card_magentic: ['hermes-agent'],
-      card_team: ['hermes-agent'],
-      card_knowgraph: ['grounded-citations'],
+      card_main_chat: ['main', 'hermes-agent'],
+      builder: ['builder', 'codebase-inspection'],
+      card_thinkgraph: ['thinkgraph', 'hermes-agent'],
+      card_magentic: ['card_magentic', 'hermes-agent'],
+      card_team: ['team', 'hermes-agent'],
+      card_knowgraph: ['knowgraph', 'grounded-citations'],
     });
     expect(byId.get('card_knowgraph')?.runtimeOptions?.skills).toEqual([
-      'grounded-citations',
+      'knowgraph', 'grounded-citations',
     ]);
     expect(byId.get('card_knowgraph')?.prompt).toContain(
       'One Know is one first-class durable Graphiti object',

@@ -42,6 +42,7 @@ def test_graph_map_injection_is_absent_for_all_four_profiles():
             return "project-one" if name == "project_id" else default
 
         def register_tool(self, **_kwargs):
+            assert _kwargs['toolset'] == 'card-tools'  # Must not shadow the liquidaity MCP alias.
             self.tools.append(_kwargs["name"])
 
         def register_hook(self, name, callback):

@@ -124,7 +124,7 @@ def register(ctx: Any) -> None:
     card_script = normalize_card_script(ctx.get_config("card_script", {}))
     ctx.register_tool(
         name=CARD_SCRIPT_TOOL_NAME,
-        toolset="liquidaity",
+        toolset="card-tools",
         schema=card_python_schema(card_script),
         handler=build_card_script_handler(ctx),
         check_fn=lambda: normalize_card_script(
@@ -135,7 +135,7 @@ def register(ctx: Any) -> None:
     )
     ctx.register_tool(
         name=TASKGRAPH_TOOL_NAME,
-        toolset="liquidaity",
+        toolset="card-tools",
         schema=taskgraph_schema(),
         handler=build_taskgraph_handler(ctx),
         check_fn=lambda: taskgraph_available(ctx),

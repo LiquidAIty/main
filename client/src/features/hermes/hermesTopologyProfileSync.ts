@@ -1,6 +1,6 @@
 /**
  * Entity: Card Topology
- * Relationship: Projects each persisted orchestrator wire roster into its stable Hermes profile after exact deck readback.
+ * Relationship: Derives each saved orchestrator's exact authorized membership from persisted wires without writing profiles.
  * Entity: Agent Messaging
  * Relationship: Keeps native Bot reachability and Magnetic's blue worker ceiling synchronized with saved orange and blue topology.
  */
@@ -10,7 +10,6 @@ import {
   hasAgentOrchestratorAuthority,
   wiredBotTargets,
 } from '../agentbuilder/deck/deckPrimitives';
-import { configureHermesBotRoster } from './hermesProfileClient';
 
 export type HermesTopologyPlan = {
   cardId: string;
@@ -35,14 +34,4 @@ export function hermesTopologyPlans(deck: DeckDocument): HermesTopologyPlan[] {
       botModeRoster: [...new Set(roster.map((target) => target.profile))],
     }];
   });
-}
-
-export async function synchronizeHermesTopologyProfiles(
-  deck: DeckDocument,
-): Promise<HermesTopologyPlan[]> {
-  const plans = hermesTopologyPlans(deck);
-  for (const plan of plans) {
-    await configureHermesBotRoster(plan.profile, plan.botModeRoster);
-  }
-  return plans;
 }

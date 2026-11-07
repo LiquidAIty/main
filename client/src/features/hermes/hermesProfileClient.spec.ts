@@ -18,7 +18,6 @@ import {
   configureHermesProfile,
   createHermesProfile,
   createHermesSkill,
-  ensureHermesPluginEnabled,
   loadHermesProfile,
   saveHermesSkill,
 } from './hermesProfileClient';
@@ -179,19 +178,6 @@ describe('Hermes profile skill binding', () => {
       provider: 'openai-codex',
       default: 'gpt-5.6-sol',
     });
-  });
-
-  it('binds the current Project even when the plugin was already enabled', async () => {
-    config.plugins.enabled = ['existing-plugin', 'liquidaity'];
-    config.plugins.entries.liquidaity.settings.project_id = 'old-project';
-
-    await ensureHermesPluginEnabled('main', 'current-project');
-
-    expect(config.plugins.entries.liquidaity.settings.project_id).toBe('current-project');
-    expect(config.plugins.isolation).toBe('host');
-    expect(config.mcp_servers.liquidaity.headers['X-LiquidAIty-Hermes-Profile']).toBe('main');
-    expect(host.request).not.toHaveBeenCalled();
-    expect(servers[0].tools.include).toEqual(['engraphis_get_memory']);
   });
 
   it('publishes and reads back Bot Mode roster without loading tools, MCP, or skills', async () => {

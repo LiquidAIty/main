@@ -1,14 +1,8 @@
 // Entity: Card Topology
 // Relationship: Verifies persisted orange and blue wires produce exact native Bot rosters and Magnetic worker membership before profile publication.
 
-import { describe, expect, it, vi } from 'vitest';
-
-const profile = vi.hoisted(() => ({ configureRoster: vi.fn() }));
-vi.mock('./hermesProfileClient', () => ({
-  configureHermesBotRoster: profile.configureRoster,
-}));
-
-import { hermesTopologyPlans, synchronizeHermesTopologyProfiles } from './hermesTopologyProfileSync';
+import { describe, expect, it } from 'vitest';
+import { hermesTopologyPlans } from './hermesTopologyProfileSync';
 import type { DeckDocument } from '../../types/agentgraph';
 
 function deck(): DeckDocument {
@@ -42,16 +36,12 @@ function deck(): DeckDocument {
 }
 
 describe('Hermes topology profile synchronization', () => {
-  it('publishes direct reachability and the exact blue worker ceiling', async () => {
-    profile.configureRoster.mockResolvedValue([]);
+  it('derives direct reachability and the exact blue worker ceiling', () => {
     expect(hermesTopologyPlans(deck())).toEqual([
       { cardId: 'card_main_chat', profile: 'main', botModeRoster: ['orchestrator', 'card_magentic', 'worker'] },
       { cardId: 'orchestrator', profile: 'orchestrator', botModeRoster: ['main'] },
       { cardId: 'card_magentic', profile: 'card_magentic', botModeRoster: ['worker'] },
     ]);
-    await synchronizeHermesTopologyProfiles(deck());
-    expect(profile.configureRoster).toHaveBeenCalledTimes(3);
-    expect(profile.configureRoster).toHaveBeenLastCalledWith('card_magentic', ['worker']);
   });
 
   it('projects the retained eleven-Card, nine-wire Trading topology exactly', () => {

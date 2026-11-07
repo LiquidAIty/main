@@ -70,7 +70,7 @@ function transcriptMessage(row: TranscriptMessage): HermesChatMessage | null {
   const displayKind = text(row.display_kind).trim().toLowerCase();
   const displayText = text(metadata.display_text);
   const body = displayText || text(row.text ?? row.content);
-  if (!body.trim() || displayKind === 'hidden' || displayKind === 'process_complete') return null;
+  if (!body.trim() || displayKind === 'hidden') return null;
   if (displayKind === 'internal_notification') {
     const delivery = HERMES_AGENT_MESSAGE_RE.exec(body);
     if (!delivery) return null;
@@ -82,14 +82,16 @@ function transcriptMessage(row: TranscriptMessage): HermesChatMessage | null {
       rowId: typeof row.row_id === 'number' ? row.row_id : undefined,
     };
   }
-  const role = botAuthored ? 'assistant' : text(row.role).trim().toLowerCase();
+  const role = botAuthored || displayKind === 'process_complete'
+    ? 'assistant' : text(row.role).trim().toLowerCase();
   if (role !== 'user' && role !== 'assistant') return null;
   return {
     role,
     text: body,
     speaker: botAuthored
       ? text(author.name || author.id)
-      : role === 'assistant' ? 'Main' : 'You',
+      : displayKind === 'process_complete' ? 'Hermes'
+        : role === 'assistant' ? 'Main' : 'You',
     status: row.display_kind === 'failed_turn' ? 'error' : 'complete',
     rowId: typeof row.row_id === 'number' ? row.row_id : undefined,
     linkedEvidenceIds: Array.isArray(metadata.linkedEvidenceIds)
@@ -291,7 +293,7 @@ export default function useHermesMainChat(projectId: string) {
       unsubscribers.push(gateway.on('message.start', (event) => {
         if (!belongs(event)) return;
         const displayKind = text(event.payload?.display_kind).trim().toLowerCase();
-        visibleTurnRef.current = displayKind !== 'hidden' && displayKind !== 'process_complete';
+        visibleTurnRef.current = displayKind !== 'hidden';
         if (!visibleTurnRef.current) return;
         streamingIndexRef.current = null;
         deltaCursorRef.current = { turnId: '', segment: -1, offset: 0 };
@@ -350,7 +352,10 @@ export default function useHermesMainChat(projectId: string) {
             };
             return next;
           }
-          return current;
+          return finalText ? [...current, {
+            role: 'assistant', text: finalText,
+            status: failed ? 'error' : 'complete',
+          }] : current;
         });
         streamingIndexRef.current = null;
         deltaCursorRef.current = { turnId: '', segment: -1, offset: 0 };

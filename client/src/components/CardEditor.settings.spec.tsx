@@ -25,7 +25,7 @@ import { CardEditor } from './CardEditor';
 const config = { runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'trading' },
   provider: 'openai' as const, access_mode: 'chatgpt-account' as const, model_key: 'gpt-5.6-sol',
   prompt_template: '# CARD_PROMPT_V1\n[ROLE]\nResearch carefully.\n\n[GOAL]\nReturn evidence.',
-  tools: ['engraphis_get_memory'], toolsets: ['web'], skills: ['research'] };
+  tools: ['engraphis_get_memory'], toolsets: ['web'], skills: ['trading', 'research'] };
 
 const cardSkill = `---
 name: trading
@@ -171,7 +171,7 @@ describe('restored Card settings surfaces', () => {
       autoLoadSkills: ['trading', 'research'],
     })));
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
-      skills: ['research'],
+      skills: ['trading', 'research'],
     })));
     expect(screen.queryByLabelText('Skill graph')).toBeNull();
     expect(screen.queryByLabelText('Learning')).toBeNull();
@@ -200,7 +200,7 @@ describe('restored Card settings surfaces', () => {
     const optional = await screen.findByLabelText('hermes-agent');
     fireEvent.click(optional);
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
-      skills: ['research', 'hermes-agent'],
+      skills: ['trading', 'research', 'hermes-agent'],
     })));
     expect(screen.getByText('Edit trading')).toBeTruthy();
   });

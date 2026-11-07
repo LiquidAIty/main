@@ -4,7 +4,7 @@
  * Entity: Saved Cards
  * Relationship: This file persists the exact current Card document and optimistic revision, promotes explicit saves, and freezes on an uncertain commit until canonical reload.
  * Entity: Card Topology
- * Relationship: This file persists Card placement and edges through the same single writer while excluding unsaved transient Cards and their incident edges.
+ * Relationship: Persists Card placement and edges through the same single writer, then publishes only changed saved wire memberships to Hermes.
  * Entity: Projects
  * Relationship: This file fences queued and in-flight saves to the exact active Project and rejects completions from a superseded workspace scope.
  */
@@ -15,6 +15,8 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { safeJson } from '../../../components/builder/requestGuards';
 import { applicationFetch } from '../../../lib/applicationApi';
 import type { DeckDocument } from '../../../types/agentgraph';
+import { hermesTopologyPlans } from '../../hermes/hermesTopologyProfileSync';
+import { configureHermesBotRoster } from '../../hermes/hermesProfileClient';
 
 type IntegrityResult = {
   ok: boolean;
@@ -232,6 +234,9 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
       }
 
       const canonicalDeck = config.readDeckDocument(data.deck as DeckDocument);
+      const previousDeck = config.lastPersistedBoardFingerprintRef.current
+        ? { ...canonicalDeck, ...JSON.parse(config.lastPersistedBoardFingerprintRef.current) } as DeckDocument
+        : canonicalDeck;
       const canonicalFingerprint = boardFingerprint(canonicalDeck);
       const revisionAfter = data.meta.deckRevision;
       revisionRef.current = revisionAfter;
@@ -256,7 +261,22 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
         revisionAfter,
         ok: true,
       });
-      for (const waiter of request.waiters) waiter.resolve();
+      try {
+        const before = hermesTopologyPlans(previousDeck);
+        const after = hermesTopologyPlans(canonicalDeck);
+        for (const profile of new Set([...before, ...after].map((plan) => plan.profile))) {
+          const prior = before.find((plan) => plan.profile === profile)?.botModeRoster || [];
+          const next = after.find((plan) => plan.profile === profile)?.botModeRoster || [];
+          if (prior.length !== next.length || prior.some((target) => !next.includes(target))) {
+            await configureHermesBotRoster(profile, next);
+          }
+        }
+        for (const waiter of request.waiters) waiter.resolve();
+      } catch (error) {
+        const message = errorText(error, 'Hermes wire publication failed.');
+        config.setDeckStatusMessage(`Board saved; Hermes wire update failed: ${message}`);
+        rejectRequest(request, new Error(message));
+      }
     } catch (error) {
       const activeScope = scopeRef.current;
       if (

@@ -8,12 +8,11 @@ runtime, or restoration of historical overlay files.
 
 - Project: `NousResearch/hermes-agent`
 - Remote: `https://github.com/NousResearch/hermes-agent.git`
-- Release tag: `v0.22.7`
-- Package version: `0.22.7`
-- Release date: `2026.11.3`
-- Annotated tag object: `592aa804d6ed135a18d6a01fb0824bfdbb0279d7`
-- Source commit: `b200f5bc60e31588ba2cb60e288029c4a54ba5fa`
-- Imported into this working tree on `2026.11.4`
+- Release tag: `v0.23.0`
+- Package version: `0.23.0`
+- Release date: `2026.11.5`
+- Official source: `https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.0`
+- Imported into this working tree on `2026.11.7`, retaining the existing local overlays.
 
 Production uses only `HermesLatest/`. There is no comparison runtime, fallback checkout, parallel
 Gateway, or application-owned task service.
@@ -43,7 +42,7 @@ dependencies, attempts, dispatch, worker processes, retries, notifications, and 
 
 ### External alternative check
 
-Hermes 0.22.7 exposes public plugin tool dispatch, but upstream `kanban_create` has no structural
+Hermes 0.23.0 exposes public plugin tool dispatch, but upstream `kanban_create` has no structural
 Team/Magnetic root, exact mission-scoped assignee ceiling, or same-root synthesis contract. Putting that
 behavior in LiquidAIty application code would require a second task store, dispatcher, worker registry,
 or private database writer. The smallest owner-local change is therefore inside Hermes's existing
@@ -75,8 +74,41 @@ SQLite ledger.
 | `tools/delegate_tool.py` | Prevents a temporary AutoTeam worker from opening another delegation tree. |
 | `tools/kanban_tools.py` | Lets structurally configured Team and Magnetic profiles enter their exact root paths through public `kanban_create`, including native completion subscription, while retaining ordinary task creation. |
 
-Standard `tools/bot_mode_dm.py` is byte-identical to the imported baseline in this change.
-LiquidAIty does not patch Bot delivery, target sessions, reply waiting, or sender identity.
+## Wire-controlled Bot Mode and retained integration repairs
+
+The ordinary 0.23.0 single-final-reply Bot protocol, delivery process, outcome reporting, sender
+identity, and completion notification remain upstream-owned. LiquidAIty supplies the saved wire
+roster, not a second delivery or task system.
+
+| File | Local delta and preserved behavior |
+| --- | --- |
+| `tools/bot_mode_probe.py` | An explicit profile roster is the ordered local-target authority; an empty roster stays empty. Absent configuration retains upstream discovery. Live-profile resolution, Bot activation, prompt roster, and capability fingerprint use that same authority. Protocol epoch 4 advances the earlier local epoch 3 so retained Bot Chats adopt upstream's new single-reply instructions once. |
+| `tools/bot_mode_dm.py` | Resolves local targets through that roster and filters upstream friendly-name matching to authorized entries. Preserves upstream self-target handling and the 0.23.0 delivery/combined-reply implementation. |
+| `tui_gateway/methods_profiles.py`, `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` | Configure and read back `bot_mode_roster`; the shared TypeScript/OpenRPC contracts are regenerated from these schemas. |
+| `gateway/run.py` | Retains concurrent per-profile MCP discovery during startup. |
+| `hermes_cli/middleware.py` | Preserves the original value of a rewritten tool argument in its existing `original_*` field. |
+
+The corresponding existing Bot/profile contract tests are retained. No additional name aliases,
+fallback roster, delivery transport, reply formatter, or security-policy change is part of this update.
+
+## Windows installation prerequisite
+
+- **Purpose / files:** `pm/workspace.py::_copy_core_inputs` passes its package-directory copy through
+  the existing `pm.filesystem.long_root` helper. The official update failed while copying three
+  bundled configuration conformance files into the managed environment on Windows with long paths
+  disabled; the destination filenames exceeded MAX_PATH.
+- **External alternative check:** Hermes already provides this filesystem helper specifically for
+  that Windows setting. No registry change, relocated profile, omitted file, disabled plugin, or
+  replacement installer is needed.
+- **Contracts / upstream behavior preserved:** the same source files, ignore rules, dependency
+  manager, plugin selection, workspace identity, and transactional environment publication remain.
+  Non-Windows path behavior is unchanged.
+- **Proof:** the previously failing real managed sync completed source copy, dependency installation,
+  and publication. The managed interpreter reports Hermes 0.23.0 and a current dependency environment.
+  Generated contracts pass their regeneration check; the application and spec typechecks pass.
+  These checks do not substitute for a real Bot delivery or Team/Magnetic model run.
+- **Fork cost / rollback:** one import and one copy-call change; remove it when upstream applies the
+  same long-path handling. No saved data migration is involved.
 
 ## Focused proof
 
@@ -87,9 +119,17 @@ tests/hermes_cli/test_kanban_team.py
 tests/hermes_cli/test_kanban_magnetic.py
 ```
 
-The focused `kanban_tools` plus Team/Magnetic set passed **76 tests** in the current source turn; the
-external plugin's focused suite passed separately. This proves the tested source contracts only. It does
-not prove a loaded plugin, real provider execution, persistence readback, or UI acceptance.
+Before the 0.23.0 refresh, the focused `kanban_tools` plus Team/Magnetic set passed **76 tests**; the
+external plugin's focused suite passed separately. Those are historical source-contract results,
+not proof of the refreshed runtime or a real Team/Magnetic model run. The update retains these tests
+and their policy owners; loaded and visual update results must be reported separately.
+
+The 0.23.0 managed update, generated-contract check, application/spec typechecks, client build and
+Plugin Doctor passed. The running Main session reports 0.23.0. One real read-only Main-to-KnowGraph
+request returned a 1,343-character reply; one persisted `process_complete` notification retained that
+exact reply, Main continued, and the notice/answer survived reopening Trading Preview. This proves the
+short-reply path only. The upstream 2,000-character notification formatter remains unchanged and its
+known long-output truncation defect is not fixed. Team/Magnetic model execution was not rerun.
 
 ## Upstream behavior preserved
 

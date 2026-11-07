@@ -71,9 +71,6 @@ import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPa
 import MainBuilderSplitPanel from '../features/agentbuilder/console/MainBuilderSplitPanel';
 import useHermesMainChat from '../features/hermes/useHermesMainChat';
 import useHermesCardRuntime from '../features/hermes/useHermesCardRuntime';
-import { synchronizeHermesTopologyProfiles } from '../features/hermes/hermesTopologyProfileSync';
-import { synchronizeHermesSavedCardProfiles } from '../features/hermes/hermesSavedCardProfileSync';
-import { synchronizeHermesProjectProfileCredentials } from '../features/hermes/hermesProfileClient';
 import { applicationFetch } from '../lib/applicationApi';
 import useAgentBuilderAutosave, {
   projectDeckForPersistence,
@@ -289,20 +286,20 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     workspaceView,
     openCanvasWorkspace: () => setWorkspaceView('canvas'),
   });
-  const publishGraphView = useCallback(async (view: GraphViewContext) => {
+  const publishGraphView = useCallback(async (body: string) => {
     const response = await applicationFetch('/api/thinkgraph/view-context', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: view.map.projectId, map: view.map, openNode: view.openNode }),
+      body,
     });
     if (!response.ok) throw new Error('The displayed graph context could not be delivered.');
   }, []);
   const graphMapKeyRef = useRef('');
   const onGraphViewContext = useCallback((view: GraphViewContext) => {
     if (view.map.projectId !== canvasProjectId) return;
-    const key = JSON.stringify(view);
+    const key = JSON.stringify({ projectId: view.map.projectId, map: view.map, openNode: view.openNode });
     if (graphMapKeyRef.current !== key) {
       graphMapKeyRef.current = key;
-      void publishGraphView(view).catch(() => { graphMapKeyRef.current = ''; });
+      void publishGraphView(key).catch(() => { graphMapKeyRef.current = ''; });
     }
   }, [canvasProjectId, publishGraphView]);
   const mainChat = useHermesMainChat(canvasProjectId);
@@ -375,55 +372,9 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     ]),
   ), [cardRuntimeSnapshots]);
   const currentDeckRef = useRef(deck);
-  const topologyProfileRevisionRef = useRef('');
   useEffect(() => {
     currentDeckRef.current = deck;
   }, [deck]);
-  useEffect(() => {
-    if (!canonicalDeckReady || !canvasProjectId || !deckRevision) return;
-    const identity = `${canvasProjectId}:${deckRevision}`;
-    if (topologyProfileRevisionRef.current === identity) return;
-    let cancelled = false;
-    const snapshot = cloneDeckDocument(currentDeckRef.current);
-    void (async () => {
-      const failures: string[] = [];
-      try {
-        await synchronizeHermesProjectProfileCredentials({
-          projectId: canvasProjectId,
-          deckId: snapshot.id,
-        });
-      } catch (error) {
-        failures.push(`credentials: ${error instanceof Error ? error.message : 'refresh failed'}`);
-      }
-      try {
-        await synchronizeHermesSavedCardProfiles(snapshot, canvasProjectId);
-      } catch (error) {
-        failures.push(`profiles: ${error instanceof Error ? error.message : 'publication failed'}`);
-      }
-      try {
-        await synchronizeHermesTopologyProfiles(snapshot);
-      } catch (error) {
-        failures.push(`rosters: ${error instanceof Error ? error.message : 'publication failed'}`);
-      }
-      if (failures.length) throw new Error(failures.join('; '));
-    })().then(() => {
-      if (!cancelled) topologyProfileRevisionRef.current = identity;
-    }).catch((error) => {
-      if (!cancelled) {
-        setDeckStatusMessage(
-          error instanceof Error
-            ? `Hermes profile publication failed: ${error.message}`
-            : 'Hermes profile publication failed.',
-        );
-      }
-    });
-    return () => { cancelled = true; };
-  }, [
-    canonicalDeckReady,
-    canvasProjectId,
-    deckRevision,
-    setDeckStatusMessage,
-  ]);
   const visibleRailItems = useMemo(
     () =>
       deriveVisibleRailItems({

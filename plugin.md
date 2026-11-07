@@ -180,7 +180,7 @@ attempts, dispatch, workers, retries, and final synthesis. The plugin calls the 
 `ctx.dispatch_tool("kanban_create", ...)` doorway; the Task tab reads Hermes's bundled authenticated
 Kanban board/task APIs and reconstructs only the exact root creator lineage.
 
-Hermes 0.22.7's public `kanban_create` contract has no structural Team/Magnetic root or mission-scoped
+Hermes 0.23.0's public `kanban_create` contract has no structural Team/Magnetic root or mission-scoped
 assignee ceiling. That exact gap is why the retained Hermes fork contains a small taskgraph policy
 delta behind the existing public tool doorway and the plugin has one admission tool. The external
 plugin imports no private Kanban modules. This does not authorize a second task store, board,

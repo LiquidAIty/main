@@ -6,14 +6,10 @@
 import type {
   McpServerEntry,
   ProfilesDescribeResult,
-  ReloadMcpResult,
 } from '../../../../HermesLatest/apps/shared/src/gateway-contract.generated';
-import { applicationFetch } from '../../lib/applicationApi';
-import { hermesGateway, hermesRequest, hermesWebappHost } from './hermesHost';
+import { hermesRequest, hermesWebappHost } from './hermesHost';
 
 const APPLICATION_MCP_SERVER = 'liquidaity';
-const APPLICATION_MCP_BEARER_ENV = 'MCP_LIQUIDAITY_API_KEY';
-const HERMES_BOT_SESSION_TITLE = 'Bot Chat';
 const KNOWGRAPH_PROFILE = 'knowgraph';
 const KNOWGRAPH_WEB_SEARCH_BACKEND = 'firecrawl';
 // Hermes agent.skill_utils.ESSENTIAL_SKILLS cannot be disabled by profiles.configure.
@@ -25,8 +21,6 @@ const CARD_MEMORY_POLICY = {
   backgroundReviewEnabled: false,
   curatorEnabled: false,
 } as const;
-
-const appliedCredentialFingerprints = new Map<string, string>();
 
 type McpServerDetails = McpServerEntry & {
   source?: string;
@@ -125,11 +119,6 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(normalize(value));
 }
 
-function credentialFingerprint(bearer: string): string {
-  const separator = bearer.lastIndexOf('.');
-  return separator >= 0 ? bearer.slice(separator + 1) : bearer;
-}
-
 async function mcpServers(profile: string): Promise<McpServerDetails[]> {
   const fetchJSON = hermesWebappHost().fetchJSON;
   if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
@@ -145,138 +134,6 @@ async function profileConfig(profile: string): Promise<ProfileConfig> {
   return fetchJSON<ProfileConfig>(
     `/api/config?profile=${encodeURIComponent(profile)}`,
   );
-}
-
-export async function ensureHermesPluginEnabled(profile: string, projectId?: string): Promise<void> {
-  const name = String(profile || '').trim().toLowerCase();
-  if (!name) throw new Error('Hermes profile is required.');
-  const before = await profileConfig(name);
-  const enabled = strings(before.plugins?.enabled);
-  const applicationConnection = before.mcp_servers?.[APPLICATION_MCP_SERVER];
-  if (enabled.includes(APPLICATION_MCP_SERVER)
-    && (!applicationConnection || applicationConnection.headers?.['X-LiquidAIty-Hermes-Profile'] === name)
-    && (name !== 'main' || before.plugins?.isolation === 'host')
-    && (projectId === undefined
-      || before.plugins?.entries?.liquidaity?.settings?.project_id === projectId)) return;
-  const fetchJSON = hermesWebappHost().fetchJSON;
-  if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
-  await fetchJSON(`/api/config?profile=${encodeURIComponent(name)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      config: {
-        ...(applicationConnection ? { mcp_servers: {
-          [APPLICATION_MCP_SERVER]: {
-            headers: { 'X-LiquidAIty-Hermes-Profile': name },
-          },
-        } } : {}),
-        plugins: {
-          enabled: [...new Set([...enabled, APPLICATION_MCP_SERVER])],
-          ...(name === 'main' ? { isolation: 'host' } : {}),
-          ...(projectId === undefined ? {} : {
-            entries: { liquidaity: { settings: { project_id: projectId } } },
-          }),
-        },
-      },
-    }),
-  });
-  const after = await profileConfig(name);
-  if (applicationConnection && after.mcp_servers?.[APPLICATION_MCP_SERVER]?.headers?.['X-LiquidAIty-Hermes-Profile'] !== name) {
-    throw new Error(`MCP profile binding failed for ${name}.`);
-  }
-  if (!strings(after.plugins?.enabled).includes(APPLICATION_MCP_SERVER)) {
-    throw new Error(`Hermes plugin enablement failed for ${name}.`);
-  }
-  if (projectId !== undefined
-    && after.plugins?.entries?.liquidaity?.settings?.project_id !== projectId) {
-    throw new Error(`Project context configuration failed for ${name}.`);
-  }
-  if (name === 'main' && after.plugins?.isolation !== 'host') {
-    throw new Error('ThinkGraph completion hook requires the Hermes plugin host.');
-  }
-}
-
-export async function synchronizeHermesProjectProfileCredentials(input: {
-  projectId: string;
-  deckId: string;
-}): Promise<string[]> {
-  const projectId = String(input.projectId || '').trim();
-  const deckId = String(input.deckId || '').trim();
-  if (!projectId || !deckId) throw new Error('Project and deck are required for Hermes credentials.');
-  const response = await applicationFetch(
-    `/api/projects/${encodeURIComponent(projectId)}/decks/${encodeURIComponent(deckId)}/profile-credentials`,
-    { method: 'POST' },
-  );
-  const payload = await response.json().catch(() => null) as {
-    ok?: boolean;
-    error?: string;
-    projectId?: string;
-    deckId?: string;
-    credentials?: Array<{ profile?: unknown; bearer?: unknown }>;
-  } | null;
-  if (!response.ok || payload?.ok !== true || !Array.isArray(payload.credentials)) {
-    throw new Error(payload?.error || 'Hermes profile credentials are unavailable.');
-  }
-  if (payload.projectId !== projectId || payload.deckId !== deckId) {
-    throw new Error('Hermes profile credential scope mismatch.');
-  }
-  const credentials = payload.credentials.map((entry) => ({
-    profile: typeof entry.profile === 'string' ? entry.profile.trim().toLowerCase() : '',
-    bearer: typeof entry.bearer === 'string' ? entry.bearer.trim() : '',
-  }));
-  if (
-    credentials.length === 0
-    || credentials.some(entry => !entry.profile || !entry.bearer)
-    || new Set(credentials.map(entry => entry.profile)).size !== credentials.length
-  ) throw new Error('Hermes profile credentials are invalid.');
-
-  const fetchJSON = hermesWebappHost().fetchJSON;
-  if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
-  const failures: string[] = [];
-  for (const credential of credentials) {
-    const key = JSON.stringify([projectId, deckId, credential.profile]);
-    const fingerprint = credentialFingerprint(credential.bearer);
-    if (appliedCredentialFingerprints.get(key) === fingerprint) continue;
-    try {
-      await ensureHermesPluginEnabled(credential.profile, projectId);
-      const saved = await fetchJSON<{ ok?: boolean }>(
-        `/api/env?profile=${encodeURIComponent(credential.profile)}`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: APPLICATION_MCP_BEARER_ENV, value: credential.bearer }),
-        },
-      );
-      if (saved?.ok !== true) throw new Error('credential write failed');
-      const listed = await hermesRequest(credential.profile, 'session.list', {
-        title: HERMES_BOT_SESSION_TITLE,
-        limit: 1,
-        include_hidden: true,
-      });
-      const session = listed.sessions[0];
-      const sessionId = String(session?.resolved_id || session?.id || '').trim();
-      if (sessionId) {
-        await hermesRequest(credential.profile, 'reload.env', { session_id: sessionId });
-        const gateway = await hermesGateway(credential.profile);
-        const reloaded = await gateway.request<ReloadMcpResult>('reload.mcp', {
-          session_id: sessionId,
-          confirm: true,
-        });
-        if (
-          reloaded.status !== 'reloaded'
-          || reloaded.session === 'busy'
-          || (reloaded.unavailable || []).includes(APPLICATION_MCP_SERVER)
-        ) throw new Error('MCP reload failed');
-      }
-      appliedCredentialFingerprints.set(key, fingerprint);
-    } catch (error) {
-      failures.push(`${credential.profile}: ${error instanceof Error ? error.message : 'credential refresh failed'}`);
-    }
-  }
-  if (failures.length) {
-    throw new Error(`Hermes profile credential refresh failed (${failures.join('; ')}).`);
-  }
-  return credentials.map(entry => entry.profile);
 }
 
 function projectProfile(
@@ -448,7 +305,9 @@ export async function configureHermesProfile(input: {
     ...(input.botModeRoster === undefined ? {} : { bot_mode_roster: strings(input.botModeRoster) }),
   };
   const configured = await hermesRequest(input.profile, 'profiles.configure', configure);
-  if (configured.ok !== true) throw new Error('Hermes profile configuration failed.');
+  // Hermes applies profile sections independently. Finish the requested skill/MCP
+  // configuration even when another section failed, then report that failure.
+  const profileConfigurationFailed = configured.ok !== true;
   const fetchJSON = hermesWebappHost().fetchJSON;
   if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
   await fetchJSON(`/api/config?profile=${encodeURIComponent(input.profile)}`, {
@@ -518,6 +377,11 @@ export async function configureHermesProfile(input: {
     }),
   });
   const after = await loadHermesProfile(input.profile);
+  if (profileConfigurationFailed) {
+    const failedSections = Object.entries(objectRecord(configured.applied) || {})
+      .filter(([, applied]) => applied === false).map(([section]) => section);
+    throw new Error(`Hermes profile configuration failed${failedSections.length ? `: ${failedSections.join(', ')}` : ''}.`);
+  }
   if (input.soul !== undefined && after.soul !== input.soul) {
     throw new Error('Hermes SOUL readback mismatch.');
   }
