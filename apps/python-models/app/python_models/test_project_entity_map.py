@@ -16,8 +16,10 @@ from app import graph_routes
 @pytest.fixture(autouse=True)
 def clear_view():
     maps._VISIBLE_MAPS.clear()
+    maps._TURN_REFERENCES.clear()
     yield
     maps._VISIBLE_MAPS.clear()
+    maps._TURN_REFERENCES.clear()
 
 
 def view():
@@ -97,3 +99,55 @@ def test_routes_publish_and_read_the_same_display_context():
     assert "think-rocket" in result["context"] and "know-rocket" in result["context"]
     assert "OPERATES" in result["context"]
     assert "No map selection authorizes an edit" in result["context"]
+
+
+def authorize_main(monkeypatch):
+    from app.python_models import saved_cards
+    monkeypatch.setattr(saved_cards, "load_deck", lambda *_: {"deck": {"nodes": [
+        {"enabled": True, "runtime": {"kind": "hermes", "profile": "main"}},
+    ]}})
+
+
+def test_reference_freezes_already_displayed_detail_without_requerying_provider(monkeypatch):
+    from app.python_models import thinkgraph_projection
+    authorize_main(monkeypatch)
+    monkeypatch.setattr(thinkgraph_projection, "projection", lambda *_: pytest.fail("Send must not wait for a new provider read"))
+    reference = "cb47ca84-c8af-4e81-b861-5b58294045c7"
+    snapshot = view()
+    selected = {"id": "think-rocket", "name": "Rocket Lab", "authority": "thinkgraph",
+                "thinks": [{"id": "selected-think", "text": "Already displayed provider detail"}]}
+    maps.capture_graph_reference("project-one", "main", reference, snapshot, selected)
+    snapshot["entities"].clear()
+    selected["thinks"][0]["text"] = "Later Inspector change"
+    maps.publish_project_entity_map("project-one", maps.empty_project_entity_map("project-one"))
+    frozen = maps.take_graph_reference("project-one", "main", reference)
+    assert len(frozen["map"]["entities"]) == 2
+    assert frozen["openNode"]["thinks"] == [{"id": "selected-think", "text": "Already displayed provider detail"}]
+    assert not maps._TURN_REFERENCES
+    with pytest.raises(ValueError, match="unavailable"):
+        maps.take_graph_reference("project-one", "main", reference)
+
+
+def test_empty_reference_and_closed_node_need_no_provider_read(monkeypatch):
+    authorize_main(monkeypatch)
+    monkeypatch.setattr(maps, "_selected_detail", lambda *args: None if args[2] is None else pytest.fail("Unexpected selection"))
+    reference = "f29193d1-9989-43c4-8adf-7d8794b2516a"
+    maps.capture_graph_reference("project-one", "main", reference, None)
+    result = maps.take_graph_reference("project-one", "main", reference)
+    assert result["map"]["entities"] == []
+    assert result["openNode"] is None
+
+
+def test_reference_cannot_change_scope_or_be_rebound(monkeypatch):
+    authorize_main(monkeypatch)
+    reference = "b49969f7-f9d5-4906-a838-3b014222508d"
+    maps.capture_graph_reference("project-one", "main", reference, view())
+    with pytest.raises(ValueError, match="conflict"):
+        maps.capture_graph_reference("project-one", "main", reference, None)
+    with pytest.raises(ValueError, match="unavailable"):
+        maps.take_graph_reference("other-project", "main", reference)
+    with pytest.raises(ValueError, match="unavailable"):
+        maps.take_graph_reference("project-one", "builder", reference)
+    with pytest.raises(ValueError, match="not_authorized"):
+        maps.capture_graph_reference("project-one", "unknown", reference, view())
+    assert maps.take_graph_reference("project-one", "main", reference)["map"] == view()

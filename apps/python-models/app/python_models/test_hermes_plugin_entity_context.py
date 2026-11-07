@@ -23,6 +23,8 @@ def _load_plugin() -> Any:
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
+    # The request-only engine is tested in Hermes's runtime; these tests isolate retained hooks/tools.
+    module._register_graph_context = lambda _ctx: None
     return module
 
 

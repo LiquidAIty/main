@@ -198,6 +198,13 @@ async def project_entity_map_read(payload: dict[str, Any]):
         build_project_entity_map, render_project_entity_map,
     )
     import asyncio
+    if "referenceId" in payload:
+        from app.python_models.project_entity_map import take_graph_reference
+        try:
+            return take_graph_reference(str(payload["projectId"]), str(payload.get("profile") or ""),
+                                        str(payload["referenceId"]))
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
     entity_map = await asyncio.to_thread(build_project_entity_map, str(payload["projectId"]))
     return {"ok": True, "projectId": entity_map["projectId"],
             "sha256": entity_map["sha256"],
@@ -208,6 +215,12 @@ async def project_entity_map_read(payload: dict[str, Any]):
 async def project_entity_map_view(payload: dict[str, Any]):
     from app.python_models.project_entity_map import publish_project_entity_map
     try:
+        if "referenceId" in payload:
+            import asyncio
+            from app.python_models.project_entity_map import capture_graph_reference
+            return await asyncio.to_thread(capture_graph_reference, str(payload["projectId"]),
+                str(payload.get("profile") or ""), str(payload["referenceId"]),
+                payload.get("map"), payload.get("selection"))
         return publish_project_entity_map(str(payload["projectId"]), payload["map"])
     except (ValueError, KeyError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

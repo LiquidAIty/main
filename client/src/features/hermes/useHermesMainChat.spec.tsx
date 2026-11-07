@@ -140,6 +140,29 @@ describe('Hermes Main chat binding', () => {
     expect(reopened.result.current.messages.map(message => message.text)).toEqual([literal]);
   });
 
+  it('binds a reference to the existing submission ID without adding any prompt fields', async () => {
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: [{ id: 'existing' }] };
+      if (method === 'session.resume') return { session_id: 'existing', messages: [], running: false };
+      if (method === 'prompt.submit') return { accepted: true };
+      throw new Error(`Unexpected method ${method}`);
+    });
+    let release!: () => void;
+    const attached = vi.fn((_submission: { profile: string; submissionId: string }) =>
+      new Promise<void>(resolve => { release = resolve; }));
+    const { result } = renderHook(() => useHermesMainChat('trading-project', attached));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+    let sending!: Promise<boolean>;
+    act(() => { sending = result.current.send('  literal question  '); });
+    expect(attached).toHaveBeenCalledExactlyOnceWith({ profile: 'main', submissionId: expect.stringMatching(UUID_V4) });
+    expect(host.request.mock.calls.some(([method]) => method === 'prompt.submit')).toBe(false);
+    await act(async () => { release(); expect(await sending).toBe(true); });
+    expect(host.request).toHaveBeenCalledWith('prompt.submit', {
+      session_id: 'existing', profile: 'main', submission_id: attached.mock.calls[0][0].submissionId,
+      text: '  literal question  ',
+    });
+  });
+
   it('gives a voice transcript its own Hermes submission identity', async () => {
     host.request.mockImplementation(async (method: string) => {
       if (method === 'session.list') return { sessions: [] };
@@ -150,7 +173,8 @@ describe('Hermes Main chat binding', () => {
       throw new Error(`Unexpected method ${method}`);
     });
 
-    const { result } = renderHook(() => useHermesMainChat('trading-project'));
+    const attached = vi.fn(async (_submission: { profile: string; submissionId: string }) => undefined);
+    const { result } = renderHook(() => useHermesMainChat('trading-project', attached));
     await waitFor(() => expect(result.current.historyLoading).toBe(false));
 
     await act(async () => {
@@ -177,6 +201,8 @@ describe('Hermes Main chat binding', () => {
     expect(host.request).toHaveBeenCalledWith('image.attach_bytes', {
       session_id: 'main-session', profile: 'main', content_base64: 'AQ==', filename: 'voice-chart.png',
     });
+    const submission = host.request.mock.calls.find(([method]) => method === 'prompt.submit')![1];
+    expect(attached).toHaveBeenCalledExactlyOnceWith({ profile: 'main', submissionId: submission.submission_id });
   });
 
   it('resumes Hermes history and retains the author Hermes reports', async () => {

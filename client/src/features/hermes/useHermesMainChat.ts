@@ -110,7 +110,12 @@ function base64(dataUrl: string): string {
   return marker >= 0 ? dataUrl.slice(marker + 1) : dataUrl;
 }
 
-export default function useHermesMainChat(projectId: string) {
+export default function useHermesMainChat(
+  projectId: string,
+  attachReference?: (submission: { profile: string; submissionId: string }) => Promise<void>,
+) {
+  const attachReferenceRef = useRef(attachReference);
+  attachReferenceRef.current = attachReference;
   const profile = 'main';
   const generationRef = useRef(0);
   const sessionRef = useRef('');
@@ -386,7 +391,10 @@ export default function useHermesMainChat(projectId: string) {
         const spoken = text(event.payload?.text).trim();
         const literal = [pending.draft.trim(), spoken].filter(Boolean).join('\n');
         if (!literal) return;
+        const submissionId = randomUuid();
+        const reference = attachReferenceRef.current?.({ profile, submissionId });
         void (async () => {
+          await reference;
           if (resumePromiseRef.current) await resumePromiseRef.current;
           for (const image of pending.images) {
             await gateway.request('image.attach_bytes', {
@@ -397,7 +405,7 @@ export default function useHermesMainChat(projectId: string) {
           await gateway.request('prompt.submit', {
             session_id: sessionRef.current,
             profile,
-            submission_id: randomUuid(),
+            submission_id: submissionId,
             text: literal,
             voice_turn: true,
           });
@@ -453,6 +461,9 @@ export default function useHermesMainChat(projectId: string) {
     const body = String(literal || '');
     if (!body.trim() || !sessionRef.current) return false;
     try {
+      const submissionId = randomUuid();
+      // Capture outside the Hermes payload; text, images and submission identity keep their contract.
+      await attachReferenceRef.current?.({ profile, submissionId });
       const gateway = await hermesGateway(profile);
       if (resumePromiseRef.current) await resumePromiseRef.current;
       for (const image of input?.images || []) {
@@ -464,7 +475,7 @@ export default function useHermesMainChat(projectId: string) {
       await gateway.request('prompt.submit', {
         session_id: sessionRef.current,
         profile,
-        submission_id: randomUuid(),
+        submission_id: submissionId,
         text: body,
       });
       setMessages((current) => [...current, {

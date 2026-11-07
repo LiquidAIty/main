@@ -26,6 +26,7 @@ $nativePluginSource = Join-Path $repoRoot 'apps\hermes-liquidaity-plugin'
 $nativePluginFiles = @(
   '__init__.py',
   'card_script_runtime.py',
+  'graph_context.py',
   'plugin.yaml',
   'taskgraph_runtime.py'
 )

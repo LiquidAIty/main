@@ -4,6 +4,8 @@
 # Relationship: Registers the one categorized Team/Magnetic admission tool while Hermes retains the task ledger, dispatch, workers, and completion.
 # Entity: ThinkGraph
 # Relationship: Passes Main's post_llm_call message pair to independent saved-Card extraction and Engraphis settlement without reading Main's state database.
+# Entity: Project Knowledge Graph
+# Relationship: Registers submission-bound graph references and request-only selection without altering prompt submission or conversation history.
 """Official Hermes binding for Card Python, taskgraphs, and ThinkGraph."""
 
 from __future__ import annotations
@@ -103,7 +105,22 @@ def _run_completed_turn(ctx: Any, payload: dict[str, Any]) -> None:
         _LOGGER.exception("Automatic ThinkGraph failed for Main turn %s", payload["turnId"])
 
 
+def _register_graph_context(ctx: Any) -> None:
+    try:
+        from .graph_context import register_graph_context
+    except ImportError:
+        from graph_context import register_graph_context
+
+    def read(project: str, profile: str, reference: str) -> dict[str, Any]:
+        origin = _loopback_origin(ctx.get_config("python_rails_url", _DEFAULT_PYTHON_RAILS_URL))
+        return _post_json(origin, "/project/entity-map/read",
+                          {"projectId": project, "profile": profile, "referenceId": reference}, timeout=30)
+
+    register_graph_context(ctx, read)
+
+
 def register(ctx: Any) -> None:
+    _register_graph_context(ctx)
     card_script = normalize_card_script(ctx.get_config("card_script", {}))
     ctx.register_tool(
         name=CARD_SCRIPT_TOOL_NAME,
