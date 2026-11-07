@@ -5,7 +5,7 @@
 # Entity: ThinkGraph
 # Relationship: Passes Main's post_llm_call message pair to independent saved-Card extraction and Engraphis settlement without reading Main's state database.
 # Entity: Project Knowledge Graph
-# Relationship: Registers submission-bound graph references and request-only selection without altering prompt submission or conversation history.
+# Relationship: Registers request-only selection of the displayed graph without altering prompt submission or conversation history.
 """Official Hermes binding for Card Python, taskgraphs, and ThinkGraph."""
 
 from __future__ import annotations
@@ -111,10 +111,10 @@ def _register_graph_context(ctx: Any) -> None:
     except ImportError:
         from graph_context import register_graph_context
 
-    def read(project: str, profile: str, reference: str) -> dict[str, Any]:
+    def read(project: str, profile: str) -> dict[str, Any]:
         origin = _loopback_origin(ctx.get_config("python_rails_url", _DEFAULT_PYTHON_RAILS_URL))
         return _post_json(origin, "/project/entity-map/read",
-                          {"projectId": project, "profile": profile, "referenceId": reference}, timeout=30)
+                          {"projectId": project, "profile": profile}, timeout=1)
 
     register_graph_context(ctx, read)
 

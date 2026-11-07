@@ -110,12 +110,7 @@ function base64(dataUrl: string): string {
   return marker >= 0 ? dataUrl.slice(marker + 1) : dataUrl;
 }
 
-export default function useHermesMainChat(
-  projectId: string,
-  attachReference?: (submission: { profile: string; submissionId: string }) => Promise<void>,
-) {
-  const attachReferenceRef = useRef(attachReference);
-  attachReferenceRef.current = attachReference;
+export default function useHermesMainChat(projectId: string) {
   const profile = 'main';
   const generationRef = useRef(0);
   const sessionRef = useRef('');
@@ -392,9 +387,7 @@ export default function useHermesMainChat(
         const literal = [pending.draft.trim(), spoken].filter(Boolean).join('\n');
         if (!literal) return;
         const submissionId = randomUuid();
-        const reference = attachReferenceRef.current?.({ profile, submissionId });
         void (async () => {
-          await reference;
           if (resumePromiseRef.current) await resumePromiseRef.current;
           for (const image of pending.images) {
             await gateway.request('image.attach_bytes', {
@@ -462,8 +455,6 @@ export default function useHermesMainChat(
     if (!body.trim() || !sessionRef.current) return false;
     try {
       const submissionId = randomUuid();
-      // Capture outside the Hermes payload; text, images and submission identity keep their contract.
-      await attachReferenceRef.current?.({ profile, submissionId });
       const gateway = await hermesGateway(profile);
       if (resumePromiseRef.current) await resumePromiseRef.current;
       for (const image of input?.images || []) {

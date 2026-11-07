@@ -65,12 +65,16 @@ describe('Hermes profile skill binding', () => {
       tools: { include: ['engraphis_get_memory'] },
     }];
     host.request.mockImplementation(async (_profile: string, method: string, params: Record<string, any>) => {
-      if (method === 'profiles.describe') return structuredClone(described);
+      if (method === 'profiles.describe') {
+        if (!params.name) throw new Error('name required');
+        return structuredClone(described);
+      }
       if (method === 'profiles.configure') {
+        if (!params.name) throw new Error('name required');
         const disabled = new Set(params.disabled_skills || []);
         described.skills = described.skills.map((skill: Record<string, any>) => ({
           ...skill,
-          enabled: !disabled.has(skill.name),
+          enabled: skill.name === 'hermes-agent' || !disabled.has(skill.name),
         }));
         if (typeof params.soul === 'string') described.soul = params.soul;
         if (typeof params.description === 'string') described.description = params.description;
@@ -216,7 +220,7 @@ describe('Hermes profile skill binding', () => {
     });
 
     expect(host.request).toHaveBeenCalledWith('trading', 'profiles.configure', expect.objectContaining({
-      profile: 'trading',
+      name: 'trading',
       disabled_skills: ['research'],
     }));
     expect(host.fetchJSON).toHaveBeenCalledWith(
@@ -265,7 +269,7 @@ describe('Hermes profile skill binding', () => {
     expect(profile.skills.find((skill) => skill.name === 'trading')?.enabled).toBe(true);
   });
 
-  it('pins KnowGraph web search to Hermes Firecrawl and verifies profile readback', async () => {
+  it('pins KnowGraph search and extraction to Hermes Firecrawl with readback', async () => {
     const profile = await configureHermesProfile({
       profile: 'knowgraph',
       enabledToolsets: ['web'],
@@ -275,10 +279,38 @@ describe('Hermes profile skill binding', () => {
       '/api/config?profile=knowgraph',
       expect.objectContaining({
         method: 'PUT',
-        body: expect.stringContaining('"web":{"search_backend":"firecrawl"}'),
+        body: expect.stringContaining('"web":{"search_backend":"firecrawl","extract_backend":"firecrawl"}'),
       }),
     );
     expect(profile.webSearchBackend).toBe('firecrawl');
+    expect(profile.webExtractBackend).toBe('firecrawl');
+  });
+
+  it('preserves Hermes required core skill without changing selected auto-load skills', async () => {
+    described.skills = [
+      { name: 'hermes-agent', enabled: true },
+      { name: 'knowgraph', enabled: true },
+      { name: 'grounded-citations', enabled: true },
+      { name: 'unselected', enabled: true },
+    ];
+    const profile = await configureHermesProfile({
+      profile: 'knowgraph',
+      enabledSkills: ['knowgraph', 'grounded-citations'],
+      autoLoadSkills: ['knowgraph', 'grounded-citations'],
+    });
+    expect(host.request).toHaveBeenCalledWith('knowgraph', 'profiles.configure', expect.objectContaining({
+      name: 'knowgraph', disabled_skills: ['unselected'],
+    }));
+    expect(profile.skills.filter(skill => skill.enabled).map(skill => skill.name))
+      .toEqual(['hermes-agent', 'knowgraph', 'grounded-citations']);
+    expect(profile.autoLoadSkills).toEqual(['knowgraph', 'grounded-citations']);
+  });
+
+  it('still rejects a requested skill missing from Hermes readback', async () => {
+    described.skills = [{ name: 'hermes-agent', enabled: true }];
+    await expect(configureHermesProfile({
+      profile: 'knowgraph', enabledSkills: ['grounded-citations'],
+    })).rejects.toThrow('Hermes enabled-skill readback mismatch.');
   });
 
   it('preserves an explicit empty Hermes toolset selection instead of restoring defaults', async () => {
@@ -308,7 +340,7 @@ describe('Hermes profile skill binding', () => {
     });
 
     expect(host.request).toHaveBeenCalledWith('team', 'profiles.configure', expect.objectContaining({
-      profile: 'team',
+      name: 'team',
       description: 'Category: team. Automatic same-profile decomposition and synthesis.',
       model: 'gpt-5.6-terra',
       provider: 'openai-codex',

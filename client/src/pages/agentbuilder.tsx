@@ -289,35 +289,23 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     workspaceView,
     openCanvasWorkspace: () => setWorkspaceView('canvas'),
   });
-  const graphViewRef = useRef<GraphViewContext | null>(null);
   const publishGraphView = useCallback(async (view: GraphViewContext) => {
     const response = await applicationFetch('/api/thinkgraph/view-context', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: view.map.projectId, map: view.map }),
+      body: JSON.stringify({ projectId: view.map.projectId, map: view.map, openNode: view.openNode }),
     });
     if (!response.ok) throw new Error('The displayed graph context could not be delivered.');
   }, []);
   const graphMapKeyRef = useRef('');
   const onGraphViewContext = useCallback((view: GraphViewContext) => {
     if (view.map.projectId !== canvasProjectId) return;
-    graphViewRef.current = view;
-    const key = JSON.stringify(view.map);
+    const key = JSON.stringify(view);
     if (graphMapKeyRef.current !== key) {
       graphMapKeyRef.current = key;
       void publishGraphView(view).catch(() => { graphMapKeyRef.current = ''; });
     }
   }, [canvasProjectId, publishGraphView]);
-  const attachGraphReference = useCallback(async ({ profile, submissionId }: { profile: string; submissionId: string }) => {
-    const view = graphViewRef.current?.map.projectId === canvasProjectId ? graphViewRef.current : null;
-    // Serialize at the gesture, before awaiting I/O; later Inspector changes cannot edit this reference.
-    const body = JSON.stringify({ projectId: canvasProjectId, profile, referenceId: submissionId,
-      map: view?.map ?? null, selection: view?.openNode ?? null });
-    const response = await applicationFetch('/api/thinkgraph/view-context', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-    });
-    if (!response.ok) throw new Error('The selected graph reference could not be attached.');
-  }, [canvasProjectId]);
-  const mainChat = useHermesMainChat(canvasProjectId, attachGraphReference);
+  const mainChat = useHermesMainChat(canvasProjectId);
   const {
     chatMinWidth,
     chatPanelWidth,

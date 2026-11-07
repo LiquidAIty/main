@@ -66,22 +66,20 @@ afterEach(() => {
 });
 
 describe('ThinkGraph Engraphis read transport', () => {
-  it('captures a reference only through the existing Project-owned view endpoint', async () => {
+  it('publishes the displayed map and open node through the existing Project-owned endpoint', async () => {
     mocks.requestPythonRailsJson.mockResolvedValue({ ok: true });
     const { server, baseUrl } = await createApiServer();
     const selection = { id: 'entity', authority: 'thinkgraph', thinks: [{ id: 'think', text: 'Displayed detail' }] };
     try {
       const response = await fetch(`${baseUrl}/view-context`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: 'project-1', map: null, profile: 'main',
-          referenceId: 'cb47ca84-c8af-4e81-b861-5b58294045c7', selection }),
+        body: JSON.stringify({ projectId: 'project-1', map: null, openNode: selection }),
       });
       expect(response.status).toBe(200);
       expect(mocks.requireOwnedProject).toHaveBeenCalled();
       expect(mocks.requestPythonRailsJson).toHaveBeenCalledWith('/project/entity-map/view', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: 'project-1', map: null,
-          referenceId: 'cb47ca84-c8af-4e81-b861-5b58294045c7', profile: 'main', selection }),
+        body: JSON.stringify({ projectId: 'project-1', map: null, openNode: selection }),
       });
     } finally { await closeServer(server); }
   });

@@ -30,11 +30,7 @@ thinkGraphRoutes.post('/view-context', async (req, res) => {
   try {
     return res.json(await requestPythonRailsJson('/project/entity-map/view', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: scope.projectId, map: req.body?.map,
-        ...(req.body?.referenceId !== undefined ? {
-          referenceId: req.body.referenceId, profile: req.body.profile, selection: req.body.selection,
-        } : {}),
-      }),
+      body: JSON.stringify({ projectId: scope.projectId, map: req.body?.map, openNode: req.body?.openNode }),
     }));
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : 'graph_view_context_unavailable' });

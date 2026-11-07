@@ -1,10 +1,9 @@
 # Entity: Project Knowledge Graph
 # Relationship: Proves request-only graph selection preserves literal/image history and never hands map data to compaction.
 # Entity: Hermes Plugin
-# Relationship: Exercises the actual installed Hermes engine and reference contracts in Hermes's managed Python runtime.
+# Relationship: Exercises the actual installed Hermes request-only selection and compaction contracts in Hermes's managed Python runtime.
 """Run with Hermes's Python runtime; no provider calls or product data writes."""
 
-import asyncio
 import copy
 import importlib.util
 import json
@@ -25,33 +24,28 @@ spec = importlib.util.spec_from_file_location("graph_context_under_test", Path(_
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
-REFERENCE = "cb47ca84-c8af-4e81-b861-5b58294045c7"
-
-
 class GraphContextTests(unittest.TestCase):
     def setUp(self):
-        self.value = {"ok": True, "projectId": "project-one", "referenceId": REFERENCE,
+        self.value = {"ok": True, "projectId": "project-one",
             "map": {"schemaVersion": "project-entity-map", "entities": [{"id": "subject", "name": "Subject"}],
                     "relationships": []}, "openNode": {"id": "subject", "records": [{"id": "record", "summary": "Selected detail"}]}}
         self.calls = []
         self.ctx = SimpleNamespace(profile_name="main", get_config=lambda name, default: "project-one" if name == "project_id" else default)
-        self.provider = module.GraphReferenceProvider(self.ctx, self.read)
         self.config = {"model": {"default": "gpt-5.6-sol", "provider": "openai-codex", "context_length": 272000},
                        "compression": {"threshold": 0.5}, "agent": {}}
-        self.engine = module.GraphContextEngine(self.provider, self.config)
+        self.engine = module.GraphContextEngine("project-one", "main", self.read, self.config)
         self.engine.update_model("gpt-5.6-sol", 272000, provider="openai-codex")
 
-    def read(self, project, profile, reference):
-        self.calls.append((project, profile, reference))
+    def read(self, project, profile):
+        self.calls.append((project, profile))
         return copy.deepcopy(self.value)
 
-    def test_one_expansion_per_turn_request_only_including_images(self):
+    def test_one_read_per_turn_request_only_including_images(self):
         for content in ("Literal words", [{"type": "text", "text": "Literal words"},
                          {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}]):
             self.engine.on_turn_complete([])
             self.calls.clear()
-            history = [{"role": "user", "content": copy.deepcopy(content),
-                        "display_metadata": {"submission_id": REFERENCE}}]
+            history = [{"role": "user", "content": copy.deepcopy(content)}]
             original = copy.deepcopy(history)
             request = [{"role": "system", "content": "Existing instructions"}, {"role": "user", "content": copy.deepcopy(content)}]
             agent = SimpleNamespace(context_compressor=self.engine, session_id="isolated")
@@ -62,22 +56,22 @@ class GraphContextTests(unittest.TestCase):
             self.assertEqual(history, original)
             self.assertEqual(request[0]["content"], "Existing instructions")
             self.assertEqual(first[1]["content"], content)
-            self.assertEqual(json.dumps(first).count("Current graph reference"), 1)
+            self.assertEqual(json.dumps(first).count("Current Project Entity Map"), 1)
             from agent.transports.codex import ResponsesApiTransport
             wire = ResponsesApiTransport().build_kwargs("gpt-5.6-sol", first,
                 provider="openai-codex", base_url="https://chatgpt.com/backend-api/codex", is_codex_backend=True)
-            self.assertEqual(wire["instructions"].count("Current graph reference"), 1)
-            self.assertNotIn("Current graph reference", json.dumps(wire["input"]))
+            self.assertEqual(wire["instructions"].count("Current Project Entity Map"), 1)
+            self.assertNotIn("Current Project Entity Map", json.dumps(wire["input"]))
             self.assertIn("Literal words", json.dumps(wire["input"]))
             self.assertEqual(len(self.calls), 1)
-            self.assertNotIn("Current graph reference", json.dumps(history))
+            self.assertNotIn("Current Project Entity Map", json.dumps(history))
             self.value["map"]["entities"][0]["name"] = "Subject"
 
     def test_threshold_compaction_and_reopen_do_not_receive_or_store_map(self):
-        history = [{"role": "user", "content": "Literal words", "display_metadata": {"submission_id": REFERENCE}}]
+        history = [{"role": "user", "content": "Literal words"}]
         selected = self.engine.select_context(copy.deepcopy(history), conversation_messages=history, incoming_message=history[0])
         self.assertIn("Selected detail", json.dumps(selected))
-        with tempfile.TemporaryDirectory(prefix="graph-reference-proof-") as directory:
+        with tempfile.TemporaryDirectory(prefix="graph-context-proof-") as directory:
             path = Path(directory) / "state.db"
             db = SessionDB(db_path=path)
             db.create_session(session_id="isolated", source="test")
@@ -116,17 +110,24 @@ class GraphContextTests(unittest.TestCase):
         self.assertIs(type(self.engine).compress, ContextCompressor.compress)
         self.assertIs(type(self.engine).should_compress, ContextCompressor.should_compress)
 
-    def test_next_turn_and_unattached_turn_do_not_reuse_previous_graph(self):
-        incoming = {"display_metadata": {"submission_id": REFERENCE}}
+    def test_next_turn_reads_new_view_and_closed_node_has_no_details(self):
+        incoming = {"role": "user", "content": "First"}
         self.engine.select_context([{"role": "user", "content": "First"}], incoming_message=incoming)
         self.engine.on_turn_complete([])
-        self.assertIsNone(self.engine.select_context([{"role": "user", "content": "No attachment"}], incoming_message={}))
         self.value["openNode"] = None
         self.value["map"]["entities"] = []
         second = self.engine.select_context([{"role": "user", "content": "Next"}], incoming_message=incoming)
         self.assertNotIn("Selected detail", json.dumps(second))
-        self.assertIn('"openNode":null', second[0]["content"])
+        self.assertNotIn('"openNode"', second[0]["content"])
         self.assertEqual(len(self.calls), 2)
+
+    def test_all_four_cards_read_map_but_only_main_receives_open_node(self):
+        for profile in ("main", "builder", "thinkgraph", "knowgraph"):
+            engine = module.GraphContextEngine("project-one", profile, self.read, self.config)
+            result = engine.select_context([{"role": "user", "content": "Question"}])
+            self.assertIn('"name":"Subject"', result[0]["content"])
+            self.assertEqual("Selected detail" in result[0]["content"], profile == "main")
+        self.assertEqual([profile for _, profile in self.calls], ["main", "builder", "thinkgraph", "knowgraph"])
 
 
 if __name__ == "__main__":

@@ -16,6 +16,8 @@ const APPLICATION_MCP_BEARER_ENV = 'MCP_LIQUIDAITY_API_KEY';
 const HERMES_BOT_SESSION_TITLE = 'Bot Chat';
 const KNOWGRAPH_PROFILE = 'knowgraph';
 const KNOWGRAPH_WEB_SEARCH_BACKEND = 'firecrawl';
+// Hermes agent.skill_utils.ESSENTIAL_SKILLS cannot be disabled by profiles.configure.
+const HERMES_REQUIRED_SKILLS = new Set(['hermes-agent']);
 const CARD_MEMORY_POLICY = {
   provider: 'holographic',
   memoryEnabled: false,
@@ -51,6 +53,7 @@ export type HermesProfileView = {
   cardScript: Record<string, unknown> | null;
   enabledPlugins: string[];
   webSearchBackend: string;
+  webExtractBackend: string;
   taskMode: string;
   pluginTaskMode: string;
   subagentModel: {
@@ -77,7 +80,7 @@ type ProfileConfig = {
   };
   auxiliary?: { background_review?: { enabled?: unknown } };
   curator?: { enabled?: unknown };
-  web?: { search_backend?: unknown };
+  web?: { search_backend?: unknown; extract_backend?: unknown };
   kanban?: { task_mode?: unknown };
   delegation?: {
     provider?: unknown;
@@ -317,6 +320,9 @@ function projectProfile(
     webSearchBackend: typeof config.web?.search_backend === 'string'
       ? config.web.search_backend
       : '',
+    webExtractBackend: typeof config.web?.extract_backend === 'string'
+      ? config.web.extract_backend
+      : '',
     taskMode: typeof config.kanban?.task_mode === 'string'
       ? config.kanban.task_mode
       : '',
@@ -346,7 +352,7 @@ function projectProfile(
 
 export async function loadHermesProfile(profile: string): Promise<HermesProfileView> {
   const [described, servers, config] = await Promise.all([
-    hermesRequest(profile, 'profiles.describe', { profile }),
+    hermesRequest(profile, 'profiles.describe', { name: profile }),
     mcpServers(profile),
     profileConfig(profile),
   ]);
@@ -420,15 +426,19 @@ export async function configureHermesProfile(input: {
   const enabledSkills = input.enabledSkills === undefined
     ? before.skills.filter((skill) => skill.enabled).map((skill) => skill.name)
     : strings(input.enabledSkills);
+  const effectiveEnabledSkills = [...new Set([
+    ...enabledSkills,
+    ...before.skills.filter((skill) => HERMES_REQUIRED_SKILLS.has(skill.name)).map((skill) => skill.name),
+  ])];
   const configure = {
-    profile: input.profile,
+    name: input.profile,
     ...(input.soul === undefined ? {} : { soul: input.soul }),
     ...(input.description === undefined ? {} : { description: input.description }),
     ...(input.model === undefined ? {} : { model: input.model }),
     ...(input.provider === undefined ? {} : { provider: input.provider }),
     disabled_skills: before.skills
       .map((skill) => skill.name)
-      .filter((name) => !enabledSkills.includes(name)),
+      .filter((name) => !effectiveEnabledSkills.includes(name)),
     enabled_toolsets: input.enabledToolsets === undefined
       ? before.toolsets.filter((toolset) => toolset.enabled).map((toolset) => toolset.name)
       : strings(input.enabledToolsets),
@@ -456,7 +466,10 @@ export async function configureHermesProfile(input: {
         },
         curator: { enabled: CARD_MEMORY_POLICY.curatorEnabled },
         ...(input.profile === KNOWGRAPH_PROFILE ? {
-          web: { search_backend: KNOWGRAPH_WEB_SEARCH_BACKEND },
+          web: {
+            search_backend: KNOWGRAPH_WEB_SEARCH_BACKEND,
+            extract_backend: KNOWGRAPH_WEB_SEARCH_BACKEND,
+          },
         } : {}),
         ...(input.taskMode === undefined ? {} : {
           kanban: { task_mode: input.taskMode },
@@ -532,7 +545,7 @@ export async function configureHermesProfile(input: {
   }
   if (input.enabledSkills !== undefined && JSON.stringify(
     after.skills.filter((skill) => skill.enabled).map((skill) => skill.name).sort(),
-  ) !== JSON.stringify([...strings(input.enabledSkills)].sort())) {
+  ) !== JSON.stringify([...effectiveEnabledSkills].sort())) {
     throw new Error('Hermes enabled-skill readback mismatch.');
   }
   if (input.enabledToolsets !== undefined && JSON.stringify(
@@ -563,9 +576,10 @@ export async function configureHermesProfile(input: {
   }
   if (
     input.profile === KNOWGRAPH_PROFILE
-    && after.webSearchBackend !== KNOWGRAPH_WEB_SEARCH_BACKEND
+    && (after.webSearchBackend !== KNOWGRAPH_WEB_SEARCH_BACKEND
+      || after.webExtractBackend !== KNOWGRAPH_WEB_SEARCH_BACKEND)
   ) {
-    throw new Error('Hermes KnowGraph Firecrawl search-backend readback mismatch.');
+    throw new Error('Hermes KnowGraph Firecrawl search/extract readback mismatch.');
   }
   if (
     input.taskMode !== undefined

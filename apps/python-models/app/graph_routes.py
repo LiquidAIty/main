@@ -194,34 +194,18 @@ async def thinkgraph_completed_turn_process(payload: dict[str, Any]):
 
 @graph_read_router.post("/project/entity-map/read")
 async def project_entity_map_read(payload: dict[str, Any]):
-    from app.python_models.project_entity_map import (
-        build_project_entity_map, render_project_entity_map,
-    )
-    import asyncio
-    if "referenceId" in payload:
-        from app.python_models.project_entity_map import take_graph_reference
-        try:
-            return take_graph_reference(str(payload["projectId"]), str(payload.get("profile") or ""),
-                                        str(payload["referenceId"]))
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-    entity_map = await asyncio.to_thread(build_project_entity_map, str(payload["projectId"]))
+    from app.python_models.project_entity_map import build_project_entity_map
+    entity_map = build_project_entity_map(str(payload["projectId"]), include_open_node=payload.get("profile") == "main")
+    open_node = entity_map.pop("openNode", None)
     return {"ok": True, "projectId": entity_map["projectId"],
-            "sha256": entity_map["sha256"],
-            "context": render_project_entity_map(entity_map)}
+            "map": entity_map, "openNode": open_node}
 
 
 @graph_read_router.post("/project/entity-map/view")
 async def project_entity_map_view(payload: dict[str, Any]):
     from app.python_models.project_entity_map import publish_project_entity_map
     try:
-        if "referenceId" in payload:
-            import asyncio
-            from app.python_models.project_entity_map import capture_graph_reference
-            return await asyncio.to_thread(capture_graph_reference, str(payload["projectId"]),
-                str(payload.get("profile") or ""), str(payload["referenceId"]),
-                payload.get("map"), payload.get("selection"))
-        return publish_project_entity_map(str(payload["projectId"]), payload["map"])
+        return publish_project_entity_map(str(payload["projectId"]), payload["map"], payload.get("openNode"))
     except (ValueError, KeyError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

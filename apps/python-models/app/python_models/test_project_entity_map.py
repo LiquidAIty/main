@@ -16,10 +16,8 @@ from app import graph_routes
 @pytest.fixture(autouse=True)
 def clear_view():
     maps._VISIBLE_MAPS.clear()
-    maps._TURN_REFERENCES.clear()
     yield
     maps._VISIBLE_MAPS.clear()
-    maps._TURN_REFERENCES.clear()
 
 
 def view():
@@ -42,7 +40,7 @@ def test_map_retains_displayed_identity_and_single_top_relationship_only():
     snapshot = view()
     maps.publish_project_entity_map("project-one", snapshot)
     result = maps.build_project_entity_map("project-one")
-    assert {k: v for k, v in result.items() if k != "sha256"} == snapshot
+    assert result == snapshot
     assert len(result["relationships"]) == 1
     assert "distribution" not in json.dumps(result)
     snapshot["entities"].clear()
@@ -56,7 +54,6 @@ def test_all_off_and_no_view_are_valid_empty_maps():
     assert maps.publish_project_entity_map("project-one", empty)["ok"]
     assert maps.build_project_entity_map("project-one")["entities"] == []
     assert maps.build_project_entity_map("other-project")["relationships"] == []
-    assert "An empty map is valid" in maps.render_project_entity_map(empty)
 
 
 @pytest.mark.parametrize("field", ["body", "citation", "openNode", "source", "toolGrants"])
@@ -96,58 +93,41 @@ def test_routes_publish_and_read_the_same_display_context():
     result = asyncio.run(graph_routes.project_entity_map_read({"projectId": "project-one"}))
     assert result["ok"] is True
     assert result["projectId"] == "project-one"
-    assert "think-rocket" in result["context"] and "know-rocket" in result["context"]
-    assert "OPERATES" in result["context"]
-    assert "No map selection authorizes an edit" in result["context"]
+    assert result["map"] == snapshot
+    assert set(result) == {"ok", "projectId", "map", "openNode"}
 
 
-def authorize_main(monkeypatch):
-    from app.python_models import saved_cards
-    monkeypatch.setattr(saved_cards, "load_deck", lambda *_: {"deck": {"nodes": [
-        {"enabled": True, "runtime": {"kind": "hermes", "profile": "main"}},
-    ]}})
-
-
-def test_reference_freezes_already_displayed_detail_without_requerying_provider(monkeypatch):
+def test_publication_keeps_displayed_detail_without_requerying_provider(monkeypatch):
     from app.python_models import thinkgraph_projection
-    authorize_main(monkeypatch)
-    monkeypatch.setattr(thinkgraph_projection, "projection", lambda *_: pytest.fail("Send must not wait for a new provider read"))
-    reference = "cb47ca84-c8af-4e81-b861-5b58294045c7"
+    monkeypatch.setattr(thinkgraph_projection, "projection", lambda *_: pytest.fail("Map context must not query a provider"))
     snapshot = view()
     selected = {"id": "think-rocket", "name": "Rocket Lab", "authority": "thinkgraph",
                 "thinks": [{"id": "selected-think", "text": "Already displayed provider detail"}]}
-    maps.capture_graph_reference("project-one", "main", reference, snapshot, selected)
+    maps.publish_project_entity_map("project-one", snapshot, selected)
     snapshot["entities"].clear()
     selected["thinks"][0]["text"] = "Later Inspector change"
-    maps.publish_project_entity_map("project-one", maps.empty_project_entity_map("project-one"))
-    frozen = maps.take_graph_reference("project-one", "main", reference)
-    assert len(frozen["map"]["entities"]) == 2
-    assert frozen["openNode"]["thinks"] == [{"id": "selected-think", "text": "Already displayed provider detail"}]
-    assert not maps._TURN_REFERENCES
-    with pytest.raises(ValueError, match="unavailable"):
-        maps.take_graph_reference("project-one", "main", reference)
+    for profile in ("main", "builder", "thinkgraph", "knowgraph"):
+        result = asyncio.run(graph_routes.project_entity_map_read({"projectId": "project-one", "profile": profile}))
+        assert result["map"] == view()
+        if profile == "main":
+            assert result["openNode"]["thinks"] == [{"id": "selected-think", "text": "Already displayed provider detail"}]
+        else:
+            assert result["openNode"] is None
+    assert maps.build_project_entity_map("other-project", include_open_node=True)["openNode"] is None
 
 
-def test_empty_reference_and_closed_node_need_no_provider_read(monkeypatch):
-    authorize_main(monkeypatch)
-    monkeypatch.setattr(maps, "_selected_detail", lambda *args: None if args[2] is None else pytest.fail("Unexpected selection"))
-    reference = "f29193d1-9989-43c4-8adf-7d8794b2516a"
-    maps.capture_graph_reference("project-one", "main", reference, None)
-    result = maps.take_graph_reference("project-one", "main", reference)
-    assert result["map"]["entities"] == []
+def test_closing_node_removes_detail_and_empty_map_remains_valid():
+    selected = {"id": "think-rocket", "name": "Rocket Lab", "authority": "thinkgraph", "thinks": []}
+    maps.publish_project_entity_map("project-one", view(), selected)
+    maps.publish_project_entity_map("project-one", view())
+    result = maps.build_project_entity_map("project-one", include_open_node=True)
     assert result["openNode"] is None
+    maps.publish_project_entity_map("project-one", maps.empty_project_entity_map("project-one"))
+    assert maps.build_project_entity_map("project-one")["entities"] == []
 
 
-def test_reference_cannot_change_scope_or_be_rebound(monkeypatch):
-    authorize_main(monkeypatch)
-    reference = "b49969f7-f9d5-4906-a838-3b014222508d"
-    maps.capture_graph_reference("project-one", "main", reference, view())
-    with pytest.raises(ValueError, match="conflict"):
-        maps.capture_graph_reference("project-one", "main", reference, None)
-    with pytest.raises(ValueError, match="unavailable"):
-        maps.take_graph_reference("other-project", "main", reference)
-    with pytest.raises(ValueError, match="unavailable"):
-        maps.take_graph_reference("project-one", "builder", reference)
-    with pytest.raises(ValueError, match="not_authorized"):
-        maps.capture_graph_reference("project-one", "unknown", reference, view())
-    assert maps.take_graph_reference("project-one", "main", reference)["map"] == view()
+def test_selected_node_must_belong_to_displayed_map():
+    with pytest.raises(ValueError, match="selection_not_visible"):
+        maps.publish_project_entity_map("project-one", view(), {
+            "id": "foreign-entity", "name": "Other", "authority": "thinkgraph", "thinks": [],
+        })
