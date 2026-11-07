@@ -14,7 +14,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_SOLARPUNK_COLORS } from './knowledgeGraphProjection';
 import {
   presentationStorageKey,
-  responsiveRepelForce,
   safePresentationPreferences,
   solarpunkEdgeFields,
   withoutSolarpunkEdgeMaterial,
@@ -76,18 +75,9 @@ describe('knowledge graph presentation preferences', () => {
     expect(safePresentationPreferences('joined')).toEqual({});
     expect(safePresentationPreferences('knowgraph')).toEqual({
       schemaVersion: 6,
+      layout: 'galaxy',
       physicsProfile: 'contrast',
     });
   });
 
-  it('uses the baseline responsive repel from the saved base without compounding resize cycles', () => {
-    const baseRepel = 100;
-    const narrow = responsiveRepelForce(baseRepel, 440);
-    const wide = responsiveRepelForce(baseRepel, 1_200);
-    const narrowAgain = responsiveRepelForce(baseRepel, 440);
-
-    expect([narrow, wide, narrowAgain]).toEqual([62, 128, 62]);
-    expect(responsiveRepelForce(baseRepel, 200)).toBe(62);
-    expect(responsiveRepelForce(baseRepel, 2_000)).toBe(128);
-  });
 });

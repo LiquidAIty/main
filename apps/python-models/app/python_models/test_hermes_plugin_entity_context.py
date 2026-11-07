@@ -1,7 +1,7 @@
-"""Contract proof for provider-owned Entity context in the Hermes plugin."""
+"""Contract proof for the plugin's retained hooks and removed context injection."""
 
 # Entity: Hermes Plugin
-# Relationship: Verifies Main, Builder, ThinkGraph, and KnowGraph read the current Project Entity map from Python rails instead of a UI-published cache.
+# Relationship: Verifies automatic map injection is absent for all four Cards while Main's post-turn ThinkGraph hook stays intact.
 
 from __future__ import annotations
 
@@ -26,96 +26,96 @@ def _load_plugin() -> Any:
     return module
 
 
-def test_plugin_reads_project_entity_map_from_python_rails(monkeypatch) -> None:
+def test_graph_map_injection_is_absent_for_all_four_profiles():
+    import yaml
     plugin = _load_plugin()
-    calls: list[tuple[str, str, dict[str, Any], float]] = []
 
     class Context:
-        profile_name = "main"
+        def __init__(self, profile):
+            self.profile_name = profile
+            self.hooks = {}
+            self.tools = []
 
-        @staticmethod
-        def get_config(name: str, default: str) -> str:
+        def get_config(self, name, default):
             return "project-one" if name == "project_id" else default
 
-        @staticmethod
-        def call_mcp(*_args, **_kwargs):
-            raise AssertionError("Project scope must not borrow a GPT connector tool")
+        def register_tool(self, **_kwargs):
+            self.tools.append(_kwargs["name"])
 
-    def post(origin: str, path: str, payload: dict[str, Any], *, timeout: float):
-        calls.append((origin, path, payload, timeout))
-        return {
-            "ok": True,
-            "projectId": "project-one",
-            "context": "### Current Project Entity Map\n{}",
-        }
+        def register_hook(self, name, callback):
+            self.hooks[name] = callback
 
-    monkeypatch.setattr(plugin, "_post_json", post)
-
-    assert plugin._PROJECT_ENTITY_MAP_PROFILES == frozenset({
-        "main", "builder", "thinkgraph", "knowgraph",
-    })
-    assert plugin._project_entity_map_context(Context()).startswith(
-        "### Current Project Entity Map"
-    )
-    assert calls == [(
-        "http://127.0.0.1:8003",
-        "/project/entity-map/read",
-        {"projectId": "project-one"},
-        30,
-    )]
+    for profile in ("main", "builder", "thinkgraph", "knowgraph"):
+        context = Context(profile)
+        plugin.register(context)
+        assert set(context.hooks) == {"post_llm_call"}
+        assert set(context.tools) == {"card_python", "taskgraph_start"}
+    manifest = yaml.safe_load(Path(plugin.__file__).with_name("plugin.yaml").read_text(encoding="utf-8"))
+    assert manifest["provides_hooks"] == ["post_llm_call"]
 
 
-def test_plugin_schedules_thinkgraph_only_after_successful_persisted_turn(
-    monkeypatch,
-) -> None:
+def test_post_llm_hook_schedules_only_its_supplied_pair_without_database_reads(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
     plugin = _load_plugin()
-    hooks: dict[str, Any] = {}
-    scheduled: list[tuple[str | None, Any]] = []
+    monkeypatch.setitem(sys.modules, "agent.message_content",
+                        SimpleNamespace(flatten_message_text=lambda value: value))
+    hooks = {}
+    scheduled = []
+    calls = []
 
     class Context:
         profile_name = "main"
 
-        @staticmethod
-        def get_config(name: str, default: Any) -> Any:
-            return default
+        def get_config(self, name, default):
+            return "project-one" if name == "project_id" else default
 
-        @staticmethod
-        def register_tool(**_kwargs: Any) -> None:
-            return None
+        def register_tool(self, **_kwargs):
+            pass
 
-        @staticmethod
-        def register_hook(name: str, callback: Any) -> None:
+        def register_hook(self, name, callback):
             hooks[name] = callback
 
-        @staticmethod
-        def spawn_task(coro: Any, *, name: str | None = None) -> None:
+        def spawn_task(self, coro, *, name=None):
             scheduled.append((name, coro))
 
-    monkeypatch.setattr(plugin, "_completed_pair_row_ids", lambda _session: (41, 42))
     context = Context()
     plugin.register(context)
-
-    assert set(hooks) == {"pre_llm_call", "on_session_end"}
-    for outcome in ({}, {"completed": False}, {"completed": True, "failed": True},
-                    {"completed": True, "interrupted": True}):
-        hooks["on_session_end"](session_id="main-session", **outcome)
-    assert scheduled == []
-    hooks["on_session_end"](
-        session_id="main-session",
-        completed=True,
-    )
-
-    assert scheduled[0][0] == "liquidaity-thinkgraph:main-session"
-    scheduled[0][1].close()
+    assert set(hooks) == {"post_llm_call"}
+    assert not hasattr(plugin, "_completed_pair_row_ids")
+    monkeypatch.setattr(plugin, "_post_json",
+                        lambda origin, path, payload, **kwargs: calls.append((path, payload)) or {"ok": True})
+    hooks["post_llm_call"](session_id="session-one", turn_id="turn-one",
+        user_message="  Forecast versus backtest?\n", assistant_response="Exact final answer.",
+        conversation_history=[{"role": "user", "content": "Never select this unrelated question."}])
+    assert len(scheduled) == 1
+    assert calls == []  # The callback does not wait for extraction or transport.
+    assert scheduled[0][0] == "liquidaity-thinkgraph:turn-one"
+    asyncio.run(scheduled[0][1])
+    path, payload = calls[0]
+    assert path == "/thinkgraph/completed-pair/process"
+    assert payload["userMessage"] == "  Forecast versus backtest?\n"
+    assert payload["assistantResponse"] == "Exact final answer."
+    assert payload["turnId"] == "turn-one"
+    assert payload["sessionId"] == "session-one"
+    assert payload["projectId"] == "project-one"
+    assert "userRowIds" not in payload and "assistantRowId" not in payload
+    hooks["post_llm_call"](session_id="session-one", turn_id="turn-two",
+                          user_message="Question", assistant_response="")
+    context.profile_name = "thinkgraph"
+    hooks["post_llm_call"](session_id="child", turn_id="child-turn",
+                          user_message="Question", assistant_response="Answer")
+    assert len(scheduled) == 1
 
 
 def test_automatic_thinkgraph_requires_saved_wire(monkeypatch):
     from app.python_models import saved_cards, thinkgraph_automatic
 
     deck = {"nodes": [
-        {"id": "main", "runtime": {"kind": "hermes", "mode": "main", "profile": "main"}},
-        {"id": "card_thinkgraph", "_cardRevisionId": "saved-revision",
-         "runtime": {"kind": "hermes", "profile": "thinkgraph"}},
+        {"id": "main", "kind": "agent", "runtimeOptions": {"orchestrator": True},
+         "runtime": {"kind": "hermes", "mode": "main", "profile": "main"}},
+        {"id": "card_thinkgraph", "kind": "agent", "_cardRevisionId": "saved-revision",
+         "runtimeOptions": {}, "runtime": {"kind": "hermes", "mode": "delegate", "profile": "thinkgraph"}},
     ], "edges": []}
     monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: {"deck": deck})
     saved = [
@@ -123,6 +123,11 @@ def test_automatic_thinkgraph_requires_saved_wire(monkeypatch):
         {"role": "assistant", "speaker": {"cardId": "main", "profile": "main"}},
     ]
     import pytest
+    with pytest.raises(thinkgraph_automatic.AutomaticThinkGraphError, match="saved_thinkgraph_connection_unavailable"):
+        thinkgraph_automatic._saved_authority("project-one", saved)
+    deck["edges"] = [{"source": "card_thinkgraph", "target": "main", "edgeType": "flow"}]
+    assert thinkgraph_automatic._saved_authority("project-one", saved)["thinkGraphRevisionId"] == "saved-revision"
+    deck["edges"][0]["enabled"] = False
     with pytest.raises(thinkgraph_automatic.AutomaticThinkGraphError, match="saved_thinkgraph_connection_unavailable"):
         thinkgraph_automatic._saved_authority("project-one", saved)
 
@@ -147,10 +152,11 @@ def test_completed_turn_calls_saved_thinkgraph_path_without_auxiliary_model(monk
         return {"ok": True, "status": "completed"}
 
     monkeypatch.setattr(plugin, "_post_json", post)
-    plugin._process_completed_turn(
-        Context(), "session-one", user_row_id=41, assistant_row_id=42,
-    )
+    plugin._run_completed_turn(Context(), {
+        "projectId": "project-one", "profile": "main", "sessionId": "session-one",
+        "turnId": "turn-one", "userMessage": "Question", "assistantResponse": "Answer",
+    })
     assert calls == [("/thinkgraph/completed-pair/process", {
         "projectId": "project-one", "profile": "main", "sessionId": "session-one",
-        "userRowId": 41, "assistantRowId": 42,
+        "turnId": "turn-one", "userMessage": "Question", "assistantResponse": "Answer",
     })]

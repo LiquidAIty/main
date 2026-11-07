@@ -2,7 +2,7 @@ manifest_version: 2
 api_version: 1
 name: liquidaity
 version: 1.0.0
-description: "LiquidAIty saved Card Python, wire-reduced taskgraphs, provider-owned Project Entity context, and automatic Engraphis ThinkGraph intake for Hermes."
+description: "LiquidAIty saved Card Python, wire-reduced taskgraphs, and automatic Engraphis ThinkGraph intake for Hermes."
 requires_hermes: ">=0.22.7"
 license: MIT
 tags:
@@ -12,8 +12,7 @@ tags:
 requires_plugins:
   - holographic
 provides_hooks:
-  - pre_llm_call
-  - on_session_end
+  - post_llm_call
 provides_tools:
   - card_python
   - taskgraph_start
@@ -27,7 +26,7 @@ config_schema:
     type: str
     default: "http://127.0.0.1:8003"
     label: Python rails URL
-    description: "Loopback LiquidAIty Python rails origin used for Project Entity context and database-to-database ThinkGraph intake."
+    description: "Loopback LiquidAIty Python rails origin used for post-LLM ThinkGraph intake."
   card_script:
     type: dict
     default: {}

@@ -5,6 +5,8 @@
  * Relationship: This file resolves each selectable chat Entity against current ThinkGraph and KnowGraph provider identities and refuses stale or mismatched graph evidence.
  * Entity: ThinkGraph
  * Relationship: This file renders native persisted Think mentions as exact Project-scoped Entity references without assigning the Think to another Entity.
+ * Entity: KnowGraph
+ * Relationship: Resolves persisted Graphiti mentions to the same existing Entity without changing the Know's primary Entity.
  */
 import type {
   GraphProjectionNode,
@@ -312,7 +314,13 @@ export function createCanonicalEntityMatcher(
   if (!directory) return null;
   const records = exactEntityRecords(projections, directory);
   if (!records) return null;
-  const targets = buildTargets(records, directory);
+  const nameCounts = new Map<string, number>();
+  for (const entity of directory.entities) {
+    const name = entity.canonicalName.toLowerCase();
+    nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
+  }
+  const targets = buildTargets(records, directory)
+    .filter(target => nameCounts.get(target.canonicalName.toLowerCase()) === 1);
   const recordLinks = new Map<string, CanonicalEntityTextSegment>();
   const addReference = (id: unknown, link: CanonicalEntityTextSegment) => {
     if (typeof id !== 'string' || !id.trim()) return;
@@ -338,7 +346,16 @@ export function createCanonicalEntityMatcher(
       addReference(know.contentHash, link);
     }
   }
-  const trie = buildTrie(targets, directory, false, recordLinks);
+  // Reserve stale provider ids as whole tokens so a name inside an id cannot
+  // become a misleading partial link (for example "Rocket" in "know-rocket").
+  for (const entity of directory.entities) {
+    for (const pointer of readCanonicalEntityProviderPointers(entity) || []) {
+      if (!recordLinks.has(pointer.entityId)) {
+        recordLinks.set(pointer.entityId, { text: pointer.entityId });
+      }
+    }
+  }
+  const trie = buildTrie(targets, directory, true, recordLinks);
   return {
     revisionKey: [
       directory.projectId,
@@ -347,7 +364,7 @@ export function createCanonicalEntityMatcher(
       directory.sha256,
     ].join(':'),
     segmentMessage: (role, text) => role === 'assistant' && targets.length
-      ? segmentText(trie, text)
+      ? segmentText(trie, text, true)
       : [{ text }],
   };
 }
@@ -361,13 +378,20 @@ export function createPersistedEntityMentionMatcher(
   for (const mention of mentions) {
     if (!mention || typeof mention !== 'object' || mention.projectId !== directory.projectId
       || typeof mention.id !== 'string' || !mention.id) continue;
+    const members: CanonicalEntityFocusMember[] = [
+      ...(typeof mention.engraphisEntityId === 'string' && mention.engraphisEntityId
+        ? [{ authority: 'thinkgraph' as const, entityId: mention.engraphisEntityId }] : []),
+      ...(typeof mention.graphitiEntityId === 'string' && mention.graphitiEntityId
+        ? [{ authority: 'knowgraph' as const, entityId: mention.graphitiEntityId }] : []),
+    ];
+    if (members.length !== 1) continue;
+    const member = members[0];
     const header = directory.entities.find(entity => entity.canonicalName === mention.canonicalName
       && readCanonicalEntityProviderPointers(entity)?.some(pointer =>
-        pointer.authority === 'thinkgraph' && pointer.entityId === mention.engraphisEntityId));
+        pointer.authority === member.authority && pointer.entityId === member.entityId));
     if (!header || targets.some(target => target.canonicalName === header.canonicalName)) continue;
     targets.push({ projectId: directory.projectId, directorySha256: directory.sha256,
-      canonicalName: header.canonicalName, view: 'thinkgraph',
-      members: [{ authority: 'thinkgraph', entityId: mention.engraphisEntityId }] });
+      canonicalName: header.canonicalName, view: member.authority, members });
   }
   const trie = buildTrie(targets, directory, true);
   return { revisionKey: directory.sha256,
@@ -427,9 +451,8 @@ export function resolveCanonicalEntityFocusVisualId({
     );
     if (!visualId) return null;
     const variants = joinedPresentation.nodeVariants.get(visualId) || [];
-    return variants.length === 1
-      && variants[0].authority === member.authority
-      && variants[0].node.id === member.entityId
+    return variants.some(variant => variant.authority === member.authority
+      && variant.node.id === member.entityId)
       && projection.nodes.some(node => node.id === visualId)
       ? visualId
       : null;

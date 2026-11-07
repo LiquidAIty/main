@@ -30,6 +30,7 @@ import {
   type JevGraphPhysicsProfile,
 } from './jevGraphPhysics';
 import {
+  createCanonicalEntityMatcher,
   createPersistedEntityMentionMatcher,
   resolveCanonicalEntityFocusVisualId,
   type CanonicalEntityFocusRequest,
@@ -44,7 +45,6 @@ import {
   type GraphViewContext,
   providerMemberKey,
   solarpunkMaterialFields,
-  combinedCyberMaterialFields,
   visualSourceKind,
   type GraphAuthority,
   type GraphLayerVisibility,
@@ -55,6 +55,7 @@ import {
   type JoinedGraphEdgeVariant,
   type JoinedGraphNodeVariant,
   type JoinedGraphPresentation,
+  type SolarpunkColors,
 } from './knowledgeGraphProjection';
 import {
   applyCodeGraphPhysics,
@@ -63,7 +64,7 @@ import {
   type CodeGraphFileSource,
 } from './codeGraphProjection';
 import {
-  responsiveRepelForce,
+  SOLARPUNK_HEX,
   safePresentationPreferences,
   presentationStorageKey,
   solarpunkEdgeFields,
@@ -373,25 +374,18 @@ export function KnowledgeGraphProjectionSurface({
     [authority],
   );
   const savedPresentationIsCurrent = savedPresentation.schemaVersion === 6 || savedPresentation.schemaVersion === 7;
-  const codeOnly = authority === 'codegraph' || (authority === 'joined'
-    && layerVisibility?.codegraph === true
-    && !layerVisibility.thinkgraph && !layerVisibility.knowgraph);
-  const [preferredLayout, setLayout] = useState<RendererLayout>(savedPresentation.layout || 'compact');
-  const [preferredStyle, setStyle] = useState<PresentationStyle>(savedPresentation.schemaVersion === 7 ? savedPresentation.style || 'solarpunk' : 'solarpunk');
-  const [preferredPhysics, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(savedPresentation.physicsProfile || 'galaxy');
-  const [settings, setSettings] = useState<Record<string, number | boolean | string>>({ size: 5, labels: true, ...(savedPresentation.settings || {}) });
-  const settingsOverrides = useRef<Record<string, number | boolean | string>>({ ...(savedPresentation.settings || {}) });
-  const layout: RendererLayout = codeOnly ? 'communities' : preferredLayout;
-  const style: PresentationStyle = codeOnly ? 'cyber' : preferredStyle;
-  const physicsProfile: JevGraphPhysicsProfile = codeOnly
-    ? 'galaxy'
-    : preferredPhysics;
-  const presentationKey = `${authority}:${layout}:${physicsProfile}:${codeOnly ? 'code' : 'knowledge'}`;
-  const [repelSource, setRepelSource] = useState<{
-    key: string;
-    base: number | null;
-  }>({ key: '', base: null });
-  const solarpunkColors = DEFAULT_SOLARPUNK_COLORS;
+  const [layout, setLayout] = useState<RendererLayout>(savedPresentation.layout || 'compact');
+  const [style, setStyle] = useState<PresentationStyle>(authority === 'codegraph'
+    ? savedPresentation.style || 'cyber'
+    : savedPresentationIsCurrent ? savedPresentation.style || 'solarpunk' : 'solarpunk');
+  const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(savedPresentation.physicsProfile || 'galaxy');
+  const [settings, setSettings] = useState<Record<string, number | boolean | string>>({ labels: true, ...(savedPresentation.settings || {}) });
+  const settingsOverrides = useRef<Record<string, number | boolean | string>>(savedPresentationIsCurrent
+    ? { ...(savedPresentation.settings || {}) }
+    : { ...(savedPresentation.settings || {}), size: 5 });
+  const [solarpunkColors, setSolarpunkColors] = useState<SolarpunkColors>(
+    savedPresentationIsCurrent ? savedPresentation.solarpunkColors || DEFAULT_SOLARPUNK_COLORS : DEFAULT_SOLARPUNK_COLORS,
+  );
   const inspectNodeRef = useRef<(id: string) => void>(() => undefined);
   const consumedEntityFocusRequestRef = useRef<number | null>(null);
   const panelBodyRef = useRef<HTMLDivElement>(null);
@@ -498,6 +492,22 @@ export function KnowledgeGraphProjectionSurface({
     openNodeInspector(visualId);
     setSelectedAuthority(target.view === 'all' ? null : target.view);
   };
+  const entityMatcher = useMemo(() => activeJoinedPresentation
+    ? createCanonicalEntityMatcher(activeJoinedPresentation.providerProjections)
+    : null, [activeJoinedPresentation]);
+  const renderLinkedText = (text: string, mentions?: unknown) => {
+    const persisted = createPersistedEntityMentionMatcher(canonicalEntityDirectory, mentions);
+    const segments = persisted?.segmentMessage('assistant', text) || [{ text }];
+    return segments.flatMap(segment => !segment.target && entityMatcher
+      ? entityMatcher.segmentMessage('assistant', segment.text) : [segment])
+      .map((segment, index) => segment.target && mentionVisualId(segment.target)
+        ? <button key={index} type="button" aria-label={`Open ${segment.text} in graph`}
+          style={{ display: 'inline', width: 'auto', margin: 0, padding: 0, border: 0,
+            background: 'transparent', color: 'inherit', font: 'inherit', fontStyle: 'italic',
+            textDecoration: 'underline dotted', textUnderlineOffset: 3, cursor: 'pointer' }}
+          onClick={() => openMention(segment.target!)}>{segment.text}</button>
+        : segment.text);
+  };
   const syncPaper = () => {
     const graph = graphRef.current;
     if (!graph) return;
@@ -545,11 +555,10 @@ export function KnowledgeGraphProjectionSurface({
           setSelectedId(null);
           setSelectedEdgeId(null);
           setInspectorOpen(false);
-          setControlsOpen(authority === 'joined');
+          setControlsOpen(false);
         },
       });
       graph.setCollapse(false);
-      graph.setStyle('cyber');
       graphRef.current = graph;
       return () => { graph.destroy(); graphRef.current = null; };
     } catch (failure) {
@@ -562,15 +571,9 @@ export function KnowledgeGraphProjectionSurface({
     const graph = graphRef.current;
     if (!graph) return;
     const defaults = graph.setPreset(layout);
-    if (codeOnly) {
-      graph.setSettings({ labels: true, size: 5, linkw: 1 });
-      setRepelSource({ key: presentationKey, base: null });
-      return;
-    }
     const restoredSettings: Record<string, number | boolean | string> = {
       ...defaults,
       labels: true,
-      size: 5,
       ...settingsOverrides.current,
     };
     if (!savedPresentationIsCurrent) {
@@ -578,16 +581,11 @@ export function KnowledgeGraphProjectionSurface({
     }
     graph.setSettings(restoredSettings);
     setSettings(restoredSettings);
-    const baseRepel = Number(restoredSettings.repel);
-    setRepelSource({
-      key: presentationKey,
-      base: Number.isFinite(baseRepel) ? baseRepel : null,
-    });
-  }, [codeOnly, layout, presentationKey, savedPresentation, savedPresentationIsCurrent]);
+  }, [authority]);
 
   const savePresentation = (patch: Record<string, unknown>) => {
     window.localStorage.setItem(presentationStorageKey(authority), JSON.stringify({
-      schemaVersion: 7, layout, style, physicsProfile, settings, ...patch,
+      schemaVersion: 7, layout, style, physicsProfile, settings, solarpunkColors, ...patch,
     }));
   };
   const changeSettings = (patch: Record<string, number | boolean>) => {
@@ -595,7 +593,6 @@ export function KnowledgeGraphProjectionSurface({
     settingsOverrides.current = { ...settingsOverrides.current, ...patch };
     graphRef.current?.setSettings(patch);
     setSettings(next);
-    if (typeof patch.repel === 'number') setRepelSource({ key: presentationKey, base: patch.repel });
     savePresentation({ settings: next });
   };
 
@@ -621,19 +618,9 @@ export function KnowledgeGraphProjectionSurface({
     const graph = graphRef.current;
     if (!host || !graph || typeof ResizeObserver === 'undefined') return undefined;
     let frame = 0;
-    let lastApplied = -1;
     const apply = () => {
       frame = 0;
       graph.resize();
-      if (codeOnly || repelSource.key !== presentationKey || repelSource.base === null) return;
-      const effective = responsiveRepelForce(
-        repelSource.base,
-        host.getBoundingClientRect().width,
-      );
-      if (effective === lastApplied) return;
-      lastApplied = effective;
-      graph.setSettings({ repel: effective });
-      graph.reheat();
     };
     const schedule = () => {
       if (frame) cancelAnimationFrame(frame);
@@ -646,7 +633,7 @@ export function KnowledgeGraphProjectionSurface({
       observer.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [codeOnly, presentationKey, repelSource]);
+  }, [authority]);
 
   useEffect(() => {
     if (!controlsOpen) return;
@@ -693,9 +680,7 @@ export function KnowledgeGraphProjectionSurface({
         return {
           ...node,
           authority: node.authority || authority,
-          ...(authority === 'joined'
-            ? combinedCyberMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors)
-            : solarpunkMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors)),
+          ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors),
           material_code_present: node.material_code_present === true,
         };
       }),
@@ -933,6 +918,7 @@ export function KnowledgeGraphProjectionSurface({
             observation,
             interpretation,
             citation,
+            ...(Array.isArray(item.mentions) ? { mentions: item.mentions } : {}),
             ...(Object.keys(direction).length ? { direction } : {}),
             observedAt: item.ingestedAt ?? properties.created_at,
             sourceDate: item.validFrom ?? properties.valid_at,
@@ -959,6 +945,7 @@ export function KnowledgeGraphProjectionSurface({
       id: selected.id, name: selected.label, authority: inspectedAuthority,
       ...(inspectedAuthority === 'thinkgraph' ? { thinks: visibleThinks.map(item => ({
         id: item.id, title: item.title, text: item.summary || item.content || '',
+        ...(Array.isArray(item.mentions) ? { mentions: item.mentions } : {}),
       })) } : {}),
       ...(inspectedAuthority === 'knowgraph' ? { knows: visibleKnowItems.map(item => ({
         id: item.episodeId, ...item.know,
@@ -1060,7 +1047,7 @@ export function KnowledgeGraphProjectionSurface({
             setControlsOpen(!reopenInspector);
             setInspectorOpen(reopenInspector);
           }}
-          collapsedLabel="Graph controls"
+          collapsedLabel={null}
           openAriaLabel="Open graph settings"
           movable
           defaultWidth={340} minWidth={280} maxWidth={520}
@@ -1095,8 +1082,8 @@ export function KnowledgeGraphProjectionSurface({
           {!inspectorOpen ? <div ref={panelBodyRef} className="knowledge-authority-controls" tabIndex={-1}>
             {authority !== 'codegraph' && projection?.projectId ? <SourceSearchControls key={projection.projectId} projectId={projection.projectId} /> : null}
             {authority === 'joined' && layerVisibility && onLayerVisibilityChange
-              ? <fieldset className="graph-layer-controls" aria-label="Graph sources">
-                <legend>Sources</legend>
+              ? <fieldset className="graph-layer-controls" aria-label="Graph layers">
+                <legend>Layers</legend>
                 <div className="graph-layer-legend">
                   {([
                     ['thinkgraph', 'Think', solarpunkColors.think],
@@ -1137,15 +1124,41 @@ export function KnowledgeGraphProjectionSurface({
               {JEV_GRAPH_PHYSICS_PROFILES.map(profile => <option key={profile} value={profile}>{JEV_GRAPH_PHYSICS_PROFILE_LABELS[profile]}</option>)}
             </select></label> : null}
             <label>Layout<select aria-label="Layout" value={layout}
-              onChange={event => { setLayout(event.target.value as RendererLayout); savePresentation({ layout: event.target.value }); }}>
+              onChange={event => {
+                const nextLayout = event.target.value as RendererLayout;
+                const preset = graphRef.current?.setPreset(nextLayout);
+                const nextSettings = { ...settings, ...preset, linkw: Math.max(1, Number(preset?.linkw) || 1) };
+                settingsOverrides.current = nextSettings;
+                setLayout(nextLayout);
+                setSettings(nextSettings);
+                savePresentation({ layout: nextLayout, settings: nextSettings });
+              }}>
               <option value="compact">Compact</option><option value="original">Original</option>
               <option value="communities">Communities</option><option value="radial">Radial</option>
+              <option value="galaxy">Galaxy gravity</option>
             </select></label>
             <label>Style<select aria-label="Style" value={style}
               onChange={event => { setStyle(event.target.value as PresentationStyle); savePresentation({ style: event.target.value }); }}>
               <option value="classic">Classic</option><option value="cyber">Cyberpunk</option>
               <option value="solarpunk">Solarpunk</option><option value="galaxy">Galaxy</option><option value="solar">Solar</option>
             </select></label>
+            {style === 'solarpunk'
+              ? <fieldset aria-label="Solarpunk colors" style={{ display: 'grid', gap: 6 }}>
+                <legend>Solarpunk colors</legend>
+                {([['Think nodes', 'think'], ['Know nodes', 'know'],
+                  ['Think edges', 'thinkRelationship'], ['Know edges', 'knowRelationship']] as const)
+                  .map(([label, key]) => <label key={key}>
+                    <span>{label}</span>
+                    <input type="color" aria-label={label} value={solarpunkColors[key]}
+                      onChange={event => {
+                        const value = event.target.value;
+                        if (!SOLARPUNK_HEX.test(value)) return;
+                        const next = { ...solarpunkColors, [key]: value };
+                        setSolarpunkColors(next);
+                        savePresentation({ solarpunkColors: next });
+                      }} />
+                  </label>)}
+              </fieldset> : null}
             <label><input type="checkbox" checked={settings.labels === true}
               onChange={event => changeSettings({ labels: event.target.checked })} />Entity labels</label>
             {([
@@ -1160,7 +1173,7 @@ export function KnowledgeGraphProjectionSurface({
             </label>)}
             <button type="button" onClick={() => {
               const defaults = graphRef.current?.setPreset(layout) || {};
-              changeSettings({ ...defaults, labels: true, size: 5, linkw: Math.max(1, Number(defaults.linkw) || 1) } as Record<string, number | boolean>);
+              changeSettings({ ...defaults, labels: true, linkw: Math.max(1, Number(defaults.linkw) || 1) } as Record<string, number | boolean>);
             }}>Reset to preset defaults</button>
           </div> : (selected || selectedEdge) ? <div ref={panelBodyRef} className="knowledge-authority-controls" role="region" aria-label={`${entryTitle} details`}>
         {authority === 'joined' && selected && availableNodeAuthorities.length > 0
@@ -1239,13 +1252,7 @@ export function KnowledgeGraphProjectionSurface({
             item={item}
             projectId={projection?.projectId}
             heading="Think"
-            renderText={text => createPersistedEntityMentionMatcher(canonicalEntityDirectory, item.mentions)
-              ?.segmentMessage('assistant', text).map((segment, index) => segment.target && mentionVisualId(segment.target) ? <button key={index} type="button"
-                aria-label={`Open ${segment.text} in graph`}
-                style={{ display: 'inline', width: 'auto', margin: 0, padding: 0, border: 0,
-                  background: 'transparent', color: 'inherit', font: 'inherit', fontStyle: 'italic',
-                  textDecoration: 'underline dotted', textUnderlineOffset: 3, cursor: 'pointer' }}
-                onClick={() => { void openMention(segment.target!); }}>{segment.text}</button> : segment.text) || text}
+            renderText={text => renderLinkedText(text, item.mentions)}
             removing={removingId === item.id}
             onRemove={inspectedAuthority === 'thinkgraph' && onRemoveEvidence
               ? () => { void deleteThink(item.id); }
@@ -1278,6 +1285,7 @@ export function KnowledgeGraphProjectionSurface({
             key={record.episodeId}
             record={record}
             heading={visibleKnowItems.length > 1 ? `Know ${index + 1}` : 'Know'}
+            renderText={text => renderLinkedText(text, record.know.mentions)}
             removing={removingId === record.episodeId}
             onRemove={onRemoveKnowEvidence
               ? () => { void deleteKnow(record.episodeId); }

@@ -204,7 +204,7 @@ export function ThinkRecordCard({
   const researchRequested = item.researchRequested ?? item.metadata?.structured_extraction?.think?.researchRequested;
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
-      <h4>{String(item.title || heading)}</h4>
+      <h4>{renderText ? renderText(String(item.title || heading)) : String(item.title || heading)}</h4>
     </div>
     {entryTime ? <p className="graph-record-time"><time dateTime={entryTime.dateTime}>
       {entryTime.label}
@@ -216,7 +216,7 @@ export function ThinkRecordCard({
     </details> : null}
     {relationships.length ? <section className="graph-think-section">
       <h5>Relationships</h5>
-      <ul>{relationships.map(value => <li key={value}>{value}</li>)}</ul>
+      <ul>{relationships.map(value => <li key={value}>{renderText ? renderText(value) : value}</li>)}</ul>
     </section> : null}
     {researchRequested === true ? <small>Research requested</small> : null}
     {projectId ? <ThinkSourceExchange key={`${projectId}:${item.id}`} projectId={projectId} memoryId={String(item.id)}
@@ -353,11 +353,13 @@ export function KnowGraphKnow({
   heading,
   removing = false,
   onRemove,
+  renderText,
 }: {
   record: KnowInspectorRecord;
   heading: string;
   removing?: boolean;
   onRemove?: () => void;
+  renderText?: (text: string) => ReactNode;
 }) {
   const { episodeId, know } = record;
   const citation = know.citation
@@ -387,19 +389,19 @@ export function KnowGraphKnow({
     ? direction.proposition.trim()
     : '';
   return <section className="graph-note graph-know" data-episode-id={episodeId}>
-    <div className="graph-think-heading"><h5>{String(know.title || heading)}</h5></div>
+    <div className="graph-think-heading"><h5>{renderText ? renderText(String(know.title || heading)) : String(know.title || heading)}</h5></div>
     <>
       {observation ? <div className="graph-know-finding">
         <strong>Finding</strong>
-        <p>{observation}</p>
+        <p>{renderText ? renderText(observation) : observation}</p>
       </div> : null}
       {interpretation ? <div className="graph-know-interpretation">
         <strong>Interpretation</strong>
-        <p>{interpretation}</p>
+        <p>{renderText ? renderText(interpretation) : interpretation}</p>
       </div> : null}
       {relation && proposition ? <p className="graph-know-direction">
         <strong>{relation.charAt(0).toUpperCase() + relation.slice(1)}</strong>
-        {': '}{proposition}
+        {': '}{renderText ? renderText(proposition) : proposition}
       </p> : null}
       {links.length ? <ul className="graph-know-citations">
         {links.map(link => <li key={link.url}>

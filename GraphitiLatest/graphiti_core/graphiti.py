@@ -1343,8 +1343,8 @@ class Graphiti:
 
         A Know remains a normal episode for extraction, temporal ordering, hybrid
         retrieval, communities, and Saga membership. The additional ``Know`` label
-        stores its exact Entity UUID as data. Know records retain no ``ABOUT`` or
-        ``MENTIONS`` attachment edges.
+        stores its primary Entity UUID as data. Extracted ``MENTIONS`` links to
+        existing Entities remain intact; redundant ``ABOUT`` attachments do not.
         """
 
         observation = observation.strip()

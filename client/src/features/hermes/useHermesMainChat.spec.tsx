@@ -47,6 +47,7 @@ describe('Hermes Main chat binding', () => {
     host.request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
       if (method === 'session.list') return { sessions: [] };
       if (method === 'session.create') return { session_id: 'main-session', messages: [] };
+      if (method === 'image.attach_bytes') return { ok: true };
       if (method === 'prompt.submit') return { accepted: true };
       throw new Error(`Unexpected method ${method}: ${JSON.stringify(params)}`);
     });
@@ -68,14 +69,19 @@ describe('Hermes Main chat binding', () => {
     }));
 
     await act(async () => {
-      expect(await result.current.send('  @KnowGraph exact text  ')).toBe(true);
+      expect(await result.current.send('  @KnowGraph exact text  ', { images: [{
+        name: 'chart.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,AA==', kind: 'user-upload',
+      }] })).toBe(true);
     });
-    expect(host.request).toHaveBeenCalledWith('prompt.submit', expect.objectContaining({
+    expect(host.request).toHaveBeenCalledWith('image.attach_bytes', {
+      session_id: 'main-session', profile: 'main', content_base64: 'AA==', filename: 'chart.png',
+    });
+    expect(host.request).toHaveBeenCalledWith('prompt.submit', {
       session_id: 'main-session',
       profile: 'main',
       submission_id: expect.stringMatching(UUID_V4),
       text: '  @KnowGraph exact text  ',
-    }));
+    });
   });
 
   it('resumes the same Bot Chat before Send after a Gateway reconnect', async () => {
@@ -111,11 +117,35 @@ describe('Hermes Main chat binding', () => {
     );
   });
 
+  it('keeps literal submitted input when reopening Hermes history', async () => {
+    const literal = 'Which forecasting models should we compare?';
+    let submitted = false;
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: [{ id: 'existing' }] };
+      if (method === 'session.resume') return { session_id: 'existing', running: false,
+        messages: submitted ? [{ role: 'user', text: literal }] : [] };
+      if (method === 'prompt.submit') { submitted = true; return { accepted: true }; }
+      throw new Error(`Unexpected method ${method}`);
+    });
+    const first = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(first.result.current.historyLoading).toBe(false));
+    await act(async () => { expect(await first.result.current.send(literal)).toBe(true); });
+    const request = host.request.mock.calls.find(([method]) => method === 'prompt.submit')![1];
+    expect(request.text).toBe(literal);
+    expect(request).not.toHaveProperty('api_text');
+    expect(first.result.current.messages.map(message => message.text)).toEqual([literal]);
+    first.unmount();
+    const reopened = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(reopened.result.current.historyLoading).toBe(false));
+    expect(reopened.result.current.messages.map(message => message.text)).toEqual([literal]);
+  });
+
   it('gives a voice transcript its own Hermes submission identity', async () => {
     host.request.mockImplementation(async (method: string) => {
       if (method === 'session.list') return { sessions: [] };
       if (method === 'session.create') return { session_id: 'main-session', messages: [] };
       if (method === 'voice.record') return { status: 'recording' };
+      if (method === 'image.attach_bytes') return { ok: true };
       if (method === 'prompt.submit') return { accepted: true };
       throw new Error(`Unexpected method ${method}`);
     });
@@ -124,7 +154,9 @@ describe('Hermes Main chat binding', () => {
     await waitFor(() => expect(result.current.historyLoading).toBe(false));
 
     await act(async () => {
-      expect(await result.current.startVoice('typed draft', { images: [] })).toBe(true);
+      expect(await result.current.startVoice('typed draft', { images: [{
+        name: 'voice-chart.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,AQ==', kind: 'user-upload',
+      }] })).toBe(true);
     });
     act(() => host.handlers.get('voice.transcript')?.({
       type: 'voice.transcript',
@@ -134,14 +166,17 @@ describe('Hermes Main chat binding', () => {
 
     await waitFor(() => expect(host.request).toHaveBeenCalledWith(
       'prompt.submit',
-      expect.objectContaining({
+      {
         session_id: 'main-session',
         profile: 'main',
         submission_id: expect.stringMatching(UUID_V4),
         text: 'typed draft\nspoken words',
         voice_turn: true,
-      }),
+      },
     ));
+    expect(host.request).toHaveBeenCalledWith('image.attach_bytes', {
+      session_id: 'main-session', profile: 'main', content_base64: 'AQ==', filename: 'voice-chart.png',
+    });
   });
 
   it('resumes Hermes history and retains the author Hermes reports', async () => {

@@ -21,17 +21,17 @@ beforeAll(async () => {
 afterEach(() => vi.useRealTimers());
 
 describe('Engraphis graph renderer contracts', () => {
-  it('preserves projected knowledge and code radii through normalization and drawing', () => {
+  it('preserves original knowledge normalization and the separate Code radius', () => {
     const { sanitizeEvidenceMetrics, graphNodeRadius, radiusFromGravityMass } = (window as any).EngraphisGraph._internals;
     const knowledge = { authority: 'joined', visual_radius: 7, gravity_mass: 40 };
     const code = { authority: 'codegraph', visual_radius: 2.4, gravity_mass: 10 };
     const ordinary = { visual_radius: 1, gravity_mass: 10 };
     sanitizeEvidenceMetrics([knowledge, code, ordinary], 50);
-    expect(knowledge.visual_radius).toBe(7);
+    expect(knowledge.visual_radius).toBeCloseTo(radiusFromGravityMass(40));
     expect(code.visual_radius).toBe(2.4);
     expect(ordinary.visual_radius).toBeCloseTo(radiusFromGravityMass(10));
-    expect(graphNodeRadius(knowledge, 5, 0)).toBe(7);
-    expect(graphNodeRadius(knowledge, 5, 1)).toBe(7);
+    expect(graphNodeRadius(knowledge, 5, 0)).toBe(graphNodeRadius({}, 5, 0));
+    expect(graphNodeRadius(knowledge, 5, 1)).toBe(graphNodeRadius({}, 5, 1));
     expect(graphNodeRadius(code, 5, 1)).toBe(2.4);
   });
 

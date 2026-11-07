@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
- * Relationship: This file validates authority-scoped saved renderer presentation and material contracts without owning graph data.
+ * Relationship: This file validates authority-scoped saved layout, style, physics, material colors, and renderer settings without owning graph data.
  */
 
 import {
@@ -12,6 +12,7 @@ import {
   type JevGraphPhysicsProfile,
 } from './jevGraphPhysics';
 import {
+  DEFAULT_SOLARPUNK_COLORS,
   type GraphAuthority,
   type GraphProjectionEdge,
   type GraphProjectionNode,
@@ -30,12 +31,14 @@ export type GraphPresentationPreferences = {
   layout?: RendererLayout;
   physicsProfile?: JevGraphPhysicsProfile;
   style?: PresentationStyle;
+  solarpunkColors?: SolarpunkColors;
   settings?: Partial<Record<'repel' | 'link' | 'gravity' | 'linkw' | 'size' | 'font' | 'labelDensity', number>> & { labels?: boolean };
 };
 
 const KNOWLEDGE_PRESENTATION_LAYOUTS = new Set<RendererLayout>([
-  'compact', 'original', 'communities', 'radial',
+  'compact', 'original', 'communities', 'radial', 'galaxy',
 ]);
+export const SOLARPUNK_HEX = /^#[0-9a-f]{6}$/i;
 const JEV_PHYSICS = new Set<JevGraphPhysicsProfile>(JEV_GRAPH_PHYSICS_PROFILES);
 const PRESENTATION_SETTING_BOUNDS = {
   repel: [0, 400],
@@ -77,6 +80,15 @@ export function safePresentationPreferences(
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const source = parsed as Record<string, unknown>;
     const settings = safePresentationSettings(source.settings);
+    const rawColors = source.solarpunkColors;
+    const solarpunkColors = rawColors && typeof rawColors === 'object' && !Array.isArray(rawColors)
+      ? Object.fromEntries(Object.entries(DEFAULT_SOLARPUNK_COLORS).map(([key, fallback]) => {
+        const value = (rawColors as Record<string, unknown>)[key];
+        const legacy = key === 'think' ? /^(?:#6e5fae|#3979e8)$/i.test(String(value || ''))
+          : key === 'thinkRelationship' && /^#3979e8$/i.test(String(value || ''));
+        return [key, !legacy && typeof value === 'string' && SOLARPUNK_HEX.test(value) ? value : fallback];
+      })) as SolarpunkColors
+      : undefined;
     return {
       ...(typeof source.schemaVersion === 'number'
         && [2, 3, 4, 5, 6, 7].includes(source.schemaVersion)
@@ -91,18 +103,11 @@ export function safePresentationPreferences(
       ...(['classic', 'cyber', 'galaxy', 'solar', 'solarpunk'].includes(String(source.style))
         ? { style: source.style as PresentationStyle } : {}),
       ...(settings ? { settings } : {}),
+      ...(solarpunkColors ? { solarpunkColors } : {}),
     };
   } catch {
     return {};
   }
-}
-
-export function responsiveRepelForce(baseValue: unknown, containerWidth: number): number {
-  const base = Math.max(0, Math.min(400, Number(baseValue) || 0));
-  const width = Math.max(440, Math.min(1_200, Number(containerWidth) || 440));
-  const progress = (width - 440) / (1_200 - 440);
-  const multiplier = 0.62 + progress * (1.28 - 0.62);
-  return Math.max(0, Math.min(400, Math.round(base * multiplier)));
 }
 
 export function withoutSolarpunkMaterial(node: GraphProjectionNode): GraphProjectionNode {

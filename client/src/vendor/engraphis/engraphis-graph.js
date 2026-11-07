@@ -788,7 +788,7 @@
      discs. Material style must not change geometry; it only changes the painted surface. */
   function graphNodeRadius(node, base, metric) {
     const size = Number.isFinite(+base) && +base > 0 ? +base : 3;
-    if (node && ['joined', 'engraphis', 'graphiti', 'thinkgraph', 'knowgraph', 'codegraph'].includes(node.authority)
+    if (node && node.authority === 'codegraph'
       && typeof node.visual_radius === 'number' && Number.isFinite(node.visual_radius)
       && node.visual_radius > 0) {
       return (size / 5) * Math.min(64, node.visual_radius);
@@ -888,8 +888,8 @@
     return BASE_NODE_RADIUS_SCALE
       * (1.5 + 2 * Math.pow(finitePositive(mass, 1, 1000), 2 / 3));
   }
-  /* Project projections supply their own bounded display radius. Ordinary Engraphis scenes
-     retain the mass-derived radius; malformed values never inject NaN/Infinity. */
+  /* CodeGraph retains its structural display radius. Knowledge and ordinary Engraphis
+     scenes use the original mass-derived radius; malformed values never inject NaN/Infinity. */
   function sanitizeEvidenceMetrics(nodes, maxDegree) {
     const values = Array.isArray(nodes) ? nodes : [];
     values.forEach(node => {
@@ -901,7 +901,7 @@
       node.gravity_mass = finitePositive(
         node.gravity_mass, fallbackGravityMass(node.degree, maxDegree), 1000
       );
-      const projectedRadius = ['joined', 'engraphis', 'graphiti', 'thinkgraph', 'knowgraph', 'codegraph'].includes(node.authority)
+      const projectedRadius = node.authority === 'codegraph'
         && typeof node.visual_radius === 'number' && Number.isFinite(node.visual_radius)
         && node.visual_radius > 0;
       node.visual_radius = projectedRadius

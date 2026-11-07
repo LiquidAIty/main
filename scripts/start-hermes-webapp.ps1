@@ -101,16 +101,14 @@ Write-Output "LiquidAIty Webapp renderer: $webappDist"
 
 Push-Location $hermesRoot
 try {
-  if (-not $SignInOnly) {
-    $gatewayOutput = & $hermesPython -X utf8 -m hermes_cli.main gateway ensure --timeout 180
-    if ($LASTEXITCODE -ne 0) {
-      throw "Hermes Gateway did not become ready within 180 seconds."
-    }
-  }
+  # The official webapp launcher starts/attaches its own host. No separate
+  # application Gateway management command belongs in this launch path.
   # Mint only after build/readiness. The raw application URL cannot authorize
   # a fresh Preview tab; Hermes's one-use fragment must reach that same tab.
   $launchOutput = & $hermesPython -X utf8 -m hermes_cli.main webapp --no-open --skip-build
-  if ($LASTEXITCODE -ne 0) { throw 'Hermes Webapp sign-in link creation failed.' }
+  if ($LASTEXITCODE -ne 0) {
+    throw ('Hermes Webapp sign-in failed: ' + ($launchOutput -join [Environment]::NewLine))
+  }
   $launchUrl = @($launchOutput | ForEach-Object {
     if ($_ -match '(https?://\S+)') { $Matches[1] }
   }) | Select-Object -Last 1

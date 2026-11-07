@@ -289,7 +289,6 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     workspaceView,
     openCanvasWorkspace: () => setWorkspaceView('canvas'),
   });
-  const graphViewRef = useRef<GraphViewContext | null>(null);
   const publishGraphView = useCallback(async (view: GraphViewContext) => {
     const response = await applicationFetch('/api/thinkgraph/view-context', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -300,21 +299,13 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
   const graphMapKeyRef = useRef('');
   const onGraphViewContext = useCallback((view: GraphViewContext) => {
     if (view.map.projectId !== canvasProjectId) return;
-    graphViewRef.current = view;
     const key = JSON.stringify(view.map);
     if (graphMapKeyRef.current !== key) {
       graphMapKeyRef.current = key;
       void publishGraphView(view).catch(() => { graphMapKeyRef.current = ''; });
     }
   }, [canvasProjectId, publishGraphView]);
-  const prepareSelectedGraphContext = useCallback(async () => {
-    const view = graphViewRef.current;
-    if (!view || view.map.projectId !== canvasProjectId) return undefined;
-    await publishGraphView(view);
-    return view.openNode ? 'Selected graph node at submission (context only, not permission to edit or execute):\n'
-      + JSON.stringify(view.openNode) : undefined;
-  }, [canvasProjectId, publishGraphView]);
-  const mainChat = useHermesMainChat(canvasProjectId, prepareSelectedGraphContext);
+  const mainChat = useHermesMainChat(canvasProjectId);
   const {
     chatMinWidth,
     chatPanelWidth,

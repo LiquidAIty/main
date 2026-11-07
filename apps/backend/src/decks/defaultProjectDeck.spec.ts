@@ -64,8 +64,8 @@ const EXPECTED_PROMPT_CONTRACTS = [
     asset: 'thinkgraph.md',
     templateId: 'prompt_thinkgraph',
     cardId: 'card_thinkgraph',
-    bytes: 5506,
-    sha256: 'aa972bc0d325dcc9259dcb2e4ef0ec22f1bd7f3af14bafe99da4570e3b93515a',
+    bytes: 5686,
+    sha256: 'fcae9857f89f56f28ab8a56a9541153662fe7f57a64fe28a574c25ce97ae0835',
   },
   {
     asset: 'team.md',
@@ -78,8 +78,8 @@ const EXPECTED_PROMPT_CONTRACTS = [
     asset: 'knowgraph.md',
     templateId: 'prompt_knowgraph',
     cardId: 'card_knowgraph',
-    bytes: 7007,
-    sha256: '86d8929c521513a067daed72f647b816b4919279228f33eb79a5ef81af24e265',
+    bytes: 7188,
+    sha256: '62c14ba7ad82ebe988a976bdfa0af1f96352bc2b860c8a4592d1c343b13d4c59',
   },
 ] as const;
 

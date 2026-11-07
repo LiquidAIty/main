@@ -74,6 +74,9 @@ afterEach(() => {
 });
 
 describe('Trading agent UI', () => {
+  const chartOptions = () => JSON.parse(decodeURIComponent(
+    new URL(screen.getByTestId('trading-candles').getAttribute('src')!).hash.slice(1),
+  ));
   it('mounts visible Portfolio candles using TradingView and opens the selected chart', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })));
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
@@ -84,20 +87,18 @@ describe('Trading agent UI', () => {
       observe() {}
       disconnect = disconnect;
     });
-    const widget = vi.fn(function () { return { remove: vi.fn() }; });
-    vi.stubGlobal('TradingView', { widget });
     render(<TradingUI symbol="RDW" projectId="project-one" />);
     expect(screen.getByRole('tab', { name: 'Add trade' }).getAttribute('aria-selected')).toBe('true');
-    expect(widget).toHaveBeenCalledWith(expect.objectContaining({ symbol: 'NYSE:RDW', hide_top_toolbar: false }));
+    expect(chartOptions()).toMatchObject({ symbol: 'NYSE:RDW', hide_top_toolbar: '0', interval: '5', theme: 'dark' });
+    expect(document.querySelector('#tv-script')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
-    widget.mockClear();
     await screen.findByTestId('trade-job-job-one');
     await waitFor(() => expect(observers).toHaveLength(1));
-    expect(widget).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('trading-candles')).toBeNull();
     act(() => observers[0]([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
-    expect(widget).toHaveBeenLastCalledWith(expect.objectContaining({ symbol: 'RDW', style: '1', hide_top_toolbar: true }));
+    expect(chartOptions()).toMatchObject({ symbol: 'RDW', style: '1', hide_top_toolbar: '1', allow_symbol_change: '0' });
     fireEvent.click(screen.getByRole('button', { name: 'Open RDW chart' }));
-    expect(widget).toHaveBeenLastCalledWith(expect.objectContaining({ symbol: 'RDW', style: '1', hide_top_toolbar: false }));
+    expect(chartOptions()).toMatchObject({ symbol: 'RDW', style: '1', hide_top_toolbar: '0', allow_symbol_change: '1' });
     expect(disconnect).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(screen.getByTestId('active-trade-job-grid')).toBeTruthy();
@@ -108,9 +109,6 @@ describe('Trading agent UI', () => {
       status: 200, headers: { 'Content-Type': 'application/json' },
     })));
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
-    const remove = vi.fn(() => { throw new Error('detached iframe'); });
-    const widget = vi.fn(function () { return { remove }; });
-    vi.stubGlobal('TradingView', { widget });
     render(<TradingUI symbol="RDW" projectId="project-one" />);
 
     fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
@@ -128,7 +126,7 @@ describe('Trading agent UI', () => {
     fireEvent.click(screen.getByTestId('trade-job-job-one'));
     expect(screen.getByTestId('selected-trade-job')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'PAUSE' }).hasAttribute('disabled')).toBe(true);
-    expect(widget).toHaveBeenLastCalledWith(expect.objectContaining({ symbol: 'RDW' }));
+    expect(chartOptions()).toMatchObject({ symbol: 'RDW' });
     expect(screen.queryByRole('button', { name: /^Dark$/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^Fullscreen$/ }));
     expect(screen.queryByRole('complementary', { name: 'Trading controls' })).toBeNull();
@@ -140,7 +138,7 @@ describe('Trading agent UI', () => {
     expect(screen.getByTestId('trading-portfolio')).toBeTruthy();
     expect(screen.queryByTestId('trading-candles')).toBeNull();
     expect(screen.getByText('Cash')).toBeTruthy();
-    expect(remove).toHaveBeenCalled();
+    expect(screen.queryByTestId('trading-candles')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Journal' }));
     expect(screen.getByText('Stop at the authorized level.')).toBeTruthy();
     expect(screen.getByTestId('trading-journal')).toBeTruthy();

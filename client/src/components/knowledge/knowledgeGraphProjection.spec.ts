@@ -17,6 +17,7 @@ import {
   DEFAULT_GRAPH_LAYER_VISIBILITY,
   composeThinkKnowPresentation as composeAuthorityThinkKnowPresentation,
   composeVisibleGraphLayers,
+  displayedEntityMap,
   type GraphProjectionV1,
 } from './knowledgeGraphProjection';
 
@@ -108,6 +109,26 @@ const composeThinkKnowPresentation = (
 };
 
 describe('knowledge graph projection composition', () => {
+  it('publishes every displayed edge with only its top Jev choice and respects all-off', () => {
+    const think = { ...empty('thinkgraph'), nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+      edges: [{ id: 'e', source: 'a', target: 'b', predicate: 'USES', properties: {
+        jev: { winner: 'USES', distribution: { USES: 0.8, REQUIRES: 0.2 } },
+        evidence: [{ content: 'Not map content' }],
+      } }] };
+    const code = { ...empty('thinkgraph'), authority: 'codegraph' };
+    const presentation = composeVisibleGraphLayers(think, empty('knowgraph'), code,
+      { thinkgraph: true, knowgraph: false, codegraph: false });
+    const map = displayedEntityMap(presentation);
+    expect(map.entities).toHaveLength(2);
+    expect(map.relationships).toHaveLength(1);
+    expect(map.relationships[0]).toMatchObject({ label: 'USES', probability: 0.8 });
+    expect(JSON.stringify(map)).not.toContain('distribution');
+    expect(JSON.stringify(map)).not.toContain('Not map content');
+    const off = displayedEntityMap(composeVisibleGraphLayers(think, empty('knowgraph'), code,
+      { thinkgraph: false, knowgraph: false, codegraph: false }));
+    expect(off.entities).toEqual([]);
+    expect(off.relationships).toEqual([]);
+  });
   it('groups one exact authoritative Entity per authority while retaining provider evidence and edges', () => {
     const think = {
       ...empty('thinkgraph'),
@@ -168,8 +189,8 @@ describe('knowledge graph projection composition', () => {
     expect(presentation.edgeVariants.get('thinkgraph:same-edge')?.edge).toBe(think.edges[0]);
     expect(presentation.edgeVariants.get('knowgraph:same-edge')?.edge).toBe(know.edges[0]);
     expect(presentation.projection.nodes.find(node => node.id === sharedVisualId)).toMatchObject({
-      material_kind: 'solarpunk',
-      material_role: 'PAIRED_SOLARPUNK_MATERIAL',
+      material_kind: 'joined-cyber',
+      material_role: 'PAIRED_CYBER_MATERIAL',
       material_blue: '#4FA2AD',
       material_orange: '#F2A64A',
     });

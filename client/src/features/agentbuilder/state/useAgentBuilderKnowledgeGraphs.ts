@@ -170,6 +170,8 @@ export default function useAgentBuilderKnowledgeGraphs({
     warning: null,
     freshness: 'unverified',
   }));
+  const codeGraphRef = useRef(codeGraph);
+  codeGraphRef.current = codeGraph;
   const codeProjectionRequestRef = useRef(0);
   const codeFileRequestRef = useRef(0);
   const codeSourceRequestRef = useRef(0);
@@ -305,16 +307,21 @@ export default function useAgentBuilderKnowledgeGraphs({
     const query = new URLSearchParams({ projectId });
     const stream = new EventSource(applicationApiUrl(`/api/thinkgraph/events?${query}`), { withCredentials: true });
     const refresh = () => { void refreshThinkGraph(); };
-    const refreshKnow = () => { void refreshKnowGraph(); };
+    const refreshKnow = () => {
+      void refreshKnowGraph();
+      // The shared Entity directory is returned with the Think projection.
+      // A newly stored Know Entity must become linkable in the same update.
+      void refreshThinkGraph();
+    };
     const disconnected = () => {
       setErrors(current => ({ ...current, thinkgraph: 'ThinkGraph live updates disconnected. Reconnecting.' }));
     };
-    stream.addEventListener('ready', refresh);
+    stream.addEventListener('ready', refreshKnow);
     stream.addEventListener('changed', refresh);
     stream.addEventListener('knowgraph-changed', refreshKnow);
     stream.addEventListener('error', disconnected);
     return () => {
-      stream.removeEventListener('ready', refresh);
+      stream.removeEventListener('ready', refreshKnow);
       stream.removeEventListener('changed', refresh);
       stream.removeEventListener('knowgraph-changed', refreshKnow);
       stream.removeEventListener('error', disconnected);
@@ -386,7 +393,11 @@ export default function useAgentBuilderKnowledgeGraphs({
       const paths = codeGraphInspectedPaths(event.payload.name,
         event.payload.result ?? event.payload.result_text);
       if (!paths.length || disposed) return;
-      void loadCodeGraph().then(projection => {
+      const existing = codeGraphRef.current;
+      const categories = existing.projection.projectId === projectId
+        && existing.projection.nodes.some(node => node.properties?.recordKind === 'feature')
+        ? Promise.resolve(existing.projection) : loadCodeGraph();
+      void categories.then(projection => {
         if (disposed || !projection) return;
         const activated = projection.nodes.filter(node => node.properties?.recordKind === 'feature'
           && Array.isArray(node.properties.memberFilePaths)
@@ -497,8 +508,8 @@ export default function useAgentBuilderKnowledgeGraphs({
       }),
     });
     if (!response.ok) throw new Error('Could not delete this Know.');
-    await refreshKnowGraph();
-  }, [projectId, refreshKnowGraph]);
+    await Promise.all([refreshKnowGraph(), refreshThinkGraph()]);
+  }, [projectId, refreshKnowGraph, refreshThinkGraph]);
 
   return {
     projections,

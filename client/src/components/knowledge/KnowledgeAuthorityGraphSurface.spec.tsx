@@ -440,12 +440,55 @@ describe('knowledge authority graph surfaces', () => {
 
     act(() => graph.nodeClick(node('Think only')));
     expect(screen.getByRole('tab', { name: 'Think' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByText('Think only record.')).toBeTruthy();
+    expect(screen.getByTestId('knowledge-think-records').textContent).toContain('Think only record.');
+    expect(screen.getByRole('button', { name: 'Open Think only in graph' })).toBeTruthy();
 
     act(() => graph.nodeClick(node('Know only')));
     expect(screen.getByRole('tab', { name: 'Know' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByText('Know only record.')).toBeTruthy();
+    expect(screen.getByTestId('knowledge-know-records').textContent).toContain('Know only record.');
+    expect(screen.getAllByRole('button', { name: 'Open Know only in graph' })).toHaveLength(2);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('links Entity names inside Thinks and Knows to the shared node without changing their text', () => {
+    const think = { ...empty('thinkgraph'), nodes: [
+      { id: 'reasoning', label: 'Reasoning', properties: { evidence: [{
+        id: 'think-one', summary: 'Shared provides evidence.',
+        detail: 'shared remains the same Entity.',
+        mentions: [{ id: 'mention-one', projectId: 'project-1', canonicalName: 'Shared', engraphisEntityId: 'think-shared' }],
+        metadata: { thinkgraph_origin: { authority: 'thinkgraph' } },
+      }] } },
+      { id: 'think-shared', label: 'Shared', properties: {} },
+    ], edges: [] };
+    const know = { ...empty('knowgraph'), nodes: [
+      { id: 'know-shared', label: 'Shared', properties: { evidence: [
+        { ...knowRecord('know-one', 'A sourced finding', 'Reasoning informs shared.', 'https://example.test/Shared'),
+          mentions: [{ id: 'know-mention', projectId: 'project-1', canonicalName: 'Shared', graphitiEntityId: 'know-shared' }] },
+      ] } },
+    ], edges: [] };
+    const onViewContext = vi.fn();
+    render(<JoinedKnowledgeGraphSurface projections={currentProjections(think, know)} onViewContext={onViewContext} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.label === 'Reasoning')));
+    expect(screen.getByTestId('knowledge-think-records').textContent).toContain('Shared provides evidence.');
+    expect(onViewContext.mock.lastCall?.[0].openNode.thinks[0].mentions[0]).toMatchObject({
+      canonicalName: 'Shared', engraphisEntityId: 'think-shared',
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Open Shared in graph' }));
+    expect(screen.getByTestId('thinkgraph-node-inspector').getAttribute('data-provider-id')).toBe('think-shared');
+    fireEvent.click(screen.getByRole('tab', { name: 'Know' }));
+    expect(screen.getByTestId('knowgraph-node-inspector').getAttribute('data-provider-id')).toBe('know-shared');
+    expect(screen.getByTestId('knowledge-know-records').textContent).toContain('Reasoning informs shared.');
+    expect(onViewContext.mock.lastCall?.[0].openNode.knows[0].mentions[0]).toMatchObject({
+      canonicalName: 'Shared', graphitiEntityId: 'know-shared',
+    });
+    expect(screen.getByRole('button', { name: 'Open shared in graph' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'A sourced finding source' }).getAttribute('href')).toBe('https://example.test/Shared');
+    fireEvent.click(screen.getByRole('button', { name: 'Open Reasoning in graph' }));
+    expect(screen.getByTestId('thinkgraph-node-inspector').getAttribute('data-provider-id')).toBe('reasoning');
+    fireEvent.click(screen.getByText('More'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open shared in graph' }));
+    expect(screen.getByTestId('thinkgraph-node-inspector').getAttribute('data-provider-id')).toBe('think-shared');
   });
 
   it('selects without a Focus control, collapse, Jev request, or view replacement', () => {
@@ -554,7 +597,7 @@ describe('knowledge authority graph surfaces', () => {
     },
   );
 
-  it('preserves Engraphis scene metadata and source records while applying incoming size', () => {
+  it('preserves an ordinary Engraphis scene and its saved style without Jev evidence', () => {
     window.localStorage.setItem('liquidaity.graph.knowgraph.presentation.v1', JSON.stringify({
       schemaVersion: 6,
       style: 'cyber',
@@ -577,12 +620,12 @@ describe('knowledge authority graph surfaces', () => {
       communities: [],
     });
     expect(graph.data.nodes[0]).toMatchObject({
-      semantic_mass: 0.82, gravity_mass: 9.4, visual_radius: 2.5,
+      semantic_mass: 0.82, gravity_mass: 9.4, visual_radius: 7.2,
     });
     expect(scene.nodes[0].visual_radius).toBe(7.2);
-    expect(graph.data.nodes[0].material_kind).toBe('solarpunk');
-    expect(graph.setThemeColors).toHaveBeenLastCalledWith(expect.objectContaining({
-      material_blue: '#4FA2AD', material_orange: '#F2A64A' }));
+    expect(graph.data.nodes[0].material_kind).toBeUndefined();
+    expect(graph.setStyle).toHaveBeenLastCalledWith('cyber');
+    expect(graph.setThemeColors).toHaveBeenLastCalledWith({});
     expect(graph.data.links[0]).toMatchObject({
       relation: 'QUALIFIES', relationship_strength: 0.82,
       spring_strength: 0.1744, rest_length: 16.16,
@@ -721,7 +764,9 @@ describe('knowledge authority graph surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open file' }));
     await waitFor(() => expect(readCodeSource).toHaveBeenCalledWith('client/src/surface.tsx'));
     act(() => graph.backgroundClick());
-    expect(screen.getByRole('group', { name: 'Graph sources' })).toBeTruthy();
+    expect(screen.queryByRole('complementary')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    expect(screen.getByRole('group', { name: 'Graph layers' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Code source' }).getAttribute('aria-pressed'))
       .toBe('true');
 
@@ -915,7 +960,8 @@ describe('knowledge authority graph surfaces', () => {
       size: 3, font: 13, linkw: 0.6, labelDensity: 40,
       repel: 80, link: 44, gravity: 20, labels: false,
     });
-    expect(container.querySelector('[data-style="solarpunk"][data-physics-profile="open"]')).toBeTruthy();
+    expect(container.querySelector('[data-style="classic"][data-physics-profile="open"]')).toBeTruthy();
+    expect(graph.setStyle).toHaveBeenLastCalledWith('classic');
     expect(graph.data.links[0].visual_width).toBeCloseTo(1.8);
     expect(graph.data.links[0].spring_strength).toBeCloseTo(0.121);
     expect(graph.data.links[0].rest_length).toBeCloseTo(24.4);
@@ -925,7 +971,7 @@ describe('knowledge authority graph surfaces', () => {
     expect(window.localStorage.getItem(key)).toBe(stored);
   });
 
-  it('keeps canonical colors without rewriting legacy presentation data', () => {
+  it('keeps the donor legacy-presentation migration without rewriting saved data', () => {
     const key = 'liquidaity.graph.joined.presentation.v1';
     const stored = JSON.stringify({ schemaVersion: 3, style: 'cyber',
       settings: { size: 3 }, solarpunkColors: { think: '#6e5fae', know: '#ffffff' } });
@@ -933,6 +979,7 @@ describe('knowledge authority graph surfaces', () => {
     render(<JoinedKnowledgeGraphSurface
       projections={currentProjections(empty('thinkgraph'), empty('knowgraph'))} />);
     const graph = forceGraphMocks.instances.at(-1);
+    expect(graph.setStyle).toHaveBeenLastCalledWith('cyber');
     expect(graph.setThemeColors).toHaveBeenLastCalledWith(expect.objectContaining({
       material_blue: '#4FA2AD', material_orange: '#F2A64A' }));
     expect(window.localStorage.getItem(key)).toBe(stored);
@@ -998,7 +1045,7 @@ describe('knowledge authority graph surfaces', () => {
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.queryByRole('group', { name: 'Solarpunk colors' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Solarpunk colors' })).toBeTruthy();
     expect(screen.getByRole('combobox', { name: 'Style' })).toBeTruthy();
   });
 
@@ -1418,8 +1465,8 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.getByRole('slider', { name: 'Node size' })).toBeTruthy();
     expect(screen.getByRole('complementary').style.width).toBe('340px');
     expect(screen.getByRole('combobox', { name: 'Style' })).toBeTruthy();
-    expect(graph.data.nodes[0].material_kind).toBe('solarpunk');
-    expect(screen.queryByRole('group', { name: 'Solarpunk colors' })).toBeNull();
+    expect(graph.data.nodes[0].material_kind).toBe('joined-cyber');
+    expect(screen.getByRole('group', { name: 'Solarpunk colors' })).toBeTruthy();
     expect(graph.setStyle).toHaveBeenLastCalledWith('cyber');
     expect(container.querySelector('.thinkgraph-entry')).toBeNull();
     expect(graph.setPreset).toHaveBeenCalledTimes(1);

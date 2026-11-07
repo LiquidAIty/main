@@ -17,6 +17,7 @@ import {
 } from '../knowledge/canonicalEntityDirectory';
 import {
   createCanonicalEntityMatcher,
+  createPersistedEntityMentionMatcher,
   resolveCanonicalEntityFocusVisualId,
 } from './canonicalEntityLinks';
 
@@ -99,7 +100,27 @@ function linkedNames(
 }
 
 describe('canonical Entity chat links', () => {
-  it('matches exact case-sensitive names and carries paired provider evidence without displaying ids', () => {
+  it('resolves persisted Know mentions to existing Entity ids without creating or reattaching nodes', () => {
+    const current = projections();
+    const directory = current.thinkgraph.canonicalEntityDirectory!;
+    const mention = { id: 'mention-electron', projectId: 'project-1',
+      graphitiEntityId: 'know-electron', canonicalName: 'Electron' };
+    const matcher = createPersistedEntityMentionMatcher(directory, [mention])!;
+    expect(matcher.segmentMessage('assistant', 'electron launches.')[0]).toMatchObject({
+      text: 'electron', target: { canonicalName: 'Electron', view: 'knowgraph',
+        members: [{ authority: 'knowgraph', entityId: 'know-electron' }] },
+    });
+    for (const invalid of [
+      { ...mention, projectId: 'another-project' },
+      { ...mention, graphitiEntityId: 'wrong-entity' },
+      { ...mention, engraphisEntityId: 'think-rocket' },
+    ]) {
+      expect(createPersistedEntityMentionMatcher(directory, [invalid])!
+        .segmentMessage('assistant', 'Electron')).toEqual([{ text: 'Electron' }]);
+    }
+    expect(directory.entities).toHaveLength(3);
+  });
+  it('matches canonical names regardless of capitalization while retaining exact provider identity', () => {
     const matcher = createCanonicalEntityMatcher(projections())!;
     const segments = matcher.segmentMessage('assistant', 'Rocket Lab builds Electron.');
     expect(linkedNames(segments)).toEqual(['Rocket Lab', 'Electron']);
@@ -110,9 +131,18 @@ describe('canonical Entity chat links', () => {
         { authority: 'knowgraph', entityId: 'know-rocket' },
       ],
     });
-    expect(matcher.segmentMessage('assistant', 'rocket lab and RocketLab').some(
-      segment => segment.target,
-    )).toBe(false);
+    expect(linkedNames(matcher.segmentMessage('assistant', 'rocket lab and RocketLab')))
+      .toEqual(['rocket lab']);
+    expect(matcher.segmentMessage('assistant', 'rocket lab')[0].target)
+      .toEqual(segments.find(segment => segment.text === 'Rocket Lab')?.target);
+  });
+
+  it('does not guess between different Entities whose names differ only by capitalization', () => {
+    const matcher = createCanonicalEntityMatcher(projections({ entities: [
+      { authority: 'thinkgraph', canonicalName: 'US', engraphisEntityId: 'upper' },
+      { authority: 'knowgraph', canonicalName: 'us', graphitiEntityId: 'lower' },
+    ] }))!;
+    expect(linkedNames(matcher.segmentMessage('assistant', 'US or us'))).toEqual([]);
   });
 
   it('chooses the longest nonoverlapping exact canonical name', () => {
@@ -292,6 +322,13 @@ describe('canonical Entity chat links', () => {
       directory,
       request: { ...electron, requestId: 2 },
     })).toBe(electronVisualId);
+    // A persisted Think mention can target its provider member of a shared node.
+    expect(resolveCanonicalEntityFocusVisualId({
+      projection: joinedPresentation.projection,
+      joinedPresentation,
+      directory,
+      request: { ...rocket, view: 'thinkgraph', members: [rocket.members[0]], requestId: 6 },
+    })).toBe(visualId);
     expect(resolveCanonicalEntityFocusVisualId({
       projection: joinedPresentation.projection,
       joinedPresentation,

@@ -1,178 +1,99 @@
-"""Focused proof for the provider-owned Project Entity map."""
-
+"""The displayed map is bounded navigation context, never a second graph."""
 # Entity: Project Knowledge Graph
-# Relationship: Verifies the shared map carries complete canonical identities and provider relationships without Think, Know, citation, or episode bodies.
+# Relationship: Tests visible-source filtering, exact provider pointers, complete displayed edges, empty maps, and exclusion of hidden record bodies.
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
-from typing import Any
 
 import pytest
-
-from app.python_models import project_entity_map
+from app.python_models import project_entity_map as maps
 from app import graph_routes
 
 
-def _directory() -> dict[str, Any]:
+@pytest.fixture(autouse=True)
+def clear_view():
+    maps._VISIBLE_MAPS.clear()
+    yield
+    maps._VISIBLE_MAPS.clear()
+
+
+def view():
     return {
-        "schemaVersion": "graph-entity-directory",
-        "projectId": "project-one",
-        "complete": True,
-        "counts": {"engraphis": 1, "graphiti": 1, "total": 1},
-        "revisions": {"engraphis": "think-r1", "graphiti": "know-r1"},
-        "entities": [{
-            "canonicalName": "Rocket Lab",
-            "authority": "both",
-            "engraphisEntityId": "think-rocket",
-            "graphitiEntityId": "know-rocket",
-        }],
-        "sha256": "a" * 64,
-        "bytes": 256,
-        "estimatedTokens": 64,
-        "readDurationMs": 1.0,
+        "schemaVersion": "project-entity-map", "projectId": "project-one",
+        "sources": {"thinkgraph": True, "knowgraph": True, "codegraph": False},
+        "entities": [
+            {"id": "rocket", "name": "Rocket Lab", "providers": [
+                {"authority": "thinkgraph", "id": "think-rocket"},
+                {"authority": "knowgraph", "id": "know-rocket"}]},
+            {"id": "electron", "name": "Electron", "providers": [
+                {"authority": "thinkgraph", "id": "think-electron"}]},
+        ],
+        "relationships": [{"id": "edge", "source": "rocket", "target": "electron",
+                           "authority": "thinkgraph", "label": "OPERATES", "probability": 0.9}],
     }
 
 
-def test_project_entity_map_contains_identity_and_relationship_state_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    think_relationship = {
-        "authority": "thinkgraph",
-        "engraphisRelationshipId": "think-edge",
-        "sourceEngraphisEntityId": "think-rocket",
-        "sourceCanonicalName": "Rocket Lab",
-        "targetEngraphisEntityId": "think-electron",
-        "targetCanonicalName": "Electron",
-        "label": "OPERATES",
-        "state": {"labelConfidence": 0.9},
-    }
-    know_relationship = {
-        "authority": "knowgraph",
-        "graphitiRelationshipId": "know-edge",
-        "sourceGraphitiEntityId": "know-rocket",
-        "sourceCanonicalName": "Rocket Lab",
-        "targetGraphitiEntityId": "know-electron",
-        "targetCanonicalName": "Electron",
-        "label": "OPERATES",
-        "state": {"validAt": "2026-01-01T00:00:00Z"},
-    }
-    monkeypatch.setattr(
-        project_entity_map,
-        "build_canonical_entity_directory",
-        lambda _project: _directory(),
-    )
-    monkeypatch.setattr(
-        project_entity_map,
-        "_thinkgraph_relationships",
-        lambda _project: [think_relationship],
-    )
-    monkeypatch.setattr(
-        project_entity_map,
-        "_knowgraph_relationships",
-        lambda _project: [know_relationship],
-    )
-
-    result = project_entity_map.build_project_entity_map("project-one")
-    rendered = project_entity_map.render_project_entity_map(result)
-
-    assert result["entities"] == _directory()["entities"]
-    assert result["relationships"] == [think_relationship, know_relationship]
-    assert result["counts"]["relationships"] == 2
-    assert "Current Project Entity Map" in rendered
-    assert "shared names do not merge graph ownership" in rendered
-    encoded = json.dumps(result, sort_keys=True).casefold()
-    assert '"body"' not in encoded
-    assert '"citation"' not in encoded
-    assert '"engraphismemoryid"' not in encoded
-    assert '"graphitiepisodeid"' not in encoded
+def test_map_retains_displayed_identity_and_single_top_relationship_only():
+    snapshot = view()
+    maps.publish_project_entity_map("project-one", snapshot)
+    result = maps.build_project_entity_map("project-one")
+    assert {k: v for k, v in result.items() if k != "sha256"} == snapshot
+    assert len(result["relationships"]) == 1
+    assert "distribution" not in json.dumps(result)
+    snapshot["entities"].clear()
+    assert len(maps.build_project_entity_map("project-one")["entities"]) == 2
+    result["entities"].clear()
+    assert len(maps.build_project_entity_map("project-one")["entities"]) == 2
 
 
-def test_knowgraph_relationship_read_keeps_exact_entity_ids(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class Session:
-        calls = 0
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def run(self, _query: str, **_arguments: Any):
-            self.calls += 1
-            if self.calls == 1:
-                return [{"count": 1}]
-            return [{
-                "relationshipId": "know-edge",
-                "relationshipType": "RELATES_TO",
-                "relationshipProperties": {
-                    "name": "OPERATES",
-                    "fact": "Excluded relationship evidence body.",
-                    "episodes": ["episode-one"],
-                    "valid_at": "2026-01-01T00:00:00Z",
-                },
-                "sourceId": "know-rocket",
-                "sourceName": "Rocket Lab",
-                "targetId": "know-electron",
-                "targetName": "Electron",
-            }]
-
-    class Driver:
-        def __init__(self):
-            self.session_value = Session()
-            self.closed = False
-
-        def session(self, **_kwargs):
-            return self.session_value
-
-        def close(self):
-            self.closed = True
-
-    driver = Driver()
-    monkeypatch.setattr(
-        project_entity_map,
-        "knowgraph_driver",
-        lambda: (driver, "neo4j"),
-    )
-
-    relationships = project_entity_map._knowgraph_relationships("project-one")
-
-    assert relationships == [{
-        "authority": "knowgraph",
-        "graphitiRelationshipId": "know-edge",
-        "sourceGraphitiEntityId": "know-rocket",
-        "sourceCanonicalName": "Rocket Lab",
-        "targetGraphitiEntityId": "know-electron",
-        "targetCanonicalName": "Electron",
-        "label": "OPERATES",
-        "state": {"validAt": "2026-01-01T00:00:00Z"},
-    }]
-    assert driver.closed is True
+def test_all_off_and_no_view_are_valid_empty_maps():
+    empty = maps.empty_project_entity_map("project-one")
+    assert maps.publish_project_entity_map("project-one", empty)["ok"]
+    assert maps.build_project_entity_map("project-one")["entities"] == []
+    assert maps.build_project_entity_map("other-project")["relationships"] == []
+    assert "An empty map is valid" in maps.render_project_entity_map(empty)
 
 
-def test_project_entity_map_route_returns_provider_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entity_map = {
-        **_directory(),
-        "schemaVersion": "project-entity-map",
-        "relationships": [],
-        "counts": {**_directory()["counts"], "relationships": 0},
-    }
-    monkeypatch.setattr(
-        project_entity_map,
-        "build_project_entity_map",
-        lambda _project: entity_map,
-    )
+@pytest.mark.parametrize("field", ["body", "citation", "openNode", "source", "toolGrants"])
+def test_shared_map_rejects_details_and_authorization_fields(field):
+    snapshot = view()
+    snapshot[field] = "must not enter shared context"
+    with pytest.raises(ValueError, match="fields_invalid"):
+        maps.publish_project_entity_map("project-one", snapshot)
 
-    result = asyncio.run(graph_routes.project_entity_map_read({
-        "projectId": "project-one",
-    }))
 
+def test_hidden_authority_and_dangling_edges_are_rejected_without_replacing_view():
+    snapshot = view()
+    maps.publish_project_entity_map("project-one", snapshot)
+    bad = copy.deepcopy(snapshot)
+    bad["sources"]["knowgraph"] = False
+    with pytest.raises(ValueError, match="pointer_invalid"):
+        maps.publish_project_entity_map("project-one", bad)
+    bad = copy.deepcopy(snapshot)
+    bad["relationships"][0]["target"] = "not-displayed"
+    with pytest.raises(ValueError, match="relationship_invalid"):
+        maps.publish_project_entity_map("project-one", bad)
+    assert maps.build_project_entity_map("project-one")["entities"] == snapshot["entities"]
+
+
+def test_scope_and_duplicate_identity_are_rejected():
+    with pytest.raises(ValueError, match="scope_invalid"):
+        maps.publish_project_entity_map("different-project", view())
+    snapshot = view()
+    snapshot["entities"].append(copy.deepcopy(snapshot["entities"][0]))
+    with pytest.raises(ValueError, match="entity_invalid"):
+        maps.publish_project_entity_map("project-one", snapshot)
+
+
+def test_routes_publish_and_read_the_same_display_context():
+    snapshot = view()
+    assert asyncio.run(graph_routes.project_entity_map_view({"projectId": "project-one", "map": snapshot}))["ok"]
+    result = asyncio.run(graph_routes.project_entity_map_read({"projectId": "project-one"}))
     assert result["ok"] is True
     assert result["projectId"] == "project-one"
-    assert result["sha256"] == entity_map["sha256"]
-    assert result["context"].startswith("### Current Project Entity Map")
+    assert "think-rocket" in result["context"] and "know-rocket" in result["context"]
+    assert "OPERATES" in result["context"]
+    assert "No map selection authorizes an edit" in result["context"]

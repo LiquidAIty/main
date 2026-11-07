@@ -80,41 +80,30 @@ def test_concurrent_duplicate_replies_and_scope_isolation(archive):
     assert call("read", project="project-two") == []
 
 
-def test_plugin_captured_rows_reuse_saved_thinkgraph_process(archive, tmp_path, monkeypatch):
-    import sqlite3
+def test_hook_pair_reuses_saved_thinkgraph_process_without_main_database(archive, monkeypatch):
     from app.python_models import thinkgraph_automatic as automatic
-
-    database = sqlite3.connect(tmp_path / "state.db")
-    database.execute("CREATE TABLE messages (id INTEGER, session_id TEXT, active INTEGER, role TEXT, content TEXT, tool_calls TEXT, timestamp REAL, display_kind TEXT)")
-    database.executemany("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?)", [
-        (41, "session-one", 1, "user", "Kronos forecasts prices.", None, 1700000000.0, None),
-        (42, "session-one", 1, "assistant", "Forecasts need out-of-sample testing.", None, 1700000001.0, None),
-        (43, "session-one", 1, "user", "Do not include this later question.", None, 1700000002.0, None),
-    ])
-    database.commit()
-    database.close()
-    monkeypatch.setattr(automatic, "_profile_home", lambda _: tmp_path)
     received = []
-
     def process(project, arguments, saved):
         received.append((project, arguments, saved))
         return {"status": "completed", "thinkMemoryIds": []}
-
     monkeypatch.setattr(automatic, "_automatic_run", process)
-    result = automatic.process_completed_turn("project-one", "main", "session-one", 41, 42)
+    args = ("project-one", "main", "session-one", "turn-one",
+            "Kronos forecasts prices.", "Forecasts need out-of-sample testing.",
+            "2026-11-06T18:00:00.000Z")
+    result = automatic.process_completed_turn(*args)
     assert result["ok"] is True
     saved = received[0][2]
     assert [item["content"] for item in saved] == [
         "Kronos forecasts prices.", "Forecasts need out-of-sample testing.",
     ]
-    assert [item["hermesSource"]["rowId"] for item in saved] == [41, 42]
-    assert saved[0]["createdAt"] == "2023-11-14T22:13:20.000Z"
-    automatic.process_completed_turn("project-one", "main", "session-one", 41, 42)
+    assert all(item["hermesSource"] == {
+        "profile": "main", "turnId": "turn-one", "hook": "post_llm_call",
+    } for item in saved)
+    automatic.process_completed_turn(*args)
     assert len(call("read", conversation="session-one")) == 2
-    with pytest.raises(automatic.AutomaticThinkGraphError, match="main_completed_pair_invalid"):
-        automatic.process_completed_turn("project-one", "main", "wrong-session", 41, 42)
+    with pytest.raises(automatic.AutomaticThinkGraphError, match="main_profile_required"):
+        automatic.process_completed_turn(args[0], "builder", *args[2:])
     assert call("read", conversation="chat-two") == []
-    assert call("reply", project="project-two", message=reply())["inserted"] is True
 
 
 def test_failed_batch_rolls_back_sequence_and_content(archive):
@@ -123,6 +112,23 @@ def test_failed_batch_rolls_back_sequence_and_content(archive):
         call("append", messages=[user("Must roll back."), user(messageId="invalid")])
     assert len(call("read")) == 1
     assert call("append", messages=[user("Next valid message.")])[0]["seq"] == 2
+
+
+def test_hook_pair_keeps_exact_turn_identity_and_excludes_the_next_question(archive):
+    first = conversations.record_hook_pair("project-one", profile="main", session_id="chat",
+        turn_id="first", user_message="Compare forecasts and backtests.",
+        assistant_response="Both need a cost-aware evaluation.", completed_at="2026-11-06T18:00:00.000Z")
+    conversations.record_hook_pair("project-one", profile="main", session_id="chat",
+        turn_id="next", user_message="A different question.", assistant_response="A different answer.",
+        completed_at="2026-11-06T18:01:00.000Z")
+    pair = conversations.read_pair("project-one", "chat", [first[0]["messageId"]], first[1]["messageId"])
+    assert pair["userMessage"] == "Compare forecasts and backtests."
+    assert pair["mainResponse"] == "Both need a cost-aware evaluation."
+    with pytest.raises(ValueError, match="hermes_pair_content_changed"):
+        conversations.record_hook_pair("project-one", profile="main", session_id="chat",
+            turn_id="first", user_message="Changed question.", assistant_response="Changed answer.",
+            completed_at="2026-11-06T18:00:00.000Z")
+    assert len(call("read", conversation="chat")) == 4
 
 
 def test_duplicate_message_identity_is_rejected_across_conversations(archive):

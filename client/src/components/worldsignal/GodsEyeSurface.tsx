@@ -234,6 +234,7 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
       }
     }).catch((error) => {
       if (cancelled) return;
+      console.error('WorldView mount failed', error);
       const message = error instanceof Error ? error.message : String(error);
       setStatus('failed');
       setFailure(message);

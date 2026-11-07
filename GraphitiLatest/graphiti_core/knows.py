@@ -106,7 +106,7 @@ class KnowNode(EpisodicNode):
         )
 
     async def save_know(self, driver: GraphDriver) -> None:
-        """Promote the stored episode to a Know without attachment edges."""
+        """Promote the episode without discarding its extracted Entity mentions."""
 
         if driver.provider == GraphProvider.KUZU:
             raise NotImplementedError('Know storage is not available for Kuzu')
@@ -129,8 +129,7 @@ class KnowNode(EpisodicNode):
             MATCH (know:Episodic {uuid: $know_uuid})
             MATCH (entity:Entity {uuid: $entity_uuid})
             WHERE know.group_id = $group_id AND entity.group_id = $group_id
-            OPTIONAL MATCH (know)-[attachment]->()
-            WHERE type(attachment) IN ['ABOUT', 'MENTIONS']
+            OPTIONAL MATCH (know)-[attachment:ABOUT]->()
             WITH know, entity, collect(attachment) AS attachments
             FOREACH (edge IN attachments | DELETE edge)
             SET know:Know,

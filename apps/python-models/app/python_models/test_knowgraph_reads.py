@@ -338,9 +338,13 @@ def test_knowgraph_neighborhood_preserves_one_hop_direction_with_entity_nodes_on
 def test_knowgraph_projection_attaches_only_two_property_owned_knows_to_entity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    knows = _attached_know_rows()
+    mention = {"id": "mention-beta", "projectId": "project-1",
+               "graphitiEntityId": "entity-b", "canonicalName": "Beta"}
+    knows[0]["mentions"] = [mention, {**mention, "id": "foreign", "projectId": "project-2"}]
     driver = _FakeNeo4jDriver([
         _projection_node_rows(),
-        _attached_know_rows(),
+        knows,
         _projection_relationship_rows(),
     ])
     monkeypatch.setattr(
@@ -355,6 +359,8 @@ def test_knowgraph_projection_attaches_only_two_property_owned_knows_to_entity(
     evidence = nodes["entity-a"]["properties"]["evidence"]
     assert [item["graphitiEpisodeId"] for item in evidence] == ["know-3", "know-2"]
     assert all(item["graphitiEntityId"] == "entity-a" for item in evidence)
+    assert evidence[0]["mentions"] == [mention]
+    assert "mentions" not in evidence[1]
     assert nodes["entity-a"]["properties"]["attachedWordCount"] == 15
     assert all("body" not in item and "content" not in item and "properties" not in item
                for item in evidence)
@@ -366,7 +372,9 @@ def test_knowgraph_projection_attaches_only_two_property_owned_knows_to_entity(
     assert len(know_queries) == 1
     assert "episode.entity_uuid" in know_queries[0]
     assert "ABOUT" not in know_queries[0]
-    assert "MENTIONS" not in know_queries[0]
+    assert "OPTIONAL MATCH (episode)-[mention:MENTIONS]->(mentioned:Entity)" in know_queries[0]
+    assert "toString(mentioned.group_id) = toString(episode.group_id)" in know_queries[0]
+    assert "toString(mention.group_id) = toString(episode.group_id)" in know_queries[0]
 
 
 def test_knowgraph_projection_refuses_non_entity_provider_rows(

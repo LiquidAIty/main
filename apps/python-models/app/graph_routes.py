@@ -183,7 +183,8 @@ async def thinkgraph_completed_turn_process(payload: dict[str, Any]):
         return await asyncio.to_thread(
             process_completed_turn, str(payload["projectId"]),
             str(payload["profile"]), str(payload["sessionId"]),
-            int(payload["userRowId"]), int(payload["assistantRowId"]),
+            str(payload["turnId"]), payload["userMessage"],
+            payload["assistantResponse"], str(payload["completedAt"]),
         )
     except (ValueError, KeyError) as err:
         raise HTTPException(status_code=400, detail=str(err)) from err

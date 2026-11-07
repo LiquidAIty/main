@@ -2,19 +2,16 @@
 # Relationship: Registers LiquidAIty's declared tools and lifecycle hooks through the public Hermes plugin context.
 # Entity: TaskGraphs
 # Relationship: Registers the one categorized Team/Magnetic admission tool while Hermes retains the task ledger, dispatch, workers, and completion.
-# Entity: Project Knowledge Graph
-# Relationship: Reads the provider-owned Project Entity map into Main, Builder, ThinkGraph, and KnowGraph before inference without accepting graph meaning from the UI.
 # Entity: ThinkGraph
-# Relationship: Observes each successful completed Main turn and asks the Hermes plugin host to schedule independent completed-pair extraction and Engraphis settlement.
-"""Official Hermes binding for UI context, Card Python, taskgraphs, and ThinkGraph."""
+# Relationship: Passes Main's post_llm_call message pair to independent saved-Card extraction and Engraphis settlement without reading Main's state database.
+"""Official Hermes binding for Card Python, taskgraphs, and ThinkGraph."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from pathlib import Path
-import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -50,9 +47,6 @@ except ImportError:  # Directory-plugin validators may import __init__.py direct
 
 _LOGGER = logging.getLogger(__name__)
 _DEFAULT_PYTHON_RAILS_URL = "http://127.0.0.1:8003"
-_PROJECT_ENTITY_MAP_PROFILES = frozenset({
-    "main", "builder", "thinkgraph", "knowgraph",
-})
 
 
 def _loopback_origin(value: Any) -> str:
@@ -92,113 +86,21 @@ def _project_id(ctx: Any) -> str:
     return project_id
 
 
-def _project_entity_map_context(ctx: Any) -> str:
-    project_id = _project_id(ctx)
-    origin = _loopback_origin(
-        ctx.get_config("python_rails_url", _DEFAULT_PYTHON_RAILS_URL)
-    )
-    result = _post_json(
-        origin,
-        "/project/entity-map/read",
-        {"projectId": project_id},
-        timeout=30,
-    )
-    context = str(result.get("context") or "")
-    if (
-        result.get("ok") is not True
-        or result.get("projectId") != project_id
-        or not context.strip()
-    ):
-        raise RuntimeError("liquidaity_project_entity_map_unavailable")
-    return context
-
-
-def _completed_pair_row_ids(session_id: str) -> tuple[int, int]:
-    """Capture the exact terminal pair synchronously at the Hermes turn boundary."""
-
-    from hermes_constants import get_hermes_home
-
-    database = (Path(get_hermes_home()) / "state.db").resolve()
-    if not database.is_file():
-        raise RuntimeError("liquidaity_main_state_unavailable")
-    connection = sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
+def _run_completed_turn(ctx: Any, payload: dict[str, Any]) -> None:
+    """Run after the hook has returned; no Main transcript/database lookup."""
     try:
-        rows = connection.execute(
-            "SELECT id,role,content,tool_calls,display_kind FROM messages "
-            "WHERE session_id=? AND active=1 AND role IN ('user','assistant') "
-            "AND COALESCE(display_kind,'')='' ORDER BY id DESC LIMIT 128",
-            (session_id,),
-        ).fetchall()
-    finally:
-        connection.close()
-    assistant = next((
-        row for row in rows
-        if row["role"] == "assistant"
-        and row["tool_calls"] in (None, "", "[]")
-        and str(row["content"] or "").strip()
-    ), None)
-    user = next((
-        row for row in rows
-        if assistant is not None
-        and row["role"] == "user"
-        and row["id"] < assistant["id"]
-        and str(row["content"] or "").strip()
-    ), None)
-    if user is None or assistant is None:
-        raise RuntimeError("liquidaity_main_completed_pair_unavailable")
-    return int(user["id"]), int(assistant["id"])
-
-
-def _process_completed_turn(
-    ctx: Any,
-    session_id: str,
-    *,
-    profile_name: str | None = None,
-    origin: str | None = None,
-    user_row_id: int,
-    assistant_row_id: int,
-) -> None:
-    project_id = _project_id(ctx)
-    profile_name = profile_name or ctx.profile_name
-    origin = origin or _loopback_origin(
-        ctx.get_config("python_rails_url", _DEFAULT_PYTHON_RAILS_URL)
-    )
-    settled = _post_json(
-        origin,
-        "/thinkgraph/completed-pair/process",
-        {
-            "projectId": project_id,
-            "profile": profile_name,
-            "sessionId": session_id,
-            "userRowId": user_row_id,
-            "assistantRowId": assistant_row_id,
-        },
-        timeout=1_830,
-    )
-    if settled.get("ok") is not True:
-        raise RuntimeError("liquidaity_thinkgraph_settle_failed")
-
-
-def _run_completed_turn(
-    ctx: Any,
-    session_id: str,
-    profile_name: str,
-    origin: str,
-    user_row_id: int,
-    assistant_row_id: int,
-) -> None:
-    try:
-        _process_completed_turn(
-            ctx,
-            session_id,
-            profile_name=profile_name,
-            origin=origin,
-            user_row_id=user_row_id,
-            assistant_row_id=assistant_row_id,
+        origin = _loopback_origin(
+            ctx.get_config("python_rails_url", _DEFAULT_PYTHON_RAILS_URL)
         )
-    except Exception as error:  # Observer work never changes the completed Main reply.
-        _LOGGER.error("LiquidAIty automatic ThinkGraph intake failed: %s", error)
+        settled = _post_json(
+            origin, "/thinkgraph/completed-pair/process", payload, timeout=1_830,
+        )
+        if settled.get("ok") is not True:
+            raise RuntimeError("liquidaity_thinkgraph_settle_failed")
+        _LOGGER.info("ThinkGraph completed Main turn %s: %s",
+                     payload["turnId"], settled.get("thinkMemoryIds", []))
+    except Exception:
+        _LOGGER.exception("Automatic ThinkGraph failed for Main turn %s", payload["turnId"])
 
 
 def register(ctx: Any) -> None:
@@ -226,56 +128,33 @@ def register(ctx: Any) -> None:
         ),
         emoji="🕸️",
     )
-    def project_entity_map_context(**_: Any) -> dict[str, str] | None:
-        if ctx.profile_name not in _PROJECT_ENTITY_MAP_PROFILES:
-            return None
-        return {"context": _project_entity_map_context(ctx)}
-
-    ctx.register_hook("pre_llm_call", project_entity_map_context)
-
-    def on_main_turn_complete(*, session_id: str = "", completed: bool = False,
-                              failed: bool = False, interrupted: bool = False,
-                              **_: Any) -> None:
-        if (
-            ctx.profile_name != "main"
-            or not str(session_id or "").strip()
-            or completed is not True or failed or interrupted
-        ):
+    def on_main_response(*, session_id: str = "", turn_id: str = "",
+                         user_message: Any = "", assistant_response: str = "",
+                         **_: Any) -> None:
+        if ctx.profile_name != "main":
             return
-        profile_name = ctx.profile_name
-        try:
-            user_row_id, assistant_row_id = _completed_pair_row_ids(
-                str(session_id).strip()
-            )
-        except Exception as error:
-            _LOGGER.error(
-                "LiquidAIty could not capture the completed Main pair: %s", error
-            )
+        # Hermes supplies the clean original prompt and finalized response.
+        # Never select a pair from conversation_history or a database.
+        from agent.message_content import flatten_message_text
+        user_text = flatten_message_text(user_message)
+        if (not session_id or not turn_id or not user_text.strip()
+                or not isinstance(assistant_response, str) or not assistant_response.strip()):
             return
-        origin = _loopback_origin(
-            ctx.get_config("python_rails_url", _DEFAULT_PYTHON_RAILS_URL)
-        )
+        payload = {
+            "projectId": _project_id(ctx),
+            "profile": ctx.profile_name,
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "userMessage": user_text,
+            "assistantResponse": assistant_response,
+            "completedAt": datetime.now(timezone.utc).isoformat(
+                timespec="milliseconds").replace("+00:00", "Z"),
+        }
+        work = asyncio.to_thread(_run_completed_turn, ctx, payload)
         try:
-            # The Hermes plugin host owns this background task. Main only produced
-            # the completed source turn; it cannot invoke, steer, or settle intake.
-            ctx.spawn_task(
-                asyncio.to_thread(
-                    _run_completed_turn,
-                    ctx,
-                    str(session_id).strip(),
-                    profile_name,
-                    origin,
-                    user_row_id,
-                    assistant_row_id,
-                ),
-                name=f"liquidaity-thinkgraph:{session_id}",
-            )
-        except RuntimeError as error:
-            _LOGGER.error(
-                "LiquidAIty ThinkGraph observer requires a running Hermes plugin loop: %s",
-                error,
-            )
+            ctx.spawn_task(work, name=f"liquidaity-thinkgraph:{turn_id}")
+        except RuntimeError:
+            work.close()
+            _LOGGER.exception("ThinkGraph could not schedule Main turn %s", turn_id)
 
-    # Hermes fires this per-turn hook after its transcript persistence step.
-    # Do not capture rows from a streaming/composer completion callback.
-    ctx.register_hook("on_session_end", on_main_turn_complete)
+    ctx.register_hook("post_llm_call", on_main_response)

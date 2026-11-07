@@ -2,7 +2,7 @@
  * Entity: Trading
  * Relationship: Presents read-only market charts, paper portfolio state, plan and journal evidence, and bounded pause or resume interventions for the selected Trading Card.
  */
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './tradingui.css';
 import type { AgentCardInstance } from '../types/agentgraph';
 import { applicationFetch } from '../lib/applicationApi';
@@ -17,53 +17,27 @@ const GREEN = '#34d399';
 const RED = '#fb7185';
 const MUTED = '#94a3b8';
 const CHART_INTERVALS = { '1Min': '1', '5Min': '5', '15Min': '15', '1Hour': '60', '1Day': 'D' } as const;
-type ChartWidget = { remove?: () => void };
-type ChartWindow = Window & { TradingView?: { widget: new (options: Record<string, unknown>) => ChartWidget } };
-
 function TVChart({ symbol, timeframe, compact = false }: { symbol: string; timeframe: TradingSettings['defaultTimeframe']; compact?: boolean }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const id = useId().replace(/:/g, '');
   const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    let widget: ChartWidget | undefined;
-    setFailed(false);
-    const mount = () => {
-      if (cancelled || !ref.current) return;
-      const chart = (window as ChartWindow).TradingView;
-      if (!chart) { setFailed(true); return; }
-      try {
-        widget = new chart.widget({
-          autosize: true, symbol, interval: CHART_INTERVALS[timeframe], style: '1',
-          timezone: 'Etc/UTC', theme: 'dark', container_id: id,
-          hide_top_toolbar: compact, hide_legend: compact, allow_symbol_change: !compact,
-        });
-      } catch { setFailed(true); }
-    };
-    const fail = () => { if (!cancelled) setFailed(true); };
-    let script = document.querySelector<HTMLScriptElement>('#tv-script');
-    if ((window as ChartWindow).TradingView) mount();
-    else {
-      if (!script) {
-        script = document.createElement('script');
-        script.id = 'tv-script';
-        script.src = 'https://s3.tradingview.com/tv.js';
-        script.async = true;
-        document.head.appendChild(script);
-      }
-      script.addEventListener('load', mount);
-      script.addEventListener('error', fail);
-    }
-    return () => {
-      cancelled = true;
-      script?.removeEventListener('load', mount);
-      script?.removeEventListener('error', fail);
-      // React can detach the iframe before the external widget tears down.
-      try { widget?.remove?.(); } catch { /* The detached iframe is already gone. */ }
-    };
-  }, [id, symbol, timeframe, compact]);
+  // This is the same hosted chart that tv.js creates. Mount it directly so
+  // Trading does not require third-party script execution in the app document.
+  const url = new URL('https://www.tradingview.com/widgetembed/');
+  url.searchParams.set('hideideas', '1');
+  url.searchParams.set('overrides', '{}');
+  url.searchParams.set('enabled_features', '[]');
+  url.searchParams.set('disabled_features', '[]');
+  url.hash = encodeURIComponent(JSON.stringify({
+    symbol, interval: CHART_INTERVALS[timeframe], style: '1',
+    timezone: 'Etc/UTC', theme: 'dark',
+    hide_top_toolbar: compact ? '1' : '0', hide_legend: compact ? '1' : '0',
+    allow_symbol_change: compact ? '0' : '1',
+  }));
+  const src = url.href;
+  useEffect(() => setFailed(false), [src]);
   return <div style={{ height: '100%', width: '100%', position: 'relative' }}>
-    <div id={id} ref={ref} data-testid="trading-candles" style={{ height: '100%', width: '100%' }} />
+    <iframe key={src} title={`${symbol} chart`} src={src} data-testid="trading-candles"
+      style={{ height: '100%', width: '100%', border: 0 }} allowFullScreen
+      onError={() => setFailed(true)} />
     {failed ? <span role="alert" style={{ position: 'absolute', top: 12, left: 12, color: RED }}>Chart unavailable</span> : null}
   </div>;
 }

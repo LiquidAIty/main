@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GraphProjectionV1 } from '../../../components/knowledge/knowledgeGraphProjection';
 import type { CodeGraphFileSource } from '../../../components/knowledge/codeGraphProjection';
+import { createCanonicalEntityMatcher } from '../../../components/builder/canonicalEntityLinks';
 import useAgentBuilderKnowledgeGraphs from './useAgentBuilderKnowledgeGraphs';
 
 function projection(): GraphProjectionV1 {
@@ -50,22 +51,41 @@ beforeEach(() => {
 });
 
 describe('KnowGraph route contracts', () => {
-  it('refreshes KnowGraph only when the existing stream reports a KnowGraph commit', async () => {
+  it('refreshes new Know Entities and their shared directory on the same committed update', async () => {
     const calls: string[] = [];
+    let created = false;
+    const entities = () => [
+      { authority: 'knowgraph' as const, canonicalName: 'Kronos', graphitiEntityId: 'kronos' },
+      ...(created ? [{ authority: 'knowgraph' as const, canonicalName: 'Regime Detection', graphitiEntityId: 'regime' }] : []),
+    ];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       calls.push(url);
       return new Response(JSON.stringify(url.startsWith('/api/thinkgraph/projection?')
-        ? projection() : { nodes: [], relationships: [] }), { status: 200 });
+        ? { ...projection(), canonicalEntityDirectory: {
+          schemaVersion: 'graph-entity-directory', projectId: 'project-one', complete: true,
+          entities: entities(), counts: { engraphis: 0, graphiti: entities().length, total: entities().length },
+          revisions: { engraphis: 'think', graphiti: created ? 'new' : 'old' },
+          sha256: (created ? 'b' : 'a').repeat(64), bytes: 512, estimatedTokens: 128, readDurationMs: 1,
+        } } : { nodes: entities().map(entity => ({ id: entity.graphitiEntityId,
+          label: entity.canonicalName, type: 'Entity', properties: {} })), relationships: [] }), { status: 200 });
     }));
     const { result } = renderHook(() => useAgentBuilderKnowledgeGraphs({
       projectId: 'project-one', deckId: 'deck-one', conversationId: 'conversation-one',
     }));
     await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+    const before = createCanonicalEntityMatcher(result.current.projections)!;
+    expect(before.segmentMessage('assistant', 'Kronos')[0].target?.canonicalName).toBe('Kronos');
+    expect(before.segmentMessage('assistant', 'Regime Detection')[0].target).toBeUndefined();
     const thinkReads = calls.filter(url => url.startsWith('/api/thinkgraph/projection?')).length;
+    created = true;
     await act(async () => { GraphStream.connections[0].dispatchEvent(new Event('knowgraph-changed')); });
     await waitFor(() => expect(calls.filter(url => url.startsWith('/api/knowgraph/graph?'))).toHaveLength(2));
-    expect(calls.filter(url => url.startsWith('/api/thinkgraph/projection?'))).toHaveLength(thinkReads);
+    expect(calls.filter(url => url.startsWith('/api/thinkgraph/projection?'))).toHaveLength(thinkReads + 1);
+    const after = createCanonicalEntityMatcher(result.current.projections)!;
+    expect(after.segmentMessage('assistant', 'Kronos and Regime Detection')
+      .filter(segment => segment.target).map(segment => segment.target?.canonicalName))
+      .toEqual(['Kronos', 'Regime Detection']);
   });
 
   it('refreshes committed ThinkGraph data without Main, a Run ID, or a KnowGraph reload', async () => {
@@ -157,7 +177,7 @@ describe('KnowGraph route contracts', () => {
     const query = new URLSearchParams(refresh.split('?')[1] || '');
     expect(query.get('projectId')).toBe('project-one');
     expect(query.has('afterRunId')).toBe(false);
-    expect(calls.filter(url => url.startsWith('/api/knowgraph/graph?'))).toHaveLength(1);
+    expect(calls.filter(url => url.startsWith('/api/knowgraph/graph?'))).toHaveLength(2);
     expect(calls.filter(url => url.startsWith('/api/thinkgraph/projection?'))).toHaveLength(2);
     unmount();
     expect(stream.close).toHaveBeenCalledOnce();

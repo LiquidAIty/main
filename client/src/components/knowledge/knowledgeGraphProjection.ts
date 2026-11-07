@@ -41,14 +41,10 @@ export type GraphSurfaceAuthority = GraphAuthority | 'joined' | 'codegraph';
 const GRAPH_NODE_MATERIALS = {
   think: 'THINK_MATERIAL',
   know: 'KNOW_MATERIAL',
-  paired: 'PAIRED_SOLARPUNK_MATERIAL',
+  paired: 'PAIRED_CYBER_MATERIAL',
 } as const;
 
-const COMBINED_CYBER_MATERIAL = 'PAIRED_CYBER_MATERIAL' as const;
-
-export type GraphNodeMaterialRole =
-  | typeof GRAPH_NODE_MATERIALS[keyof typeof GRAPH_NODE_MATERIALS]
-  | typeof COMBINED_CYBER_MATERIAL;
+export type GraphNodeMaterialRole = typeof GRAPH_NODE_MATERIALS[keyof typeof GRAPH_NODE_MATERIALS];
 
 export type SolarpunkColors = {
   think: string;
@@ -225,34 +221,16 @@ export function solarpunkMaterialFields(
   | 'material_surface'
   | 'material_think_active'
   | 'material_know_active'> {
+  // Solarpunk is the established iridescent treatment. Keep the renderer's
+  // existing wire tags; changing those to its split-disc tags changes the paint.
   return {
-    material_kind: 'solarpunk',
+    material_kind: 'joined-cyber',
     material_role: GRAPH_NODE_MATERIALS[source],
     material_blue: colors.think,
     material_orange: colors.know,
     material_surface: GRAPH_THEME.surface.base,
     material_think_active: thinkActive,
     material_know_active: knowActive,
-  };
-}
-
-export function combinedCyberMaterialFields(
-  source: 'think' | 'know' | 'paired',
-  thinkActive = false,
-  knowActive = false,
-  colors: SolarpunkColors = DEFAULT_SOLARPUNK_COLORS,
-): Pick<GraphProjectionNode,
-  | 'material_kind'
-  | 'material_role'
-  | 'material_blue'
-  | 'material_orange'
-  | 'material_surface'
-  | 'material_think_active'
-  | 'material_know_active'> {
-  return {
-    ...solarpunkMaterialFields(source, thinkActive, knowActive, colors),
-    material_kind: 'joined-cyber',
-    material_role: source === 'paired' ? COMBINED_CYBER_MATERIAL : GRAPH_NODE_MATERIALS[source],
   };
 }
 

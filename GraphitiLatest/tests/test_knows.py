@@ -141,7 +141,7 @@ async def test_add_know_reuses_add_episode_and_preserves_saga(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_save_know_stores_entity_identity_and_removes_attachment_edges():
+async def test_save_know_preserves_mentions_and_removes_only_redundant_about_edges():
     now = datetime(2026, 10, 20, tzinfo=timezone.utc)
     know = KnowNode.from_episode(
         _episode(now),
@@ -171,7 +171,8 @@ async def test_save_know_stores_entity_identity_and_removes_attachment_edges():
     query = driver.execute_query.await_args_list[1].args[0]
     params = driver.execute_query.await_args_list[1].kwargs
     assert 'SET know:Know' in query
-    assert "type(attachment) IN ['ABOUT', 'MENTIONS']" in query
+    assert 'OPTIONAL MATCH (know)-[attachment:ABOUT]->()' in query
+    assert 'MENTIONS' not in query
     assert 'FOREACH (edge IN attachments | DELETE edge)' in query
     assert 'MERGE (know)-[about:ABOUT]->(entity)' not in query
     assert params['entity_uuid'] == 'entity-1'

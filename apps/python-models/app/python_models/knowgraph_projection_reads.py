@@ -5,7 +5,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
-# Relationship: This file reads bounded Project-scoped Graphiti Entities, relationships, first-class Know evidence, and one-hop neighborhoods without copying graph authority.
+# Relationship: Reads Project-scoped Graphiti Entities, relationships, first-class Knows and their stored Entity mentions without copying graph authority.
 # Entity: Project Knowledge Graph
 # Relationship: This file projects KnowGraph records into the shared visual graph contract used by the application.
 # Entity: Jev Decisions
@@ -78,11 +78,12 @@ def _upsert_projection_node(
 
 def _attach_entity_knows(
     session: Any,
+    project_id: str,
     project_scope_ids: list[str],
     nodes: dict[str, dict[str, Any]],
     entity_ids: list[str],
 ) -> None:
-    """Attach at most two Knows by exact stored Entity identity."""
+    """Attach two primary Knows and retain their scoped cross-Entity mentions."""
 
     if not entity_ids:
         return
@@ -91,15 +92,26 @@ def _attach_entity_knows(
         MATCH (episode:Episodic:Know)
         WHERE toString(episode.entity_uuid) IN $entityIds
           AND toString(episode.group_id) IN $projectScopeIds
+        OPTIONAL MATCH (episode)-[mention:MENTIONS]->(mentioned:Entity)
+        WHERE toString(mentioned.group_id) = toString(episode.group_id)
+          AND toString(mention.group_id) = toString(episode.group_id)
+        WITH episode, collect(DISTINCT CASE WHEN mentioned IS NOT NULL THEN {
+            id: coalesce(toString(mention.uuid), elementId(mention)),
+            projectId: $projectId,
+            graphitiEntityId: coalesce(toString(mentioned.uuid), elementId(mentioned)),
+            canonicalName: mentioned.name
+        } END) AS mentions
         RETURN toString(episode.entity_uuid) AS entity_id,
                coalesce(toString(episode.uuid), elementId(episode)) AS episode_id,
-               properties(episode) AS episode_props
+               properties(episode) AS episode_props,
+               mentions
         ORDER BY entity_id,
                  coalesce(episode.valid_at, episode.created_at) DESC,
                  episode.created_at DESC,
                  episode_id DESC
         """,
         entityIds=entity_ids,
+        projectId=project_id,
         projectScopeIds=project_scope_ids,
     ))
     counts: dict[str, int] = {}
@@ -140,6 +152,13 @@ def _attach_entity_knows(
             record["direction"] = know["direction"]
         if know.get("contentHash"):
             record["contentHash"] = know["contentHash"]
+        mentions = [mention for mention in row.get("mentions") or []
+                    if isinstance(mention, dict) and mention.get("id")
+                    and mention.get("projectId") == project_id
+                    and mention.get("graphitiEntityId")
+                    and is_visible_knowgraph_entity_name(str(mention.get("canonicalName") or ""))]
+        if mentions:
+            record["mentions"] = sorted(mentions, key=lambda item: (item["canonicalName"], item["id"]))
         evidence.append(record)
         counts[entity_id] = count + 1
 
@@ -276,7 +295,7 @@ def read_knowgraph_projection(
                     nodes[node_id]["community_id"] = community_id
                     nodes[node_id]["properties"]["communityId"] = community_id
             entity_ids = list(nodes)
-            _attach_entity_knows(session, project_scope_ids, nodes, entity_ids)
+            _attach_entity_knows(session, canonical_project_id, project_scope_ids, nodes, entity_ids)
             relationship_rows = [] if not entity_ids else neo4j_rows(session.run(
                 """
                 MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity)
@@ -390,6 +409,7 @@ def read_knowgraph_neighborhood(
             ]
             _attach_entity_knows(
                 session,
+                canonical_project_id,
                 project_scope_ids,
                 nodes,
                 list(nodes),
