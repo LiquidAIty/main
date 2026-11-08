@@ -6,15 +6,13 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
- * Relationship: This file verifies authority-scoped saved presentation and material fields without mutating provider records.
+ * Relationship: This file verifies presentation material fields without mutating provider records.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_SOLARPUNK_COLORS } from './knowledgeGraphProjection';
 import {
-  presentationStorageKey,
-  safePresentationPreferences,
   solarpunkEdgeFields,
   withoutSolarpunkEdgeMaterial,
   withoutSolarpunkMaterial,
@@ -50,33 +48,5 @@ describe('knowledge graph presentation preferences', () => {
     expect(edge.material_kind).toBe('solarpunk');
   });
 
-  it('reads only valid layout, Jev profile, and force settings from the requested authority', () => {
-    window.localStorage.setItem(presentationStorageKey('thinkgraph'), JSON.stringify({
-      schemaVersion: 6,
-      layout: 'radial',
-      style: 'classic',
-      physicsProfile: 'open',
-      settings: {
-        repel: 80, link: 44, gravity: 20, linkw: 0.6,
-        size: 3, labels: false, unknown: 12,
-      },
-    }));
-    window.localStorage.setItem(presentationStorageKey('knowgraph'), JSON.stringify({
-      schemaVersion: 6, layout: 'galaxy', physicsProfile: 'galaxy',
-    }));
-
-    expect(safePresentationPreferences('thinkgraph')).toEqual({
-      schemaVersion: 6,
-      layout: 'radial',
-      style: 'classic',
-      physicsProfile: 'open',
-      settings: { repel: 80, link: 44, gravity: 20, linkw: 0.6, size: 3, labels: false },
-    });
-    expect(safePresentationPreferences('joined')).toEqual({});
-    expect(safePresentationPreferences('knowgraph')).toEqual({
-      schemaVersion: 6,
-      physicsProfile: 'galaxy',
-    });
-  });
 
 });

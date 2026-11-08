@@ -20,7 +20,7 @@ import {
   type SolarpunkColors,
 } from './knowledgeGraphProjection';
 
-export type RendererLayout = 'compact' | 'original' | 'communities' | 'radial';
+export type RendererLayout = 'compact' | 'original' | 'communities';
 
 export type PresentationStyle = 'classic' | 'cyber' | 'galaxy' | 'solar' | 'solarpunk';
 
@@ -36,7 +36,7 @@ export type GraphPresentationPreferences = {
 };
 
 const KNOWLEDGE_PRESENTATION_LAYOUTS = new Set<RendererLayout>([
-  'compact', 'original', 'communities', 'radial',
+  'compact', 'original', 'communities',
 ]);
 export const SOLARPUNK_HEX = /^#[0-9a-f]{6}$/i;
 const JEV_PHYSICS = new Set<JevGraphPhysicsProfile>(JEV_GRAPH_PHYSICS_PROFILES);

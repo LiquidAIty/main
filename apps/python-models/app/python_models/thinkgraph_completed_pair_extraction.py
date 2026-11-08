@@ -5,7 +5,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
-# Relationship: Defines one chunk-grounded Think per Entity with an optional same-pass research indication, never a separate question or preference classification pass.
+# Relationship: Defines the saved Card's chunk-grounded Entity-specific Think extraction, exact single ownership, free-form relationships and optional research indications.
 
 from __future__ import annotations
 
@@ -88,7 +88,8 @@ class ThinkGraphStructuredFact(_StructuredModel):
             "Outgoing relationships from this fact's entity, grounded in this completed pair. "
             "Every source must equal this fact's entity; a relationship with a different "
             "source cannot be nested here. "
-            "Return an empty list only when this Entity has no supported outgoing relationship."
+            "Use an empty list when no outgoing relationship is supported; useful isolated "
+            "Entities remain valid."
         ),
     )
     think: ThinkGraphThink
@@ -125,6 +126,18 @@ class ThinkGraphStructuredFact(_StructuredModel):
 
 class ThinkGraphStructuredOutput(_StructuredModel):
     facts: list[ThinkGraphStructuredFact] = Field(max_length=20)
+
+    @model_validator(mode="after")
+    def validate_relationship_pairs(self) -> "ThinkGraphStructuredOutput":
+        pairs: set[tuple[str, str]] = set()
+        for fact in self.facts:
+            for relationship in fact.relations:
+                source, target = relationship.source.casefold(), relationship.target.casefold()
+                pair = tuple(sorted((source, target)))
+                if pair in pairs:
+                    raise ValueError("thinkgraph_card_pair_duplicate")
+                pairs.add(pair)
+        return self
 
 
 class _SavedCardStructuredResult:
@@ -225,6 +238,7 @@ def llm_structured_contract(
         "Relationships remain separate directed "
         "Entity-to-Entity edges: list each relationship exactly once, under the fact whose "
         "`entity` is its source. Return at most 20 relationships across the entire facts array. "
+        "Use one direction per Entity pair in this extraction, not mirrored inverse copies. "
         "Each relation object has exactly source, relation, and "
         "target. Always include the `relations` array. A grounded Entity may exist "
         "without a relationship; do not invent an edge to qualify it. An existing Entity "
@@ -234,12 +248,13 @@ def llm_structured_contract(
         "target Entity used by that fact's Relationships. Before returning, check that "
         "each relationship's source and target strings occur exactly in that fact's "
         "entities list; do not omit an endpoint or substitute a differently worded name. "
-        "Write each `relation` as a one-to-three-word directed phrase, such as "
-        "'depends on', 'competes with', or 'may constrain', only when the pair supports it. "
-        "Keep the explanation in its Entity's Think paragraph, not in a long edge label. "
-        "Preserve negation or uncertainty in the short phrase when material. "
+        "Write each `relation` as informative free-form directed prose only when the pair "
+        "supports it. Preserve material explanation, negation, conditions and uncertainty; "
+        "do not reduce the relationship to a technical classification label. "
         "This is free-form relationship language grounded in the pair, not a "
         "normalized edge label. Jev alone chooses the durable relationship label and math. "
+        "Use the current Entity directory to reuse exact canonical names. Its provider IDs "
+        "and display weights are navigation context, not evidence or Jev classifications. "
         "Neither an Entity name nor a relationship label establishes sourced facts. Do not browse, "
         "research, infer facts from graph context, read prior Think bodies, create multiple "
         "Thinks for one Entity, or add generic wrapper concepts. "

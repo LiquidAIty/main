@@ -42,6 +42,7 @@ import {
   DEFAULT_GRAPH_LAYER_VISIBILITY,
   composeVisibleGraphLayers,
   displayedEntityMap,
+  linearAttachedWordSizeWeights,
   type GraphViewContext,
   providerMemberKey,
   solarpunkMaterialFields,
@@ -276,6 +277,7 @@ export function JoinedKnowledgeGraphSurface({
 }
 
 type EngraphisRenderer = {
+  nodeWeights: () => Record<string, number>;
   setPreset: (name: RendererLayout) => Record<string, number | boolean | string>;
   setStyle: (name: RendererStyle) => void;
   setSettings: (settings: Record<string, number | boolean | string>) => void;
@@ -373,7 +375,7 @@ export function KnowledgeGraphProjectionSurface({
     () => safePresentationPreferences(authority),
     [authority],
   );
-  const [layout] = useState<RendererLayout>(savedPresentation.layout || 'compact');
+  const [layout, setLayout] = useState<RendererLayout>(savedPresentation.layout || 'compact');
   const [style, setStyle] = useState<PresentationStyle>(savedPresentation.style
     || (authority === 'codegraph' ? 'cyber' : 'solarpunk'));
   const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(savedPresentation.physicsProfile || 'galaxy');
@@ -570,6 +572,7 @@ export function KnowledgeGraphProjectionSurface({
     const restoredSettings: Record<string, number | boolean | string> = {
       ...defaults,
       labels: true,
+      ...(authority !== 'codegraph' && layout === 'compact' ? { linkw: 1 } : {}),
       ...settingsOverrides.current,
     };
     graph.setSettings(restoredSettings);
@@ -587,6 +590,19 @@ export function KnowledgeGraphProjectionSurface({
     graphRef.current?.setSettings(patch);
     setSettings(next);
     savePresentation({ settings: next });
+  };
+  const changeLayout = (nextLayout: RendererLayout) => {
+    const defaults = graphRef.current?.setPreset(nextLayout) || {};
+    const nextSettings = {
+      ...defaults,
+      labels: settings.labels !== false,
+      ...(authority !== 'codegraph' && nextLayout === 'compact' ? { linkw: 1 } : {}),
+    };
+    setLayout(nextLayout);
+    settingsOverrides.current = { ...nextSettings };
+    graphRef.current?.setSettings(nextSettings);
+    setSettings(nextSettings);
+    savePresentation({ layout: nextLayout, settings: nextSettings });
   };
 
   useEffect(() => {
@@ -645,10 +661,22 @@ export function KnowledgeGraphProjectionSurface({
         ? scene.edges
         : displayProjection?.edges || [];
     const projectionEdgesById = new Map((displayProjection?.edges || []).map(edge => [edge.id, edge]));
+    const projectedNodes = displayProjection?.nodes || [];
+    const projectionNodesById = new Map(projectedNodes.map(node => [node.id, node]));
+    const sizeWeights = linearAttachedWordSizeWeights(projectedNodes.filter(node => node.authority !== 'codegraph'));
     const data = {
       ...(scene || {}),
       nodes: sceneNodes.map((rawNode) => {
-        const node = rawNode as GraphProjectionNode;
+        const sourceNode = rawNode as GraphProjectionNode;
+        const projectedNode = projectionNodesById.get(sourceNode.id);
+        const node: GraphProjectionNode = authority === 'codegraph' || sourceNode.authority === 'codegraph'
+          ? sourceNode
+          : {
+            ...sourceNode,
+            properties: { ...sourceNode.properties, ...projectedNode?.properties },
+            visual_size_weight: sizeWeights.get(sourceNode.id) || 0,
+            visual_jev_weight: projectedNode?.visual_jev_weight ?? sourceNode.visual_jev_weight ?? 0,
+          };
         const codeNode = authority === 'joined'
           ? activeJoinedPresentation?.codeNodeVariants?.get(node.id)
           : null;
@@ -750,6 +778,7 @@ export function KnowledgeGraphProjectionSurface({
   useEffect(() => {
     graphRef.current?.setHighlight(selectedId);
   }, [selectedId]);
+
 
   useEffect(() => {
     if (!entityFocusRequest
@@ -949,8 +978,15 @@ export function KnowledgeGraphProjectionSurface({
     } : null,
   } satisfies GraphViewContext) : '';
   useEffect(() => {
-    if (viewContextText) onViewContext?.(JSON.parse(viewContextText));
-  }, [onViewContext, viewContextText]);
+    if (!viewContextText) return;
+    const context: GraphViewContext = JSON.parse(viewContextText);
+    const weights = graphRef.current?.nodeWeights() || {};
+    context.map.entities = context.map.entities.map(entity => ({
+      ...entity,
+      ...(Number.isFinite(weights[entity.id]) ? { weight: weights[entity.id] } : {}),
+    }));
+    onViewContext?.(context);
+  }, [onViewContext, viewContextText, displayProjection, settings.size]);
   const jev = selectedEdge?.properties?.jev
     && typeof selectedEdge.properties.jev === 'object'
     && !Array.isArray(selectedEdge.properties.jev)
@@ -1112,6 +1148,12 @@ export function KnowledgeGraphProjectionSurface({
                 </button> : null}
               </fieldset>
               : null}
+            <label>Layout<select aria-label="Layout" value={layout}
+              onChange={event => changeLayout(event.target.value as RendererLayout)}>
+              <option value="compact">Compact clusters</option>
+              <option value="original">Original force</option>
+              <option value="communities">Community islands</option>
+            </select></label>
             {authority !== 'codegraph' ? <label>Physics profile<select aria-label="Physics profile" value={physicsProfile}
               onChange={event => { setPhysicsProfile(event.target.value as JevGraphPhysicsProfile); savePresentation({ physicsProfile: event.target.value }); }}>
               {JEV_GRAPH_PHYSICS_PROFILES.map(profile => <option key={profile} value={profile}>{JEV_GRAPH_PHYSICS_PROFILE_LABELS[profile]}</option>)}

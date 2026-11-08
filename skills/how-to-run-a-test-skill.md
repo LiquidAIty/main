@@ -51,6 +51,27 @@ startup is authorized and needed, `npm run dev:fresh` owns the full application 
 repair a failing component by introducing a second process. If Docker is down, stop and tell
 the owner as requested. Do not restart Docker or reset its data.
 
+### Codex Preview: Hermes Webapp sign-in handoff
+
+- `npm run dev:fresh` already includes `scripts/start-hermes-webapp.ps1`. Wait for its client
+  build and official Hermes one-use sign-in URL; a plain `http://127.0.0.1:9120/agentbuilder`
+  URL does not authenticate a fresh tab.
+- Use Codex's in-app Preview, not Windows desktop automation or an external browser. Reuse the
+  existing Preview tab and navigate it through the complete launch URL, including `#ticket=...`.
+  Hermes exchanges that ticket and stores the credential in that tab's session storage. Never
+  copy credentials between tabs, bypass the exchange, or add an application token issuer.
+- After the handoff, navigate the same tab to the exact requested Project/workspace URL. The
+  current application root redirect does not preserve the launch page's query string.
+- Verify that the sign-in warning is gone and the existing chat/history is accessible; a loaded
+  graph alone does not establish Hermes chat authentication. Do not submit a prompt just to check sign-in.
+- Keep that authenticated tab open with `markDeliverable()` when handing it to the owner. Closing it
+  and opening a new raw URL loses the tab-scoped sign-in even while the host remains healthy.
+- If the one-use link expired or the tab lost its credential, and sign-in repair is authorized, use
+  `npm run dev:hermes-webapp -- -SignInOnly` for a fresh official handoff. Do not rebuild, run a second
+  host, restart the Gateway, or rewrite saved profiles merely to repair a Preview tab.
+- Never commit or retain the one-use URL in documentation, source, or a handoff file. Do not claim
+  that printing the URL automatically delivered it to Preview; the same-tab navigation is required.
+
 Observe a running test rather than launching it again. A progressing build may take longer than
 a minute; use bounded waits and meaningful progress updates. A timeout is not proof that a child
 failed. Inspect its existing state before any retry, stop, or re-dispatch.

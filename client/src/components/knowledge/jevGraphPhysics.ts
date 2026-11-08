@@ -193,7 +193,9 @@ function applyToRecords(
       ...unweightedEdge
     } = edge as GraphProjectionEdge & { visual_width?: number };
     incidentMass.set(edge.source, (incidentMass.get(edge.source) || 0) + weight);
-    incidentMass.set(edge.target, (incidentMass.get(edge.target) || 0) + weight);
+    if (edge.target !== edge.source) {
+      incidentMass.set(edge.target, (incidentMass.get(edge.target) || 0) + weight);
+    }
     // w is exactly P(winner) from a validated Jev classification. Its application
     // and visual semantics are classification-derived, not physical, causal,
     // financial, or ontological magnitude; compare only matching Jev vocabularies.
@@ -209,6 +211,9 @@ function applyToRecords(
       properties: { ...record(edge.properties), relationship_strength: weight },
     };
   });
+  // One scale across the visible knowledge projection, never one per provider.
+  const maximumIncidentMass = nodes.reduce((maximum, node) => node.authority === 'codegraph'
+    ? maximum : Math.max(maximum, incidentMass.get(node.id) || 0), 0);
   const mappedNodes = nodes.map((node) => {
     // CodeGraph has structural connectivity, not Jev evidence or semantic mass.
     if (node.authority === 'codegraph') return node;
@@ -219,6 +224,7 @@ function applyToRecords(
       semantic_mass: semanticMass,
       gravity_mass: 1 + (4 * Math.log1p(semanticMass)),
       visual_radius: mapJevGraphPhysics(profile, 0, semanticMass).nodeRadius,
+      visual_jev_weight: maximumIncidentMass > 0 ? semanticMass / maximumIncidentMass : 0,
       properties: {
         ...nodeProperties,
         semantic_mass: semanticMass,
@@ -245,7 +251,16 @@ export function applyJevGraphPhysics(
     && !(sceneEdges || []).some(
       (edge: GraphProjectionEdge) => currentLiveJevWinnerProbability(edge) !== null,
     )) {
-    return value;
+    return {
+      ...value,
+      nodes: value.nodes.map(node => node.authority === 'codegraph'
+        ? node : { ...node, visual_jev_weight: 0 }),
+      ...(scene ? { scene: {
+        ...value.scene!,
+        nodes: (scene.nodes || []).map((node: GraphProjectionNode) => node.authority === 'codegraph'
+          ? node : { ...node, visual_jev_weight: 0 }),
+      } } : {}),
+    };
   }
   const mapped = applyToRecords(value.nodes, value.edges, profile);
   if (!scene) return { ...value, ...mapped };

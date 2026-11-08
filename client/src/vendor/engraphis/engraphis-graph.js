@@ -165,19 +165,29 @@
     ctx.fill();
     ctx.restore();
   }
-  /* Keep node geometry in the same compact world-space range as the Classic/Ledger renderer.
-     The previous overview formula used the full size-slider value plus a normalized degree
-     bonus, which made a seven-node workspace occupy only a small simulation area while each
-     node still had a dense-graph radius. `zoomToFit()` then magnified those radii into large
-     discs. Material style must not change geometry; it only changes the painted surface. */
+  function explicitVisualSizeWeight(node) {
+    const value = Number(node && node.visual_size_weight);
+    return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null;
+  }
+  function linearVisualNodeRadius(base, weight) {
+    const size = Number.isFinite(+base) && +base > 0 ? +base : 3;
+    const minimum = Math.max(0.8, size * 0.35);
+    const maximum = Math.max(minimum, size * 1.1);
+    return minimum + (maximum - minimum) * weight;
+  }
+  /* Attached words own the small-node scale. Jev can only augment that size by
+     up to 50%, within the same bounds; material, degree and mass cannot replace it. */
   function graphNodeRadius(node, base, metric) {
     const size = Number.isFinite(+base) && +base > 0 ? +base : 3;
-    if (node && ['thinkgraph', 'knowgraph', 'joined'].includes(node.authority)
-      && typeof node.visual_radius === 'number' && Number.isFinite(node.visual_radius)
-      && node.visual_radius > 0) {
-      // The ordinary size control is neutral at its saved-preset default. Preserve
-      // Jev's calculated radius; do not apply the removed orbital renderer's scale.
-      return (size / PRESETS.compact.size) * node.visual_radius;
+    const wordWeight = explicitVisualSizeWeight(node);
+    if (wordWeight !== null || (node && ['thinkgraph', 'knowgraph', 'joined', 'engraphis'].includes(node.authority))) {
+      const minimum = linearVisualNodeRadius(size, 0);
+      const wordRadius = linearVisualNodeRadius(size, wordWeight === null ? 0 : wordWeight);
+      const words = Number(node && node.properties && node.properties.attachedWordCount);
+      if (!Number.isFinite(words) || words <= 0) return minimum;
+      const suppliedJev = Number(node.visual_jev_weight);
+      const jevWeight = Number.isFinite(suppliedJev) ? Math.max(0, Math.min(1, suppliedJev)) : 0;
+      return Math.min(linearVisualNodeRadius(size, 1), wordRadius * (1 + jevWeight / 2));
     }
     if (node && node.authority === 'codegraph'
       && typeof node.visual_radius === 'number' && Number.isFinite(node.visual_radius)
@@ -279,8 +289,8 @@
     return BASE_NODE_RADIUS_SCALE
       * (1.5 + 2 * Math.pow(finitePositive(mass, 1, 1000), 2 / 3));
   }
-  /* Keep the provider projection's calculated radius. Normalization must not replace
-     Think/Know Jev results or CodeGraph's separate structural size. */
+  /* Preserve projected metadata and CodeGraph's structural size. Think/Know paint
+     uses explicit word weight plus the bounded Jev boost, not visual_radius. */
   function sanitizeEvidenceMetrics(nodes, maxDegree) {
     const values = Array.isArray(nodes) ? nodes : [];
     values.forEach(node => {
@@ -364,7 +374,7 @@
   function preserveRefreshPosition(previous, incoming) {
     const copy = Object.assign({}, incoming);
     if (!previous) return copy;
-    ['x', 'y', 'vx', 'vy'].forEach(key => {
+    ['x', 'y', 'vx', 'vy', 'fx', 'fy'].forEach(key => {
       if (Number.isFinite(previous[key])) copy[key] = previous[key];
     });
     return copy;
@@ -1515,8 +1525,9 @@
         suspended--;
         const queuedPhysics = physicsReheatPending;
         physicsReheatPending = false;
+        const preservePositions = Boolean(pendingRender && pendingRender[3]);
         pendingRender = null;
-        render(!!fit, !!reheat || queuedPhysics);
+        render(!!fit, !!reheat || queuedPhysics, false, preservePositions);
       }
     }
 
@@ -1726,7 +1737,9 @@
       const baseRepel = mode === 'communities' ? Math.max(10, s.repel * 0.68) : s.repel;
       // Repulsion uses the saved control directly; pane width never retunes it.
       if (charge && charge.strength) charge.strength(-baseRepel);
-      if (link && link.distance) link.distance(edge => semanticRelationshipDistance(edge, s.link));
+      if (link && link.distance) link.distance(edge =>
+        semanticRelationshipDistance(edge, PRESETS.compact.link)
+          * (s.link / PRESETS.compact.link));
       if (link && link.strength) link.strength(edge => {
         const source = typeof edge.source === 'object' ? edge.source : layoutById.get(linkEndpoint(edge, 'source'));
         const target = typeof edge.target === 'object' ? edge.target : layoutById.get(linkEndpoint(edge, 'target'));
@@ -2221,12 +2234,13 @@
       });
     }
 
-    function render(fit, reheat, dragging = false) {
+    function render(fit, reheat, dragging = false, preservePositions = false) {
       if (destroyed) return;
       if (suspended) {
         pendingRender = pendingRender
-          ? [pendingRender[0] || fit, pendingRender[1] || reheat, pendingRender[2] || dragging]
-          : [fit, reheat, dragging];
+          ? [pendingRender[0] || fit, pendingRender[1] || reheat, pendingRender[2] || dragging,
+            pendingRender[3] || preservePositions]
+          : [fit, reheat, dragging, preservePositions];
         return;
       }
       const motion = !state.settings.frozen;
@@ -2269,7 +2283,8 @@
         if (staticFullLayout) {
           pinFullGraphLayout(data);
           fullLayoutDirty = false;
-        } else clearPinnedPositions(data);
+        } else if (wasStatic) releasePinnedPositions(data);
+        else if (!preservePositions) clearPinnedPositions(data);
 
         fg.graphData(data);
         seeded = data;
@@ -2764,7 +2779,7 @@
       /* A graph revision is an in-place knowledge update. Retain established coordinates and
          the current camera; new/changed edges then pull only their local neighborhood through
          the existing force engine instead of refitting the mature galaxy on every turn. */
-      render(!preserveViewport, true);
+      render(!preserveViewport, true, false, preserveViewport);
     };
     /* Which of these settings changes the *layout* rather than just the paint, matching the
        classic path's `key==='repel'||key==='link'||key==='gravity'||key==='size'` in
@@ -3007,6 +3022,10 @@
       return centerRenderedNode(id);
     };
     api.state = () => ({ ...state, collapsed, highlight: hilite });
+    // Model navigation context reads the actual painted size, not another sizing formula.
+    api.nodeWeights = () => Object.fromEntries((fg.graphData().nodes || [])
+      .filter(node => Number.isFinite(node.radius))
+      .map(node => [node.id, node.radius]));
     /* The engine clusters its own copies of the nodes, so a caller that renders a cluster
        legend from the source data would otherwise report a single community. */
     api.communityMap = () => {
@@ -3142,7 +3161,8 @@
     _internals: {
       esc, hexRgb, alpha, contrastOn, communities, betweenness, findBridges, maxOf,
       createNodeClickArbiter,
-      graphNodeRadius, codeCategoryForce, sanitizeEvidenceMetrics, fallbackGravityMass,
+      graphNodeRadius, explicitVisualSizeWeight, linearVisualNodeRadius,
+      codeCategoryForce, sanitizeEvidenceMetrics, fallbackGravityMass,
       radiusFromGravityMass,
       communityKey, communityCenters,
       semanticRelationshipStrength, semanticRelationshipWidth,

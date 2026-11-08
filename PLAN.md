@@ -131,8 +131,10 @@ Catalog version includes the root package version and source-manifest hash.
 ### Shared graph navigation map
 
 The graph surface publishes one compact in-memory JSON snapshot matching the visible Think/Know/Code
-layers. It contains bounded nodes, relationships, provider pointers, and at most one open-node detail
-record.
+layers. It currently publishes Entity names, provider-native IDs and each available painted-radius
+weight, with an empty relationships array and at most one open-node detail record. Weight is display
+emphasis, not truth or confidence. Ordinary agents receive no technical Jev edge names
+or classification probabilities through this map; the visual graph and its Jev calculations remain intact.
 
 Main, Builder, ThinkGraph, and KnowGraph read the already-displayed map once at turn start through
 request-only context selection. Only Main receives the displayed open-node detail. The value is
@@ -148,10 +150,19 @@ Hermes's `on_session_end` plugin hook observes a successful Main turn. The hook 
 profile/session context, then the Hermes plugin host uses `ctx.spawn_task` plus `asyncio.to_thread`;
 Main returns without waiting. Main does not supervise, invoke, steer, approve, or settle the work.
 
-The hook captures the exact User/Main `state.db` row IDs at the completed-turn boundary. Python rails
-reads only those rows and prepares deterministic extraction input. Hermes's registered ThinkGraph
-auxiliary model returns structured candidates. Engraphis records the pair outcome and writes zero or
-more Thinks. There is no minimum count and no Python semantic validator.
+The completed-turn hook passes the exact User/Main exchange to Python rails. The existing saved
+ThinkGraph profile executes the recovered chunk-grounded Entity-specific extraction contract from
+the October 30 / November 3 source: substantive reasoning stays on each distinct Entity, rather than
+being absorbed into a broad theme. The application supplies its matching Think schema without
+Engraphis's generic fact-prompt prefix. Engraphis settles the returned single-owner Thinks and their
+source references; there is no second model pass or Python semantic classifier.
+
+Useful isolated Entities are permitted; neither a nonempty result nor an Entity needs an invented edge.
+One extraction emits at most one directed relationship per unordered Entity pair. Relationship prose
+remains model-authored, without technical Jev labels or a fixed word limit. A new Jev decision creates
+a fresh edge and retires prior active Jev edges for that directed pair; their stored distributions
+and prose are not overwritten. The restored extraction still needs a fresh authorized live
+conversation to establish the resulting Entity and relationship quality.
 
 The deleted TypeScript conversation store is not replaced. There is no history polling, caller-supplied
 chat copy, Main route coupling, or duplicated transcript owner.

@@ -85,6 +85,8 @@ export type GraphProjectionNode = {
   semantic_mass?: number;
   gravity_mass?: number;
   visual_radius?: number;
+  visual_size_weight?: number;
+  visual_jev_weight?: number;
   etype?: string;
   anchor_role?: 'global' | 'community' | null;
   system_anchor_id?: string;
@@ -151,6 +153,24 @@ export type JoinedGraphNodeVariant = {
   node: GraphProjectionNode;
 };
 
+function attachedWordCount(node: GraphProjectionNode): number {
+  const value = Number(node.properties?.attachedWordCount);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+export function linearAttachedWordSizeWeights(
+  nodes: GraphProjectionNode[],
+): Map<string, number> {
+  if (!nodes.length) return new Map();
+  const counts = nodes.map(attachedWordCount);
+  const minimum = Math.min(...counts);
+  const maximum = Math.max(...counts);
+  return new Map(nodes.map((node, index) => [
+    node.id,
+    maximum === minimum ? (maximum > 0 ? 1 : 0) : (counts[index] - minimum) / (maximum - minimum),
+  ]));
+}
+
 export type JoinedGraphEdgeVariant = {
   authority: GraphAuthority;
   edge: GraphProjectionEdge;
@@ -175,14 +195,14 @@ export type GraphViewContext = {
     projectId: string;
     sources: GraphLayerVisibility;
     entities: Array<{ id: string; name: string; providers: Array<{ authority: GraphVisualLayer; id: string }>;
-      filePath?: string; categories?: string[] }>;
+      filePath?: string; categories?: string[]; weight?: number }>;
     relationships: Array<{ id: string; source: string; target: string; authority: GraphVisualLayer;
       label: string; probability?: number }>;
   };
   openNode: Record<string, unknown> | null;
 };
 
-/** Serialize the existing drawing, not another graph or an inventory of hidden records. */
+/** Publish visible Entity identities only; relationship discovery remains model-authored. */
 export function displayedEntityMap(presentation: JoinedGraphPresentation): GraphViewContext['map'] {
   const entities = presentation.projection.nodes.map(node => {
     const providers: Array<{ authority: GraphVisualLayer; id: string }> =
@@ -195,17 +215,8 @@ export function displayedEntityMap(presentation: JoinedGraphPresentation): Graph
           ? code.properties.features.filter((name): name is string => typeof name === 'string') : [] } : {}),
     };
   });
-  const relationships = presentation.projection.edges.map(edge => {
-    const variant = presentation.edgeVariants.get(edge.id);
-    const authority: GraphVisualLayer = variant?.authority || 'codegraph';
-    const jev = edge.properties?.jev as { winner?: string; distribution?: Record<string, number> } | undefined;
-    const label = jev?.winner || edge.predicate;
-    const probability = jev?.distribution?.[label];
-    return { id: edge.id, source: edge.source, target: edge.target, authority, label,
-      ...(typeof probability === 'number' && Number.isFinite(probability) ? { probability } : {}) };
-  });
   return { schemaVersion: 'project-entity-map', projectId: presentation.projection.projectId,
-    sources: { ...(presentation.layerVisibility || DEFAULT_GRAPH_LAYER_VISIBILITY) }, entities, relationships };
+    sources: { ...(presentation.layerVisibility || DEFAULT_GRAPH_LAYER_VISIBILITY) }, entities, relationships: [] };
 }
 
 export function solarpunkMaterialFields(
@@ -307,7 +318,10 @@ function presentationNode(
     canonicalId: undefined,
     authority: 'joined',
     ...solarpunkMaterialFields(sourceKind, false, false),
-    properties: { ...(primary.node.properties || {}) },
+    properties: {
+      ...(primary.node.properties || {}),
+      attachedWordCount: variants.reduce((total, variant) => total + attachedWordCount(variant.node), 0),
+    },
   } as GraphProjectionNode;
 }
 
@@ -338,6 +352,7 @@ export function composeThinkKnowPresentation(
     const header = canonicalEntityHeader(entityIndex, authority, node);
     if (!header) return;
     const records = eligibleByName[authority].get(header.canonicalName) || [];
+    if (records.some(record => record.id === node.id)) return;
     records.push(node);
     eligibleByName[authority].set(header.canonicalName, records);
   };
@@ -350,6 +365,8 @@ export function composeThinkKnowPresentation(
   const nodeVariants = new Map<string, JoinedGraphNodeVariant[]>();
   const visualNodeIdByProviderMember = new Map<string, string>();
   const addNode = (authority: GraphAuthority, node: GraphProjectionNode) => {
+    const memberKey = providerMemberKey(authority, node.id);
+    if (visualNodeIdByProviderMember.has(memberKey)) return;
     const header = canonicalEntityHeader(entityIndex, authority, node);
     const visualId = header && pairedNames.has(header.canonicalName)
       ? `node-name:${encodeURIComponent(header.canonicalName)}`
@@ -357,7 +374,7 @@ export function composeThinkKnowPresentation(
     const variants = nodeVariants.get(visualId) || [];
     variants.push({ authority, node });
     nodeVariants.set(visualId, variants);
-    visualNodeIdByProviderMember.set(providerMemberKey(authority, node.id), visualId);
+    visualNodeIdByProviderMember.set(memberKey, visualId);
   };
   thinkProjection.nodes.forEach(node => addNode('thinkgraph', node));
   knowProjection.nodes.forEach(node => addNode('knowgraph', node));
@@ -376,6 +393,7 @@ export function composeThinkKnowPresentation(
       const target = visualNodeIdByProviderMember.get(providerMemberKey(authority, edge.target));
       if (!source || !target || !visibleNodeIds.has(source) || !visibleNodeIds.has(target)) continue;
       const visualId = providerRenderId(authority, edge.id);
+      if (edgeVariants.has(visualId)) continue;
       edges.push({
         ...edge,
         id: visualId,

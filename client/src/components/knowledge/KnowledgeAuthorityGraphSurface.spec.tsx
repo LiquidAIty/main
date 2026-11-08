@@ -954,39 +954,6 @@ describe('knowledge authority graph surfaces', () => {
     expect(window.localStorage.getItem(key)).toBe(saved);
   });
 
-  it('restores the saved layout, Jev profile, node size, labels and force settings', () => {
-    const key = 'liquidaity.graph.thinkgraph.presentation.v1';
-    const stored = JSON.stringify({ schemaVersion: 6, layout: 'radial', style: 'classic',
-      physicsProfile: 'open', settings: {
-        repel: 80, link: 44, gravity: 20, linkw: 0.6, size: 3, labels: false,
-      } });
-    window.localStorage.setItem(key, stored);
-    const projection = {
-      ...empty('thinkgraph'),
-      nodes: [{ id: 'a', label: 'Alpha' }, { id: 'b', label: 'Beta' }],
-      edges: [{ id: 'ab', source: 'a', target: 'b', predicate: 'PROVIDES', properties: {
-        jev: { status: 'success', winner: 'PROVIDES',
-          distribution: { PROVIDES: 0.8, ASSOCIATED_WITH: 0.2 } },
-      } }],
-    };
-    const { container } = render(<KnowledgeGraphProjectionSurface authority="thinkgraph"
-      projection={projection} status="ready" error={null} />);
-    const graph = forceGraphMocks.instances.at(-1);
-    expect(graph.setPreset).toHaveBeenCalledWith('radial');
-    expect(graph.setSettings).toHaveBeenCalledWith({
-      size: 3, font: 13, linkw: 0.6, labelDensity: 40,
-      repel: 80, link: 44, gravity: 20, labels: false,
-    });
-    expect(container.querySelector('[data-style="classic"][data-physics-profile="open"]')).toBeTruthy();
-    expect(graph.setStyle).toHaveBeenLastCalledWith('classic');
-    expect(graph.data.links[0].visual_width).toBeCloseTo(1.8);
-    expect(graph.data.links[0].spring_strength).toBeCloseTo(0.121);
-    expect(graph.data.links[0].rest_length).toBeCloseTo(24.4);
-    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.queryByRole('combobox', { name: 'Layout' })).toBeNull();
-    expect(screen.getByRole('slider', { name: 'Node size' })).toBeTruthy();
-    expect(window.localStorage.getItem(key)).toBe(stored);
-  });
 
   it('keeps saved settings and colors without a version-based migration or rewrite', () => {
     const key = 'liquidaity.graph.joined.presentation.v1';

@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 from engraphis.core.interfaces import Edge, Node
@@ -67,7 +66,7 @@ def apply_accepted_decision(
     relationship: dict[str, str],
     decision: dict[str, Any],
 ) -> dict[str, Any]:
-    """Persist one Jev winner; the Card's free-form phrase is provenance only."""
+    """Write a fresh Jev decision, retiring the pair's prior edges unchanged."""
     winner = str(decision.get("winner") or "")
     vocabulary = project_relationship_vocabulary(store, workspace_id)
     candidate = str(decision.get("novel_relationship_candidate") or "")
@@ -120,49 +119,23 @@ def apply_accepted_decision(
     )
     replaced_ids: list[str] = []
     edge_weight = winner_probability(decision)
-    if len(current) == 1 and current[0].relation == winner:
-        existing = current[0]
-        previous = (
-            existing.provenance if isinstance(existing.provenance, dict) else {}
-        )
-        history = list(previous.get("jev_history") or [])
-        if isinstance(previous.get("jev"), dict):
-            history.append(deepcopy(previous["jev"]))
-        provenance["jev_history"] = history
-        edge_id = store.upsert_edge(
-            Edge(
-                id=existing.id,
-                src=source_id,
-                dst=target_id,
-                relation=winner,
-                weight=edge_weight,
-                workspace_id=workspace_id,
-                repo_id=None,
-                valid_from=existing.valid_from,
-                ingested_at=existing.ingested_at,
-                provenance=provenance,
-            ),
-            commit=False,
-        )
-        status = "updated"
-    else:
-        for edge in current:
-            store.invalidate_edge(edge.id, commit=False)
-            replaced_ids.append(edge.id)
-        edge_id = store.upsert_edge(
-            Edge(
-                id="",
-                src=source_id,
-                dst=target_id,
-                relation=winner,
-                weight=edge_weight,
-                workspace_id=workspace_id,
-                repo_id=None,
-                provenance=provenance,
-            ),
-            commit=False,
-        )
-        status = "superseded" if replaced_ids else "written"
+    for edge in current:
+        store.invalidate_edge(edge.id, commit=False)
+        replaced_ids.append(edge.id)
+    edge_id = store.upsert_edge(
+        Edge(
+            id="",
+            src=source_id,
+            dst=target_id,
+            relation=winner,
+            weight=edge_weight,
+            workspace_id=workspace_id,
+            repo_id=None,
+            provenance=provenance,
+        ),
+        commit=False,
+    )
+    status = "superseded" if replaced_ids else "written"
     return {
         **decision,
         "status": status,

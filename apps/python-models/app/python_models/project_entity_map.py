@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from threading import Lock
 from typing import Any
 
@@ -38,12 +39,15 @@ def _validated_map(project: str, snapshot: dict[str, Any]) -> dict[str, Any]:
         raise GraphReadError("project_entity_map_records_invalid")
     ids: set[str] = set()
     for entity in entities:
-        if not isinstance(entity, dict) or not set(entity) <= {"id", "name", "providers", "filePath", "categories"}:
+        if not isinstance(entity, dict) or not set(entity) <= {"id", "name", "providers", "filePath", "categories", "weight"}:
             raise GraphReadError("project_entity_map_entity_invalid")
         if not isinstance(entity.get("id"), str) or not entity["id"] or entity["id"] in ids \
                 or not isinstance(entity.get("name"), str) or not entity["name"]:
             raise GraphReadError("project_entity_map_entity_invalid")
         ids.add(entity["id"])
+        if "weight" in entity and (type(entity["weight"]) not in (int, float)
+                                   or not math.isfinite(entity["weight"]) or entity["weight"] < 0):
+            raise GraphReadError("project_entity_map_weight_invalid")
         pointers = entity.get("providers")
         if not isinstance(pointers, list) or not pointers:
             raise GraphReadError("project_entity_map_pointer_invalid")

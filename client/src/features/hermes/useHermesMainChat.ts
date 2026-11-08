@@ -6,6 +6,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   ApprovalChoice,
+  CanonicalControlParams,
+  CanonicalSessionHandle,
+  CanonicalSnapshot,
   ClarifyQuestion,
   SessionCreateResult,
   SessionHistoryResult,
@@ -337,6 +340,7 @@ export default function useHermesMainChat(projectId: string) {
           deltaCursorRef.current = { turnId: '', segment: -1, offset: 0 };
           setBusy(false);
           if (failed) setError(text(event.payload?.error || event.payload?.warning || 'Hermes turn did not complete.'));
+          else setError(current => current === 'stale_generation' ? null : current);
           void refreshHistory().catch(() => undefined);
           return;
         }
@@ -361,6 +365,7 @@ export default function useHermesMainChat(projectId: string) {
         deltaCursorRef.current = { turnId: '', segment: -1, offset: 0 };
         setBusy(false);
         if (failed) setError(text(event.payload?.error || event.payload?.warning || 'Hermes turn did not complete.'));
+        else setError(current => current === 'stale_generation' ? null : current);
         void refreshHistory().catch((cause) => {
           if (!disposed && generationRef.current === generation) {
             setError(cause instanceof Error ? cause.message : String(cause));
@@ -487,10 +492,33 @@ export default function useHermesMainChat(projectId: string) {
   }, []);
 
   const stop = useCallback(() => {
-    if (!sessionRef.current) return;
-    void hermesGateway(profile).then((gateway) => gateway.request('session.interrupt', {
-      session_id: sessionRef.current, profile,
-    })).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+    const sessionId = sessionRef.current;
+    const requestGeneration = generationRef.current;
+    if (!sessionId) return;
+    setError(null);
+    void (async () => {
+      const gateway = await hermesGateway(profile);
+      if (resumePromiseRef.current) await resumePromiseRef.current;
+      // Hermes owns the current execution identity, including compaction continuations.
+      const snapshot = await gateway.request<CanonicalSnapshot>('session.resume', {
+        session_id: sessionId, profile, omit_messages: true,
+      });
+      if (generationRef.current !== requestGeneration || sessionRef.current !== sessionId) return;
+      if (!snapshot.running) {
+        setBusy(false);
+        return;
+      }
+      await gateway.request<CanonicalSessionHandle>('session.interrupt', {
+        session_id: snapshot.session_id,
+        profile,
+        execution_generation: snapshot.execution_generation,
+      } satisfies CanonicalControlParams);
+      // Keep the running state until Hermes reports actual execution completion.
+    })().catch((cause) => {
+      if (generationRef.current === requestGeneration && sessionRef.current === sessionId) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    });
   }, []);
 
   const startVoice = useCallback(async (draft: string, input: { images?: ComposerImage[] }) => {
