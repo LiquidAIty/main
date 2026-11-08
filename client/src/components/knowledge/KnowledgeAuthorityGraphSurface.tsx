@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: Project Knowledge Graph
- * Relationship: This file owns the single renderer lifecycle, camera, settings, selection and Inspector shared by the Project graph views.
+ * Relationship: This file owns the single renderer lifecycle, saved presentation, camera, source layers, selection and Inspector shared by the Project graph views.
  * Entity: ThinkGraph
  * Relationship: This file renders exact Engraphis nodes, relationships, Think records, native mention references, Jev provenance, and confirmed removal actions.
  * Entity: KnowGraph
@@ -373,18 +373,14 @@ export function KnowledgeGraphProjectionSurface({
     () => safePresentationPreferences(authority),
     [authority],
   );
-  const savedPresentationIsCurrent = savedPresentation.schemaVersion === 6 || savedPresentation.schemaVersion === 7;
-  const [layout, setLayout] = useState<RendererLayout>(savedPresentation.layout || 'compact');
-  const [style, setStyle] = useState<PresentationStyle>(authority === 'codegraph'
-    ? savedPresentation.style || 'cyber'
-    : savedPresentationIsCurrent ? savedPresentation.style || 'solarpunk' : 'solarpunk');
+  const [layout] = useState<RendererLayout>(savedPresentation.layout || 'compact');
+  const [style, setStyle] = useState<PresentationStyle>(savedPresentation.style
+    || (authority === 'codegraph' ? 'cyber' : 'solarpunk'));
   const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(savedPresentation.physicsProfile || 'galaxy');
   const [settings, setSettings] = useState<Record<string, number | boolean | string>>({ labels: true, ...(savedPresentation.settings || {}) });
-  const settingsOverrides = useRef<Record<string, number | boolean | string>>(savedPresentationIsCurrent
-    ? { ...(savedPresentation.settings || {}) }
-    : { ...(savedPresentation.settings || {}), size: 5 });
+  const settingsOverrides = useRef<Record<string, number | boolean | string>>({ ...(savedPresentation.settings || {}) });
   const [solarpunkColors, setSolarpunkColors] = useState<SolarpunkColors>(
-    savedPresentationIsCurrent ? savedPresentation.solarpunkColors || DEFAULT_SOLARPUNK_COLORS : DEFAULT_SOLARPUNK_COLORS,
+    savedPresentation.solarpunkColors || DEFAULT_SOLARPUNK_COLORS,
   );
   const inspectNodeRef = useRef<(id: string) => void>(() => undefined);
   const consumedEntityFocusRequestRef = useRef<number | null>(null);
@@ -576,9 +572,6 @@ export function KnowledgeGraphProjectionSurface({
       labels: true,
       ...settingsOverrides.current,
     };
-    if (!savedPresentationIsCurrent) {
-      restoredSettings.linkw = Math.max(1, Number(restoredSettings.linkw) || 1);
-    }
     graph.setSettings(restoredSettings);
     setSettings(restoredSettings);
   }, [authority]);
@@ -1123,20 +1116,6 @@ export function KnowledgeGraphProjectionSurface({
               onChange={event => { setPhysicsProfile(event.target.value as JevGraphPhysicsProfile); savePresentation({ physicsProfile: event.target.value }); }}>
               {JEV_GRAPH_PHYSICS_PROFILES.map(profile => <option key={profile} value={profile}>{JEV_GRAPH_PHYSICS_PROFILE_LABELS[profile]}</option>)}
             </select></label> : null}
-            <label>Layout<select aria-label="Layout" value={layout}
-              onChange={event => {
-                const nextLayout = event.target.value as RendererLayout;
-                const preset = graphRef.current?.setPreset(nextLayout);
-                const nextSettings = { ...settings, ...preset, linkw: Math.max(1, Number(preset?.linkw) || 1) };
-                settingsOverrides.current = nextSettings;
-                setLayout(nextLayout);
-                setSettings(nextSettings);
-                savePresentation({ layout: nextLayout, settings: nextSettings });
-              }}>
-              <option value="compact">Compact</option><option value="original">Original</option>
-              <option value="communities">Communities</option><option value="radial">Radial</option>
-              <option value="galaxy">Galaxy gravity</option>
-            </select></label>
             <label>Style<select aria-label="Style" value={style}
               onChange={event => { setStyle(event.target.value as PresentationStyle); savePresentation({ style: event.target.value }); }}>
               <option value="classic">Classic</option><option value="cyber">Cyberpunk</option>

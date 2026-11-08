@@ -178,7 +178,7 @@ describe('shared knowledge inspector', () => {
       episode: {},
     };
 
-    render(<>
+    const { container } = render(<>
       <KnowGraphKnow record={record} heading="Know" />
       <KnowSourceList records={[record]} />
     </>);
@@ -187,6 +187,8 @@ describe('shared knowledge inspector', () => {
     expect(screen.getByText('Rocket Lab reported one source-backed operating result.'))
       .toBeTruthy();
     expect(screen.getByText('Interpretation')).toBeTruthy();
+    const published = container.querySelector('time[datetime="2026-10-19T00:00:00.000Z"]');
+    expect(published?.textContent).toBe(new Date('2026-10-19').toLocaleString());
     expect(screen.getByText('The result informs demand but does not decide the thesis.'))
       .toBeTruthy();
     expect(screen.getByText((content, element) => (
@@ -201,6 +203,18 @@ describe('shared knowledge inspector', () => {
     ]);
     fireEvent.click(screen.getByText('Source passage'));
     expect(screen.getByText('The exact source passage remains inspectable.')).toBeTruthy();
+  });
+
+  it('shows a citation publication year without treating it as epoch seconds', () => {
+    const { container } = render(<KnowGraphKnow heading="HAR-RV" record={{
+      episodeId: 'd9343cdf-752a-5a36-9ff5-1831d94ba684',
+      know: { citation: { publishedAt: '2009', retrievedAt: '2026-11-07T23:56:30Z' } },
+      episode: {},
+    }} />);
+    const year = container.querySelector('time[datetime="2009"]');
+    expect(year?.textContent).toBe('2009');
+    expect(container.querySelector('time[datetime="2026-11-07T23:56:30.000Z"]')).not.toBeNull();
+    expect(container.textContent).not.toMatch(/1969|1970/);
   });
 
   it('keeps a complete Know readable and deduplicates its safe citation source', () => {

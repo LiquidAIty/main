@@ -128,6 +128,108 @@ does not authorize a renderer replacement, and a rendering problem does not auth
 | Decomposition, routing or knowledge meaning moved into deterministic code | Keep semantic work with models; code validates structure, scope and actual execution. No keyword planner or semantic sanitizer. |
 | Work resumed from a stale plan or compaction summary as if complete | Reconcile current status and diff; mark each started item completed, removed, deferred or unproven before opening more work. |
 
+## Incident record — 2026-11-07 Rejected workspace-open synchronization and provisioning
+
+This is an owner-requested account of a Codex implementation failure, not a proposal or a restoration
+recipe. Codex was supposed to preserve saved Cards, the wire-controlled roster, ordinary Hermes Bot Mode,
+and the simple displayed graph map. Instead, it added application-owned configuration work that the owner
+had not requested or approved. Calling that work "synchronization," "provisioning," or a "helper" did not
+make it necessary. The owner had to repeatedly stop the work and demand its removal.
+
+### What Codex added and why it was harmful
+
+An effect in `client/src/pages/agentbuilder.tsx` ran when the saved deck loaded or its revision changed.
+It called three bulk operations: `synchronizeHermesProjectProfileCredentials`,
+`synchronizeHermesSavedCardProfiles`, and `synchronizeHermesTopologyProfiles`. A workspace read therefore
+became a sequence of credential writes, full-profile rewrites, and roster publications, even when the
+owner had not edited an agent. An unrelated placement/deck revision could enter the same path.
+
+The credential loop wrote each profile's environment and then called `reload.env` and `reload.mcp`
+against its session. Those were not harmless "make sure it is ready" reads. The installed Hermes
+`tui_gateway/methods_tools.py` reload handler tears down/re-discovers MCP registrations, refreshes live
+session tools, and explicitly warns about prompt-cache invalidation. Repeating it across Cards can
+repeatedly rebuild the shared runtime while Main is trying to start. The profile rewrites also caused
+configuration rescans. This cost was created by the application's calls; it was not evidence that Bot
+Mode needed a second lifecycle owner.
+
+The recorded Main turn had about **221 seconds between admission and the provider request**. Profile
+rescans and WebSocket stalls occurred in that interval. The graph-map read measured **33 ms** in a
+separate observation. The owner reports that the preceding working turn took **18 seconds end to end,
+including the model call and return**; the minutes-long delay did not exist before these additions.
+Treat this as an introduced regression, not acceptable startup overhead or an inherent cost of Bot Mode.
+The logs identify needless overlapping work, not a complete allocation of every second to one function.
+Do not blame the map or substitute an upstream bug for the demonstrated application-side cause.
+
+This was wasted implementation and recovery work: code, tests and explanations were built for an
+unapproved layer; the owner then had to spend attention correcting the scope; the same code had to be
+traced and deleted while preserving working data. After being told to delete it, Codex briefly tried a
+smaller provisioning helper and then placed that work in Card creation. Both were rejected and removed.
+Deletion does not mean "move it somewhere less visible." That replacement attempt repeated the error.
+
+### What was removed and what remained
+
+- Removed the workspace-open effect, revision guard, failure aggregation, exclusive imports, bulk
+  profile-publication module and its exclusive test.
+- Removed automatic enablement, the bulk credential-minting endpoint and exclusive tests, credential
+  fingerprints/bookkeeping, and forced environment/MCP reload calls. No replacement at startup, Card
+  creation, Send, a timer, a background task, or a renamed helper is accepted.
+- Removed map diagnostics and redundant serialization/config-copy work. The displayed Entity map,
+  Project authorization, linked mentions and the once-per-turn request-only read remain.
+- Retained the existing explicit Card save, and attached roster publication to a successful saved edit
+  only when authorized membership changes. A last qualifying wire removal must publish an empty roster.
+- Preserved existing credentials, saved grants, authorization checks, Hermes 0.23.0, `process_complete`,
+  Skills, ThinkGraph, and the separate approved Team/Magnetic policies. A credential verifier or owner
+  check still used by real MCP calls is not dead code merely because the rejected issuer was removed.
+
+The deletion pass opened/reopened Trading and compared 44 profile/configuration files: no file writes
+occurred on open or Card movement. A reversible Card edit affected its own profile. Wire edits affected
+changed rosters. One restore drag hit an overlapping blue wire; the exact original edge records and
+affected rosters were restored, not approximated. Final readback preserved 11 Cards, 9 wires, original
+placements and all original profile-file contents. An authenticated `graphiti.get_know` call under the
+saved KnowGraph profile returned the existing record in **376.81 ms**, without a new prompt or write.
+That proved tool access, not citation quality, a new research result, or recovery of the full 221 seconds.
+
+After the owner authorized one ordinary Main rerun, Send was recorded at **18:14:16.793 Eastern**;
+Hermes admitted it at **18:14:16.964**, opened the provider request at **18:14:19.597**, and dispatched the
+615-character response at **18:14:23.864**. That is **7.071 seconds from Send to response dispatch**,
+including one provider call reported as **4.1 seconds**. The reply and enabled Send control were then
+observed in Preview while ThinkGraph remained active independently. Exact browser paint time was not
+instrumented. The minutes-long wait did not recur in this run, but **2.633 seconds of admission-to-provider
+preparation still exceeds the owner's one-second application budget**. Do not call that residual cost a pass.
+
+### What future Codex work must do instead
+
+Hermes owns Bot sessions, delivery, reply capture/completion, MCP discovery/connections/tool dispatch,
+and its own cache and refresh lifecycle. The version-matched positive contract and source references are
+in [plugin.md — Official Hermes Bot Mode and MCP ownership](plugin.md#official-hermes-bot-mode-and-mcp-ownership).
+LiquidAIty's retained difference is saved wire authority, not another Bot runtime. Team/Magnetic policy
+is separate and must not be removed as a side effect of deleting the rejected layer.
+
+1. Opening/reopening reads saved state. Moving a Card, receiving a reply or changing an unrelated deck
+   revision must perform zero profile writes, credential refreshes, MCP reloads or roster publications.
+2. Publish only the configuration changed by an actual edit, through its existing owner. Do not republish
+   the whole deck as a repair, readiness check, migration, reconciliation or safety measure.
+3. Do not add runtime coordination helpers, aliases, registries, credential issuers, managers, listeners,
+   watchers, pollers or caches to imitate Hermes. A different filename is not a different design.
+4. Treat `process_complete` and reported sender metadata as runtime evidence, not disposable spam.
+   Never suppress a genuine result/failure merely to make chat look cleaner.
+5. Test the tool as the receiving saved Card: same profile, connection, credentials and grants. Check the
+   actual returned schema/result. A checked box, prompt assertion, mock or manually inserted Know is not
+   proof that the agent can use the tool or persist a valid result.
+6. Any application/context operation above the owner's one-second budget is suspect and must be reported
+   separately from inference. Use existing request evidence; do not add another telemetry system, repeated
+   prompts or background benchmark to hide the cost. Unknown elapsed time is not a pass.
+7. A missing/expired credential is an exact authentication problem to report. Hermes can use supported
+   configured credentials/OAuth; it does not magically mint LiquidAIty's custom bearer or extend its
+   expiry. Do not resurrect the banned issuer or weaken authorization to conceal that limitation.
+8. Remove exclusive callers, imports, mounts, types, tests and stale normative documentation with a
+   rejected path. Preserve live authorization and unrelated working behavior. No replacement is implied.
+
+The lesson is not "write a better synchronization helper." It is **do not add this layer again**.
+Its measured cost and the owner's repeated corrections are evidence against it, not a backlog of features
+to recreate. Preserving progress requires following the existing owner, not making the owner debug an
+assistant-invented runtime before their actual feature can work.
+
 ## Incident record — 2026-10-23 Hermes Bot and TaskGraph boundary overreach
 
 An attempted Bot Mode, Team and Magnetic repair repeatedly expanded beyond the owner's requested

@@ -41,6 +41,32 @@ function scrollVirtualViewportToBottom(totalCount: number, itemHeight: number, v
 }
 
 describe('MainProjectChat', () => {
+  it('shows a plain author once without deriving it from mentions in the body', async () => {
+    const body = '@Builder was mentioned; this answer is from KnowGraph.';
+    render(
+      <VirtuosoMockContext.Provider value={{ viewportHeight: 600, itemHeight: 96 }}>
+        <MainProjectChat
+          messages={[
+            { role: 'assistant', speaker: 'KnowGraph', text: body },
+            { role: 'assistant', speaker: 'Main', text: 'Main answer.' },
+            { role: 'assistant', speaker: 'Builder', text: 'Builder answer.' },
+          ]}
+          onSend={() => undefined}
+          knowledgeProjectId="project-1"
+          colors={colors}
+        />
+      </VirtuosoMockContext.Provider>,
+    );
+    scrollVirtualViewportToBottom(3, 96, 600);
+    await waitFor(() => expect(screen.getAllByTestId('main-chat-message-speaker')).toHaveLength(3));
+    expect(screen.getAllByTestId('main-chat-message-speaker').map((node) => node.textContent))
+      .toEqual(['@KnowGraph', '@Main', '@Builder']);
+    for (const node of screen.getAllByTestId('main-chat-message-speaker')) {
+      expect(node.getAttribute('style')).toBeNull();
+    }
+    expect(screen.getByText(body)).toBeTruthy();
+  });
+
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
       configurable: true,

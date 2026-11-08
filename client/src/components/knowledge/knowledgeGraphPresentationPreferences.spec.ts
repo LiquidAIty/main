@@ -62,7 +62,7 @@ describe('knowledge graph presentation preferences', () => {
       },
     }));
     window.localStorage.setItem(presentationStorageKey('knowgraph'), JSON.stringify({
-      schemaVersion: 6, layout: 'galaxy', physicsProfile: 'contrast',
+      schemaVersion: 6, layout: 'galaxy', physicsProfile: 'galaxy',
     }));
 
     expect(safePresentationPreferences('thinkgraph')).toEqual({
@@ -75,8 +75,7 @@ describe('knowledge graph presentation preferences', () => {
     expect(safePresentationPreferences('joined')).toEqual({});
     expect(safePresentationPreferences('knowgraph')).toEqual({
       schemaVersion: 6,
-      layout: 'galaxy',
-      physicsProfile: 'contrast',
+      physicsProfile: 'galaxy',
     });
   });
 

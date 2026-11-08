@@ -65,7 +65,6 @@ export type HermesProfileView = {
 };
 
 type ProfileConfig = {
-  mcp_servers?: Record<string, { headers?: Record<string, string> }>;
   skills?: { auto_load?: unknown };
   memory?: {
     provider?: unknown;
@@ -83,11 +82,10 @@ type ProfileConfig = {
   };
   plugins?: {
     enabled?: unknown;
-    isolation?: unknown;
     entries?: {
       liquidaity?: {
         mcp_allowlist?: unknown;
-        settings?: { card_script?: unknown; task_mode?: unknown; project_id?: unknown };
+        settings?: { card_script?: unknown; task_mode?: unknown };
       };
     };
   };

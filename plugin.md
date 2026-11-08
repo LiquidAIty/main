@@ -127,14 +127,21 @@ One saved Card maps to one stable Hermes profile. Saving first persists the Prod
 then uses public `profiles.create`, `profiles.describe`, and `profiles.configure` calls and
 verifies the resulting profile.
 
+Workspace open/reopen only loads saved state. It must not republish profiles or rosters, issue/refresh
+credentials, enable plugins, or force MCP reloads. A successful saved wire edit publishes only rosters
+whose membership changed, including an empty roster. Card movement and unrelated deck revisions do not
+reconfigure agents. The rejected implementation and deletion are recorded in
+[DONT.md](DONT.md#incident-record--2026-11-07-rejected-workspace-open-synchronization-and-provisioning).
+
 Published profile configuration includes the saved provider/model; SOUL compiled from prompt blocks;
-one selected Card skill; selected Hermes toolsets and LiquidAIty MCP includes; Holographic policy; exact
+selected Card/Hermes skills; selected Hermes toolsets and LiquidAIty MCP includes; Holographic policy; exact
 Bot roster; Team/Magnetic task mode; optional immutable Card Python; and a deterministic description
 containing the category plus exact `[ORCHESTRATOR SKILL]` introduction.
 
-The description lets Main understand a native Bot target without copying its full prompt. A Card may
-select a custom skill or an existing Hermes skill. Launch MVP needs one selected skill per runnable
-Card and does not create another skill library.
+The description lets Main understand a Bot target without copying its full prompt. A Card may select
+its one editable custom skill, Hermes library skills, or both. When selected, the custom skill loads
+first. Hermes Skills must be enabled for its skill tools and selected auto-load behavior; the selector
+does not create a second skill library. SOUL still comes from the Card's PromptBlocks.
 
 ## Wires and roles
 
@@ -198,14 +205,13 @@ The graph navigation map is one small in-process JSON snapshot of what the user 
 Think/Know/Code layers, visible nodes and relationships, provider pointers, and at most one open node
 with bounded attached detail.
 
-React publishes it through the authenticated dashboard API. `navigation_map.py` validates and
-pre-renders it, then atomically swaps an immutable tuple. The `pre_llm_call` hook performs one
-in-memory read for Main, Builder, ThinkGraph, and KnowGraph. No database query, vector search, graph
-merge, or model call occurs in that hot path.
+React publishes it through the existing Project-authorized view endpoint. `graph_context.py` reads
+the already-displayed map once at turn start for Main, Builder, ThinkGraph, and KnowGraph. Only Main
+receives the displayed open-node detail. Request-only selection reuses that value through the turn
+and discards it at completion; it does not add it to chat text, history, or compaction.
 
-Main Send waits for publication and fails closed if the visible view and plugin cache cannot
-synchronize. Reconnect republishes. Engraphis, Graphiti, and CBM remain the deeper pointer-following
-tools.
+Send makes no graph request and waits for no publication. No submission-reference capture or
+bookkeeping remains. Engraphis, Graphiti, and CBM remain the deeper pointer-following tools.
 
 ## Completed Main turn to ThinkGraph
 
@@ -227,6 +233,57 @@ poller, Main session route, or copied transcript. Python owns deterministic sele
 model extracts, and Engraphis owns settlement.
 
 ## Tool and MCP grants
+
+### Official Hermes Bot Mode and MCP ownership
+
+This account is pinned to the installed Hermes **0.23.0** contract, not an invented LiquidAIty runtime.
+Consult the shipped source when official prose and observed tool names differ.
+
+**Bot Mode:** a Bot is a Hermes profile with its own configuration, credentials, model, skills and
+canonical Bot Chat. `message_agent` validates the destination, adds the actual sender's attribution,
+and delivers to that Bot's chat. Its acknowledgement is not the answer. The recipient's final reply is
+captured by Hermes and returned through the completion path; the recipient need not bounce it back with
+another `message_agent`. The sender can finish its foreground turn and receive the later outcome. Keep
+failures visible, avoid resending unknown deliveries, and retain `process_complete`. LiquidAIty supplies
+the saved wire-derived roster; it does not replace delivery, sessions, reply identity or completion.
+See the [official versioned Bot Mode guide](https://github.com/NousResearch/hermes-agent/blob/v0.23.0/website/docs/user-guide/bot-mode.md)
+and local `HermesLatest/tools/bot_mode_dm.py` / `tools/bot_mode_probe.py`.
+
+**MCP configuration and authority:** the receiving Bot's profile selects its configured `mcp_servers`,
+enabled toolsets and per-server tool filters. Hermes reads the selected server's stdio or HTTP settings
+and configured authentication. The server's own authorization remains authoritative; being in a Bot
+roster does not grant another Card's tools. LiquidAIty's MCP host still checks the saved owner, Project,
+profile and exact grants. An empty saved grant does not authorize broader access. Do not add a second
+toolset alias or a client-generated credential scheme to make an unavailable tool appear available.
+See the [official MCP configuration reference](https://github.com/NousResearch/hermes-agent/blob/v0.23.0/website/docs/reference/mcp-config-reference.md).
+
+**Discovery and execution:** Hermes connects, obtains the server's tool schemas, applies exposure
+filters, registers the tools and dispatches actual calls. Use the names returned by the installed
+runtime rather than guessing a prefix. Server tool-list-change notifications and Hermes's own
+configuration/reconnect mechanisms handle supported changes. Explicit `/reload-mcp` is a real reload,
+not a cheap availability query or a workspace-open requirement. It may invalidate prompt caches.
+Never call it once per Card just to load the canvas.
+See the [official MCP guide](https://github.com/NousResearch/hermes-agent/blob/v0.23.0/website/docs/user-guide/features/mcp.md)
+and local `HermesLatest/tools/mcp_tool_discovery.py`, `mcp_tool_agent.py`,
+`mcp_tool_lifecycle.py`, and `tui_gateway/methods_tools.py`.
+
+**Deferred tools:** when Hermes Tool Search is active, a tool may be callable without its full schema
+being eagerly placed in the initial model tool array. Hermes supplies `tool_search`, `tool_describe`,
+and `tool_call`; execution still reaches the real registered tool with its normal checks. A missing
+eager schema is not proof of a broken MCP connection. Inspect the saved grants, actual deferred catalog,
+description and call result before changing anything.
+See the [official Tool Search guide](https://github.com/NousResearch/hermes-agent/blob/v0.23.0/website/docs/user-guide/features/tool-search.md).
+
+**Authentication is not eliminated:** Hermes owns use of configured credentials and supported OAuth,
+but cannot invent a proprietary server credential or keep an already-issued custom token alive beyond
+its expiry. Report that exact failure and use an owner-approved supported setup. Do not restore the
+deleted credential issuer, silently broaden access, or replace the real tool with a manual graph write.
+
+The approved shape is ordinary Hermes Bot Mode plus saved wire control, using real profile-scoped MCP
+tools. Application-owned startup synchronization/provisioning and forced-refresh helpers are rejected.
+These paragraphs do not authorize runtime changes, installs, reloads or new transports.
+
+### LiquidAIty tool grants
 
 LiquidAIty publishes one MCP catalog. Hermes's native MCP client connects each profile to its exact
 saved include list.

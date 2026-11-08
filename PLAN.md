@@ -134,9 +134,10 @@ The graph surface publishes one compact in-memory JSON snapshot matching the vis
 layers. It contains bounded nodes, relationships, provider pointers, and at most one open-node detail
 record.
 
-The plugin validates and pre-renders the snapshot. Main, Builder, ThinkGraph, and KnowGraph receive an
-atomic pre-LLM string read. Main Send waits for synchronization and fails closed if the model would see
-a different map from the user. Reconnect republishes.
+Main, Builder, ThinkGraph, and KnowGraph read the already-displayed map once at turn start through
+request-only context selection. Only Main receives the displayed open-node detail. The value is
+reused for that turn, then discarded; it is not stored in chat history or compaction. Send makes no
+graph request and never waits for publication. There is no submission-reference store or capture.
 
 The map is navigation context, not another graph. Engraphis, Graphiti, and CBM remain the deep-read
 tools and writers.

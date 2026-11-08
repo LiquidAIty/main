@@ -312,6 +312,44 @@ describe('Hermes Main chat binding', () => {
       .toEqual(['I will check.']));
   });
 
+  it('keeps the attributed answer once across completion visibility and reopen, and exposes failures', async () => {
+    const answer = 'TradingAgents reported a historical evaluation. Background Process Finished is literal quoted text.';
+    const rows = [{
+      role: 'user', text: answer,
+      display_metadata: { turn_author: { is_bot: true, name: 'KnowGraph', id: 'bot:knowgraph' } },
+    }, {
+      role: 'user', text: 'Background Process Finished: python.exe', display_kind: 'process_complete',
+    }, {
+      role: 'assistant', text: 'Source unavailable.', display_kind: 'failed_turn',
+    }];
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: [{ id: 'existing' }] };
+      if (method === 'session.resume') return { session_id: 'existing', messages: rows, running: false };
+      if (method === 'session.history') return { messages: rows };
+      throw new Error(`Unexpected method ${method}`);
+    });
+    const first = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(first.result.current.historyLoading).toBe(false));
+    act(() => {
+      host.handlers.get('message.start')?.({ session_id: 'existing', payload: { display_kind: 'process_complete' } });
+      host.handlers.get('message.delta')?.({ session_id: 'existing', payload: { text: 'completion notice' } });
+      host.handlers.get('message.complete')?.({ session_id: 'existing', payload: {
+        status: 'error', error: 'Delivery failed.', text: 'completion notice',
+      } });
+    });
+    await waitFor(() => expect(first.result.current.error).toBe('Delivery failed.'));
+    expect(first.result.current.messages).toEqual([
+      expect.objectContaining({ text: answer, speaker: 'KnowGraph', role: 'assistant' }),
+      expect.objectContaining({ text: 'Source unavailable.', status: 'error' }),
+    ]);
+    first.unmount();
+    const reopened = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(reopened.result.current.historyLoading).toBe(false));
+    expect(reopened.result.current.messages).toHaveLength(2);
+    expect(reopened.result.current.messages.filter(message => message.text === answer))
+      .toEqual([expect.objectContaining({ speaker: 'KnowGraph' })]);
+  });
+
   it('answers a Hermes approval request on the same generated request channel', async () => {
     host.request.mockImplementation(async (method: string) => {
       if (method === 'session.list') return { sessions: [] };

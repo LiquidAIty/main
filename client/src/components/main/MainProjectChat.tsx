@@ -530,11 +530,8 @@ function MainProjectChatMessageBubble({
               : "inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.18), 0 4px 18px rgba(0,0,0,0.14)",
           }}
         >
-          {!isUser && message.speaker && message.speaker !== 'Main' ? (
-            <div data-testid="main-chat-message-speaker" style={{
-              color: '#7FD9D0', fontSize: 10, fontWeight: 700,
-              letterSpacing: '0.04em', marginBottom: 5,
-            }}>{message.speaker}</div>
+          {!isUser ? (
+            <div data-testid="main-chat-message-speaker">@{message.speaker || 'Main'}</div>
           ) : null}
           {isUser
             ? text

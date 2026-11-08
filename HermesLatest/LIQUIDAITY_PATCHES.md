@@ -91,6 +91,28 @@ roster, not a second delivery or task system.
 The corresponding existing Bot/profile contract tests are retained. No additional name aliases,
 fallback roster, delivery transport, reply formatter, or security-policy change is part of this update.
 
+## Subsequent owner-approved KnowGraph completion formatter correction
+
+- **Purpose / files:** `gateway/run_notifications.py::GatewayNotificationsMixin._build_process_completion_event`
+  now uses the ProcessSession's existing `completion_output_chars` allowance, with the unchanged 2,000-character
+  ordinary default. Line-boundary trimming keeps a nonempty tail when its only newline is trailing.
+  The existing unconditional Gateway secret scrub runs before slicing as well as on the final output.
+- **External alternative check:** restored application display and the short Bot reply already worked.
+  The retained 4,954-character reply reproduced a zero-character tail inside this formatter with an
+  18,000-character process allowance. No new transport, second delivery, client reconstruction, or
+  research rerun is needed to correct that formatter.
+- **Contracts / upstream behavior preserved:** the same process, completion event, redaction, parent/session
+  routing and sender metadata; no change to dispatch, notifications, Bot roster or task execution.
+- **Tests:** `tests/gateway/test_process_completion_format.py` has five checks using real ProcessSession
+  objects and the production formatter, without mocks. They passed by direct execution in the managed
+  Hermes interpreter; pytest is not installed there. The retained-reply replay preserves all 4,995
+  serialized characters and the original 4,954-character reply. Thirty local samples measured 11.6 ms
+  median and 17.5 ms maximum. A real later Bot completion delivered its entire 4,959-character reply to
+  Main and Preview, but the Card altered the requested resend, so exact live replay of the original
+  4,954-character answer is not claimed. The final pre-slice redaction addition is proven offline only.
+- **Fork cost / rollback:** one bounded formatter hunk and one test file. Remove when the corresponding
+  upstream formatter handles the same allowance/newline case.
+
 ## Windows installation prerequisite
 
 - **Purpose / files:** `pm/workspace.py::_copy_core_inputs` passes its package-directory copy through
@@ -128,8 +150,9 @@ The 0.23.0 managed update, generated-contract check, application/spec typechecks
 Plugin Doctor passed. The running Main session reports 0.23.0. One real read-only Main-to-KnowGraph
 request returned a 1,343-character reply; one persisted `process_complete` notification retained that
 exact reply, Main continued, and the notice/answer survived reopening Trading Preview. This proves the
-short-reply path only. The upstream 2,000-character notification formatter remains unchanged and its
-known long-output truncation defect is not fixed. Team/Magnetic model execution was not rerun.
+short-reply path only. At that update checkpoint the upstream 2,000-character notification formatter was
+unchanged. The subsequent correction above has separate retained-reply/formatter proof; loaded-host
+adoption remains unproven. Team/Magnetic model execution was not rerun.
 
 ## Upstream behavior preserved
 

@@ -251,7 +251,7 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
         args["citation"] = KnowCitation.model_validate(args["citation"])
         if args.get("direction"):
             args["direction"] = KnowDirection.model_validate(args["direction"])
-        args["reference_time"] = graphiti_module_ref.parse_reference_time(args.get("reference_time")) or utc_now()
+        args["reference_time"] = utc_now()
         for field in ("entity_types", "edge_types", "edge_type_map"):
             args.setdefault(field, getattr(graphiti_module_ref.graphiti_service, field))
         args["update_communities"] = False

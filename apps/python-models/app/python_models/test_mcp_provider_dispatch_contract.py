@@ -513,6 +513,28 @@ def test_graphiti_know_projection_inlines_live_mcp_v2_definitions():
     assert "$ref" not in json.dumps(schema)
 
 
+def test_know_publication_year_is_not_promoted_to_a_runtime_timestamp():
+    import asyncio
+
+    arguments = {"entity_name": "HAR-RV", "citation": {"publishedAt": "2009"}}
+    result = asyncio.run(mcp_provider_operations._entity_know_provider_arguments(
+        arguments, "cc1deb71-d059-46b8-975d-e2473dacf132",
+    ))
+    assert result == arguments
+    assert "reference_time" not in result
+
+
+def test_know_tool_does_not_offer_a_model_authored_timestamp():
+    schema = {"inputSchema": {
+        "properties": {"reference_time": {"type": "string"}, "citation": {"type": "object"}},
+        "required": ["citation", "reference_time"],
+    }}
+    mcp_provider_operations._inline_graphiti_know_schema(schema)
+    assert schema["inputSchema"] == {
+        "properties": {"citation": {"type": "object"}}, "required": ["citation"],
+    }
+
+
 def test_entity_know_dispatch_preserves_grounded_citation_and_typed_fields(
     monkeypatch, clear_live_provider_operations,
 ):
@@ -554,6 +576,7 @@ def test_entity_know_dispatch_preserves_grounded_citation_and_typed_fields(
         "graphiti", [provider_tool],
     )[0]
     assert "update_communities" not in projected.input_schema["properties"]
+    assert "reference_time" not in projected.input_schema["properties"]
 
     mcp_provider_operations.register_graphiti_catalog([projected])
     definition = operation_definition("graphiti.add_know")
@@ -593,7 +616,7 @@ def test_entity_know_dispatch_preserves_grounded_citation_and_typed_fields(
         "evidence": "Rocket Lab reported the exact source-backed demand result.",
         "publishedAt": "2026-10-19",
     }
-    assert arguments["reference_time"] == "2026-10-19"
+    assert "reference_time" not in arguments
     assert "episode_body" not in arguments
     assert "source_description" not in arguments
 
@@ -634,7 +657,6 @@ def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return
         graphiti_service=SimpleNamespace(
             entity_types={}, edge_types={}, edge_type_map={},
         ),
-        parse_reference_time=lambda value: None if value is None else datetime(2026, 10, 19, tzinfo=timezone.utc),
         _know_result=lambda _know: dict(know_payload),
     ))
     monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: {
@@ -656,8 +678,10 @@ def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return
         settle,
     )
 
+    write_started = datetime.now(timezone.utc)
     result = asyncio.run(mcp_graphiti_provider.call_graphiti_tool("add_know", {
         "group_id": "liquidaity-project-one",
+        "reference_time": "2009",
         "entity_name": "Rocket Lab",
         "name": "Bounded finding",
         "observation": "One source-backed observation.",
@@ -670,13 +694,14 @@ def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return
             "publishedAt": "2026-10-19",
         },
     }))
+    write_finished = datetime.now(timezone.utc)
 
     assert isinstance(result, CallToolResult)
     assert result.is_error is False
     assert result.structured_content["result"]["status"] == "completed"
     graphiti_client.add_know.assert_awaited_once()
     assert graphiti_client.add_know.await_args.kwargs["update_communities"] is False
-    assert graphiti_client.add_know.await_args.kwargs["reference_time"].tzinfo is not None
+    assert write_started <= graphiti_client.add_know.await_args.kwargs["reference_time"] <= write_finished
     receipt = result.structured_content["result"]
     assert all(key in receipt for key in (
         "message", "know_uuid", "content_hash", "group_id", "entity_name", "entity_uuid",

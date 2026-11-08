@@ -129,10 +129,11 @@ def _inline_graphiti_know_schema(payload: dict[str, Any]) -> None:
             for item in direction["anyOf"]
         ]
     properties.pop("update_communities", None)
+    properties.pop("reference_time", None)
     required = schema.get("required")
     if isinstance(required, list):
         schema["required"] = [
-            item for item in required if item != "update_communities"
+            item for item in required if item not in {"update_communities", "reference_time"}
         ]
     payload["inputSchema"] = schema
 
@@ -146,9 +147,6 @@ async def _entity_know_provider_arguments(
     entity_name = str(provider_arguments.get("entity_name") or "").strip()
     if not project_id or not entity_name or not isinstance(raw_citation, dict):
         raise ValueError("know_project_and_entity_required")
-    reference_time = raw_citation.get("eventAt") or raw_citation.get("publishedAt")
-    if reference_time:
-        provider_arguments["reference_time"] = reference_time
     return provider_arguments
 
 

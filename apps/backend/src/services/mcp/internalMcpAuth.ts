@@ -1,6 +1,6 @@
 /**
  * Entity: MCP Host
- * Relationship: This file restricts backend-to-MCP transport to the canonical loopback endpoint and signs catalog-reader or saved-Card scope for the host.
+ * Relationship: Restricts backend-to-MCP transport to the canonical loopback endpoint and signs the existing catalog-reader principal only.
  * Entity: Credentials
  * Relationship: This file loads and timing-safely verifies the supervised internal process secret used by protected backend and MCP seams.
  * Entity: Authentication
@@ -13,15 +13,7 @@ const INTERNAL_MCP_ISSUER = 'liquidaity-runtime';
 const INTERNAL_MCP_AUDIENCE = 'liquidaity-internal-mcp';
 const DEFAULT_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp';
 const TOKEN_LIFETIME_SECONDS = 12 * 60 * 60;
-const CARD_ISSUANCE_WINDOW_SECONDS = 60 * 60;
-
-export type InternalMcpPrincipal = { kind: 'catalog-reader' } | {
-  kind: 'card-runtime';
-  ownerUserId: string;
-  projectId: string;
-  deckId: string;
-  profile: string;
-};
+export type InternalMcpPrincipal = { kind: 'catalog-reader' };
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {
   const secret = String(env.LIQUIDAITY_INTERNAL_MCP_SECRET || '').trim();
@@ -49,26 +41,16 @@ export function createInternalMcpBearer(
   nowSeconds = Math.floor(Date.now() / 1000),
 ): string {
   const secret = requiredSecret(env);
-  if (!['catalog-reader', 'card-runtime'].includes(principal.kind)) {
+  if (principal.kind !== 'catalog-reader') {
     throw new Error('internal_mcp_principal_kind_invalid');
   }
-  if (principal.kind === 'card-runtime'
-    && [principal.ownerUserId, principal.projectId, principal.deckId, principal.profile]
-      .some(value => typeof value !== 'string' || !value.trim())) {
-    throw new Error('internal_mcp_card_scope_required');
-  }
-  // Identical Card scope must not rebuild Hermes' MCP connection on every chat.
-  // Round down so reuse never extends the existing maximum token lifetime.
-  const issuedAt = principal.kind === 'card-runtime'
-    ? Math.floor(nowSeconds / CARD_ISSUANCE_WINDOW_SECONDS) * CARD_ISSUANCE_WINDOW_SECONDS
-    : nowSeconds;
   const header = base64UrlJson({ alg: 'HS256', typ: 'JWT' });
   const payload = base64UrlJson({
     iss: INTERNAL_MCP_ISSUER,
     aud: INTERNAL_MCP_AUDIENCE,
     sub: principal.kind,
-    iat: issuedAt,
-    exp: issuedAt + TOKEN_LIFETIME_SECONDS,
+    iat: nowSeconds,
+    exp: nowSeconds + TOKEN_LIFETIME_SECONDS,
     scope: 'liquidaity.main',
     principal,
   });

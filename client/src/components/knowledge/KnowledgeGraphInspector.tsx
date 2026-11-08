@@ -223,7 +223,7 @@ export function ThinkRecordCard({
       chunkCount={item.metadata?.thinkgraph_origin?.source_chunks?.length ?? 0} /> : null}
     {onRemove ? <button type="button" aria-label="Delete record" disabled={removing}
       style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }} onClick={() => {
-      if (window.confirm('Delete this record?')) onRemove();
+      onRemove();
     }}>
       {removing ? 'Deleting…' : 'Delete'}
     </button> : null}
@@ -378,9 +378,12 @@ export function KnowGraphKnow({
     : '';
   const evidence = typeof citation.evidence === 'string' ? citation.evidence.trim() : '';
   const entryTime = graphEntryTime(citation.retrievedAt ?? know.observedAt);
-  const sourceDate = graphEntryTime(
-    citation.eventAt ?? citation.publishedAt ?? know.sourceDate,
-  );
+  const sourceDateValue = citation.eventAt ?? citation.publishedAt ?? know.sourceDate;
+  const sourceYear = typeof sourceDateValue === 'string' && /^\d{4}$/.test(sourceDateValue.trim())
+    ? sourceDateValue.trim() : null;
+  const sourceDate = sourceYear
+    ? { dateTime: sourceYear, label: sourceYear }
+    : graphEntryTime(sourceDateValue);
   const links = sourceLinks(citation);
   const relation = typeof direction.relation === 'string'
     ? direction.relation.trim()
@@ -422,7 +425,7 @@ export function KnowGraphKnow({
       disabled={removing}
       style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }}
       onClick={() => {
-        if (window.confirm('Delete this record?')) onRemove();
+        onRemove();
       }}
     >{removing ? 'Deleting…' : 'Delete'}</button> : null}
   </section>;

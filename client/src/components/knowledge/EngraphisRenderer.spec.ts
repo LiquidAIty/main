@@ -11,6 +11,8 @@
  */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { applyJevGraphPhysics } from './jevGraphPhysics';
+import { solarpunkMaterialFields, type GraphProjectionV1 } from './knowledgeGraphProjection';
 
 beforeAll(async () => {
   // The vendored renderer is an IIFE. Importing it installs its public test seam;
@@ -18,16 +20,104 @@ beforeAll(async () => {
   await import('../../vendor/engraphis/engraphis-graph.js');
 });
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('Engraphis graph renderer contracts', () => {
-  it('preserves original knowledge normalization and the separate Code radius', () => {
+  it('keeps Jev mass and weighted edges connected through ordinary paint without the removed orbital mode', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal('d3', await import('../../vendor/engraphis/vendor/d3.min.js'));
+    const values = new Map<string, any>([['graphData', { nodes: [], links: [] }], ['zoom', 1]]);
+    const forces = new Map<string, any>();
+    const graph: any = new Proxy(() => graph, { get: (_target, name: string) => {
+      if (name === 'd3Force') return (key: string, ...args: any[]) => {
+        if (!args.length) return forces.get(key);
+        forces.set(key, args[0]); return graph;
+      };
+      return (...args: any[]) => {
+        if (!args.length) return values.get(name);
+        values.set(name, args[0]); return graph;
+      };
+    } });
+    vi.stubGlobal('ForceGraph', () => () => graph);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const renderer = (window as any).EngraphisGraph.create(host, {});
+    expect((window as any).EngraphisGraph.PRESETS.galaxy).toBeUndefined();
+    expect(renderer.getPhysicsSnapshot).toBeUndefined();
+    expect(renderer.physicsDiagnostics).toBeUndefined();
+    expect(renderer.focus).toBeUndefined();
+    expect(renderer.setPreset('galaxy').mode).toBe('compact');
+    renderer.setSettings({ mode: 'galaxy', size: 5, linkw: 0.72, repel: 42, gravity: 26 });
+    expect(renderer.state().settings.mode).toBe('compact');
+    renderer.setCollapse(false);
+    const input = {
+      schemaVersion: 'think-know.presentation.v1', authority: 'joined', projectId: 'isolated-renderer-fixture', counts: { nodes: 3, edges: 2 },
+      nodes: [
+        { id: 'a', label: 'Think', authority: 'thinkgraph', properties: {}, ...solarpunkMaterialFields('think', false, false) },
+        { id: 'b', label: 'Know', authority: 'knowgraph', properties: {}, ...solarpunkMaterialFields('know', false, false) },
+        { id: 'c', label: 'Shared', authority: 'joined', properties: {}, ...solarpunkMaterialFields('paired', false, false) },
+      ],
+      edges: [
+        { id: 'weak', source: 'a', target: 'c', layer: 'thinkgraph', predicate: 'supports', properties: { jev: { winner: 'supports', distribution: { supports: 0.2, challenges: 0.8 } } } },
+        { id: 'strong', source: 'b', target: 'c', layer: 'knowgraph', predicate: 'supports', properties: { jev: { winner: 'supports', distribution: { supports: 0.8, challenges: 0.2 } } } },
+      ],
+    } as GraphProjectionV1;
+    const start = performance.now();
+    const projection = applyJevGraphPhysics(input, 'galaxy');
+    renderer.setData({ nodes: projection.nodes, links: projection.edges });
+    const rendered = values.get('graphData').nodes;
+    expect(rendered.map((node: any) => node.degree)).toEqual([1, 1, 2]);
+    expect(rendered.map((node: any) => node.semantic_mass)).toEqual([0.2, 0.8, 1]);
+    expect(forces.get('charge').strength()()).toBe(-42);
+    expect(forces.get('x').strength()()).toBe(0.26);
+    const links = values.get('graphData').links;
+    for (const edge of links) {
+      expect(values.get('linkWidth')(edge)).toBeCloseTo(edge.visual_width * 0.72);
+      expect(forces.get('link').strength()(edge)).toBeCloseTo(edge.spring_strength);
+      expect(forces.get('link').distance()(edge)).toBeCloseTo(edge.rest_length);
+    }
+    const arcs: number[] = [];
+    const context: any = new Proxy({ globalAlpha: 1 }, {
+      get: (target: any, name: string) => {
+        if (name === 'arc') return (_x: number, _y: number, radius: number) => arcs.push(radius);
+        if (['createRadialGradient', 'createLinearGradient', 'createConicGradient'].includes(name)) return () => ({ addColorStop() {} });
+        if (name === 'measureText') return () => ({ width: 10 });
+        return name in target ? target[name] : () => undefined;
+      },
+      set: (target: any, name: string, value: any) => { target[name] = value; return true; },
+    });
+    for (const node of rendered) {
+      node.x = 0; node.y = 0;
+      const expected = (2.5 + 3.5 * Math.log1p(node.semantic_mass)) * 5 / 3;
+      expect(node.visual_radius).toBeCloseTo(2.5 + 3.5 * Math.log1p(node.semantic_mass));
+      expect(node.radius).toBeCloseTo(expected);
+      arcs.length = 0;
+      values.get('nodeCanvasObject')(node, context, 1);
+      expect(arcs.some(radius => Math.abs(radius - expected) < 1e-9)).toBe(true);
+    }
+    expect(rendered[0].radius).not.toBe(rendered[1].radius);
+    expect(rendered[0].radius).toBeLessThan(rendered[2].radius);
+    const material = (window as any).EngraphisGraph._internals.materialRecipe('cyber', {}, 'theme', '#4fa2ad', rendered[2]);
+    expect(material.family).toBe('iridescent-pvd');
+    expect(material.fixedPalette.cyan.toLowerCase()).toBe('#4fa2ad');
+    expect(material.fixedPalette.magenta.toLowerCase()).toBe('#f2a64a');
+    expect(rendered.filter((node: any) => node.name === 'Shared')).toHaveLength(1);
+    console.info('Ordinary graph fixture', JSON.stringify({
+      milliseconds: performance.now() - start,
+      nodes: rendered.map((node: any) => ({ name: node.name, mass: node.gravity_mass, radius: node.radius })),
+      edges: links.map((edge: any) => ({ id: edge.id, width: values.get('linkWidth')(edge), spring: forces.get('link').strength()(edge), distance: forces.get('link').distance()(edge) })),
+    }));
+    renderer.destroy(); host.remove();
+  });
+
+  it('preserves calculated knowledge and Code radii instead of overwriting them during normalization', () => {
     const { sanitizeEvidenceMetrics, graphNodeRadius, radiusFromGravityMass } = (window as any).EngraphisGraph._internals;
     const knowledge = { authority: 'joined', visual_radius: 7, gravity_mass: 40 };
     const code = { authority: 'codegraph', visual_radius: 2.4, gravity_mass: 10 };
     const ordinary = { visual_radius: 1, gravity_mass: 10 };
     sanitizeEvidenceMetrics([knowledge, code, ordinary], 50);
-    expect(knowledge.visual_radius).toBeCloseTo(radiusFromGravityMass(40));
+    expect(knowledge.visual_radius).toBe(7);
     expect(code.visual_radius).toBe(2.4);
     expect(ordinary.visual_radius).toBeCloseTo(radiusFromGravityMass(10));
     expect(graphNodeRadius(knowledge, 5, 0)).toBe(graphNodeRadius({}, 5, 0));

@@ -20,7 +20,7 @@ import {
   type SolarpunkColors,
 } from './knowledgeGraphProjection';
 
-export type RendererLayout = 'compact' | 'original' | 'communities' | 'radial' | 'galaxy';
+export type RendererLayout = 'compact' | 'original' | 'communities' | 'radial';
 
 export type PresentationStyle = 'classic' | 'cyber' | 'galaxy' | 'solar' | 'solarpunk';
 
@@ -36,7 +36,7 @@ export type GraphPresentationPreferences = {
 };
 
 const KNOWLEDGE_PRESENTATION_LAYOUTS = new Set<RendererLayout>([
-  'compact', 'original', 'communities', 'radial', 'galaxy',
+  'compact', 'original', 'communities', 'radial',
 ]);
 export const SOLARPUNK_HEX = /^#[0-9a-f]{6}$/i;
 const JEV_PHYSICS = new Set<JevGraphPhysicsProfile>(JEV_GRAPH_PHYSICS_PROFILES);
@@ -84,9 +84,7 @@ export function safePresentationPreferences(
     const solarpunkColors = rawColors && typeof rawColors === 'object' && !Array.isArray(rawColors)
       ? Object.fromEntries(Object.entries(DEFAULT_SOLARPUNK_COLORS).map(([key, fallback]) => {
         const value = (rawColors as Record<string, unknown>)[key];
-        const legacy = key === 'think' ? /^(?:#6e5fae|#3979e8)$/i.test(String(value || ''))
-          : key === 'thinkRelationship' && /^#3979e8$/i.test(String(value || ''));
-        return [key, !legacy && typeof value === 'string' && SOLARPUNK_HEX.test(value) ? value : fallback];
+        return [key, typeof value === 'string' && SOLARPUNK_HEX.test(value) ? value : fallback];
       })) as SolarpunkColors
       : undefined;
     return {

@@ -85,9 +85,9 @@
 .graph-know-side { display:grid; gap:6px; }
 .graph-know-side details { color:#aebdc1; }
 .graph-know-citations { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
-.graph-know-citations li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 8px; }
+.graph-know-citations li { display:grid; grid-template-columns:minmax(0,1fr); gap:2px; }
 .graph-know-citations a { color:#85d3ca; overflow-wrap:anywhere; text-decoration-thickness:1px; text-underline-offset:2px; }
-.graph-know-citations small { color:#85949a; font-size:10px; }
+.graph-know-citations small { color:#85949a; font-size:10px; overflow-wrap:anywhere; }
 .graph-know-citations p { grid-column:1 / -1; color:#aebdc1; font-size:11px; }
 .graph-record-diagnostics { margin:0; color:#9dabb0; }
 .graph-record-diagnostics > div { display:flex; justify-content:space-between; gap:10px; }
