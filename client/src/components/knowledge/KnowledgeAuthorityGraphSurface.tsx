@@ -89,6 +89,7 @@ import {
 } from './KnowledgeGraphInspector';
 import type { CanonicalEntityDirectory } from './canonicalEntityDirectory';
 import { CodeGraphChangeReview } from './CodeGraphChangeReview';
+import { applicationFetch } from '../../lib/applicationApi';
 import './knowledgeAuthorityGraphSurface.css';
 
 export function JoinedKnowledgeGraphSurface({
@@ -377,6 +378,10 @@ export function KnowledgeGraphProjectionSurface({
   const [selectedMemberKey, setSelectedMemberKey] = useState<string | null>(null);
   const [selectedKnowEpisodeId, setSelectedKnowEpisodeId] = useState<string | null>(null);
   const [selectedThinkMemoryId, setSelectedThinkMemoryId] = useState<string | null>(null);
+  type ExactEvidence = { authority: GraphAuthority; ownerId: string; record: Record<string, any> };
+  const [exactEvidence, setExactEvidence] = useState<ExactEvidence | null>(null);
+  const [pendingEvidence, setPendingEvidence] = useState<ExactEvidence | null>(null);
+  const evidenceRequestRef = useRef(0);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [configurationLayer, setConfigurationLayer] = useState<'thinkgraph' | 'knowgraph' | 'codegraph' | null>(authority === 'joined' ? null : authority);
@@ -389,6 +394,7 @@ export function KnowledgeGraphProjectionSurface({
     viewport: GraphViewport; paper: { x: number; y: number; zoom: number };
     layers?: GraphLayerVisibility;
     codeSource: CodeGraphFileSource | null;
+    exactEvidence: ExactEvidence | null;
   };
   const [navigation, setNavigation] = useState<NavigationEntry[]>([]);
   const restoreViewport = useRef<GraphViewport | undefined>(undefined);
@@ -498,6 +504,8 @@ export function KnowledgeGraphProjectionSurface({
     setCodeFileError(null);
   }, [selectedEdgeId, selectedId]);
   const openNodeInspector = (visualNodeId: string) => {
+    evidenceRequestRef.current += 1;
+    setPendingEvidence(null); setExactEvidence(null);
     setControlsOpen(false);
     setRemoveError(null);
     setSelectedMemberKey(null);
@@ -509,12 +517,53 @@ export function KnowledgeGraphProjectionSurface({
     setCodeSource(null);
     setCodeSourceError(null);
   };
+  useEffect(() => {
+    setPendingEvidence(null); setExactEvidence(null);
+    return () => { evidenceRequestRef.current += 1; };
+  }, [projection?.projectId]);
+  const openResearchReference = async (targetAuthority: GraphAuthority, id: string) => {
+    if (!projection?.projectId) return;
+    const requestId = ++evidenceRequestRef.current;
+    setRemoveError(null);
+    try {
+      const query = new URLSearchParams({ projectId: projection.projectId,
+        [targetAuthority === 'thinkgraph' ? 'memoryId' : 'knowId']: id });
+      const response = await applicationFetch(`/api/${targetAuthority}/record?${query}`);
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.error || 'Research reference unavailable.');
+      if (requestId !== evidenceRequestRef.current) return;
+      const record = targetAuthority === 'thinkgraph'
+        ? { ...value.memory, summary: value.memory.content, ingestedAt: value.memory.ingested_at }
+        : value;
+      if (!value.ownerEntityId || !record.id) throw new Error('Research reference has no current Entity owner.');
+      if (layerVisibility && !layerVisibility[targetAuthority]) onLayerVisibilityChange?.(targetAuthority, true);
+      setPendingEvidence({ authority: targetAuthority, ownerId: value.ownerEntityId, record });
+    } catch (error) {
+      if (requestId === evidenceRequestRef.current) setRemoveError(error instanceof Error ? error.message : String(error));
+    }
+  };
+  useEffect(() => {
+    if (!pendingEvidence) return;
+    const { authority: provider, ownerId, record } = pendingEvidence;
+    const visualId = authority === 'joined'
+      ? [...(activeJoinedPresentation?.nodeVariants.entries() || [])]
+          .find(([, variants]) => variants.some(variant => variant.authority === provider && variant.node.id === ownerId))?.[0]
+      : authority === provider ? ownerId : null;
+    if (!visualId || !displayProjection?.nodes.some(node => node.id === visualId)) return;
+    const target = pendingEvidence;
+    openNodeInspector(visualId);
+    setSelectedAuthority(provider);
+    setSelectedMemberKey(providerMemberKey(provider, ownerId));
+    setExactEvidence(target);
+    if (provider === 'thinkgraph') setSelectedThinkMemoryId(record.id);
+    else setSelectedKnowEpisodeId(record.id);
+  }, [pendingEvidence, activeJoinedPresentation, displayProjection, authority]);
   const rememberNavigation = () => {
     const viewport = graphRef.current?.captureView();
     if (!viewport) return;
     setNavigation(current => [...current, { featureId: expandedCodeFeatureId, selectedId,
       selectedEdgeId, selectedAuthority, selectedMemberKey, selectedKnowEpisodeId, selectedThinkMemoryId, inspectorOpen,
-      viewport, paper: { ...paperViewport }, codeSource,
+      viewport, paper: { ...paperViewport }, codeSource, exactEvidence,
       layers: layerVisibility ? { ...layerVisibility } : undefined }]);
   };
   const returnToView = (project = false) => {
@@ -531,6 +580,7 @@ export function KnowledgeGraphProjectionSurface({
     setSelectedThinkMemoryId(previous.selectedThinkMemoryId);
     setInspectorOpen(previous.inspectorOpen); setControlsOpen(false);
     setCodeSource(previous.codeSource);
+    setExactEvidence(previous.exactEvidence);
     setPaperViewport(previous.paper); cameraRef.current = null;
     if (previous.layers && layerVisibility) Object.entries(previous.layers).forEach(([layer, enabled]) => {
       if (layerVisibility[layer as keyof GraphLayerVisibility] !== enabled)
@@ -604,6 +654,7 @@ export function KnowledgeGraphProjectionSurface({
       const graph = window.EngraphisGraph.create(hostRef.current, {
         onNodeClick: inspectNode,
         onLinkClick: link => {
+          evidenceRequestRef.current += 1; setPendingEvidence(null); setExactEvidence(null);
           setControlsOpen(false);
           setRemoveError(null);
           setSelectedMemberKey(null);
@@ -613,6 +664,7 @@ export function KnowledgeGraphProjectionSurface({
           setInspectorOpen(true);
         },
         onBackgroundClick: () => {
+          evidenceRequestRef.current += 1; setPendingEvidence(null); setExactEvidence(null);
           setSelectedMemberKey(null);
           setSelectedKnowEpisodeId(null);
           setSelectedId(null);
@@ -922,6 +974,7 @@ export function KnowledgeGraphProjectionSurface({
   }, [controlsOpen, inspectorOpen, selectedAuthority, selectedEdgeId, selectedId, selectedMemberKey]);
 
   const closePanel = () => {
+    evidenceRequestRef.current += 1; setPendingEvidence(null);
     setInspectorOpen(false);
     setControlsOpen(false);
   };
@@ -987,8 +1040,13 @@ export function KnowledgeGraphProjectionSurface({
     && !layerVisibility.knowgraph
     && !layerVisibility.codegraph;
   const selectedEvidence = (selectedEdge?.properties || selectedProperties).evidence;
-  const evidenceRecords = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
+  const projectedEvidenceRecords = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
     item !== null && typeof item === 'object' && typeof item.id === 'string') : [];
+  const evidenceRecords = exactEvidence && !selectedEdge && exactEvidence.authority === inspectedAuthority
+    && exactEvidence.ownerId === selected?.id
+    ? [projectedEvidenceRecords.find(item => item.id === exactEvidence.record.id) || exactEvidence.record,
+        ...projectedEvidenceRecords.filter(item => item.id !== exactEvidence.record.id)]
+    : projectedEvidenceRecords;
   const directThinks = inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
     ? evidenceRecords
     : [];
@@ -1039,6 +1097,8 @@ export function KnowledgeGraphProjectionSurface({
             observation,
             interpretation,
             citation,
+            researchOriginThinkId: item.researchOriginThinkId,
+            researchRequestVersion: item.researchRequestVersion,
             ...(Array.isArray(item.mentions) ? { mentions: item.mentions } : {}),
             ...(Object.keys(direction).length ? { direction } : {}),
             observedAt: item.ingestedAt ?? properties.created_at,
@@ -1408,6 +1468,7 @@ export function KnowledgeGraphProjectionSurface({
             item={item}
             projectId={projection?.projectId}
             heading="Think"
+            onOpenResearchReference={(provider, id) => { void openResearchReference(provider, id); }}
             renderText={text => renderLinkedText(text, item.mentions)}
             removing={removingId === item.id}
             onRemove={inspectedAuthority === 'thinkgraph' && onRemoveEvidence
@@ -1441,6 +1502,7 @@ export function KnowledgeGraphProjectionSurface({
             key={record.episodeId}
             projectId={projection?.projectId}
             record={record}
+            onOpenResearchReference={(provider, id) => { void openResearchReference(provider, id); }}
             heading={visibleKnowItems.length > 1 ? `Know ${index + 1}` : 'Know'}
             renderText={text => renderLinkedText(text, record.know.mentions)}
             removing={removingId === record.episodeId}

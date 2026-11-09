@@ -1329,6 +1329,8 @@ class Graphiti:
         uuid: str | None = None,
         mentions: list[str] | None = None,
         relationships: list[KnowRelationship] | None = None,
+        research_origin_think_id: str | None = None,
+        research_request_version: int | None = None,
     ) -> AddKnowResults:
         """Write an explicit Know and its owner, never expanding prose into a graph."""
 
@@ -1373,6 +1375,8 @@ class Graphiti:
             citation=citation,
             direction=direction,
             content_hash=digest,
+            research_origin_think_id=research_origin_think_id,
+            research_request_version=research_request_version,
         )
         edges = []
         for relationship in relationships or []:

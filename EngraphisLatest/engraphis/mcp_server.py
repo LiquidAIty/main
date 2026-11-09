@@ -3706,7 +3706,9 @@ def engraphis_add_thinks(
                     "(authored prose explaining this Entity's directed relationship to that target). "
                     "entity_id may be an Engraphis ent_ ID or its thinkgraph: map reference. "
                     "Each Think has one owner. Text mentions are references, not extra owners. "
-                    "Do not supply Jev labels or probabilities.",
+                    "Do not supply Jev labels or probabilities. Only for a genuine external evidence gap, "
+                    "set researchRequested=true and supply a specific researchQuestion. Ordinary Thinks omit these. "
+                    "The writer initializes researchState=research and request version 1; this does not launch research.",
     )],
     workspace: Annotated[Optional[str], Field(description="Workspace.")] = None,
     source_reference: Annotated[Optional[str], Field(

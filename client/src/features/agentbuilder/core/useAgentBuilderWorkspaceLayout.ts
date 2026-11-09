@@ -26,7 +26,6 @@ export const COMPANION_MIN_WIDTHS = Object.freeze({
   canvas: 520,
   knowledge: 520,
   trading: 520,
-  worldsignal: 360,
   worldview: 720,
 });
 

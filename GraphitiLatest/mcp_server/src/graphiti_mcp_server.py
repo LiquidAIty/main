@@ -394,6 +394,9 @@ def _know_result(know: KnowNode) -> dict[str, Any]:
         'group_id': know.group_id,
         'created_at': know.created_at.isoformat(),
         'valid_at': know.valid_at.isoformat(),
+        **({'researchOriginThinkId': know.research_origin_think_id,
+            'researchRequestVersion': know.research_request_version}
+           if know.research_origin_think_id else {}),
         **({'saga_uuid': know.saga_uuid} if know.saga_uuid else {}),
         **({'saga_name': know.saga_name} if know.saga_name else {}),
     }
@@ -547,6 +550,13 @@ async def add_know(
     direction: KnowDirection | None = None,
     uuid: str | None = None,
     mentions: list[str] | None = None,
+    research_origin_think_id: Annotated[str | None, Field(
+        description='Exact originating Think ID returned by a claimed research request; omit for ordinary research.',
+    )] = None,
+    research_request_version: Annotated[int | None, Field(ge=1)] = None,
+    research_claim_token: Annotated[str | None, Field(
+        description='Claim token from engraphis_research. Required by the Project adapter for a request-linked Know.',
+    )] = None,
     relationships: Annotated[list[KnowRelationship] | None, Field(
         description="For each meaningful outgoing relationship, supply target_entity_uuid and fact: "
                     "authored prose explaining this Entity's directed connection, grounded in the cited Know. "
@@ -601,6 +611,8 @@ async def add_know(
             reference_time=datetime.now(timezone.utc),
             mentions=mentions,
             relationships=relationships,
+            research_origin_think_id=research_origin_think_id,
+            research_request_version=research_request_version,
         )
         return KnowAcceptedResponse(
             message=f"Know '{name}' accepted for processing in group '{effective_group_id}'",
@@ -714,11 +726,16 @@ async def search_knows(
 
 @mcp.tool()
 async def get_entity_knows(
-    entity_uuid: str,
+    entity_uuid: str | None = None,
     group_id: str | None = None,
     max_knows: int = 10,
+    entity_name: str | None = None,
 ) -> KnowSearchResponse | ErrorResponse:
-    """Read durable Knows by one exact stored Entity identity."""
+    """Read an exact Entity's Knows. In a Project, also exposes its Think research requests.
+
+    Use the exact entity_name from the shared map when it has no Graphiti UUID yet.
+    This is read-only: it never creates an Entity or starts research.
+    """
 
     global graphiti_service
     if graphiti_service is None:
@@ -726,6 +743,17 @@ async def get_entity_knows(
     try:
         client = await graphiti_service.get_client()
         effective_group_id = group_id or config.graphiti.group_id
+        if not entity_uuid:
+            if not entity_name:
+                raise ValueError('Provide entity_uuid or an exact entity_name')
+            rows, _, _ = await client.driver.execute_query(
+                'MATCH (e:Entity {group_id:$group,name:$name}) RETURN e.uuid AS uuid LIMIT 2',
+                group=effective_group_id, name=entity_name, routing_='r')
+            if len(rows) > 1:
+                raise ValueError('Entity name is ambiguous; provide entity_uuid')
+            if not rows:
+                return KnowSearchResponse(message='No Know owner exists for this exact name yet.', knows=[])
+            entity_uuid = rows[0]['uuid']
         knows = await client.get_entity_knows(
             entity_uuid,
             group_id=effective_group_id,

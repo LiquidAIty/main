@@ -125,6 +125,11 @@ def know_from_properties(properties: dict[str, Any]) -> dict[str, Any] | None:
             else {}
         ),
         **({"contentHash": content_hash} if content_hash else {}),
+        **({"researchOriginThinkId": properties["researchOriginThinkId"],
+            "researchRequestVersion": properties["researchRequestVersion"]}
+           if isinstance(properties.get("researchOriginThinkId"), str)
+           and type(properties.get("researchRequestVersion")) is int
+           and properties["researchRequestVersion"] > 0 else {}),
         **({"researchOrigins": origins[-12:], "researchOriginCount": len(origins)} if origins else {}),
     }
 

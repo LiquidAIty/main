@@ -74,37 +74,10 @@ def test_card_selection_uses_the_live_definition_availability_and_grant_flag():
     assert card_tool_selection_is_eligible("not_a_real_tool") is False
 
 
-def test_worldsignals_batch_uses_the_provider_command_contract():
-    definition = next(
-        item for item in python_operation_definitions()
-        if item.canonical_id == "worldsignals.batch"
-    )
-    command = definition.parameters_schema["properties"]["commands"]["items"]
-    assert command["required"] == ["cmd"]
-    assert command["properties"] == {
-        "cmd": {"type": "string", "minLength": 1},
-        "args": {"type": "object"},
-    }
-    assert command["additionalProperties"] is False
-
-
-def test_worldsignals_package_exposes_query_only_and_requires_runtime_scope():
-    definition = next(
-        item for item in python_operation_definitions()
-        if item.canonical_id == "worldsignals.package"
-    )
-    assert definition.access == "read"
-    assert set(definition.parameters_schema["properties"]) == {
-        "command", "reason", "arguments", "domains", "sourceRefs",
-        "maxAgeSeconds", "limit",
-    }
-    assert definition.parameters_schema["required"] == ["command", "reason"]
-    assert "projectId" not in definition.parameters_schema["properties"]
-    with pytest.raises((TypeError, ValueError), match="worldsignals_package_card_context_required|argument"):
-        definition.handler(
-            command="get_summary",
-            reason="Read one bounded source result.",
-        )
+def test_removed_worldsignals_operations_are_not_published():
+    assert not any(item.canonical_id.startswith("worldsignals.")
+                   for item in python_operation_definitions())
+    assert operation_definition("worldsignals.package") is None
 
 
 def test_catalog_is_definition_backed_with_no_duplicate_entries():

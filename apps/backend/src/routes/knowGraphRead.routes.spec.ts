@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   getOwnedProjectByReference: vi.fn(),
   fetchKnowGraphProjection: vi.fn(),
   fetchKnowGraphNeighborhood: vi.fn(),
+  requestPythonRailsJson: vi.fn(),
 }));
 
 vi.mock('../services/projectStore', () => ({
@@ -25,6 +26,7 @@ vi.mock('../services/projectStore', () => ({
 vi.mock('../services/pythonRailsClient', () => ({
   fetchKnowGraphProjection: mocks.fetchKnowGraphProjection,
   fetchKnowGraphNeighborhood: mocks.fetchKnowGraphNeighborhood,
+  requestPythonRailsJson: mocks.requestPythonRailsJson,
 }));
 
 async function createApiServer(userId?: string): Promise<{ server: Server; baseUrl: string }> {
@@ -54,9 +56,25 @@ afterEach(() => {
   mocks.getOwnedProjectByReference.mockReset();
   mocks.fetchKnowGraphProjection.mockReset();
   mocks.fetchKnowGraphNeighborhood.mockReset();
+  mocks.requestPythonRailsJson.mockReset();
 });
 
 describe('KnowGraph read route project authority and transport', () => {
+  it('opens an exact research result only through the owned Project', async () => {
+    mocks.getOwnedProjectByReference.mockResolvedValueOnce({ id: 'project-uuid' });
+    mocks.requestPythonRailsJson.mockResolvedValueOnce({ id: 'know-one', ownerEntityId: 'owner-one' });
+    const { server, baseUrl } = await createApiServer('user-1');
+    try {
+      const response = await fetch(`${baseUrl}/record?projectId=project-code&knowId=know-one`);
+      expect(response.status).toBe(200);
+      expect(mocks.requestPythonRailsJson).toHaveBeenCalledWith(
+        '/knowgraph/record?projectId=project-uuid&knowId=know-one', { method: 'GET' });
+      mocks.getOwnedProjectByReference.mockResolvedValueOnce(null);
+      const denied = await fetch(`${baseUrl}/record?projectId=foreign&knowId=know-one`);
+      expect(denied.status).toBe(404);
+      expect(mocks.requestPythonRailsJson).toHaveBeenCalledTimes(1);
+    } finally { await closeServer(server); }
+  });
   it('keeps the graph and expand input errors at their existing URLs', async () => {
     const { server, baseUrl } = await createApiServer('user-1');
     try {

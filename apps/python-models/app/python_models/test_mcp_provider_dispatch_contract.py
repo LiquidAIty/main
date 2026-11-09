@@ -580,6 +580,51 @@ def test_duplicate_relationship_submission_retries_incomplete_settlement(monkeyp
     assert result["structuredContent"]["result"]["relationships"] == ["existing-edge"]
 
 
+def test_research_completion_recovers_saved_results_without_another_know_write(monkeypatch):
+    import asyncio
+    from engraphis.service import MemoryService
+    from app.python_models import engraphis_operations as operations
+    from app import backend_operation_transport
+    svc = MemoryService.create(":memory:", extractor="none", graph_extractor="none")
+    monkeypatch.setattr(operations, "get_service", lambda _project: svc)
+    principal = {"id": "test-owner", "email": "test-owner@example.test"}
+    monkeypatch.setattr(operations, "project_principal", lambda _project: principal)
+    monkeypatch.setattr(backend_operation_transport, "notify_graph_changed", lambda *_args: None)
+    results = []
+    async def ready(): pass
+    async def read_results(project, origin, version):
+        assert (project, origin, version) == ("trading", mid, 1)
+        return results
+    monkeypatch.setattr(mcp_graphiti_provider, "ensure_graphiti_service", ready)
+    monkeypatch.setattr(mcp_graphiti_provider, "research_result_knows", read_results)
+    try:
+        from engraphis.service_context import bind_service
+        with bind_service(svc, principal=principal):
+            mid = svc.add_thinks([{"entity_name": "Signal", "content": "An input might help.",
+                                  "researchRequested": True, "researchQuestion": "Does it add held-out information?"}],
+                                 workspace="trading")["thinks"][0]["id"]
+        async def run():
+            claimed = await operations.research_request_operation(projectId="trading", action="claim", think_id=mid, request_version=1)
+            assert claimed["claimed"]
+            with pytest.raises(ValueError, match="No sourced Know"):
+                await operations.research_request_operation(projectId="trading", action="complete", think_id=mid, request_version=1)
+            with bind_service(svc, principal=principal):
+                assert svc.read_think_research(mid, workspace="trading")["researchState"] == "working"
+            # A provider write has committed, but no completion acknowledgment did.
+            # The adapter's verified-result read is the only provider operation here.
+            results.append(SimpleNamespace(uuid="saved-provider-know"))
+            done = await operations.research_request_operation(projectId="trading", action="complete", think_id=mid, request_version=1)
+            assert done["researchedByKnowIds"] == ["saved-provider-know"]
+            assert done["researchRequested"] is False and done["researchState"] == "researched"
+            repeated = await operations.research_request_operation(projectId="trading", action="complete", think_id=mid, request_version=1)
+            assert repeated["changed"] is False
+            with pytest.raises(ValueError):
+                await operations.research_request_operation(projectId="other", action="complete", think_id=mid, request_version=1)
+        asyncio.run(run())
+    finally:
+        svc.close()
+
+
 def test_know_tool_does_not_offer_a_model_authored_timestamp():
     schema = {"inputSchema": {
         "properties": {"reference_time": {"type": "string"}, "citation": {"type": "object"}},
@@ -769,7 +814,7 @@ def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return
     )
 
 
-@pytest.mark.parametrize("operation", ["get_know", "get_entity_knows", "search_knows"])
+@pytest.mark.parametrize("operation", ["get_know", "search_knows"])
 @pytest.mark.parametrize("profile", ["builder", "knowgraph"])
 def test_saved_cards_use_the_existing_graphiti_tool_contract(monkeypatch, operation, profile):
     import asyncio
@@ -784,6 +829,72 @@ def test_saved_cards_use_the_existing_graphiti_tool_contract(monkeypatch, operat
     assert asyncio.run(mcp_graphiti_provider.call_graphiti_tool(operation, arguments)) is result
     provider.assert_awaited_once_with(operation, arguments)
     assert arguments == {"group_id": "liquidaity-project-one", "uuid": "know-one"}
+
+
+def test_entity_read_exposes_exact_think_research_without_creating_a_know_owner(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from engraphis.service import MemoryService
+    from app.python_models import engraphis
+    svc = MemoryService.create(":memory:", extractor="none", graph_extractor="none")
+    monkeypatch.setattr(engraphis, "get_service", lambda _project: svc)
+    client = SimpleNamespace(driver=SimpleNamespace(execute_query=AsyncMock(return_value=([], None, None))),
+                             get_entity_knows=AsyncMock())
+    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE", SimpleNamespace(graphiti_client=client))
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: {"projectId": "trading"})
+    try:
+        mid = svc.add_thinks([{"entity_name": "Signal", "content": "This signal needs evidence.",
+                              "researchRequested": True, "researchQuestion": "Does it predict the target?"}],
+                             workspace="trading")["thinks"][0]["id"]
+        svc.add_thinks([{"entity_name": "Signal", "content": "Other Project reasoning.",
+                         "researchRequested": True, "researchQuestion": "A different question?"}], workspace="other")
+        result = asyncio.run(mcp_graphiti_provider.call_graphiti_tool("get_entity_knows", {
+            "group_id": "liquidaity-trading", "entity_name": "Signal"})).structured_content["result"]
+        assert result["knows"] == [] and result["entity_uuid"] is None
+        assert [item["memory_id"] for item in result["thinks"]] == [mid]
+        assert [item["thinkId"] for item in result["researchRequests"]] == [mid]
+        assert result["researchRequests"][0]["researchState"] == "research"
+        assert "claimToken" not in json.dumps(result)
+        client.get_entity_knows.assert_not_awaited()
+        client.driver.execute_query.assert_awaited_once()
+        assert "MATCH" in client.driver.execute_query.await_args.args[0]
+        with pytest.raises(PermissionError):
+            asyncio.run(mcp_graphiti_provider.call_graphiti_tool("get_entity_knows", {
+                "group_id": "liquidaity-other", "entity_name": "Signal"}))
+    finally:
+        svc.close()
+
+
+def test_research_know_write_refuses_an_unclaimed_or_stale_request(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from engraphis.service import MemoryService
+    from app.python_models import engraphis_operations as operations
+    from engraphis.service_context import bind_service
+    svc = MemoryService.create(":memory:", extractor="none", graph_extractor="none")
+    principal = {"id": "test-owner", "email": "test-owner@example.test"}
+    monkeypatch.setattr(operations, "get_service", lambda _project: svc)
+    monkeypatch.setattr(operations, "project_principal", lambda _project: principal)
+    client = SimpleNamespace(add_know=AsyncMock())
+    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE", SimpleNamespace(graphiti_client=client))
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: {"projectId": "trading"})
+    try:
+        with bind_service(svc, principal=principal):
+            mid = svc.add_thinks([{"entity_name": "Signal", "content": "An input might help.",
+                "researchRequested": True, "researchQuestion": "Does it predict the target?"}],
+                workspace="trading")["thinks"][0]["id"]
+        args = {"group_id": "liquidaity-trading", "research_origin_think_id": mid,
+                "research_request_version": 1, "research_claim_token": "not-a-claim"}
+        with pytest.raises(ValueError, match="research claim is not current"):
+            asyncio.run(mcp_graphiti_provider.call_graphiti_tool("add_know", args))
+        with bind_service(svc, principal=principal):
+            claim = svc.claim_think_research(mid, workspace="trading", version=1)
+        args.update(research_claim_token=claim["claimToken"], research_request_version=2)
+        with pytest.raises(ValueError, match="research claim is not current"):
+            asyncio.run(mcp_graphiti_provider.call_graphiti_tool("add_know", args))
+        client.add_know.assert_not_awaited()
+    finally:
+        svc.close()
 
 
 

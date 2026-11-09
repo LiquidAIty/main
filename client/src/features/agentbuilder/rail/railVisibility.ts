@@ -14,12 +14,6 @@ function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean
   return card?.id === 'card_trading_workbench';
 }
 
-export function isWorldSignalsAgentCard(
-  card: AgentCardInstance | null | undefined,
-): boolean {
-  return card?.id === 'card_worldsignals_agent';
-}
-
 export function isWorldViewCard(
   card: AgentCardInstance | null | undefined,
 ): boolean {
@@ -28,7 +22,6 @@ export function isWorldViewCard(
 
 type ProgressiveRailVisibility = {
   showKnowledge: boolean;
-  showWorldsignal: boolean;
   showWorldview: boolean;
   showTrading: boolean;
 };
@@ -58,7 +51,6 @@ export function deriveVisibleRailItems({
   return {
     showKnowledge: hasConnectedEnabledCard(deck,
       card => card.runtime.kind === 'hermes' && card.runtime.profile === 'thinkgraph'),
-    showWorldsignal: hasConnectedEnabledCard(deck, isWorldSignalsAgentCard),
     showWorldview: hasConnectedEnabledCard(deck, isWorldViewCard),
     showTrading: hasConnectedEnabledCard(deck, isTradingAgentCard),
   };

@@ -73,8 +73,22 @@ describe('shared knowledge inspector', () => {
 
   it('shows retained research intent without claiming execution', () => {
     render(<ThinkRecordCard item={{ id: 'think-one', summary: 'Reasoning.', researchRequested: true }} heading="Think" />);
-    expect(screen.getByText('Research requested')).toBeTruthy();
+    expect(screen.getByText('Research')).toBeTruthy();
     expect(screen.queryByText('Research question')).toBeNull();
+  });
+
+  it('shows the research question and follows saved result references without replacing the Think', () => {
+    const open = vi.fn();
+    render(<ThinkRecordCard item={{ id: 'think-one', summary: 'Original reasoning.', metadata: {
+      structured_extraction: { think: { researchRequested: false, researchState: 'researched',
+        researchQuestion: 'Does the independent signal help?', researchRequestVersion: 1,
+        researchedByKnowIds: ['know-one'] } },
+    } }} heading="Think" onOpenResearchReference={open} />);
+    expect(screen.getByText('Original reasoning.')).toBeTruthy();
+    expect(screen.getByText('Researched')).toBeTruthy();
+    expect(screen.getByText('Does the independent signal help?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open research Know know-one' }));
+    expect(open).toHaveBeenCalledWith('knowgraph', 'know-one');
   });
 
   it('uses only the exact attached Graphiti episode identity for a Know', () => {
@@ -159,6 +173,8 @@ describe('shared knowledge inspector', () => {
       know: {
         title: 'Rocket Lab result',
         kind: 'Know',
+        researchOriginThinkId: 'origin-think',
+        researchRequestVersion: 3,
         observation: 'Rocket Lab reported one source-backed operating result.',
         interpretation: 'The result informs demand but does not decide the thesis.',
         citation: {
@@ -178,8 +194,9 @@ describe('shared knowledge inspector', () => {
       episode: {},
     };
 
+    const openOrigin = vi.fn();
     const { container } = render(<>
-      <KnowGraphKnow record={record} heading="Know" />
+      <KnowGraphKnow record={record} heading="Know" onOpenResearchReference={openOrigin} />
       <KnowSourceList records={[record]} />
     </>);
 
@@ -203,6 +220,8 @@ describe('shared knowledge inspector', () => {
     ]);
     fireEvent.click(screen.getByText('Source passage'));
     expect(screen.getByText('The exact source passage remains inspectable.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open originating Think origin-think' }));
+    expect(openOrigin).toHaveBeenCalledWith('thinkgraph', 'origin-think');
   });
 
   it('shows a citation publication year without treating it as epoch seconds', () => {
@@ -231,7 +250,7 @@ describe('shared knowledge inspector', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit record' }));
     expect(fetch).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText('Finding'), { target: { value: 'Corrected finding.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
     await screen.findByRole('button', { name: 'Edit record' });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0][0]).toBe('/api/knowgraph/edit-know');

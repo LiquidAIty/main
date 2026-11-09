@@ -66,6 +66,13 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
 }
 
+// Hermes keeps intentional-silence turns in history for model alternation.
+// These exact protocol markers are not assistant prose to render.
+function isSilentReply(value: string): boolean {
+  return ['[SILENT]', 'SILENT', 'NO_REPLY', 'NO REPLY', '[静默]', '静默', '[沉默]', '沉默']
+    .includes(value.trim().toUpperCase().replace(/\s+/g, ' '));
+}
+
 function transcriptMessage(row: TranscriptMessage, ownerName: string): HermesChatMessage | null {
   const metadata = objectRecord(row.display_metadata);
   const author = objectRecord(metadata.turn_author || row.turn_author);
@@ -87,6 +94,7 @@ function transcriptMessage(row: TranscriptMessage, ownerName: string): HermesCha
   }
   const role = botAuthored ? 'assistant' : text(row.role).trim().toLowerCase();
   if (role !== 'user' && role !== 'assistant') return null;
+  if (role === 'assistant' && isSilentReply(body)) return null;
   return {
     role,
     text: body,
@@ -387,6 +395,11 @@ export default function useHermesMainChat(projectId: string, profile = 'main', o
         const finalText = text(event.payload?.text);
         setMessages((current) => {
           const index = streamingIndexRef.current;
+          if (!failed && isSilentReply(finalText)) {
+            return index != null && current[index]?.role === 'assistant'
+              ? current.filter((_, rowIndex) => rowIndex !== index)
+              : current;
+          }
           if (index != null && current[index]?.role === 'assistant') {
             const next = [...current];
             next[index] = {

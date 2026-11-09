@@ -328,6 +328,63 @@ def test_know_content_identity_excludes_retrieval_time():
     )
 
 
+def test_research_origin_roundtrips_without_changing_know_content_identity():
+    from graphiti_core.knows import _know_from_record
+    now = datetime(2026, 11, 9, tzinfo=timezone.utc)
+    values = dict(uuid='know-research', name='A sourced finding', group_id='project-one',
+        created_at=now, valid_at=now, source_description='Primary source', content='Original full content',
+        entity_uuid='owner-one', observation='A supported observation.', interpretation='A bounded interpretation.',
+        citation=_citation(), content_hash='a' * 64)
+    ordinary = KnowNode(**values)
+    linked = KnowNode(**values, research_origin_think_id='think-one', research_request_version=2)
+    restored = _know_from_record(linked._properties())
+    assert restored.research_origin_think_id == 'think-one' and restored.research_request_version == 2
+    assert restored.content_hash == ordinary.content_hash and restored.uuid == ordinary.uuid
+    assert restored.entity_uuid == ordinary.entity_uuid and restored.created_at == ordinary.created_at
+    for invalid in ({'research_origin_think_id': 'think-one'}, {'research_request_version': 1},
+                    {'research_origin_think_id': 'think-one', 'research_request_version': 0},
+                    {'research_origin_think_id': 'think-one', 'research_request_version': True}):
+        with pytest.raises(ValueError):
+            KnowNode(**values, **invalid)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('existing_origin', [None, 'another-think'])
+async def test_research_origin_reuses_identical_know_without_overwriting_existing_origin(monkeypatch, existing_origin):
+    from contextlib import asynccontextmanager
+    import graphiti_core.knows as knows_module
+    now = datetime(2026, 11, 9, tzinfo=timezone.utc)
+    ordinary = KnowNode(uuid='know-existing', name='A sourced finding', group_id='g1',
+        created_at=now, valid_at=now, source_description='Primary source', content='Original content',
+        entity_uuid='owner-one', observation='A supported observation.', interpretation='A bounded interpretation.',
+        citation=_citation(), content_hash='a' * 64,
+        research_origin_think_id=existing_origin, research_request_version=1 if existing_origin else None)
+    submitted = ordinary.model_copy(update={'research_origin_think_id': 'think-one', 'research_request_version': 1})
+    owner = EntityNode(uuid='owner-one', name='Owner', group_id='g1', created_at=now)
+    props = ordinary._properties()
+    attached = {**props, 'researchOriginThinkId': existing_origin or 'think-one', 'researchRequestVersion': 1}
+    run = AsyncMock(side_effect=[SimpleNamespace(data=AsyncMock(return_value=[{'properties': props}])),
+        SimpleNamespace(data=AsyncMock(return_value=[{'properties': attached}])),
+        SimpleNamespace(data=AsyncMock(return_value=[{}]))])
+    @asynccontextmanager
+    async def transaction():
+        yield SimpleNamespace(run=run)
+    driver = SimpleNamespace(provider=GraphProvider.NEO4J, transaction=transaction)
+    monkeypatch.setattr(knows_module, 'entity_node_from_record', lambda _row: owner)
+    if existing_origin:
+        with pytest.raises(ValueError, match='different research provenance'):
+            await submitted.save_know(driver, entity=owner)
+    else:
+        saved, saved_owner, created, owner_created, edges = await submitted.save_know(driver, entity=owner)
+        assert saved.uuid == ordinary.uuid and saved.created_at == ordinary.created_at
+        assert saved.content == ordinary.content and saved.content_hash == ordinary.content_hash
+        assert saved.research_origin_think_id == 'think-one'
+        assert saved_owner == owner and not created and not owner_created and edges == []
+    statements = [call.args[0] for call in run.await_args_list]
+    assert 'coalesce(know.researchOriginThinkId,$origin)' in statements[1]
+    assert not any('MERGE' in statement or 'CREATE' in statement for statement in statements)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('node_count', [0, 1, 2, 3])
 @pytest.mark.parametrize('update_communities', [False, True])

@@ -65,6 +65,34 @@ import { VOICE_MODELS, isKnownVoiceTier, resolveVoiceModel } from './src/voice/v
 /** Resolve __dirname for ESM context. */
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const WORLDVIEW_BROWSER_ORIGINS = ['http://127.0.0.1:9120', 'http://localhost:9120',
+  'http://127.0.0.1:5173', 'http://localhost:5173'];
+
+// API middleware below terminates before Vite's own CORS handler. Allow only
+// the existing local UI hosts, without exposing credentials or changing CSP.
+export function worldViewBrowserAccess(req, res, next) {
+  const origin = req.headers.origin;
+  if (!origin) return next();
+  const allowed = WORLDVIEW_BROWSER_ORIGINS.includes(origin);
+  if (allowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  if (req.method !== 'OPTIONS') return next();
+  const method = String(req.headers['access-control-request-method'] || '').toUpperCase();
+  const headers = String(req.headers['access-control-request-headers'] || '')
+    .toLowerCase().split(',').map(value => value.trim()).filter(Boolean);
+  if (!allowed || !['GET', 'HEAD', 'POST'].includes(method)
+    || headers.some(value => value !== 'content-type')) {
+    res.statusCode = 403;
+    return res.end();
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.statusCode = 204;
+  res.end();
+}
+
 // ---------------------------------------------------------------------------
 // OpenSky OAuth2 token + response cache state
 // ---------------------------------------------------------------------------
@@ -7340,6 +7368,9 @@ export default defineConfig(({ mode }) => {
   const env = { ...process.env };
   return {
     plugins: [
+      { name: 'worldview-browser-access', configureServer(server) {
+        server.middlewares.use(worldViewBrowserAccess);
+      } },
       cesium(),
       openSkyProxy(),
       celestrakProxy(),
@@ -7362,6 +7393,8 @@ export default defineConfig(({ mode }) => {
       googlePlacesContextProxy(),
     ],
     server: {
+      cors: { origin: WORLDVIEW_BROWSER_ORIGINS, methods: ['GET', 'HEAD', 'POST'],
+        allowedHeaders: ['Content-Type'] },
       host: env.HOST || 'localhost',
       port: parseInt(env.PORT, 10) || 5173,
       // When binding to all interfaces, allow any host; otherwise restrict to local names

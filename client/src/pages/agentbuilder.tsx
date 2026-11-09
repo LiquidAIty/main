@@ -25,8 +25,6 @@
  * Relationship: Mounts the existing NRGSIM workspace and its Inspector only through the explicit modeling workspace URL, without probing other Projects on open.
  * Entity: Trading
  * Relationship: Opens the saved Trading Card's application surface and saves its Inspector configuration through the existing Card editor owner.
- * Entity: WorldSignals
- * Relationship: Connects the saved WorldSignals Card's surface, layer state and requested settings sections to the shared Inspector.
  * Entity: WorldView
  * Relationship: Resolves the saved WorldView profile and mounts its surface and controls through the shared workspace and Inspector.
  */
@@ -52,12 +50,6 @@ import {
   readCanonicalEntityProviderPointers,
 } from '../components/knowledge/canonicalEntityDirectory';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
-import WorldSignalSurface, {
-  type WorldSignalsInspectorBridge,
-  type WorldSignalsInspectorSection,
-  type WorldSignalsLayerState,
-} from '../components/worldsignal/WorldSignalSurface';
-import WorldSignalsInspectorPanel from '../components/worldsignal/WorldSignalsInspectorPanel';
 import type { GodsEyeBridge } from '../components/worldsignal/GodsEyeSurface';
 import WorldViewSurface from '../features/worldview/WorldViewSurface';
 import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
@@ -114,7 +106,6 @@ import {
 import {
   deriveVisibleRailItems,
   isWorldViewCard,
-  isWorldSignalsAgentCard,
 } from '../features/agentbuilder/rail/railVisibility';
 import {
   BuilderRailMoonOrb,
@@ -258,7 +249,6 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     | 'canvas'
     | 'knowledge'
     | 'trading'
-    | 'worldsignal'
     | 'worldview'
     | 'nrgsim'
   >(() => {
@@ -456,32 +446,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     for (const profile of ambiguous) titles.delete(profile);
     return Object.fromEntries(titles);
   }, [deck.nodes]);
-  // WorldSignals → canonical Inspector: the companion surface requests a
-  // section and provides state adapters; the ONE workspace drawer below
-  // renders it. No second inspector, no drawer inside the map region.
-  const [worldSignalInspectorSection, setWorldSignalInspectorSection] = useState<
-    'markets' | 'layers' | null
-  >(null);
-  const [worldSignalInspectorOpen, setWorldSignalInspectorOpen] = useState(false);
-  const [worldSignalLayerState, setWorldSignalLayerState] =
-    useState<WorldSignalsLayerState | null>(null);
-  const [worldSignalBridge, setWorldSignalBridge] =
-    useState<WorldSignalsInspectorBridge | null>(null);
   const [worldViewBridge, setWorldViewBridge] = useState<GodsEyeBridge | null>(null);
-  const handleWorldSignalInspectorRequest = useCallback(
-    (section: WorldSignalsInspectorSection) => {
-      // Only sections with a real canonical destination open today.
-      if (section === 'markets' || section === 'layers') {
-        setWorldSignalInspectorSection(section);
-        setWorldSignalInspectorOpen(true);
-      }
-    },
-    [],
-  );
-  const worldSignalsCardId = useMemo(
-    () => deck.nodes.find((node) => isWorldSignalsAgentCard(node))?.id ?? null,
-    [deck.nodes],
-  );
   const worldViewCard = useMemo(
     () => {
       const owners = deck.nodes.filter((node) => isWorldViewCard(node));
@@ -1202,21 +1167,16 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     return <div className="space-y-3">{renderEditorContent()}</div>;
   };
 
-  const inspectorDrawerRole = useMemo<'agent' | 'trading' | 'worldsignal' | 'worldview' | 'nrgsim' | null>(() => {
+  const inspectorDrawerRole = useMemo<'agent' | 'trading' | 'worldview' | 'nrgsim' | null>(() => {
     if (workspaceView === 'nrgsim') return 'nrgsim';
     if (workspaceView === 'canvas' && canonicalDeckReady && selectedCard) return 'agent';
-    // The canonical Inspector also serves the WorldSignals companion surface —
-    // same drawer, same renderer, section requested by the vendor controls.
-    if (workspaceView === 'worldsignal' && worldSignalInspectorSection) return 'worldsignal';
     if (workspaceView === 'worldview' && worldViewCard) return 'worldview';
     if (workspaceView === 'trading' && tradingCard) return 'trading';
     return null;
-  }, [canonicalDeckReady, selectedCard, tradingCard, worldViewCard, workspaceView, worldSignalInspectorSection]);
+  }, [canonicalDeckReady, selectedCard, tradingCard, worldViewCard, workspaceView]);
   const isInspectorDrawerVisible =
     inspectorDrawerRole === 'nrgsim'
       ? modelingInspectorOpen
-    : inspectorDrawerRole === 'worldsignal'
-      ? worldSignalInspectorOpen
       : inspectorDrawerRole === 'worldview'
         ? worldViewInspectorOpen
       : inspectorDrawerOpen && inspectorDrawerRole !== null;
@@ -1240,10 +1200,6 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     setInspectorDrawerOpen(false);
     if (cardLeaveRef.current) void cardLeaveRef.current();
     return true;
-  }, []);
-
-  const closeWorldSignalInspector = useCallback(() => {
-    setWorldSignalInspectorOpen(false);
   }, []);
 
   const getSurfaceShellStyle = useCallback(
@@ -1501,12 +1457,6 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     setWorkspaceView('trading');
   }, [setDeckStatusMessage, setInspectorDrawerOpen, tradingCard?.id]);
 
-  const showWorldsignalWorkspace = useCallback(async () => {
-    if (!(await closeInspectorDrawer())) return;
-    if (!worldSignalsCardId) return setDeckStatusMessage('WorldSignals saved Card is unavailable.');
-    setWorkspaceView('worldsignal');
-  }, [closeInspectorDrawer, setDeckStatusMessage, worldSignalsCardId]);
-
   const showWorldviewWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
     if (!worldViewCard?.id) return setDeckStatusMessage('WorldView saved Card is unavailable.');
@@ -1532,7 +1482,6 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
       workspaceView={workspaceView}
       visibleRailItems={visibleRailItems}
       moonOrb={<BuilderRailMoonOrb phase01={moonPhase01} />}
-      onShowWorldsignalWorkspace={showWorldsignalWorkspace}
       onShowWorldviewWorkspace={showWorldviewWorkspace}
       onShowCanvasWorkspace={showCanvasWorkspace}
       onOpenAddAgent={handleOpenSavedCardChooser}
@@ -1561,17 +1510,6 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
           card={tradingCard}
         />
       }
-      worldsignalSurface={
-        <WorldSignalSurface
-          projectId={
-            typeof activeProject === 'string' && activeProject ? activeProject : null
-          }
-          cardId={worldSignalsCardId}
-          onInspectorSectionRequest={handleWorldSignalInspectorRequest}
-          onLayerStateChange={setWorldSignalLayerState}
-          onBridgeChange={setWorldSignalBridge}
-        />
-      }
       worldviewSurface={
         <WorldViewSurface
           projectId={canvasProjectId || null}
@@ -1588,34 +1526,26 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
       <RightGlassDrawer
         isOpen={isInspectorDrawerVisible}
         title={
-          inspectorDrawerRole === 'nrgsim' ? '' : inspectorDrawerRole === 'worldsignal'
-            ? 'WorldSignals'
-            : inspectorDrawerRole === 'worldview'
+          inspectorDrawerRole === 'nrgsim' ? '' : inspectorDrawerRole === 'worldview'
               ? ''
             : inspectorDrawerRole === 'trading'
               ? 'Trading settings'
             : safeText(selectedCard?.title || 'Agent')
         }
         onClose={
-          inspectorDrawerRole === 'nrgsim' ? () => setModelingInspectorOpen(false) : inspectorDrawerRole === 'worldsignal'
-            ? closeWorldSignalInspector
-            : inspectorDrawerRole === 'worldview'
+          inspectorDrawerRole === 'nrgsim' ? () => setModelingInspectorOpen(false) : inspectorDrawerRole === 'worldview'
               ? () => setWorldViewInspectorOpen(false)
             : inspectorDrawerRole === 'trading'
               ? () => setInspectorDrawerOpen(false)
               : dockInspectorDrawer
         }
-        onOpen={inspectorDrawerRole === 'nrgsim' ? () => setModelingInspectorOpen(true) : inspectorDrawerRole === 'worldsignal'
-          ? () => setWorldSignalInspectorOpen(true)
-          : inspectorDrawerRole === 'worldview'
+        onOpen={inspectorDrawerRole === 'nrgsim' ? () => setModelingInspectorOpen(true) : inspectorDrawerRole === 'worldview'
             ? () => setWorldViewInspectorOpen(true)
             : inspectorDrawerRole === 'trading' || inspectorDrawerRole === 'agent'
               ? () => setInspectorDrawerOpen(true)
               : undefined}
         collapsedLabel={null}
-        openAriaLabel={inspectorDrawerRole === 'nrgsim' ? 'Open modeling Inspector' : inspectorDrawerRole === 'worldsignal'
-          ? 'Open WorldSignals Inspector'
-          : inspectorDrawerRole === 'worldview'
+        openAriaLabel={inspectorDrawerRole === 'nrgsim' ? 'Open modeling Inspector' : inspectorDrawerRole === 'worldview'
             ? 'Open WorldView controls'
             : inspectorDrawerRole === 'agent'
               ? 'Open Card editor'
@@ -1626,9 +1556,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
         minWidth={300}
         maxWidth={560}
         storageKey={
-          inspectorDrawerRole === 'nrgsim' ? 'building.inspector.width' : inspectorDrawerRole === 'worldsignal'
-            ? 'liquidaity.drawer.inspector.worldsignal.v1.width'
-            : inspectorDrawerRole === 'worldview'
+          inspectorDrawerRole === 'nrgsim' ? 'building.inspector.width' : inspectorDrawerRole === 'worldview'
               ? 'liquidaity.drawer.inspector.worldview.v1.width'
             : inspectorDrawerRole === 'trading'
               ? 'card.drawer.inspector.trading.v1.width'
@@ -1640,47 +1568,12 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
       >
         {inspectorDrawerRole === 'nrgsim' ? <div ref={setModelingInspectorHost} /> : null}
         {inspectorDrawerRole === 'worldview' ? <div ref={setWorldViewInspectorHost} /> : null}
-        {inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
-          <div
-            className="flex min-w-0 flex-wrap"
-            style={graphCompanionTabGroupStyle({
-              gap: 6,
-              marginBottom: 10,
-            })}
-          >
-            {(['markets', 'layers'] as const).map((section) => {
-              const selected = worldSignalInspectorSection === section;
-              return (
-                <button
-                  key={section}
-                  data-testid={`worldsignals-inspector-tab-${section}`}
-                  aria-pressed={selected}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setWorldSignalInspectorSection(section);
-                  }}
-                  className="whitespace-nowrap transition-colors duration-150 ease-out"
-                  style={graphCompanionTabButtonStyle(selected)}
-                >
-                  {section === 'markets' ? 'Markets' : 'Layers'}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
         {inspectorDrawerRole === 'trading' && tradingCard ? (
           <TradingUiInspectorPanel
             configuration={tradingCard.runtimeOptions?.configuration || {}}
             onSave={(configuration) => {
               handleSaveCardConfiguration(tradingCard.id, configuration);
             }}
-          />
-        ) : null}
-        {inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
-          <WorldSignalsInspectorPanel
-            section={worldSignalInspectorSection}
-            bridge={worldSignalBridge}
-            layerState={worldSignalLayerState}
           />
         ) : null}
         {inspectorDrawerRole === 'agent' && activeTabs.length > 0 ? (

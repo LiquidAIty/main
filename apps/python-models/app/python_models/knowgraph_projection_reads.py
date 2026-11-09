@@ -152,6 +152,8 @@ def _attach_entity_knows(
             record["direction"] = know["direction"]
         if know.get("contentHash"):
             record["contentHash"] = know["contentHash"]
+        if know.get("researchOriginThinkId"):
+            record.update(researchOriginThinkId=know["researchOriginThinkId"], researchRequestVersion=know["researchRequestVersion"])
         mentions = [mention for mention in row.get("mentions") or []
                     if isinstance(mention, dict) and mention.get("id")
                     and mention.get("projectId") == project_id

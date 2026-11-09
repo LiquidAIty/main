@@ -267,6 +267,22 @@ def knowgraph_projection_read(projectId: str, limit: int = 200):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
+@graph_read_router.get("/knowgraph/record")
+def knowgraph_record(projectId: str, knowId: str):
+    from app.python_models.knowgraph_exact_reads import read_knowgraph_exact
+    from app.python_models.knowgraph_know_contract import know_from_properties
+    record = read_knowgraph_exact(projectId, "graphitiEpisodeId", knowId)
+    if record is None:
+        raise HTTPException(404, "Know not found in this Project")
+    props = record["properties"]
+    know = know_from_properties(props)
+    if know is None:
+        raise HTTPException(404, "Sourced Know unavailable")
+    return {"id": knowId, "graphitiEpisodeId": knowId, "ownerEntityId": props["entity_uuid"],
+            "graphitiEntityId": props["entity_uuid"], "title": record["title"],
+            "ingestedAt": props.get("created_at"), "validFrom": props.get("valid_at"), **know}
+
+
 @graph_read_router.get("/knowgraph/neighborhood")
 def knowgraph_neighborhood_read(
     projectId: str,

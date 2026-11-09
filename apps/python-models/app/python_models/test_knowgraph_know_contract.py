@@ -86,6 +86,13 @@ def test_neutral_know_is_valid_without_direction() -> None:
     assert "direction" not in know
 
 
+def test_research_provenance_is_typed_and_does_not_become_observation():
+    properties = {**_properties(), "researchOriginThinkId": "think-one", "researchRequestVersion": 2}
+    know = know_from_properties(properties)
+    assert know["researchOriginThinkId"] == "think-one" and know["researchRequestVersion"] == 2
+    assert know["observation"] == properties["observation"]
+
+
 def test_episode_json_does_not_create_a_know_without_typed_properties() -> None:
     assert know_from_properties({
         "content": '{"observation":"episode text is not typed Know authority"}',

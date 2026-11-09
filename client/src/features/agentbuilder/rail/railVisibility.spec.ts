@@ -19,7 +19,7 @@ const trading = card('card_trading_workbench', 'trading');
 const think = card('card_thinkgraph', 'thinkgraph');
 const know = card('card_knowgraph', 'knowgraph');
 const nodes = [main, worldView, worldSignals, trading, think, know];
-const hidden = { showKnowledge: false, showWorldsignal: false, showWorldview: false, showTrading: false };
+const hidden = { showKnowledge: false, showWorldview: false, showTrading: false };
 const wire = (target: string, edgeType: 'flow' | 'magentic_option' = 'flow'): DeckDocument['edges'][number] =>
   ({ id: target, source: main.id, target, edgeType });
 
@@ -37,7 +37,7 @@ describe('product rail visibility', () => {
   it.each(['flow', 'magentic_option'] as const)('accepts an enabled %s wire and reacts to disconnect/reconnect', edgeType => {
     const edges = [worldView, worldSignals, trading, think].map(node => wire(node.id, edgeType));
     const deck = { nodes, edges };
-    const shown = { showKnowledge: true, showWorldsignal: true, showWorldview: true, showTrading: true };
+    const shown = { showKnowledge: true, showWorldview: true, showTrading: true };
     expect(deriveVisibleRailItems({ deck })).toEqual(shown);
     expect(deriveVisibleRailItems({ deck: { ...deck, edges: [] } })).toEqual(hidden);
     expect(deriveVisibleRailItems({ deck })).toEqual(shown);

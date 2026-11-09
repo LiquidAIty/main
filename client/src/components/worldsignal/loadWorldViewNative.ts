@@ -6,6 +6,7 @@
 import nativeDocument from '../../../../agent-products/gods-eye-view/index.html?raw';
 import scopedStyles from 'virtual:worldview-native-css';
 import { importNativeWorldViewMount as importRuntimeWorldViewMount } from 'virtual:worldview-native-mount';
+import { isHermesWebappHosted } from '../../lib/applicationApi';
 
 export type NativeWorldViewCallbacks = {
   onReady?: (sourceVersion: string) => void;
@@ -510,11 +511,16 @@ export async function loadWorldViewNative(
   },
 ): Promise<NativeWorldViewMount> {
   const { mountWorldView } = await importNativeWorldViewMount();
+  // Hermes serves the built UI, not Vite's provider proxies. The existing
+  // loopback WorldView service owns those APIs and assets in local Webapp mode.
+  const runtimeBaseUrl = isHermesWebappHosted()
+    ? new URL('/', WORLDVIEW_NATIVE_MOUNT_MODULE_URL).href
+    : '/worldview-native/';
   const mounted = await mountWorldView(root, {
     ...config,
     documentMarkup: nativeDocument,
-    scopedStyles,
-    runtimeBaseUrl: '/worldview-native/',
+    scopedStyles: scopedStyles.replaceAll('/worldview-native/', runtimeBaseUrl),
+    runtimeBaseUrl,
     sourceVersion: '0.1.1',
   }) as NativeRuntimeMount;
   const visualReadiness = observeNativeWorldViewVisualReadiness(

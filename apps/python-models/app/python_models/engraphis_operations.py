@@ -4,7 +4,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
-# Relationship: Binds Engraphis Think writes, corrections, lineage-aware reads and retirement to authenticated Project scope.
+# Relationship: Binds Think writes, maintenance and research claims/results to authorized Project scope, verifying Graphiti result references before completing research.
 # Entity: Tool Catalog
 # Relationship: This file projects the installed Smart operation schemas, explicit effects, grant eligibility, and ThinkGraph-only update ceiling into canonical definitions.
 # Entity: Data Anchors
@@ -143,8 +143,9 @@ def operation_definitions() -> list[Any]:
                     "engraphis_conflict_review", "engraphis_session",
                 },
                 grant_profiles=(
-                    frozenset({"thinkgraph"})
-                    if name in {"engraphis_update_memory", "engraphis_add_thinks", "engraphis_correct", "engraphis_retire"} else frozenset()
+                    frozenset({"thinkgraph", "builder"}) if name == "engraphis_retire"
+                    else frozenset({"thinkgraph"})
+                    if name in {"engraphis_update_memory", "engraphis_add_thinks", "engraphis_correct"} else frozenset()
                 ),
                 external_source_id="engraphis",
                 output_schema=deepcopy(item.get("outputSchema")),
@@ -156,8 +157,106 @@ def operation_definitions() -> list[Any]:
                 annotations=deepcopy(item.get("annotations") or {}),
                 dispatcher_context_arguments=frozenset({"projectId"}),
             ))
+        definitions.append(OperationDefinition(
+            canonical_id="engraphis_retire_relationship", namespace="engraphis", available=True,
+            title="Retire one ThinkGraph relationship",
+            description="Remove one exact incorrect ThinkGraph edge from the active graph, preserving its history, "
+                "both Entities and their Thinks. Use only for an explicit request to remove that relationship.",
+            parameters_schema={"type": "object", "additionalProperties": False,
+                "required": ["edge_id", "confirmed"], "properties": {
+                    "edge_id": {"type": "string", "minLength": 1},
+                    "confirmed": {"type": "boolean", "const": True},
+                }},
+            handler=retire_relationship_operation, access="write", grant_eligible=True,
+            grant_profiles=frozenset({"thinkgraph", "builder"}),
+            annotations={"readOnlyHint": False, "destructiveHint": True,
+                         "idempotentHint": False, "openWorldHint": False},
+            publishers=frozenset({"internal-plugin", "external-mcp"}),
+            dispatcher_context_arguments=frozenset({"projectId"}),
+        ))
+        definitions.append(OperationDefinition(
+            canonical_id="engraphis_research", namespace="engraphis", available=True,
+            title="Claim or finish a Think research request",
+            description="Operate on one exact Think research request in the authorized Project. "
+                "Claim before research; only claimed=true grants this attempt and returns a claimToken. "
+                "Pass its origin Think ID, version and claim token to graphiti.add_know. "
+                "Complete discovers and validates already saved Knows for that request, including recovery "
+                "after a failed acknowledgement; never resave findings merely to finish. "
+                "Blocked/inconclusive require the claim token and a reason. No action launches an agent.",
+            parameters_schema={"type": "object", "additionalProperties": False,
+                "required": ["action", "think_id", "request_version"], "properties": {
+                    "action": {"type": "string", "enum": ["claim", "complete", "blocked", "inconclusive"]},
+                    "think_id": {"type": "string", "minLength": 1},
+                    "request_version": {"type": "integer", "minimum": 1},
+                    "claim_token": {"type": "string"}, "reason": {"type": "string", "maxLength": 4000},
+                }},
+            handler=research_request_operation, access="write", grant_eligible=True,
+            grant_profiles=frozenset({"knowgraph"}),
+            annotations={"readOnlyHint": False, "destructiveHint": False,
+                         "idempotentHint": True, "openWorldHint": False},
+            publishers=frozenset({"internal-plugin", "external-mcp"}),
+            dispatcher_context_arguments=frozenset({"projectId"}),
+        ))
         OPERATION_DEFINITIONS = tuple(definitions)
         return list(OPERATION_DEFINITIONS)
+
+
+def _research_service_call(project: str, method: str, *args, **kwargs):
+    from engraphis.service_context import bind_service
+    service = get_service(project)
+    with bind_service(service, principal=project_principal(project)):
+        return getattr(service, method)(*args, workspace=project, **kwargs)
+
+
+async def retire_relationship_operation(*, projectId: str, edge_id: str, confirmed: bool) -> dict:
+    if confirmed is not True:
+        raise ValueError("explicit_relationship_removal_confirmation_required")
+    result = await asyncio.to_thread(private_operation, projectId, "retire_relationship", {"edgeId": edge_id})
+    from app.backend_operation_transport import notify_graph_changed
+    await asyncio.to_thread(notify_graph_changed, projectId, project_principal(projectId)["id"], "thinkgraph")
+    return result
+
+
+async def research_request_operation(*, projectId: str, action: str, think_id: str,
+                                     request_version: int, claim_token: str = "", reason: str = "") -> dict:
+    project = project_id(projectId)
+    if action == "claim":
+        result = await asyncio.to_thread(_research_service_call, project, "claim_think_research",
+                                         think_id, version=request_version)
+    elif action in {"complete", "blocked", "inconclusive"}:
+        ids: list[str] = []
+        if action == "complete":
+            from app.mcp_graphiti_provider import ensure_graphiti_service, research_result_knows
+            await ensure_graphiti_service()
+            request = await asyncio.to_thread(_research_service_call, project, "read_think_research", think_id)
+            if request["researchRequestVersion"] != request_version:
+                raise ValueError("research request version changed")
+            knows = await research_result_knows(project, request["researchOriginThinkId"], request_version)
+            if not knows:
+                raise ValueError("No sourced Know was saved for this research request; it cannot be marked researched")
+            ids = [know.uuid for know in knows]
+            # Only the host sees this token. Completion recovers committed evidence,
+            # not research work, so another run can acknowledge an already saved result.
+            def completion_token():
+                service = get_service(project)
+                with SERVICE_LOCK:
+                    memory = service.store.get_memory(request["thinkId"])
+                    return memory.metadata["structured_extraction"]["think"].get("researchClaimToken", "")
+            claim_token = await asyncio.to_thread(completion_token)
+        result = await asyncio.to_thread(_research_service_call, project, "finish_think_research",
+            think_id, version=request_version, claim_token=claim_token,
+            state="researched" if action == "complete" else action, know_ids=ids, reason=reason)
+    else:
+        raise ValueError("invalid research action")
+    if result.get("claimed") or result.get("changed") or action == "complete":
+        from app.backend_operation_transport import notify_graph_changed
+        try:
+            await asyncio.to_thread(notify_graph_changed, project, project_principal(project)["id"], "thinkgraph")
+        except Exception as error:
+            # The claim/state is committed. Never lose the returned claim token
+            # or misreport a saved result because presentation delivery failed.
+            result["notificationError"] = str(error)
+    return result
 
 
 async def invoke_tool(project: str, name: str, arguments: dict) -> dict:
@@ -204,7 +303,14 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
         if capability is not None and "workspace" in capability.input_schema.get("properties", {}):
             nested = dict(arguments.get("arguments") or {})
             if "workspace" in nested and nested["workspace"] != project:
-                raise ValueError("thinkgraph_scope_is_owned_by_project")
+                # Exact memory reads expose Engraphis's workspace ID. Accept that
+                # same Project's ID, never a foreign workspace name or ID.
+                with SERVICE_LOCK:
+                    workspace = get_service(project).store.conn.execute(
+                        "SELECT id FROM workspaces WHERE name=?", (project,),
+                    ).fetchone()
+                if workspace is None or nested["workspace"] != workspace["id"]:
+                    raise ValueError("thinkgraph_scope_is_owned_by_project")
             nested["workspace"] = project
             arguments["arguments"] = nested
     from engraphis.service_context import bind_service
@@ -222,11 +328,17 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
             if isinstance(data, dict):
                 if data.get("ok") is False or data.get("error"):
                     raise ValueError(json.dumps(data))
+                if name == "engraphis_get_memory":
+                    record = data.get("memory", data)
+                    if isinstance(record, dict) and isinstance(record.get("metadata"), dict):
+                        record["metadata"] = public_think_metadata(record["metadata"])
                 if name == "engraphis_recall_context" and (
                     not data.get("semantic_support") or data.get("degraded_mode")
                 ):
                     raise RuntimeError("thinkgraph_semantic_search_unavailable")
-                if name in {"engraphis_correct", "engraphis_retire"}:
+                if name in {"engraphis_correct", "engraphis_retire"} or (
+                    name == "engraphis_execute_action" and data.get("canonical_action") in {"correct", "retire"}
+                ):
                     from app.backend_operation_transport import notify_graph_changed
                     await asyncio.to_thread(notify_graph_changed, project, project_principal(project)["id"], "thinkgraph")
                 return data
@@ -304,6 +416,9 @@ def inspect(project: str, id_field: str, identifier: str) -> dict:
     result["memory"]["metadata"] = public_think_metadata(
         service.store.get_memory(identifier).metadata
     )
+    memory = service.store.get_memory(identifier)
+    result["ownerEntityId"] = exact_think_entity_ids(service.store,
+        workspace_id=memory.workspace_id, memory_ids=[identifier]).get(identifier)
     # Preserve directional composite identities from the Engraphis link store.
     # The public inspector has already authorized the neighboring records.
     neighbors = {link["id"] for link in result["links"]}
@@ -313,7 +428,7 @@ def inspect(project: str, id_field: str, identifier: str) -> dict:
 
 
 def private_operation(project: str, operation: str, arguments: dict) -> dict | list[dict]:
-    """Application operations outside model tool grants."""
+    """Application operations; selected exact actions also have scoped granted wrappers."""
     project = project_id(project)
     if operation == "conversation":
         from .conversations import conversation_operation

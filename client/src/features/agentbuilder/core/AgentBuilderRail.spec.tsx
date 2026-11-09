@@ -16,7 +16,6 @@ import { BuilderRailMoonOrb } from './BuilderRailMoonOrb';
 
 const baseVisibility = {
   showKnowledge: true,
-  showWorldsignal: false,
   showWorldview: false,
   showTrading: false,
 };
@@ -25,7 +24,6 @@ const baseProps = {
   colors: { panel: '#000', border: '#111', primary: '#0af', text: '#ccc' },
   workspaceView: 'canvas',
   moonOrb: null,
-  onShowWorldsignalWorkspace: () => undefined,
   onShowWorldviewWorkspace: () => undefined,
   onShowCanvasWorkspace: () => undefined,
   onOpenAddAgent: () => undefined,
@@ -61,7 +59,7 @@ function render(node: React.ReactElement) {
 describe('AgentBuilderRail Add Agent control', () => {
   it('keeps Agent Canvas but hides disconnected optional icons even in an open workspace', () => {
     const host = render(<AgentBuilderRail {...baseProps} workspaceView="knowledge"
-      visibleRailItems={{ showKnowledge: false, showWorldsignal: false, showWorldview: false, showTrading: false }} />);
+      visibleRailItems={{ showKnowledge: false, showWorldview: false, showTrading: false }} />);
     expect(host.querySelector('[aria-label="Agents"]')).not.toBeNull();
     for (const label of ['WorldView', 'Graphs', 'Trading', 'World']) {
       expect(host.querySelector(`[aria-label="${label}"]`)).toBeNull();
@@ -115,21 +113,19 @@ describe('AgentBuilderRail Add Agent control', () => {
 });
 
 describe('AgentBuilderRail product destinations', () => {
-  it('uses the existing globe for World and the moon orb for WorldView', () => {
+  it('keeps the WorldView moon orb and omits the retired WorldSignals launcher', () => {
     const host = render(
       <AgentBuilderRail
         {...baseProps}
         moonOrb={<span data-testid="existing-moon-orb" />}
-        visibleRailItems={{ ...baseVisibility, showWorldsignal: true, showWorldview: true }}
+        visibleRailItems={{ ...baseVisibility, showWorldview: true }}
       />,
     );
     const world = host.querySelector('[data-testid="rail-world-button"]') as HTMLButtonElement;
     const worldview = host.querySelector('[data-testid="rail-worldview-button"]') as HTMLButtonElement;
-    expect(world.querySelector('svg')).not.toBeNull();
-    expect(world.querySelector('[data-testid="existing-moon-orb"]')).toBeNull();
+    expect(world).toBeNull();
     expect(worldview.querySelector('[data-testid="existing-moon-orb"]')).not.toBeNull();
     expect(worldview.querySelector('svg')).toBeNull();
-    expect(world.getAttribute('aria-label')).toBe('World');
     expect(worldview.getAttribute('aria-label')).toBe('WorldView');
   });
 

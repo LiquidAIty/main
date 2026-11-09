@@ -235,7 +235,10 @@ def validated_think_metadata(memory: Any) -> dict[str, Any] | None:
         **({"detail": detail} if detail is not None else {}),
         "entity": entity,
         "relationships": deepcopy(relationships),
-        **({"researchRequested": True} if value.get("researchRequested") is True else {}),
+        **{key: deepcopy(value[key]) for key in (
+            "researchRequested", "researchState", "researchQuestion", "researchRequestVersion",
+            "researchOriginThinkId", "researchedByKnowIds", "researchOutcomeReason",
+        ) if key in value},
     }
 
 
@@ -243,6 +246,9 @@ def public_think_metadata(value: Any) -> dict[str, Any]:
     """Return Engraphis Think metadata without a retired per-Think judgment."""
     metadata = deepcopy(value) if isinstance(value, dict) else {}
     metadata.pop("needs_evidence", None)
+    body = metadata.get("structured_extraction", {}).get("think", {})
+    if isinstance(body, dict):
+        body.pop("researchClaimToken", None)
     return metadata
 
 
@@ -573,7 +579,10 @@ def endpoint_thinks(
             "summary": think["summary"],
             "keywords": list(memory.keywords)[:16],
             **({"detail": think["detail"]} if think.get("detail") else {}),
-            **({"researchRequested": True} if think.get("researchRequested") is True else {}),
+            **{key: deepcopy(think[key]) for key in (
+                "researchRequested", "researchState", "researchQuestion", "researchRequestVersion",
+                "researchOriginThinkId", "researchedByKnowIds", "researchOutcomeReason",
+            ) if key in think},
             "relations": deepcopy(think["relationships"]),
             "ingested_at": memory.ingested_at,
             "valid_from": memory.valid_from,
@@ -582,6 +591,37 @@ def endpoint_thinks(
         if len(result) == limit:
             break
     return result
+
+
+def read_entity_think_context(project: str, canonical_name: str) -> dict[str, Any]:
+    """Read existing Thinks and unresolved research on this exact shared Entity; never start work."""
+    service = get_service(project)
+    with SERVICE_LOCK:
+        workspace = service.store.conn.execute("SELECT id FROM workspaces WHERE name=?", (project,)).fetchone()
+        if workspace is None:
+            return {"thinks": [], "researchRequests": [], "researchRequestsHasMore": False}
+        entities = service.store.conn.execute(
+            "SELECT DISTINCT COALESCE(canonical_id,id) AS id FROM entities WHERE workspace_id=? AND name=?",
+            (workspace["id"], canonical_name),
+        ).fetchall()
+        if len(entities) > 1:
+            raise ValueError("Shared Entity name is ambiguous")
+        thinks = endpoint_thinks(service.store, workspace_id=workspace["id"], canonical_id=entities[0]["id"], limit=10) if entities else []
+        rows = service.store.conn.execute(
+            "SELECT DISTINCT m.id FROM memories m JOIN memory_entities me ON me.memory_id=m.id "
+            "JOIN entities e ON e.id=me.entity_id "
+            "WHERE m.workspace_id=? AND me.workspace_id=m.workspace_id AND e.workspace_id=m.workspace_id "
+            "AND e.name=? AND me.source_kind=? AND me.valid_to IS NULL AND me.expired_at IS NULL "
+            "AND m.valid_to IS NULL AND m.expired_at IS NULL "
+            "AND json_extract(m.metadata,'$.structured_extraction.think.researchState') "
+            "IN ('research','working','blocked','inconclusive') ORDER BY m.id LIMIT 51",
+            (workspace["id"], canonical_name, THINK_INCIDENCE_KIND),
+        ).fetchall()
+        exact = exact_think_entity_ids(service.store, workspace_id=workspace["id"],
+                                       memory_ids=[row["id"] for row in rows])
+        requests = [service.read_think_research(row["id"], workspace=project)
+                    for row in rows[:50] if row["id"] in exact]
+        return {"thinks": thinks, "researchRequests": requests, "researchRequestsHasMore": len(rows) > 50}
 
 
 def read_entity_thinks(

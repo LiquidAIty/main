@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import url2pathname
+from uuid import uuid4
 
 from engraphis import __version__
 from engraphis.backends.extractor import ChunkingExtractor
@@ -2514,6 +2515,16 @@ class MemoryService:
             } for item in think.get("relationships", [])]
             proposals.append(relationships)
             body = {"summary": content, "entity": entity_name, "relationships": relationships}
+            requested = think.get("researchRequested", False)
+            if type(requested) is not bool:
+                raise ValidationError("researchRequested must be a boolean")
+            if requested:
+                question = _clean_text(think.get("researchQuestion"), field="researchQuestion",
+                                       max_chars=4_000)
+                _reject_secret_capture((("researchQuestion", question),))
+                body.update(researchRequested=True, researchState="research",
+                            researchQuestion=question, researchRequestVersion=1,
+                            researchedByKnowIds=[])
             if detail:
                 body["detail"] = detail
             origin = {"authority": "thinkgraph", "writer": "engraphis_add_thinks"}
@@ -2550,6 +2561,12 @@ class MemoryService:
             # mention mechanism records text_mention, not another Think attachment.
             for result, content in zip(results, texts, strict=True):
                 memory = self.store.get_memory(result["id"])
+                research = memory.metadata["structured_extraction"]["think"]
+                if research.get("researchRequested"):
+                    # An immutable request anchor survives native Think corrections.
+                    research["researchOriginThinkId"] = memory.id
+                    self.store.conn.execute("UPDATE memories SET metadata=? WHERE id=?",
+                                            (json.dumps(memory.metadata), memory.id))
                 self.engine._link_memory_entities(
                     memory.id, content, workspace_id=wid, repo_id=None,
                     valid_from=memory.valid_from,
@@ -2566,6 +2583,93 @@ class MemoryService:
                 "thinks": [{"id": result["id"], "entity_id": result["entity_id"]}
                            for result in results],
                 "relationships": written_relationships}
+
+    def _research_think(self, memory_id: str, workspace: str):
+        """Resolve only this Think's current correction, within its authorized workspace."""
+        wid, rid = self._require_scope(workspace, None)
+        self._check_owns(memory_id, wid, rid)
+        memory = self.store.get_memory(memory_id)
+        if memory.claim_kind != "think":
+            raise ValidationError("research target must be a Think")
+        current = [item for item in self._chain_for(memory, wid)
+                   if item.claim_kind == "think" and item.valid_to is None and item.expired_at is None]
+        if len(current) != 1:
+            raise ValidationError("current research Think is unavailable or ambiguous")
+        memory = current[0]
+        body = memory.metadata.get("structured_extraction", {}).get("think", {})
+        if not body.get("researchState") or not body.get("researchQuestion"):
+            raise ValidationError("Think has no research request")
+        return memory, body
+
+    def read_think_research(self, memory_id: str, *, workspace: str) -> dict:
+        memory, body = self._research_think(memory_id, workspace)
+        fields = ("researchRequested", "researchState", "researchQuestion", "researchRequestVersion",
+                  "researchOriginThinkId", "researchedByKnowIds", "researchOutcomeReason")
+        return {"thinkId": memory.id, "projectId": self._clean_ws(workspace),
+                "entityName": body["entity"], **{key: copy.deepcopy(body[key]) for key in fields if key in body}}
+
+    @_rollback_service_transaction
+    def claim_think_research(self, memory_id: str, *, workspace: str, version: int) -> dict:
+        memory, body = self._research_think(memory_id, workspace)
+        if type(version) is not int or version != body.get("researchRequestVersion"):
+            raise ValidationError("research request version changed")
+        if body["researchState"] != "research":
+            return {"claimed": False, **self.read_think_research(memory.id, workspace=workspace)}
+        body.update(researchState="working", researchClaimToken=uuid4().hex)
+        self.store.conn.execute("UPDATE memories SET metadata=? WHERE id=?",
+                                (json.dumps(memory.metadata), memory.id))
+        return {"claimed": True, "claimToken": body["researchClaimToken"],
+                **self.read_think_research(memory.id, workspace=workspace)}
+
+    def validate_think_research_claim(self, memory_id: str, *, workspace: str,
+                                      version: int, claim_token: str) -> dict:
+        memory, body = self._research_think(memory_id, workspace)
+        if (type(version) is not int or version != body.get("researchRequestVersion")
+                or body["researchState"] != "working" or not claim_token
+                or claim_token != body.get("researchClaimToken")):
+            raise ValidationError("research claim is not current")
+        return self.read_think_research(memory.id, workspace=workspace)
+
+    @_rollback_service_transaction
+    def finish_think_research(self, memory_id: str, *, workspace: str, version: int,
+                              claim_token: str, state: str, know_ids: list[str], reason: str = "") -> dict:
+        """Commit the host-verified result references, never a copy of sourced evidence."""
+        memory, body = self._research_think(memory_id, workspace)
+        if type(version) is not int or version != body.get("researchRequestVersion"):
+            raise ValidationError("research request version changed")
+        ids = sorted(set(_clean_string_list(know_ids, field="know_ids", max_items=100,
+                                           max_chars=MAX_NAME_CHARS)))
+        if body["researchState"] == "researched" and state == "researched" and ids == body["researchedByKnowIds"]:
+            return {"changed": False, **self.read_think_research(memory.id, workspace=workspace)}
+        self.validate_think_research_claim(memory.id, workspace=workspace, version=version,
+                                          claim_token=claim_token)
+        if state not in {"researched", "blocked", "inconclusive"}:
+            raise ValidationError("invalid research outcome")
+        reason = _clean_text(reason, field="reason", max_chars=4_000, required=state != "researched")
+        if (state == "researched") != bool(ids):
+            raise ValidationError("researched requires saved Know references; other outcomes must not claim them")
+        body.update(researchState=state, researchRequested=state != "researched",
+                    researchedByKnowIds=ids, researchOutcomeReason=reason)
+        self.store.conn.execute("UPDATE memories SET metadata=? WHERE id=?",
+                                (json.dumps(memory.metadata), memory.id))
+        return {"changed": True, **self.read_think_research(memory.id, workspace=workspace)}
+
+    @_rollback_service_transaction
+    def request_think_research_again(self, memory_id: str, *, workspace: str,
+                                     expected_version: int, question: str) -> dict:
+        """Explicit maintenance only; an ordinary content edit never calls this."""
+        memory, body = self._research_think(memory_id, workspace)
+        if type(expected_version) is not int or expected_version != body["researchRequestVersion"]:
+            raise ValidationError("research request version changed")
+        question = _clean_text(question, field="researchQuestion", max_chars=4_000)
+        _reject_secret_capture((("researchQuestion", question),))
+        body.update(researchRequested=True, researchState="research", researchQuestion=question,
+                    researchRequestVersion=expected_version + 1, researchedByKnowIds=[])
+        body.pop("researchClaimToken", None)
+        body.pop("researchOutcomeReason", None)
+        self.store.conn.execute("UPDATE memories SET metadata=? WHERE id=?",
+                                (json.dumps(memory.metadata), memory.id))
+        return self.read_think_research(memory.id, workspace=workspace)
 
     def ingest(self, content: str, *, workspace: str, repo: Optional[str] = None,
                session_id: Optional[str] = None, mtype: str = "semantic",
@@ -10143,7 +10247,31 @@ class MemoryService:
             )
             entity_params.extend((wid, wid, t, known_t, known_t, t, known_t, known_t,
                                   wid, t, known_t, known_t))
-        entity_sql += ")"
+        # A public Entity-owned Think is evidence in its own right. Retiring the
+        # last semantic edge must not hide its still-current owner. Session-only
+        # attachments and non-current evidence do not grant public visibility.
+        entity_sql += (
+            " OR EXISTS (SELECT 1 FROM memory_entities think_owner "
+            "JOIN memories public_think ON public_think.id=think_owner.memory_id "
+            "WHERE think_owner.entity_id=entity.id AND think_owner.workspace_id=entity.workspace_id "
+            "AND public_think.workspace_id=entity.workspace_id "
+            "AND think_owner.source_kind='structured_extractor' AND public_think.claim_kind='think' "
+            "AND COALESCE(public_think.scope,'workspace')!='session' "
+            "AND _engraphis_prompt_eligible(public_think.provenance,public_think.metadata)=1 "
+        )
+        for alias in ("think_owner", "public_think"):
+            entity_sql += (
+                f"AND ({alias}.valid_from IS NULL OR {alias}.valid_from<=?) "
+                f"AND ({alias}.valid_to IS NULL OR ?<{alias}.valid_to "
+                f"OR ({alias}.valid_to_recorded_at IS NOT NULL AND ?<{alias}.valid_to_recorded_at)) "
+                f"AND ({alias}.ingested_at IS NULL OR {alias}.ingested_at<=?) "
+                f"AND ({alias}.expired_at IS NULL OR ?<{alias}.expired_at) "
+            )
+            entity_params.extend((t, t, known_t, known_t, known_t))
+        if repo_id:
+            entity_sql += "AND (public_think.repo_id IS NULL OR public_think.repo_id=?) "
+            entity_params.append(repo_id)
+        entity_sql += "))"
         # Page until the cap is reached after session-scope pruning so private
         # evidence cannot crowd out public entities in the candidate set.
         entity_rows = []

@@ -127,6 +127,7 @@ def test_operation_definitions_can_initialize_inside_an_active_event_loop():
 
     assert {definition.canonical_id for definition in definitions} == (
         operations.READ_TOOLS | operations.WRITE_TOOLS
+        | {"engraphis_research", "engraphis_retire_relationship"}
     )
 
 
@@ -230,6 +231,51 @@ def test_discovered_read_uses_engine_schema_and_project_binding(engraphis_adapte
     assert actual["result"] == expected
     with pytest.raises(ValueError, match="scope_is_owned_by_project"):
         call(engraphis_adapter, "engraphis_execute_read", **{**arguments, "arguments": {"workspace": "project-two"}})
+
+
+def test_discovered_retirement_accepts_only_the_authorized_workspace_id(engraphis_adapter, monkeypatch):
+    from app import backend_operation_transport
+    notifications = []
+    monkeypatch.setattr(backend_operation_transport, "notify_graph_changed", lambda *args: notifications.append(args))
+    saved = call(engraphis_adapter, "engraphis_remember", content="A specifically selected stale test record.")
+    other = asyncio.run(operations.invoke_tool("project-two", "engraphis_remember", {"content": "Keep the other Project intact."}))
+    store = engraphis_adapter.get_service("project-one").store
+    own_id = store.get_memory(saved["id"]).workspace_id
+    foreign_id = store.get_memory(other["id"]).workspace_id
+    actions = call(engraphis_adapter, "engraphis_discover_actions", task="retire a memory", intent="destructive", limit=3)
+    retire = next(item for item in actions["actions"] if item["canonical_action"] == "retire")
+    arguments = {"capability_id": retire["capability_id"], "schema_digest": retire["schema_digest"],
+                 "arguments": {"memory_id": saved["id"], "workspace": foreign_id, "confirmed": True}}
+    with pytest.raises(ValueError, match="scope_is_owned_by_project"):
+        call(engraphis_adapter, "engraphis_execute_action", **arguments)
+    assert store.get_memory(saved["id"]).valid_to is None
+    arguments["arguments"]["workspace"] = own_id
+    result = call(engraphis_adapter, "engraphis_execute_action", **arguments)
+    assert result["result"]["status"] == "retired"
+    assert store.get_memory(saved["id"]).valid_to is not None
+    assert store.get_memory(other["id"]).valid_to is None
+    assert notifications == [("project-one", "fixture-user", "thinkgraph")]
+
+
+def test_published_relationship_retirement_uses_the_inspector_owner(engraphis_adapter, monkeypatch):
+    from app import backend_operation_transport
+    from engraphis.core.interfaces import Edge, Node
+    monkeypatch.setattr(backend_operation_transport, "notify_graph_changed", lambda *_args: None)
+    service = engraphis_adapter.get_service("project-one")
+    workspace_id = service.store.get_or_create_workspace("project-one")
+    a = service.store.upsert_entity(Node(id="", name="Edge source", ntype="person_or_concept", workspace_id=workspace_id))
+    b = service.store.upsert_entity(Node(id="", name="Edge target", ntype="person_or_concept", workspace_id=workspace_id))
+    edge = service.store.upsert_edge(Edge(id="", src=a, dst=b, relation="SUPPORTS", workspace_id=workspace_id))
+    definition = next(item for item in operations.operation_definitions() if item.canonical_id == "engraphis_retire_relationship")
+    assert definition.grant_profiles == {"thinkgraph", "builder"}
+    with pytest.raises(ValueError, match="confirmation_required"):
+        asyncio.run(definition.handler(projectId="project-one", edge_id=edge, confirmed=False))
+    with pytest.raises(ValueError, match="relationship_not_found"):
+        asyncio.run(definition.handler(projectId="project-two", edge_id=edge, confirmed=True))
+    result = asyncio.run(definition.handler(projectId="project-one", edge_id=edge, confirmed=True))
+    assert result == {"ok": True, "edgeId": edge, "operation": "retire"}
+    assert service.store.conn.execute("SELECT valid_to FROM edges WHERE id=?", (edge,)).fetchone()["valid_to"] is not None
+    assert service.store.conn.execute("SELECT count(*) n FROM entities WHERE id IN (?,?)", (a,b)).fetchone()["n"] == 2
 
 
 def test_entity_id_projection_uses_only_bounded_direct_neighborhood(

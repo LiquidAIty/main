@@ -1496,6 +1496,73 @@ def test_graph_edge_history_visibility_sql_uses_current_time_when_known_at_omitt
         assert before <= params[slot] <= after
 
 
+def test_think_research_claim_is_atomic_and_completion_preserves_the_record():
+    from concurrent.futures import ThreadPoolExecutor
+    svc = MemoryService.create(":memory:", extractor="none", graph_extractor="none")
+    try:
+        result = svc.add_thinks([{"entity_name": "Forecast confirmation", "content": "Independent data may add information.",
+            "researchRequested": True, "researchQuestion": "Does an independent input improve held-out forecasts?"}],
+            workspace="trading", source_reference="pair_research")["thinks"][0]
+        mid = result["id"]
+        before = svc.store.get_memory(mid)
+        initial = svc.read_think_research(mid, workspace="trading")
+        assert initial["researchState"] == "research"
+        assert initial["researchRequested"] is True
+        assert initial["researchOriginThinkId"] == mid
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            claims = list(pool.map(lambda _: svc.claim_think_research(mid, workspace="trading", version=1), range(2)))
+        assert sum(item["claimed"] for item in claims) == 1
+        winner = next(item for item in claims if item["claimed"])
+        assert "claimToken" not in next(item for item in claims if not item["claimed"])
+        with pytest.raises(ValidationError):
+            svc.finish_think_research(mid, workspace="trading", version=1, claim_token="wrong", state="researched", know_ids=["know-result"])
+        with pytest.raises(ValidationError):
+            svc.finish_think_research(mid, workspace="trading", version=1, claim_token=winner["claimToken"], state="researched", know_ids=[])
+        done = svc.finish_think_research(mid, workspace="trading", version=1, claim_token=winner["claimToken"],
+                                         state="researched", know_ids=["know-result"])
+        assert done["researchState"] == "researched" and done["researchRequested"] is False
+        assert done["researchedByKnowIds"] == ["know-result"]
+        after = svc.store.get_memory(mid)
+        assert (after.id, after.content, after.ingested_at, after.valid_from) == (before.id, before.content, before.ingested_at, before.valid_from)
+        assert after.metadata["thinkgraph_origin"] == before.metadata["thinkgraph_origin"]
+        assert svc.finish_think_research(mid, workspace="trading", version=1, claim_token=winner["claimToken"],
+            state="researched", know_ids=["know-result"])["changed"] is False
+        assert not svc.claim_think_research(mid, workspace="trading", version=1)["claimed"]
+        corrected = svc.correct(mid, "An independent input needs held-out validation.", workspace="trading")
+        current = svc.read_think_research(mid, workspace="trading")
+        assert current["thinkId"] == corrected["id"]
+        assert current["researchState"] == "researched" and current["researchOriginThinkId"] == mid
+        assert current["researchRequestVersion"] == 1
+        again = svc.request_think_research_again(mid, workspace="trading", expected_version=1, question="Does this hold in a different market?")
+        assert again["researchRequestVersion"] == 2 and again["researchState"] == "research"
+        with pytest.raises(ValidationError):
+            svc.claim_think_research(mid, workspace="trading", version=1)
+        svc.store.get_or_create_workspace("other")
+        with pytest.raises(ValidationError):
+            svc.claim_think_research(mid, workspace="other", version=2)
+    finally:
+        svc.close()
+
+
+@pytest.mark.parametrize("outcome", ["blocked", "inconclusive"])
+def test_think_research_unsuccessful_outcome_is_not_automatically_claimable(outcome):
+    svc = MemoryService.create(":memory:", extractor="none", graph_extractor="none")
+    try:
+        ordinary = svc.add_thinks([{"entity_name": "Forecast", "content": "An ordinary idea."}], workspace="trading")["thinks"][0]
+        assert "researchState" not in svc.store.get_memory(ordinary["id"]).metadata["structured_extraction"]["think"]
+        with pytest.raises(ValidationError):
+            svc.add_thinks([{"entity_name": "Forecast", "content": "A question without its gap.", "researchRequested": True}], workspace="trading")
+        mid = svc.add_thinks([{"entity_name": "Forecast", "content": "Evidence is needed.", "researchRequested": True,
+                              "researchQuestion": "Which published result supports this?"}], workspace="trading")["thinks"][0]["id"]
+        claim = svc.claim_think_research(mid, workspace="trading", version=1)
+        result = svc.finish_think_research(mid, workspace="trading", version=1, claim_token=claim["claimToken"],
+            state=outcome, know_ids=[], reason="No adequate source was found.")
+        assert result["researchedByKnowIds"] == [] and result["researchState"] == outcome
+        assert not svc.claim_think_research(mid, workspace="trading", version=1)["claimed"]
+    finally:
+        svc.close()
+
+
 def test_think_correction_retains_owner_mentions_source_and_supported_edge():
     svc = MemoryService.create(":memory:", extractor="none", graph_extractor="none")
     try:
@@ -1534,5 +1601,32 @@ def test_think_correction_retains_owner_mentions_source_and_supported_edge():
             svc.correct(latest_id, "Wrong Project.", workspace="other")
         svc.retire(latest_id, workspace="trading", reason="Explicit test removal")
         assert svc.store.get_memory(latest_id).valid_to is not None
+    finally:
+        svc.close()
+
+
+def test_scene_keeps_live_think_owners_after_their_last_relationship_is_retired():
+    svc = MemoryService.create(":memory:", extractor="none", graph_extractor="none")
+    try:
+        saved = svc.add_thinks([
+            {"entity_name": "First model", "content": "The first model has a useful bounded role."},
+            {"entity_name": "Second model", "content": "The second model needs independent evaluation."},
+        ], workspace="trading")["thinks"]
+        first, second = saved
+        memory = svc.store.get_memory(first["id"])
+        edge = svc.store.upsert_edge(Edge(id="", src=first["entity_id"], dst=second["entity_id"],
+            relation="ASSOCIATED_WITH", workspace_id=memory.workspace_id,
+            provenance={"memory_id": first["id"]}))
+        before = svc.graph_scene(workspace="trading", level="complete", include_memory_nodes=False)
+        assert {node["id"] for node in before["nodes"]} == {item["entity_id"] for item in saved}
+        svc.store.invalidate_edge(edge)
+        after = svc.graph_scene(workspace="trading", level="complete", include_memory_nodes=False)
+        assert after["edges"] == []
+        assert {node["id"] for node in after["nodes"]} == {item["entity_id"] for item in saved}
+        assert all(svc.store.get_memory(item["id"]).valid_to is None for item in saved)
+        svc.retire(first["id"], workspace="trading", reason="Remove only this unsupported record")
+        remaining = svc.graph_scene(workspace="trading", level="complete", include_memory_nodes=False)
+        assert first["entity_id"] not in {node["id"] for node in remaining["nodes"]}
+        assert second["entity_id"] in {node["id"] for node in remaining["nodes"]}
     finally:
         svc.close()

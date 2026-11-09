@@ -161,16 +161,8 @@ export function createWorldViewApplication({
       defer(() => resetContextStore());
       loaderStatus.textContent = 'Configuring viewer...';
       if (cesiumToken) Cesium.Ion.defaultAccessToken = cesiumToken;
-      const previousIonServer = Cesium.Ion.defaultServer;
-      if (supervised) {
-        const mountedIonServer = new Cesium.Resource({ url: '/cesium-ion/' });
-        Cesium.Ion.defaultServer = mountedIonServer;
-        defer(() => {
-          if (Cesium.Ion.defaultServer === mountedIonServer) {
-            Cesium.Ion.defaultServer = previousIonServer;
-          }
-        });
-      }
+      // Keep Cesium's HTTPS service owner. A mounted UI need not have the
+      // former Vite-only /cesium-ion proxy on its own document origin.
       // The mounted app may use Cesium ion's cached Google Photorealistic
       // asset without a direct Google Maps key. Reset the module-global key
       // when none was supplied so Cesium takes its native ion branch rather

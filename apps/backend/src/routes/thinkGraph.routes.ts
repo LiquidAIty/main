@@ -80,6 +80,19 @@ thinkGraphRoutes.get('/sources', async (req, res) => {
   }
 });
 
+thinkGraphRoutes.get('/record', async (req, res) => {
+  const projectId = String(req.query.projectId || '').trim();
+  const memoryId = String(req.query.memoryId || '').trim();
+  if (!projectId || !memoryId) return res.status(400).json({ error: 'projectId and memoryId required' });
+  if (!await requireOwnedProject(req, res, projectId)) return undefined;
+  try {
+    return res.json(await requestPythonRailsJson('/thinkgraph/operation', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, operation: 'inspect', arguments: { memoryId } }),
+    }));
+  } catch { return res.status(404).json({ error: 'Think not found in this Project.' }); }
+});
+
 thinkGraphRoutes.get('/source-search', async (req, res) => {
   const projectId = String(req.query.projectId || '').trim();
   const query = String(req.query.query || '').trim();

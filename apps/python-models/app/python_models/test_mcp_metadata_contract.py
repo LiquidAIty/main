@@ -77,7 +77,6 @@ def test_source_current_hash_covers_every_code_owned_catalog_owner():
     assert any(path.endswith("/python_models/tool_catalog.py") for path in normalized)
     assert any(path.endswith("/python_models/tool_registry.py") for path in normalized)
     assert any(path.endswith("/python_models/trading_tool_operations.py") for path in normalized)
-    assert any(path.endswith("/python_models/worldsignals_tool_operations.py") for path in normalized)
     assert len(mcp_observability.catalog_source_sha256()) == 64
 
 

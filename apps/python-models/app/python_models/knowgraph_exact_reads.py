@@ -56,6 +56,8 @@ def _projected_know_record(
         record["direction"] = know["direction"]
     if know.get("contentHash"):
         record["contentHash"] = know["contentHash"]
+    if know.get("researchOriginThinkId"):
+        record.update(researchOriginThinkId=know["researchOriginThinkId"], researchRequestVersion=know["researchRequestVersion"])
     if know.get("researchOrigins"):
         record.update(researchOrigins=know["researchOrigins"], researchOriginCount=know["researchOriginCount"])
     return record

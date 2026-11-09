@@ -191,6 +191,33 @@ describe('Hermes Main chat binding', () => {
     expect(reopened.result.current.messages.map(message => message.text)).toEqual([literal]);
   });
 
+  it('does not paint persisted assistant silence markers as replies or erase human/quoted text', async () => {
+    const rows = [
+      { role: 'user', text: '[SILENT]' },
+      { role: 'assistant', text: 'The token [SILENT] suppresses delivery.' },
+      { role: 'assistant', text: '[SILENT]', row_id: 1545 },
+      { role: 'assistant', text: 'NO_REPLY' },
+    ];
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: [{ id: 'existing' }] };
+      if (method === 'session.resume') return { session_id: 'existing', running: false, messages: rows };
+      if (method === 'session.history') return { messages: rows };
+      throw new Error(`Unexpected method ${method}`);
+    });
+    const { result } = renderHook(() => useHermesMainChat('trading-project'));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+    const expected = ['[SILENT]', 'The token [SILENT] suppresses delivery.'];
+    expect(result.current.messages.map(message => message.text)).toEqual(expected);
+    await act(async () => {
+      host.handlers.get('message.start')!({ session_id: 'existing', payload: {} });
+      host.handlers.get('message.complete')!({ session_id: 'existing', payload: { text: '[SILENT]', status: 'complete' } });
+    });
+    expect(result.current.messages.map(message => message.text)).toEqual(expected);
+    expect(result.current.busy).toBe(false);
+    expect(rows).toHaveLength(4);
+    expect(host.request.mock.calls.every(([method]) => ['session.list', 'session.resume', 'session.history'].includes(method))).toBe(true);
+  });
+
   it('submits literal input directly without graph capture or extra prompt fields', async () => {
     host.request.mockImplementation(async (method: string) => {
       if (method === 'session.list') return { sessions: [{ id: 'existing' }] };

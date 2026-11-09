@@ -98,6 +98,8 @@ class KnowNode(Node):
     direction: KnowDirection | None = None
     content_hash: str = Field(min_length=64, max_length=64)
     entity_created: bool = False
+    research_origin_think_id: str | None = Field(default=None, min_length=1, max_length=512)
+    research_request_version: int | None = Field(default=None, ge=1, strict=True)
     saga_uuid: str | None = None
     saga_name: str | None = None
 
@@ -112,6 +114,12 @@ class KnowNode(Node):
     @model_validator(mode='after')
     def require_know_label(self) -> 'KnowNode':
         self.labels[:] = ['Know']
+        if bool(self.research_origin_think_id) != (self.research_request_version is not None):
+            raise ValueError('Research origin requires both Think ID and request version')
+        if self.research_request_version is not None and (
+            type(self.research_request_version) is not int or self.research_request_version < 1
+        ):
+            raise ValueError('Research request version must be a positive integer')
         return self
 
     @classmethod
@@ -162,6 +170,8 @@ class KnowNode(Node):
             'citation_content_fingerprint': citation.content_fingerprint,
             'proposition': direction.proposition if direction else None,
             'direction': direction.relation if direction else None, 'know_format': 3,
+            'researchOriginThinkId': self.research_origin_think_id,
+            'researchRequestVersion': self.research_request_version,
         }
 
     async def save_know(
@@ -207,6 +217,22 @@ class KnowNode(Node):
                 created = (await result.consume()).counters.nodes_created == 1
                 stored = _know_from_record(rows[0]['properties'])
 
+            if self.research_origin_think_id:
+                # Reuse an already verified identical finding for an explicitly
+                # claimed request without creating a corrected/research copy.
+                # A concurrent claimant cannot overwrite an established origin.
+                result = await tx.run(
+                    'MATCH (know:Know {uuid:$uuid,group_id:$group}) '
+                    'SET know.researchOriginThinkId=coalesce(know.researchOriginThinkId,$origin),'
+                    'know.researchRequestVersion=coalesce(know.researchRequestVersion,$version) '
+                    'RETURN properties(know) AS properties',
+                    uuid=stored.uuid, group=self.group_id, origin=self.research_origin_think_id,
+                    version=self.research_request_version,
+                )
+                stored = _know_from_record((await result.data())[0]['properties'])
+                if (stored.research_origin_think_id != self.research_origin_think_id
+                        or stored.research_request_version != self.research_request_version):
+                    raise ValueError('Existing Know has different research provenance; do not duplicate or overwrite it')
             owner_created = False
             if not created:
                 result = await tx.run(
@@ -437,6 +463,16 @@ class KnowNode(Node):
         return [_know_from_record(record) for record in records]
 
     @classmethod
+    async def get_by_research_origin(cls, driver: GraphDriver, *, group_id: str,
+                                     think_id: str, version: int) -> list['KnowNode']:
+        records, _, _ = await driver.execute_query(
+            _KNOW_MATCH + ' WHERE know.group_id=$group AND know.researchOriginThinkId=$think '
+            'AND know.researchRequestVersion=$version RETURN ' + _KNOW_RETURN,
+            group=group_id, think=think_id, version=version, routing_='r',
+        )
+        return [_know_from_record(record) for record in records]
+
+    @classmethod
     async def get_by_content_hash(
         cls,
         driver: GraphDriver,
@@ -509,6 +545,8 @@ _KNOW_RETURN = """
     know.direction AS direction,
     know.content_hash AS content_hash,
     know.entity_uuid AS entity_uuid,
+    know.researchOriginThinkId AS researchOriginThinkId,
+    know.researchRequestVersion AS researchRequestVersion,
     coalesce(know.entity_created, false) AS entity_created,
     saga.uuid AS saga_uuid,
     saga.name AS saga_name
@@ -687,6 +725,8 @@ def _know_from_record(record: dict) -> KnowNode:
         direction=direction,
         content_hash=record['content_hash'],
         entity_created=bool(record.get('entity_created', False)),
+        research_origin_think_id=record.get('researchOriginThinkId'),
+        research_request_version=record.get('researchRequestVersion'),
         saga_uuid=record.get('saga_uuid'),
         saga_name=record.get('saga_name'),
     )

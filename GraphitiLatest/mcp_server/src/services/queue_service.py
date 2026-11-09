@@ -202,6 +202,8 @@ class QueueService:
         reference_time: datetime | None = None,
         mentions: list[str] | None = None,
         relationships: list[Any] | None = None,
+        research_origin_think_id: str | None = None,
+        research_request_version: int | None = None,
     ) -> int:
         """Queue one direct Know write using the existing group work queue."""
 
@@ -224,6 +226,8 @@ class QueueService:
                     reference_time=reference_time or datetime.now(timezone.utc),
                     mentions=mentions,
                     relationships=relationships,
+                    research_origin_think_id=research_origin_think_id,
+                    research_request_version=research_request_version,
                 )
                 logger.info(f'Successfully processed Know {uuid} for group {group_id}')
             except Exception as e:

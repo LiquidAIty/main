@@ -84,6 +84,11 @@ const EXPECTED_PROMPT_CONTRACTS = [
 ] as const;
 
 describe('backend-owned default Project deck', () => {
+  it('enables the native memory toolset on every source-default Card', () => {
+    for (const card of createDefaultProjectDeck().nodes) {
+      expect(card.runtimeOptions?.toolsets, card.title).toContain('memory');
+    }
+  });
   it('loads byte-identical source-default prompts from dedicated Markdown assets', () => {
     const source = readFileSync(join(__dirname, 'defaultProjectDeck.ts'), 'utf8');
     const templates = new Map(
@@ -206,7 +211,7 @@ describe('backend-owned default Project deck', () => {
         'cbm.search_code',
         'cbm.query_graph',
       ],
-      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution', 'skills'],
+      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution', 'skills', 'memory'],
     });
     expect(byId.get('card_thinkgraph')?.runtimeOptions?.tools).toEqual([
       'engraphis_recall_context',
@@ -249,11 +254,11 @@ describe('backend-owned default Project deck', () => {
         'graphiti.search_memory_facts',
         'graphiti.get_episodes',
       ],
-      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution', 'card-tools', 'skills'],
+      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution', 'card-tools', 'skills', 'memory'],
     });
     expect(byId.get('card_magentic')?.runtimeOptions).toMatchObject({
       modelKey: 'gpt-5.6-sol',
-      toolsets: ['card-tools', 'skills'],
+      toolsets: ['card-tools', 'skills', 'memory'],
     });
     expect(byId.get('card_knowgraph')?.runtimeOptions).toMatchObject({
       modelKey: 'gpt-5.6-sol',
@@ -265,7 +270,7 @@ describe('backend-owned default Project deck', () => {
         'graphiti.get_status',
         'graphiti.search_knows',
       ]),
-      toolsets: ['web', 'terminal', 'code_execution', 'skills'],
+      toolsets: ['web', 'terminal', 'code_execution', 'skills', 'memory'],
     });
     expect(Object.fromEntries(DEFAULT_PROJECT_DECK.nodes.map((card) => [
       card.id,

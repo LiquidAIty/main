@@ -11,6 +11,7 @@ import { Router, type Request, type Response } from 'express';
 import {
   fetchKnowGraphNeighborhood,
   fetchKnowGraphProjection,
+  requestPythonRailsJson,
 } from '../services/pythonRailsClient';
 import { getOwnedProjectByReference } from '../services/projectStore';
 
@@ -42,6 +43,17 @@ async function resolveOwnedProjectId(
   });
   return null;
 }
+
+router.get('/record', async (req, res) => {
+  const requestedProjectId = queryText(req.query.projectId);
+  const knowId = queryText(req.query.knowId);
+  if (!requestedProjectId || !knowId) return res.status(400).json({ error: 'projectId and knowId required' });
+  const projectId = await resolveOwnedProjectId(req, res, requestedProjectId);
+  if (!projectId) return undefined;
+  try {
+    return res.json(await requestPythonRailsJson(`/knowgraph/record?${new URLSearchParams({ projectId, knowId })}`, { method: 'GET' }));
+  } catch { return res.status(404).json({ error: 'Know not found in this Project.' }); }
+});
 
 router.get('/graph', async (req, res) => {
   try {

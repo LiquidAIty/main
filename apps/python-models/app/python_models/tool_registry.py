@@ -78,12 +78,8 @@ def python_operation_definitions() -> list[OperationDefinition]:
     from app.python_models.trading_tool_operations import (
         trading_tool_operation_definitions,
     )
-    from app.python_models.worldsignals_tool_operations import (
-        worldsignals_tool_operation_definitions,
-    )
 
     return [
-        *worldsignals_tool_operation_definitions(),
         *general_tool_operation_definitions(),
         *market_sec_tool_operation_definitions(),
         *trading_tool_operation_definitions(),

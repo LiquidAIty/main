@@ -237,6 +237,39 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
     graphiti_module_ref = _GRAPHITI_MODULE
     if graphiti_module_ref is None:
         raise RuntimeError("graphiti_not_initialized")
+    if name == "get_entity_knows":
+        from app import mcp_auth
+        from graphiti_core.nodes import EntityNode
+        from app.python_models.engraphis import read_entity_think_context
+        context = mcp_auth.authenticated_project_context() or mcp_auth.internal_mcp_principal() or {}
+        project = str(context.get("projectId") or "")
+        group = arguments.get("group_id")
+        if not project or group != f"liquidaity-{project}":
+            raise PermissionError("know_project_scope_mismatch")
+        client = graphiti_module_ref.graphiti_client
+        entity_id, entity_name = arguments.get("entity_uuid"), arguments.get("entity_name")
+        if entity_id:
+            owner = await EntityNode.get_by_uuid(client.driver, entity_id)
+            if owner.group_id != group or (entity_name and owner.name != entity_name):
+                raise ValueError("Entity identity does not match this Project")
+            entity_name = owner.name
+        elif entity_name:
+            rows, _, _ = await client.driver.execute_query(
+                'MATCH (e:Entity {group_id:$group,name:$name}) RETURN e.uuid AS uuid LIMIT 2',
+                group=group, name=entity_name, routing_='r')
+            if len(rows) > 1:
+                raise ValueError("Entity name is ambiguous")
+            entity_id = rows[0]['uuid'] if rows else None
+        else:
+            raise ValueError("Provide entity_uuid or an exact entity_name")
+        knows = await client.get_entity_knows(entity_id, group_id=group,
+            limit=arguments.get("max_knows", 10)) if entity_id else []
+        requests = await asyncio.to_thread(read_entity_think_context, project, entity_name)
+        payload = {"message": f"Found {len(knows)} Knows for {entity_name}",
+                   "entity_name": entity_name, "entity_uuid": entity_id,
+                   "knows": [graphiti_module_ref._know_result(know) for know in knows], **requests}
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
+                              structuredContent={"result": payload})
     if name in {"add_know", "update_know", "remove_know", "delete_entity_edge"}:
         from app import mcp_auth
         from graphiti_core.knows import KnowCitation, KnowDirection
@@ -248,6 +281,13 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
         if not project_id or arguments.get("group_id") != f"liquidaity-{project_id}":
             raise PermissionError("know_project_scope_mismatch")
         args = dict(arguments)
+        claim_token = args.pop("research_claim_token", None)
+        if name == "add_know" and (args.get("research_origin_think_id") or args.get("research_request_version") or claim_token):
+            from app.python_models.engraphis_operations import _research_service_call
+            request = await asyncio.to_thread(_research_service_call, project_id,
+                "validate_think_research_claim", args.get("research_origin_think_id"),
+                version=args.get("research_request_version"), claim_token=claim_token)
+            args["research_origin_think_id"] = request["researchOriginThinkId"]
         if args.get("citation") is not None:
             args["citation"] = KnowCitation.model_validate(args["citation"])
         if args.get("direction"):
@@ -305,6 +345,24 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
             structuredContent={"result": payload}, isError=payload["status"] != "completed",
         )
     return await graphiti_module_ref.mcp.call_tool(name, dict(arguments))
+
+
+async def research_result_knows(project: str, think_id: str, version: int):
+    """Recover only committed source-backed results of this exact request version."""
+    from graphiti_core.knows import KnowNode
+    from graphiti_core.edges import EntityEdge
+    from app.python_models.knowgraph_know_contract import know_from_properties
+    client = _GRAPHITI_MODULE.graphiti_client
+    knows = await KnowNode.get_by_research_origin(client.driver, group_id=f"liquidaity-{project}",
+                                                 think_id=think_id, version=version)
+    for know in knows:
+        if know_from_properties(know._properties()) is None:
+            raise ValueError("Saved research result has no valid sourced Know")
+        for edge_id in know.entity_edges:
+            edge = await EntityEdge.get_by_uuid(client.driver, edge_id)
+            if edge.group_id != know.group_id or not edge.attributes.get("jev_relation_winner"):
+                raise ValueError("Saved Know relationship still needs settlement; keep the existing Know and retry settlement")
+    return knows
 
 
 async def _notify_know_change(project_id: str, payload: dict) -> None:

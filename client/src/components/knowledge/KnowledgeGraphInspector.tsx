@@ -185,6 +185,7 @@ export function ThinkRecordCard({
   removing = false,
   onRemove,
   renderText,
+  onOpenResearchReference,
 }: {
   item: Record<string, any>;
   heading: string;
@@ -192,6 +193,7 @@ export function ThinkRecordCard({
   removing?: boolean;
   onRemove?: () => void;
   renderText?: (text: string) => ReactNode;
+  onOpenResearchReference?: (authority: 'thinkgraph' | 'knowgraph', id: string) => void;
 }) {
   const entryTime = graphEntryTime(item.ingestedAt);
   const summary = typeof item.summary === 'string' && item.summary.trim()
@@ -202,6 +204,10 @@ export function ThinkRecordCard({
   const relationships = thinkRelationships(item);
   const detail = item.detail ?? item.metadata?.structured_extraction?.think?.detail;
   const researchRequested = item.researchRequested ?? item.metadata?.structured_extraction?.think?.researchRequested;
+  const research = item.metadata?.structured_extraction?.think || item;
+  const researchState = research.researchState || (researchRequested === true ? 'research' : null);
+  const researchLabel = ({ research: 'Research', working: 'Researching', researched: 'Researched',
+    blocked: 'Blocked', inconclusive: 'Inconclusive' } as Record<string, string>)[researchState];
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -241,7 +247,16 @@ export function ThinkRecordCard({
       <h5>Relationships</h5>
       <ul>{relationships.map(value => <li key={value}>{renderText ? renderText(value) : value}</li>)}</ul>
     </section> : null}
-    {researchRequested === true ? <small>Research requested</small> : null}
+    {researchLabel ? <section className="graph-think-section" data-research-state={researchState}>
+      <strong>{researchLabel}</strong>
+      {research.researchQuestion ? <p>{research.researchQuestion}</p> : null}
+      {research.researchOutcomeReason ? <p>{research.researchOutcomeReason}</p> : null}
+      {Array.isArray(research.researchedByKnowIds) ? research.researchedByKnowIds.map((id: string, index: number) =>
+        <button type="button" key={id} aria-label={`Open research Know ${id}`}
+          onClick={() => onOpenResearchReference?.('knowgraph', id)} disabled={!onOpenResearchReference}>
+          Sourced finding {index + 1}
+        </button>) : null}
+    </section> : null}
     {projectId ? <ThinkSourceExchange key={`${projectId}:${item.id}`} projectId={projectId} memoryId={String(item.id)}
       chunkCount={item.metadata?.thinkgraph_origin?.source_chunks?.length ?? 0} /> : null}
     {projectId && draft === null ? <button type="button" aria-label="Edit record" disabled={removing}
@@ -353,6 +368,7 @@ export function KnowGraphKnow({
   removing = false,
   onRemove,
   renderText,
+  onOpenResearchReference,
 }: {
   record: KnowInspectorRecord;
   projectId?: string;
@@ -360,6 +376,7 @@ export function KnowGraphKnow({
   removing?: boolean;
   onRemove?: () => void;
   renderText?: (text: string) => ReactNode;
+  onOpenResearchReference?: (authority: 'thinkgraph' | 'knowgraph', id: string) => void;
 }) {
   const { episodeId, know } = record;
   const citation = know.citation
@@ -413,6 +430,10 @@ export function KnowGraphKnow({
   };
   return <section className="graph-note graph-know" data-episode-id={episodeId}>
     <div className="graph-think-heading"><h5>{renderText ? renderText(String(know.title || heading)) : String(know.title || heading)}</h5></div>
+    {know.researchOriginThinkId ? <button type="button" aria-label={`Open originating Think ${know.researchOriginThinkId}`}
+      onClick={() => onOpenResearchReference?.('thinkgraph', know.researchOriginThinkId)} disabled={!onOpenResearchReference}>
+      From Think · research request {know.researchRequestVersion}
+    </button> : null}
     {draft ? <form className="graph-record-edit" onSubmit={event => { event.preventDefault(); void save(); }}>
       <label>Finding<textarea required maxLength={8000} value={draft.observation}
         onChange={event => setDraft({ ...draft, observation: event.target.value })} /></label>

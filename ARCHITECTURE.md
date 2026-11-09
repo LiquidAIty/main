@@ -319,9 +319,10 @@ upstream forks or first-party runtime source, not general cleanup targets. Prefe
 protocol, configuration, hook, or existing adapter boundary. A justified vendor edit must record its
 exact files/symbols, preserved upstream behavior, tests, fork cost, and rollback.
 
-The source-wired WorldView launcher is `scripts/start-worldview.ps1` (package script `dev:worldview`);
-the WorldSignals service is started by package script `dev:worldsignals`. These source paths do not
-establish loaded-service or product acceptance.
+The source-wired WorldView launcher is `scripts/start-worldview.ps1` (package script `dev:worldview`).
+ShadowBroker/WorldSignals is no longer an application workspace, published tool family, or startup
+dependency. Its separate source history and private data are not replacements for WorldView.
+These source paths do not establish loaded-service or product acceptance.
 
 The current Hermes divergence has two bounded families: the existing profile-scoped ordered Bot roster
 and the Team/Magnetic policy over Hermes's own SQLite task/dependency runtime. Direct Bot delivery,
@@ -379,6 +380,24 @@ The controlled ShadowBroker import has this bounded local divergence:
 
 The controlled upstream globe import has this bounded local divergence:
 
+The local Hermes Webapp mount uses the existing provider at `127.0.0.1:4174` for API and asset URLs,
+because Hermes serving `client/dist` does not run Vite's proxy routes. The provider's existing Vite owner
+allows only the named local Hermes/Vite browser origins before its terminating API handlers; this is
+CORS readability, not authentication or a Card grant. `directApplication.js` retains Cesium's upstream
+HTTPS Ion endpoint instead of the removed document-origin proxy. `client/vite.config.ts` transforms
+only the installed Cesium Knockout 3.5.1 global-object lookup from eval to `globalThis`, with an exact
+source guard. Installed dependencies, widget APIs, viewer/controls and Hermes CSP remain unchanged.
+**Alternative check:** a new Hermes proxy/plugin or widget-less viewer would change unrelated owners;
+the existing runtime-base and provider middleware seams suffice locally. **Files/tests:**
+`loadWorldViewNative.ts`, `worldViewNativeVite.spec.ts`, vendor `vite.config.js`,
+`src/app/directApplication.js`, and `src/runtimeUrl.test.mjs`; the actual dependency is exercised with
+string code generation disabled, plus exact-origin/preflight tests. **Fork cost/rollback:** one
+provider CORS handler and removal of the obsolete Ion override, plus the first-party build transform;
+remove these exact hunks when the upstream/host supplies equivalent behavior. No graph/session data
+changes. The loaded local Webapp painted the globe, 826 CelesTrak satellites and 50 USGS events;
+the two feeds remained available after leaving and reopening WorldView. Remote HTTPS/Oracle
+transport, exact event Inspector navigation, and real saved-Card action execution remain separate proof.
+
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |
 | `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/app/{application,viewer,viewport,directApplication,mount,directBridge}.js`; `src/runtimeUrl.js`; `src/voice/{gevRealtime,realtimeProtocol,realtimeViewport}.js`; `src/data/contextStore.js`; `client/src/components/worldsignal/GodsEyeSurface.tsx`; `client/src/features/worldview/WorldViewSurface.tsx`; `client/vite.config.ts` | **UPSTREAM CURRENT:** retain the modular application lifecycle, Cesium viewer, complete visual/control surface, live data managers, scene context, selected-entity context, Realtime action runner, and image grounding. **LOCAL KEPT:** retain the supervised camera-stability rules, WorldView presentation wording, Project source readback, selection projection, and credits. **MERGED:** both standalone and LiquidAIty use the same lifecycle and full controller graph. **LIQUIDAITY-SPECIFIC:** React supplies one caller-owned pane, scoped CSS/container sizing, same-origin provider transport, direct callbacks, and serialized teardown/remount. The removed iframe/postMessage bridge is not a fallback. Realtime image grounding accepts only the Cesium canvas contained by the currently mounted WorldView root, records root/canvas/image bounds, and invalidates retained images on stop or unmount. Under the shared hybrid Main layout, capture intersects that stable canvas with the actual exposed companion viewport and crops the source pixels to those visible bounds; it never captures the covered portion or the LiquidAIty page. | Focused vendor tests cover URL scoping, annotations, context reset, Realtime protocol, pane-bounded and exposed-pane-cropped capture, retained-image deletion, and teardown invalidation; focused React tests cover one mount, direct commands, callbacks, and cleanup; vendor/client production builds cover both bundles. A visible Trading Project Preview proved one iframe-free 795×720 mount/canvas inside a 1280×720 page, current satellite/mission feeds, a completed camera reset, a real Launch Library selection with source metadata, and complete removal followed by one clean remount with idle voice and no selected mission. Live AI question/answer acceptance remains blocked honestly because the supervised provider has no configured `OPENAI_API_KEY`; the port is not declared parity-complete until those turns and the resulting viewport-capture diagnostics run. Fork cost is the bounded lifecycle/root/capture seam plus focused tests. Roll back this row's files together; no graph, Project, Card, user, or source data is migrated. |
@@ -400,6 +419,18 @@ Graphiti community-result aggregation repair (2026-10-31): **VENDORED PROJECT:**
 
 Graphiti exact-record maintenance extends that same fork: **PURPOSE / FILES:** `KnowNode.update_know` and `remove_know` in `knows.py`, exposed by `Graphiti` and its MCP tools, support requested correction/removal of one authorized Know. **EXTERNAL ALTERNATIVE CHECK:** `add_know` rejects changed content under an occupied UUID; generic episode ingestion and delete-and-add cannot preserve that identity. **CONTRACTS:** edit preserves UUID, owner, creation time, labels and existing links while updating citation, observation, interpretation, searchable content and duplicate identity in one transaction. Removal uses the former KnowGraph service deletion logic, now shared by Inspector and Card calls. **UPSTREAM BEHAVIOR PRESERVED:** ordinary episode/Saga/triplet operations and unrelated records are unchanged. **TESTS:** focused publication, Inspector and scoped route checks; saved-Card and persistence acceptance are reported separately. **FORK COST:** two bounded Know transaction operations and MCP declarations; both application environments bind the same repository package. **ROLLBACK:** remove only these maintenance operations and their callers on explicit instruction; no data migration or deletion is required.
 
+Think research provenance extends the same Graphiti fork: **PURPOSE / FILES:** optional
+`research_origin_think_id` and `research_request_version` on `KnowNode` in `knows.py`, forwarded by
+`Graphiti.add_know` and the existing MCP/queue owner. **EXTERNAL ALTERNATIVE CHECK:** extra provenance
+nodes or a second ledger would duplicate authority; the existing Know properties suffice.
+**CONTRACTS:** both fields occur together, survive exact/search/Entity reads and edits, and do not
+change duplicate identity. An unchanged existing Know may acquire its first origin through the same
+claim-validated writer, but an established origin is never overwritten. An exact Project/origin/version read recovers committed results after a
+failed Think acknowledgement. **UPSTREAM BEHAVIOR PRESERVED:** citations, owner transactions, Know
+IDs and semantic edges are unchanged; a provenance reference is not an edge. **TESTS:** property
+roundtrip and application claim/recovery tests; live Card proof is separate. **FORK COST / ROLLBACK:**
+additive optional fields and one scoped read; exposure can be removed on request without deleting data.
+
 The installed Engraphis runtime and the separately retained browser-renderer fork have these bounded local divergences:
 
 The additive Think-tool delta against Engraphis 1.7.9 (`619f49860f293ab1826aaf4e11a158bc22f03fcf`)
@@ -411,6 +442,30 @@ operations, workspace authorization, one-owner storage and rollback remain uncha
 one owner per Think, reference-only mentions and classified prose edges. Existing incidence/rollback
 checks pass; live Card/tool proof is recorded separately. Fork cost is this additive service/tool API;
 rollback removes its registration, saved grant and caller without changing stored graph schema.
+
+The same Think writer persists a specific optional research question/version in existing Think
+metadata. **PURPOSE / FILES:** `MemoryService.add_thinks`, `read_think_research`,
+`claim_think_research`, `validate_think_research_claim`, `finish_think_research`, and the explicit
+maintenance-only `request_think_research_again` in `engraphis/service.py`; the existing MCP Think
+schema documents the inputs. **EXTERNAL ALTERNATIVE CHECK:** generic metadata editing cannot
+atomically claim one exact version; the existing store transaction supplies that boundary without a
+queue, timer, new database or research dispatcher. **CONTRACTS:** Research becomes Working once;
+only saved, source-backed Graphiti result references permit Researched. Blocked/Inconclusive do not
+auto-repeat. Corrections retain the original request anchor; wording edits do not reopen research.
+**UPSTREAM BEHAVIOR PRESERVED:** Think content, source, ownership and native correction lineage.
+**TESTS:** real-store claim race, version/Project rejection, correction preservation, and application
+completion recovery; loaded/live proof is separate. **FORK COST / ROLLBACK:** bounded metadata methods;
+remove their exposure only on request, with existing metadata retained and no schema migration.
+
+Engraphis scene admission also retains a live public Think owner after its final semantic edge is
+retired. **PURPOSE / FILES:** `MemoryService._graph_scene_rows` in `engraphis/service.py` admits an
+Entity with a current, prompt-eligible, non-session Think incidence independently of live edges.
+**EXTERNAL ALTERNATIVE CHECK:** synthesizing nodes in the UI or keeping an incorrect edge would
+misrepresent the owner. **CONTRACTS / PRESERVED:** Project/repository and both temporal axes remain
+scoped; private-only evidence and retired Thinks do not qualify; edge validity and physics do not change.
+**TESTS:** real Think write followed by exact edge retirement, plus existing scene/privacy/history
+regressions. **FORK COST / ROLLBACK:** one additive scene-eligibility clause; remove it only on explicit
+instruction, with no stored data migration or deletion.
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |

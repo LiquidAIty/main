@@ -3,7 +3,7 @@
  * Relationship: Builds and serves the client on explicit loopback ports while proxying only the approved local backend and companion-service transports.
  *
  * Entity: WorldView
- * Relationship: Bundles the controlled WorldView mount, scopes its styles to the owning pane, and proxies its loopback provider surface.
+ * Relationship: Bundles the controlled WorldView mount with CSP-safe Cesium initialization, scopes its styles to the owning pane, and proxies its loopback provider surface.
  */
 
 import { defineConfig, loadEnv, type Plugin } from 'vite';
@@ -56,6 +56,18 @@ export function worldviewNativeMountPlugin(command: 'serve' | 'build'): Plugin {
       return id === WORLDVIEW_MOUNT_RESOLVED_ID
         ? worldviewNativeMountModuleSource(command)
         : null;
+    },
+    transform(source, id) {
+      const knockoutPath = path.resolve(worldviewRoot,
+        'node_modules/@cesium/widgets/Source/ThirdParty/knockout-3.5.1.js');
+      if (path.resolve(id) !== knockoutPath) return null;
+      // Cesium's legacy global lookup executes eval on ESM import, even with
+      // every Knockout widget disabled. Keep the library and host CSP intact.
+      const lookup = 'this||(0,eval)("this")';
+      if (source.split(lookup).length !== 2) {
+        throw new Error('Cesium Knockout global lookup changed; review CSP compatibility');
+      }
+      return { code: source.replace(lookup, 'globalThis'), map: null };
     },
   };
 }
@@ -236,18 +248,6 @@ export default defineConfig(({ mode, command }) => {
           secure: false,
           rewrite: (p) => p.replace(/^\/worldview-native/, ''),
         },
-        // WorldSignals (vendored app, own FastAPI backend on :8000). Its client
-        // calls `${API_BASE}/api/...`; the embed mount sets API_BASE to this
-        // prefix, so its traffic lands here instead of on LiquidAIty's own /api
-        // below. Proxying keeps it same-origin — no CORS grant on the vendor
-        // backend, and no second origin in the page.
-        // Must precede '/api' — Vite matches proxy keys in insertion order.
-        '/worldsignals-api': {
-          target: 'http://127.0.0.1:8000',
-          changeOrigin: true,
-          secure: false,
-          rewrite: (p) => p.replace(/^\/worldsignals-api/, ''),
-        },
         // App backend API
         '/api': {
           target: 'http://127.0.0.1:4000',
@@ -271,12 +271,6 @@ export default defineConfig(({ mode, command }) => {
           changeOrigin: true,
           secure: false,
           rewrite: (p) => p.replace(/^\/worldview-native/, ''),
-        },
-        '/worldsignals-api': {
-          target: 'http://127.0.0.1:8000',
-          changeOrigin: true,
-          secure: false,
-          rewrite: (p) => p.replace(/^\/worldsignals-api/, ''),
         },
         '/api': {
           target: 'http://127.0.0.1:4000',
