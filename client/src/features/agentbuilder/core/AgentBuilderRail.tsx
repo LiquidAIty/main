@@ -36,8 +36,6 @@ type AgentBuilderRailProps = {
   onShowKnowledgeWorkspace: () => void;
   onShowTradingWorkspace: () => void;
   onOpenNavigationDrawer: () => void;
-  modelingAvailable?: boolean;
-  onShowModelingWorkspace?: () => void;
 };
 
 function Icon({ d, size = 22 }: { d: string; size?: number }) {
@@ -88,8 +86,6 @@ export default function AgentBuilderRail({
   onShowKnowledgeWorkspace,
   onShowTradingWorkspace,
   onOpenNavigationDrawer,
-  modelingAvailable = false,
-  onShowModelingWorkspace,
 }: AgentBuilderRailProps) {
   return (
     <aside
@@ -100,10 +96,6 @@ export default function AgentBuilderRail({
         borderRight: `1px solid ${colors.border}`,
       }}
     >
-      {modelingAvailable ? <button type="button" title="Building" aria-label="Building" onClick={onShowModelingWorkspace} className="p-2 rounded"
-        style={{ color: workspaceView === 'nrgsim' ? colors.primary : colors.text }}>
-        <Icon d="M3 21V7l9-4 9 4v14H3zM8 9v2m8-2v2M8 14v2m8-2v2M10 21v-3h4v3" />
-      </button> : null}
       {visibleRailItems.showWorldsignal ? (
         <button
           type="button"

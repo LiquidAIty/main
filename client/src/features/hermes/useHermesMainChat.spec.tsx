@@ -43,7 +43,7 @@ describe('Hermes Main chat binding', () => {
     host.request.mockReset();
   });
 
-  it('creates the native Bot Chat and sends literal input through prompt.submit', async () => {
+  it('only reads on open, then creates the native Bot Chat on the first Send', async () => {
     host.request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
       if (method === 'session.list') return { sessions: [] };
       if (method === 'session.create') return { session_id: 'main-session', messages: [] };
@@ -59,6 +59,15 @@ describe('Hermes Main chat binding', () => {
       profile: 'main',
       title: HERMES_MAIN_SESSION_TITLE,
     }));
+    expect(host.request.mock.calls.map(([method]) => method)).toEqual(['session.list']);
+    await act(async () => { expect(await result.current.send('   ')).toBe(false); });
+    expect(host.request.mock.calls.map(([method]) => method)).toEqual(['session.list']);
+
+    await act(async () => {
+      expect(await result.current.send('  @KnowGraph exact text  ', { images: [{
+        name: 'chart.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,AA==', kind: 'user-upload',
+      }] })).toBe(true);
+    });
     expect(host.request).toHaveBeenCalledWith('session.create', expect.objectContaining({
       profile: 'main',
       title: HERMES_MAIN_SESSION_TITLE,
@@ -67,12 +76,9 @@ describe('Hermes Main chat binding', () => {
       hidden: true,
       follow_profile_config: true,
     }));
-
-    await act(async () => {
-      expect(await result.current.send('  @KnowGraph exact text  ', { images: [{
-        name: 'chart.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,AA==', kind: 'user-upload',
-      }] })).toBe(true);
-    });
+    expect(host.request.mock.calls.map(([method]) => method)).toEqual([
+      'session.list', 'session.list', 'session.create', 'image.attach_bytes', 'prompt.submit',
+    ]);
     expect(host.request).toHaveBeenCalledWith('image.attach_bytes', {
       session_id: 'main-session', profile: 'main', content_base64: 'AA==', filename: 'chart.png',
     });
@@ -84,10 +90,55 @@ describe('Hermes Main chat binding', () => {
     });
   });
 
-  it('resumes the same Bot Chat before Send after a Gateway reconnect', async () => {
+  it('reuses a Bot Chat created elsewhere while the empty view was open', async () => {
+    let createdElsewhere = false;
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: createdElsewhere ? [{ id: 'bot-created' }] : [] };
+      if (method === 'session.resume') return { session_id: 'bot-created', running: false,
+        messages: [{ role: 'assistant', text: 'The earlier research.' }] };
+      if (method === 'prompt.submit') return { accepted: true };
+      throw new Error(`Unexpected method ${method}`);
+    });
+    const { result } = renderHook(() => useHermesMainChat('trading-project', 'knowgraph', 'KnowGraph'));
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+    createdElsewhere = true;
+    await act(async () => { expect(await result.current.send('Explain that finding.')).toBe(true); });
+    expect(host.request.mock.calls.map(([method]) => method)).toEqual([
+      'session.list', 'session.list', 'session.resume', 'prompt.submit',
+    ]);
+    expect(result.current.messages.map(message => message.text)).toEqual([
+      'The earlier research.', 'Explain that finding.',
+    ]);
+  });
+
+  it('does not submit into a previous profile when creation finishes after switching Cards', async () => {
+    let finishCreate!: (value: unknown) => void;
     host.request.mockImplementation(async (method: string) => {
       if (method === 'session.list') return { sessions: [] };
-      if (method === 'session.create') return { session_id: 'main-session', messages: [] };
+      if (method === 'session.create') return new Promise(resolve => { finishCreate = resolve; });
+      throw new Error(`Unexpected method ${method}`);
+    });
+    const { result, rerender } = renderHook(({ profile }) => useHermesMainChat('trading-project', profile), {
+      initialProps: { profile: 'main' },
+    });
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+    let sent!: Promise<boolean>;
+    act(() => { sent = result.current.send('Question for Main.'); });
+    await waitFor(() => expect(finishCreate).toBeTypeOf('function'));
+    rerender({ profile: 'knowgraph' });
+    await waitFor(() => expect(result.current.historyLoading).toBe(false));
+    await act(async () => {
+      finishCreate({ session_id: 'old-main', messages: [] });
+      expect(await sent).toBe(false);
+    });
+    expect(host.request.mock.calls.filter(([method]) => method === 'prompt.submit')).toEqual([]);
+    expect(result.current.messages).toEqual([]);
+    expect(host.request.mock.calls.filter(([method]) => method === 'session.create')).toHaveLength(1);
+  });
+
+  it('resumes the same Bot Chat before Send after a Gateway reconnect', async () => {
+    host.request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') return { sessions: [{ id: 'main-session' }] };
       if (method === 'session.resume') {
         return { session_id: 'main-session', messages: [], running: false };
       }
@@ -170,6 +221,7 @@ describe('Hermes Main chat binding', () => {
 
     const { result } = renderHook(() => useHermesMainChat('trading-project'));
     await waitFor(() => expect(result.current.historyLoading).toBe(false));
+    expect(host.request.mock.calls.map(([method]) => method)).toEqual(['session.list']);
 
     await act(async () => {
       expect(await result.current.startVoice('typed draft', { images: [{
@@ -352,8 +404,8 @@ describe('Hermes Main chat binding', () => {
 
   it('answers a Hermes approval request on the same generated request channel', async () => {
     host.request.mockImplementation(async (method: string) => {
-      if (method === 'session.list') return { sessions: [] };
-      if (method === 'session.create') return { session_id: 'main-session', messages: [] };
+      if (method === 'session.list') return { sessions: [{ id: 'main-session' }] };
+      if (method === 'session.resume') return { session_id: 'main-session', messages: [], running: false };
       throw new Error(`Unexpected method ${method}`);
     });
     const respond = vi.fn();
@@ -408,8 +460,8 @@ describe('Hermes Main chat binding', () => {
 
   it('drops replayed delta bytes by Hermes turn segment and offset', async () => {
     host.request.mockImplementation(async (method: string) => {
-      if (method === 'session.list') return { sessions: [] };
-      if (method === 'session.create') return { session_id: 'main-session', messages: [] };
+      if (method === 'session.list') return { sessions: [{ id: 'main-session' }] };
+      if (method === 'session.resume') return { session_id: 'main-session', messages: [], running: false };
       throw new Error(`Unexpected method ${method}`);
     });
     const { result } = renderHook(() => useHermesMainChat('trading-project'));

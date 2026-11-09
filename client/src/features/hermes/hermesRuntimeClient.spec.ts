@@ -65,9 +65,9 @@ describe('Hermes Card runtime projection', () => {
       if (method === 'subagent.roster') {
         return { sessions: [{ session_id: 'session-main', subagents: 2, background: 0 }] };
       }
-      if (method === 'session.usage') {
+      if (method === 'session.stats') {
         return {
-          total: 321,
+          total_tokens: 321,
           avg_latency_s: 1.25,
           active_subagents: 2,
           model: 'gpt-6.1-sol',
@@ -88,6 +88,22 @@ describe('Hermes Card runtime projection', () => {
       averageLatencyMs: 1_250,
       lastActiveAt: 200,
     });
+    expect(host.request).toHaveBeenCalledWith('main', 'session.stats', { session_id: 'session-main' });
+    expect(host.request.mock.calls.map(([, method]) => method)).toEqual([
+      'session.active_list', 'subagent.roster', 'session.stats',
+    ]);
+  });
+
+  it('leaves missing statistics unknown instead of claiming zero or resuming the session', async () => {
+    const request = host.request.getMockImplementation()!;
+    host.request.mockImplementation((profile: string, method: string) => method === 'session.stats'
+      ? Promise.reject(new Error('not_found')) : request(profile, method));
+    await expect(readHermesRuntimeSnapshot('main')).resolves.toMatchObject({
+      model: 'gpt-6.1-sol', totalTokens: null, averageLatencyMs: null,
+    });
+    expect(host.request.mock.calls.map(([, method]) => method)).toEqual([
+      'session.active_list', 'subagent.roster', 'session.stats',
+    ]);
   });
 
   it('refreshes from Hermes events instead of polling or maintaining another ledger', async () => {

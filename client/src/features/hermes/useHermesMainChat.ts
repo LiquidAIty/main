@@ -1,6 +1,6 @@
 /**
  * Entity: Main Chat
- * Relationship: Opens or resumes the selected saved profile's Hermes Bot Chat, renders its history/events and reported authors, and maps Send, Stop, voice, and images directly onto the generated Gateway contract.
+ * Relationship: Reads the selected profile's existing Bot Chat on open, creates one only on invocation, and renders history/events while mapping Send, Stop, voice, and images directly onto Hermes's generated Gateway contract.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -122,6 +122,7 @@ export default function useHermesMainChat(projectId: string, profile = 'main', o
   const deltaCursorRef = useRef({ turnId: '', segment: -1, offset: 0 });
   const pendingVoiceRef = useRef<{ draft: string; images: ComposerImage[] } | null>(null);
   const resumePromiseRef = useRef<Promise<void> | null>(null);
+  const openPromiseRef = useRef<Promise<string> | null>(null);
   const serverRequestsRef = useRef(new Map<string, ServerRequest>());
   const [messages, setMessages] = useState<HermesChatMessage[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -177,6 +178,43 @@ export default function useHermesMainChat(projectId: string, profile = 'main', o
     });
   }, [ownerName]);
 
+  const openChat = useCallback((createIfMissing = false): Promise<string> => {
+    if (boundProfileRef.current !== profile) return Promise.resolve('');
+    if (sessionRef.current) return Promise.resolve(sessionRef.current);
+    if (openPromiseRef.current) return openPromiseRef.current;
+    const generation = generationRef.current;
+    const pending = (async () => {
+      const gateway = await hermesGateway(profile);
+      const current = () => generationRef.current === generation && boundProfileRef.current === profile;
+      if (!current()) return '';
+      // Recheck at invocation: Bot Mode may have created the canonical chat since this view opened.
+      const listed = await gateway.request<SessionListResult>('session.list', {
+        profile, title: HERMES_MAIN_SESSION_TITLE, limit: 10, include_hidden: false,
+      });
+      if (!current()) return '';
+      const existing = listed.sessions[0];
+      if (!existing && !createIfMissing) return '';
+      const opened = existing
+        ? await gateway.request<SessionResumeResult>('session.resume', {
+            session_id: existing.resolved_id || existing.id, profile, source: 'gui',
+          })
+        : await gateway.request<SessionCreateResult>('session.create', {
+            profile, request_id: randomUuid(), source: 'gui', title: HERMES_MAIN_SESSION_TITLE,
+            hidden: true, follow_profile_config: true,
+          });
+      if (!current()) return '';
+      sessionRef.current = opened.session_id;
+      setMessages(historyMessages(opened.messages, ownerName));
+      if ('running' in opened && opened.running) setBusy(true);
+      return opened.session_id;
+    })();
+    const tracked = pending.finally(() => {
+      if (openPromiseRef.current === tracked) openPromiseRef.current = null;
+    });
+    openPromiseRef.current = tracked;
+    return tracked;
+  }, [profile, ownerName]);
+
   useEffect(() => {
     const project = String(projectId || '').trim();
     generationRef.current += 1;
@@ -188,6 +226,7 @@ export default function useHermesMainChat(projectId: string, profile = 'main', o
     deltaCursorRef.current = { turnId: '', segment: -1, offset: 0 };
     pendingVoiceRef.current = null;
     resumePromiseRef.current = null;
+    openPromiseRef.current = null;
     serverRequestsRef.current.clear();
     setPendingRequests([]);
     setMessages([]);
@@ -428,34 +467,10 @@ export default function useHermesMainChat(projectId: string, profile = 'main', o
         });
       }));
 
-      const listed = await gateway.request<SessionListResult>('session.list', {
-        profile, title: HERMES_MAIN_SESSION_TITLE, limit: 10, include_hidden: false,
-      });
-      if (disposed || generationRef.current !== generation) return;
-      const existing = listed.sessions[0];
-      let opened: SessionResumeResult | SessionCreateResult;
-      if (existing) {
-        opened = await gateway.request<SessionResumeResult>('session.resume', {
-          session_id: existing.resolved_id || existing.id,
-          profile,
-          source: 'gui',
-        });
-      } else {
-        opened = await gateway.request<SessionCreateResult>('session.create', {
-          profile,
-          request_id: randomUuid(),
-          source: 'gui',
-          title: HERMES_MAIN_SESSION_TITLE,
-          hidden: true,
-          follow_profile_config: true,
-        });
-      }
-      if (disposed || generationRef.current !== generation) return;
-      sessionRef.current = opened.session_id;
       boundProfileRef.current = profile;
-      setMessages(historyMessages(opened.messages, ownerName));
+      await openChat();
+      if (disposed || generationRef.current !== generation) return;
       setHistoryLoading(false);
-      if ('running' in opened && opened.running) setBusy(true);
     }).catch((cause) => {
       if (disposed || generationRef.current !== generation) return;
       setHistoryLoading(false);
@@ -468,18 +483,19 @@ export default function useHermesMainChat(projectId: string, profile = 'main', o
       sessionRef.current = '';
       for (const unsubscribe of unsubscribers) unsubscribe();
     };
-  }, [appendAssistantDelta, projectId, profile, ownerName]);
+  }, [appendAssistantDelta, projectId, profile, ownerName, openChat]);
 
   const send = useCallback(async (literal: string, input?: { images?: ComposerImage[] }) => {
     const body = String(literal || '');
-    if (!body.trim() || !sessionRef.current || boundProfileRef.current !== profile) return false;
+    if (!body.trim() || boundProfileRef.current !== profile) return false;
     const generation = generationRef.current;
     try {
       const submissionId = randomUuid();
       const gateway = await hermesGateway(profile);
       if (resumePromiseRef.current) await resumePromiseRef.current;
       if (generationRef.current !== generation || boundProfileRef.current !== profile) return false;
-      const sessionId = sessionRef.current;
+      const sessionId = await openChat(true);
+      if (!sessionId || generationRef.current !== generation) return false;
       for (const image of input?.images || []) {
         await gateway.request('image.attach_bytes', {
           session_id: sessionId, profile,
@@ -504,7 +520,7 @@ export default function useHermesMainChat(projectId: string, profile = 'main', o
       if (generationRef.current === generation) setError(cause instanceof Error ? cause.message : String(cause));
       return false;
     }
-  }, [profile]);
+  }, [profile, openChat]);
 
   const stop = useCallback(() => {
     const sessionId = sessionRef.current;
@@ -537,7 +553,7 @@ export default function useHermesMainChat(projectId: string, profile = 'main', o
   }, [profile]);
 
   const startVoice = useCallback(async (draft: string, input: { images?: ComposerImage[] }) => {
-    if (!sessionRef.current || boundProfileRef.current !== profile) return false;
+    if (boundProfileRef.current !== profile) return false;
     const generation = generationRef.current;
     setVoiceError(null);
     setVoicePhase('requesting');
@@ -546,8 +562,10 @@ export default function useHermesMainChat(projectId: string, profile = 'main', o
       const gateway = await hermesGateway(profile);
       if (resumePromiseRef.current) await resumePromiseRef.current;
       if (generationRef.current !== generation || boundProfileRef.current !== profile) return false;
+      const sessionId = await openChat(true);
+      if (!sessionId || generationRef.current !== generation) return false;
       const result = await gateway.request<VoiceRecordResult>('voice.record', {
-        action: 'start', session_id: sessionRef.current, profile,
+        action: 'start', session_id: sessionId, profile,
       });
       if (generationRef.current !== generation) return false;
       if (result.status !== 'recording') throw new Error(result.reason || 'Hermes microphone is busy.');
@@ -560,7 +578,7 @@ export default function useHermesMainChat(projectId: string, profile = 'main', o
       setVoiceError(cause instanceof Error ? cause.message : String(cause));
       return false;
     }
-  }, [profile]);
+  }, [profile, openChat]);
 
   const stopVoice = useCallback(() => {
     const sessionId = sessionRef.current;

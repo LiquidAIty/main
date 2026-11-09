@@ -66,8 +66,7 @@ export async function readHermesRuntimeSnapshot(profile: string): Promise<Hermes
     };
   }
 
-  const usage = await hermesRequest(profile, 'session.usage', {
-    profile,
+  const usage = await hermesRequest(profile, 'session.stats', {
     session_id: latest.id,
   })
     .catch(() => null);
@@ -78,7 +77,7 @@ export async function readHermesRuntimeSnapshot(profile: string): Promise<Hermes
     running: runningRoots + liveSubagents > 0,
     activeModelCount: runningRoots + liveSubagents,
     model: String(usage?.model || latest.model || '').trim() || null,
-    totalTokens: typeof usage?.total === 'number' ? usage.total : null,
+    totalTokens: typeof usage?.total_tokens === 'number' ? usage.total_tokens : null,
     averageLatencyMs: typeof averageLatencySeconds === 'number'
       ? averageLatencySeconds * 1_000
       : null,

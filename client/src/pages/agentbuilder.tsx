@@ -22,7 +22,7 @@
  * Entity: CodeGraph
  * Relationship: This file passes category inventory, File connection reads, and explicit File opening into the shared graph workspace.
  * Entity: Building Modeling
- * Relationship: Reads Project modeling availability and mounts the existing NRGSIM workspace and its controls in the shared Inspector.
+ * Relationship: Mounts the existing NRGSIM workspace and its Inspector only through the explicit modeling workspace URL, without probing other Projects on open.
  * Entity: Trading
  * Relationship: Opens the saved Trading Card's application surface and saves its Inspector configuration through the existing Card editor owner.
  * Entity: WorldSignals
@@ -401,19 +401,6 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
   const [worldViewInspectorOpen, setWorldViewInspectorOpen] = useState(true);
   const [modelingInspectorHost, setModelingInspectorHost] = useState<HTMLDivElement | null>(null);
   const [modelingInspectorOpen, setModelingInspectorOpen] = useState(true);
-  const [modelingAvailable, setModelingAvailable] = useState(false);
-  useEffect(() => {
-    let current = true;
-    setModelingAvailable(false);
-    if (canvasProjectId) {
-      applicationFetch(`/api/nrgsim/projects/${encodeURIComponent(canvasProjectId)}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'state' }),
-      }).then(async response => response.ok ? response.json() : null)
-        .then(value => { if (current) setModelingAvailable(value?.configured === true); })
-        .catch(() => { if (current) setModelingAvailable(false); });
-    }
-    return () => { current = false; };
-  }, [canvasProjectId]);
   const [transientCardInputs, setTransientCardInputs] = useState<Record<string, string>>({});
   const mainCardId = useMemo(
     () => deck.nodes.find((card) => (
@@ -1552,13 +1539,6 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
-      modelingAvailable={modelingAvailable}
-      onShowModelingWorkspace={() => {
-        setWorkspaceView('nrgsim'); setModelingInspectorOpen(true);
-        const params = new URLSearchParams(window.location.search);
-        params.set('workspace', 'nrgsim');
-        window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
-      }}
     />
   );
 

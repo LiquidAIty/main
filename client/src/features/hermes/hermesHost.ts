@@ -9,6 +9,7 @@ import {
   type GatewayEventName,
 } from '../../../../HermesLatest/apps/shared/src/json-rpc-gateway';
 import type {
+  CanonicalRpcMethods,
   RpcMethods,
 } from '../../../../HermesLatest/apps/shared/src/gateway-contract.generated';
 import { buildHermesWebSocketUrl, normalizeBasePath } from '../../../../HermesLatest/apps/shared/src/websocket-url';
@@ -193,14 +194,18 @@ export async function hermesGateway(profile: string): Promise<JsonRpcGatewayClie
   return connectClient(canonicalProfile, client);
 }
 
-export async function hermesRequest<M extends keyof RpcMethods>(
+// Hermes's canonical owner overrides shared verbs and adds session.stats.
+// Profile/skill administration still uses the shared generated contracts.
+type HostRpcMethods = Omit<RpcMethods, keyof CanonicalRpcMethods> & CanonicalRpcMethods;
+
+export async function hermesRequest<M extends keyof HostRpcMethods>(
   profile: string,
   method: M,
-  params: RpcMethods[M]['params'],
+  params: HostRpcMethods[M]['params'],
   timeoutMs?: number,
-): Promise<RpcMethods[M]['result']> {
+): Promise<HostRpcMethods[M]['result']> {
   const client = await hermesGateway(profile);
-  return client.request<RpcMethods[M]['result']>(
+  return client.request<HostRpcMethods[M]['result']>(
     method,
     { profile, ...(params as Record<string, unknown>) },
     timeoutMs,
