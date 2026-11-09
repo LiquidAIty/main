@@ -90,6 +90,24 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe('restored Card settings surfaces', () => {
+  it('forwards saved parent effort and Leaf configuration to the bound profile', async () => {
+    const save = vi.fn();
+    render(<CardEditor cardId="trader" projectId="project" deckId="deck" activeTab="Prompt" localConfig={{
+      ...config, model_key: 'gpt-6.1-terra', reasoning_effort: 'low',
+      runtime_options: {
+        providerModelId: 'gpt-6.1-terra', subagentType: 'leaf',
+        subagentModel: { provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'gpt-6.1-terra', providerModelId: 'gpt-6.1-terra' },
+      },
+    }} onSaveLocalConfig={save} />);
+    fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'Verify a bounded finding.' } });
+    await waitFor(() => expect(hermes.configureProfile).toHaveBeenCalledWith(expect.objectContaining({
+      profile: 'trading', model: 'gpt-6.1-terra', provider: 'openai-codex',
+      reasoningEffort: 'low', subagentType: 'leaf',
+      subagentModel: { provider: 'openai-codex', model: 'gpt-6.1-terra', reasoningEffort: 'low' },
+    })));
+    expect(save.mock.calls.at(-1)?.[0]).toMatchObject({ reasoning_effort: 'low', runtime_options: { subagentType: 'leaf' } });
+  });
+
   it('keeps Hermes toolset switches separate and mirrors confirmed selection without changing custom grants', async () => {
     const save = vi.fn();
     render(<CardEditor cardId="trader" projectId="project" deckId="deck" activeTab="Tools" localConfig={config} onSaveLocalConfig={save} />);

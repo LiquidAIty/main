@@ -1397,6 +1397,23 @@ class Graphiti:
             entity_created=entity_created,
         )
 
+    async def update_know(
+        self, uuid: str, *, group_id: str | None = None,
+        name: str | None = None, observation: str | None = None,
+        interpretation: str | None = None, citation: KnowCitation | None = None,
+    ) -> KnowNode:
+        """Edit one cited finding without changing its ID, owner, time or links."""
+        group_id, driver, _clients = self._resolve_request_scope(group_id)
+        return await KnowNode.update_know(
+            driver, uuid, group_id=group_id, name=name, observation=observation,
+            interpretation=interpretation, citation=citation,
+        )
+
+    async def remove_know(self, uuid: str, *, group_id: str | None = None) -> None:
+        """Remove one explicitly selected Know in its Project partition."""
+        group_id, driver, _clients = self._resolve_request_scope(group_id)
+        await KnowNode.remove_know(driver, uuid, group_id=group_id)
+
     async def search_knows(
         self,
         query: str,

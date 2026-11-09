@@ -547,9 +547,15 @@ async def add_know(
     direction: KnowDirection | None = None,
     uuid: str | None = None,
     mentions: list[str] | None = None,
-    relationships: list[KnowRelationship] | None = None,
+    relationships: Annotated[list[KnowRelationship] | None, Field(
+        description="For each meaningful outgoing relationship, supply target_entity_uuid and fact: "
+                    "authored prose explaining this Entity's directed connection, grounded in the cited Know. "
+                    "Jev classifies the prose. The target must already own a Know; use returned Entity IDs. "
+                    "An unchanged existing finding can be submitted with its relationships without creating a copy. "
+                    "Leave empty only when no meaningful supported connection is established.",
+    )] = None,
 ) -> KnowAcceptedResponse | ErrorResponse:
-    """Save one cited Know and its authored Entity-to-Entity relationship triplets.
+    """Save an Entity-owned Know, textual mentions, and Jev-classified prose relationships.
 
     Supply entity_uuid to reuse an exact owner (entity_name is then optional), or entity_name
     to reuse/create the owner with its first Know. relationships carries the supported connections
@@ -608,6 +614,49 @@ async def add_know(
         error_msg = str(e)
         logger.error(f'Error accepting Know: {error_msg}')
         return ErrorResponse(error=f'Error accepting Know: {error_msg}')
+
+
+@mcp.tool()
+async def update_know(
+    uuid: str,
+    observation: str | None = None,
+    interpretation: str | None = None,
+    citation: KnowCitation | None = None,
+    name: str | None = None,
+    group_id: str | None = None,
+) -> KnowResponse | ErrorResponse:
+    """Edit an exact Know in place after checking the observation against its source passage.
+
+    Omitted fields stay unchanged. ID, owner, creation time and existing links are preserved.
+    Do not add a corrected copy. Use this for a requested update or an evidence correction.
+    """
+    if graphiti_service is None:
+        return ErrorResponse(error='Graphiti service not initialized')
+    try:
+        client = await graphiti_service.get_client()
+        know = await client.update_know(
+            uuid, group_id=group_id or config.graphiti.group_id, name=name,
+            observation=observation, interpretation=interpretation, citation=citation,
+        )
+        return KnowResponse(message=f'Updated Know {uuid}', know=_know_result(know))
+    except Exception as e:
+        return ErrorResponse(error=f'Error updating Know: {e}')
+
+
+@mcp.tool()
+async def remove_know(uuid: str, group_id: str | None = None) -> SuccessResponse | ErrorResponse:
+    """Remove one exact Know only on a specific user removal request, direct or relayed by Main.
+
+    Rechecking, explaining or correcting a finding is not permission to remove it.
+    """
+    if graphiti_service is None:
+        return ErrorResponse(error='Graphiti service not initialized')
+    try:
+        client = await graphiti_service.get_client()
+        await client.remove_know(uuid, group_id=group_id or config.graphiti.group_id)
+        return SuccessResponse(message=f'Removed Know {uuid}')
+    except Exception as e:
+        return ErrorResponse(error=f'Error removing Know: {e}')
 
 
 @mcp.tool()
@@ -850,7 +899,7 @@ async def search_memory_facts(
 
 
 @mcp.tool()
-async def delete_entity_edge(uuid: str) -> SuccessResponse | ErrorResponse:
+async def delete_entity_edge(uuid: str, group_id: str | None = None) -> SuccessResponse | ErrorResponse:
     """Delete an entity edge from the graph memory.
 
     Args:
@@ -866,8 +915,17 @@ async def delete_entity_edge(uuid: str) -> SuccessResponse | ErrorResponse:
 
         # Get the entity edge by UUID
         entity_edge = await EntityEdge.get_by_uuid(client.driver, uuid)
-        # Delete the edge using its delete method
-        await entity_edge.delete(client.driver)
+        group = group_id or config.graphiti.group_id
+        if entity_edge.group_id != group:
+            return ErrorResponse(error='Relationship not found in this Project')
+        # Use Graphiti's edge primitive and remove dangling Know pointers together.
+        async with client.driver.transaction() as tx:
+            await client.driver.entity_edge_ops.delete(client.driver, entity_edge, tx=tx)
+            await tx.run(
+                'MATCH (know:Know {group_id:$group}) WHERE $uuid IN coalesce(know.entity_edges,[]) '
+                'SET know.entity_edges=[id IN know.entity_edges WHERE id<>$uuid]',
+                group=group, uuid=uuid,
+            )
         return SuccessResponse(message=f'Entity edge with UUID {uuid} deleted successfully')
     except Exception as e:
         error_msg = str(e)
@@ -905,7 +963,7 @@ async def delete_episode(uuid: str) -> SuccessResponse | ErrorResponse:
 
 
 @mcp.tool()
-async def get_entity_edge(uuid: str) -> dict[str, Any] | ErrorResponse:
+async def get_entity_edge(uuid: str, group_id: str | None = None) -> dict[str, Any] | ErrorResponse:
     """Get an entity edge from the graph memory by its UUID.
 
     Args:
@@ -921,6 +979,8 @@ async def get_entity_edge(uuid: str) -> dict[str, Any] | ErrorResponse:
 
         # Get the entity edge directly using the EntityEdge class method
         entity_edge = await EntityEdge.get_by_uuid(client.driver, uuid)
+        if entity_edge.group_id != (group_id or config.graphiti.group_id):
+            return ErrorResponse(error='Relationship not found in this Project')
 
         # Use the format_fact_result function to serialize the edge
         # Return the Python dict directly - MCP will handle serialization

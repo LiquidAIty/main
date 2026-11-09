@@ -3482,6 +3482,14 @@ def _record_gateway_execution(
 smart_mcp = MCPServer("engraphis_mcp", instructions=_SMART_SESSION_PROTOCOL,
                       log_level="WARNING")
 
+# Publish the existing governed owners, not a second content writer or remover.
+smart_mcp.tool(name="engraphis_correct", structured_output=False,
+               annotations={"title": "Correct existing Think content", "readOnlyHint": False,
+                            "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})(engraphis_correct)
+smart_mcp.tool(name="engraphis_retire", structured_output=False,
+               annotations={"title": "Remove a Think from the current graph", "readOnlyHint": False,
+                            "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})(engraphis_retire)
+
 
 def _normalize_session_action(value: Any) -> Any:
     """Tolerate callers that pass the full tool name as the session action.
@@ -3814,7 +3822,7 @@ def engraphis_get_memory(
     prompt-eligible content reaches the agent.
     """
     try:
-        record = service().inspect(memory_id=memory_id, workspace=workspace, repo=repo)
+        record = service().inspect(memory_id=memory_id, workspace=workspace, repo=repo, follow_corrections=True)
     except Exception as exc:  # noqa: BLE001 — Smart gateway classification
         return _classify_gateway_exception(exc)
     try:

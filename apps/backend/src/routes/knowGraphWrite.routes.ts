@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: KnowGraph
- * Relationship: This file accepts bounded PDF ingestion and episode deletion requests and returns only application-owned Graphiti write results.
+ * Relationship: Transports bounded PDF ingestion and exact Know edits/removal to the existing Project-scoped Graphiti writer.
  * Entity: Authentication
  * Relationship: This file requires an authenticated Project owner before forwarding KnowGraph writes.
  */
@@ -13,6 +13,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { isDevelopmentEnvironment } from '../services/requestPayloadLimits';
+import { notifyThinkGraphChanged } from './thinkGraph.routes';
 
 const router = Router();
 
@@ -240,6 +241,29 @@ router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
         message: 'KnowGraph ingest service is unavailable.',
       },
     });
+  }
+});
+
+router.post('/edit-know', async (req, res) => {
+  const userId = String((req as any).userId || '').trim();
+  if (!userId) return res.status(401).json({ error: 'Authentication required.' });
+  const projectId = (await getOwnedProjectByReference(String(req.body?.project_id || ''), userId))?.id;
+  if (!projectId) return res.status(404).json({ error: 'KnowGraph project not found.' });
+  if (typeof req.body?.uuid !== 'string' || !req.body.uuid.trim()) {
+    return res.status(400).json({ error: 'Exact Know UUID required.' });
+  }
+  try {
+    const { uuid, name, observation, interpretation, citation } = req.body;
+    const response = await fetch(`${knowgraphBaseUrl()}/edit_know`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, uuid, name, observation, interpretation, citation }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const result = await readResponseDataSafe(response);
+    if (response.ok) notifyThinkGraphChanged(projectId, 'knowgraph');
+    return res.status(response.status).json(result);
+  } catch {
+    return res.status(502).json({ error: 'KnowGraph edit service is unavailable.' });
   }
 });
 

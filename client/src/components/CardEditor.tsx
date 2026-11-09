@@ -833,7 +833,7 @@ export function CardEditor({
         cardName,
         String(payload.prompt_template || ''),
       );
-      const profileModel = String(payload.model_key || '').trim() || undefined;
+      const profileModel = String(payload.runtime_options?.providerModelId || payload.model_key || '').trim() || undefined;
       const profileProvider = hermesProfileProvider(
         payload.provider,
         payload.access_mode,
@@ -875,7 +875,8 @@ export function CardEditor({
               savedSubagentModel.accessMode,
             ),
             model: savedSubagentModel.providerModelId || savedSubagentModel.modelKey,
-            reasoningEffort: '',
+            // The Card exposes one effort control; its leaf inherits that choice.
+            reasoningEffort: payload.reasoning_effort || '',
           }
         : null;
       const botModeRoster = payload.runtime.mode === 'magentic_one'
@@ -896,6 +897,9 @@ export function CardEditor({
         description: profileDescription,
         model: profileModel,
         provider: profileProvider,
+        reasoningEffort: payload.reasoning_effort || '',
+        subagentType: payload.runtime.mode === 'magentic_one'
+          ? undefined : payload.runtime_options?.subagentType,
         enabledSkills: selectedSkills,
         autoLoadSkills: selectedSkills,
         enabledToolsets: [...enabledToolsets],

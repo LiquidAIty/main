@@ -524,6 +524,62 @@ def test_know_publication_year_is_not_promoted_to_a_runtime_timestamp():
     assert "reference_time" not in result
 
 
+def test_relationship_removal_uses_graphitis_dictionary_response(monkeypatch):
+    import asyncio
+
+    calls = []
+    async def delete_entity_edge(**arguments):
+        calls.append(arguments)
+        # Graphiti's SuccessResponse is a TypedDict, not a Pydantic object.
+        return {"message": "Entity edge removed"}
+    async def notify(project, payload):
+        calls.append((project, payload["status"]))
+    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE", SimpleNamespace(
+        delete_entity_edge=delete_entity_edge,
+    ))
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: {"projectId": "project-1"})
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: {})
+    monkeypatch.setattr(mcp_graphiti_provider, "_notify_know_change", notify)
+    result = asyncio.run(mcp_graphiti_provider.call_graphiti_tool(
+        "delete_entity_edge", {"uuid": "edge-one", "group_id": "liquidaity-project-1"},
+    ))
+    wire = result.model_dump(by_alias=True)
+    assert wire["isError"] is False
+    assert wire["structuredContent"]["result"]["relationship_uuid"] == "edge-one"
+    assert calls == [{"uuid": "edge-one", "group_id": "liquidaity-project-1"}, ("project-1", "completed")]
+
+
+def test_duplicate_relationship_submission_retries_incomplete_settlement(monkeypatch):
+    import asyncio
+
+    settled = []
+    know = SimpleNamespace(uuid="same-know", content_hash="same-hash", group_id="liquidaity-project-1",
+                           entity_uuid="same-owner", entity_edges=["existing-edge"])
+    async def add_know(**arguments):
+        return SimpleNamespace(know=know, entity=SimpleNamespace(name="Study"),
+                               created=False, entity_created=False, relationships=[])
+    async def settle(project, uuid):
+        settled.append((project, uuid))
+        return {"status": "success", "classified_fact_count": 1}
+    async def notify(project, payload):
+        pass
+    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE", SimpleNamespace(
+        graphiti_client=SimpleNamespace(add_know=add_know), _know_result=lambda value: {"uuid": value.uuid},
+    ))
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: {"projectId": "project-1"})
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: {})
+    monkeypatch.setattr(mcp_graphiti_provider, "_notify_know_change", notify)
+    monkeypatch.setattr(mcp_graphiti_provider, "_settle_research_relationships", settle)
+    result = asyncio.run(mcp_graphiti_provider.call_graphiti_tool("add_know", {
+        "group_id": "liquidaity-project-1",
+        "relationships": [{"target_entity_uuid": "product", "fact": "Study uses product"}],
+    })).model_dump(by_alias=True)
+    assert settled == [("project-1", "same-know")]
+    assert result["isError"] is False
+    assert result["structuredContent"]["result"]["created"] is False
+    assert result["structuredContent"]["result"]["relationships"] == ["existing-edge"]
+
+
 def test_know_tool_does_not_offer_a_model_authored_timestamp():
     schema = {"inputSchema": {
         "properties": {"reference_time": {"type": "string"}, "citation": {"type": "object"}},

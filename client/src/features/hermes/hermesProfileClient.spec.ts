@@ -103,6 +103,8 @@ describe('Hermes profile skill binding', () => {
       if (path.startsWith('/api/mcp/servers')) return { servers: structuredClone(servers) };
       if (path.startsWith('/api/config') && init?.method === 'PUT') {
         const body = JSON.parse(String(init.body || '{}')).config || {};
+        if (body.agent) config.agent = { ...(config.agent || {}), ...body.agent };
+        if (body.delegation) config.delegation = { ...(config.delegation || {}), ...body.delegation };
         if (body.skills) config.skills = { ...(config.skills || {}), ...body.skills };
         if (body.memory) config.memory = { ...(config.memory || {}), ...body.memory };
         if (body.auxiliary) config.auxiliary = {
@@ -178,6 +180,41 @@ describe('Hermes profile skill binding', () => {
       provider: 'openai-codex',
       default: 'gpt-5.6-sol',
     });
+  });
+
+  it('publishes parent effort and a selected one-level child without changing MCP grants or Bot wires', async () => {
+    described.toolsets.push({ name: 'delegation', enabled: false });
+    described.bot_mode_roster = ['builder'];
+    config.delegation = { model: 'old', max_spawn_depth: 4, orchestrator_enabled: true };
+    const result = await configureHermesProfile({
+      profile: 'knowgraph', model: 'gpt-6.1-terra', provider: 'openai-codex',
+      reasoningEffort: 'low', subagentType: 'leaf',
+      subagentModel: { provider: 'openai-codex', model: 'gpt-6.1-terra', reasoningEffort: 'low' },
+    });
+    expect(config.agent.reasoning_effort).toBe('low');
+    expect(config.delegation).toMatchObject({
+      provider: 'openai-codex', model: 'gpt-6.1-terra', reasoning_effort: 'low',
+      max_spawn_depth: 1, orchestrator_enabled: false,
+    });
+    expect(result.subagentType).toBe('leaf');
+    expect(result.reasoningEffort).toBe('low');
+    expect(result.subagentModel.reasoningEffort).toBe('low');
+    expect(result.botModeRoster).toEqual(['builder']);
+    expect(result.applicationTools).toEqual(['engraphis_get_memory']);
+  });
+
+  it('None removes only native delegation and an unrelated save preserves leaf configuration', async () => {
+    described.toolsets.push({ name: 'delegation', enabled: true });
+    config.agent = { reasoning_effort: 'low' };
+    config.delegation = { model: 'gpt-6-luna', reasoning_effort: 'low', max_spawn_depth: 1, orchestrator_enabled: false };
+    await configureHermesProfile({ profile: 'trading', soul: 'Updated prose.' });
+    expect(config.delegation.model).toBe('gpt-6-luna');
+    expect(config.agent.reasoning_effort).toBe('low');
+    expect(described.toolsets.find((toolset: any) => toolset.name === 'delegation').enabled).toBe(true);
+    const result = await configureHermesProfile({ profile: 'trading', subagentType: 'none' });
+    expect(result.subagentType).toBe('none');
+    expect(result.toolsets.filter((toolset) => toolset.enabled).map((toolset) => toolset.name)).toEqual(['web']);
+    expect(result.applicationTools).toEqual(['engraphis_get_memory']);
   });
 
   it('publishes and reads back Bot Mode roster without loading tools, MCP, or skills', async () => {

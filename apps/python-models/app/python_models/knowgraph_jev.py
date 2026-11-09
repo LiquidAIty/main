@@ -104,7 +104,10 @@ def _episode_context(value: Any) -> list[dict[str, Any]]:
                 "reference_time", "fetched_at",
             )
             if item.get(key) is not None
-        } | {"content": _bounded_text(content, 4_000)})
+        # A web-research Know may legally contain 8k observation + 8k
+        # interpretation + 12k evidence, plus bounded citation/proposition text.
+        # Preserve that stored source, rather than rejecting it as a 4k preview.
+        } | {"content": _bounded_text(content, 40_000 if item.get("source_type") == "web_research" else 4_000)})
     return bounded
 
 

@@ -38,7 +38,6 @@ GRANT_FIELDS = {
 _RETIRED_HERMES_TOOL_MARKER_PREFIX = "hermes:tool:"
 _RETIRED_CARD_TOOL_IDS = frozenset({
     "card.load_graph_references",
-    "engraphis_correct",
     "engraphis_ingest",
     "engraphis_link",
     "write_mag_one_instructions",

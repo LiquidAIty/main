@@ -10,7 +10,7 @@
  * Relationship: Presents Think details and the research tag, and lazily opens cited source excerpts before the full exchange.
  *
  * Entity: KnowGraph
- * Relationship: This file presents bounded first-class Knows and safe HTTPS citation provenance for the exact selected Graphiti Entity without rendering citations as graph nodes.
+ * Relationship: Presents and edits exact first-class Knows and safe citation provenance through the Project-scoped Graphiti writer, without rendering citations as nodes.
  *
  * Entity: CodeGraph
  * Relationship: This file presents File identity, source-owned category contributions, directed structural file neighbors, and explicitly loaded source without creating another Inspector.
@@ -202,6 +202,24 @@ export function ThinkRecordCard({
   const relationships = thinkRelationships(item);
   const detail = item.detail ?? item.metadata?.structured_extraction?.think?.detail;
   const researchRequested = item.researchRequested ?? item.metadata?.structured_extraction?.think?.researchRequested;
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { setDraft(null); setError(''); }, [item.id]);
+  const save = async () => {
+    if (draft === null || !projectId) return;
+    setSaving(true); setError('');
+    try {
+      const response = await applicationFetch('/api/thinkgraph/correct', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, memoryId: item.id, content: draft }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(String(result.error || 'Could not edit this Think.'));
+      setDraft(null);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+    finally { setSaving(false); }
+  };
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
       <h4>{renderText ? renderText(String(item.title || heading)) : String(item.title || heading)}</h4>
@@ -209,7 +227,12 @@ export function ThinkRecordCard({
     {entryTime ? <p className="graph-record-time"><time dateTime={entryTime.dateTime}>
       {entryTime.label}
     </time></p> : null}
-    {summary ? <p>{renderText ? renderText(summary) : summary}</p> : null}
+    {draft !== null ? <form className="graph-record-edit" onSubmit={event => { event.preventDefault(); void save(); }}>
+      <label>Think content<textarea required maxLength={100000} value={draft} onChange={event => setDraft(event.target.value)} /></label>
+      <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+      <button type="button" disabled={saving} onClick={() => { setDraft(null); setError(''); }}>Cancel</button>
+    </form> : summary ? <p>{renderText ? renderText(summary) : summary}</p> : null}
+    {error ? <p role="alert">{error}</p> : null}
     {typeof detail === 'string' && detail.trim() && detail !== summary ? <details>
       <summary>More</summary>
       <p>{renderText ? renderText(detail) : detail}</p>
@@ -221,7 +244,9 @@ export function ThinkRecordCard({
     {researchRequested === true ? <small>Research requested</small> : null}
     {projectId ? <ThinkSourceExchange key={`${projectId}:${item.id}`} projectId={projectId} memoryId={String(item.id)}
       chunkCount={item.metadata?.thinkgraph_origin?.source_chunks?.length ?? 0} /> : null}
-    {onRemove ? <button type="button" aria-label="Delete record" disabled={removing}
+    {projectId && draft === null ? <button type="button" aria-label="Edit record" disabled={removing}
+      onClick={() => setDraft(summary || '')}>Edit</button> : null}
+    {onRemove && draft === null ? <button type="button" aria-label="Delete record" disabled={removing}
       style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }} onClick={() => {
       onRemove();
     }}>
@@ -323,12 +348,14 @@ function uniqueRecordSources(records: KnowInspectorRecord[]): SourceLinkView[] {
 
 export function KnowGraphKnow({
   record,
+  projectId,
   heading,
   removing = false,
   onRemove,
   renderText,
 }: {
   record: KnowInspectorRecord;
+  projectId?: string;
   heading: string;
   removing?: boolean;
   onRemove?: () => void;
@@ -364,9 +391,44 @@ export function KnowGraphKnow({
   const proposition = typeof direction.proposition === 'string'
     ? direction.proposition.trim()
     : '';
+  const [draft, setDraft] = useState<{
+    observation: string; interpretation: string; citation: Record<string, unknown>;
+  } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  useEffect(() => { setDraft(null); setEditError(null); }, [episodeId]);
+  const save = async () => {
+    if (!draft || !projectId) return;
+    setSaving(true); setEditError(null);
+    try {
+      const response = await applicationFetch('/api/knowgraph/edit-know', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, uuid: episodeId, ...draft }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(typeof result.error === 'string' ? result.error : 'Could not edit this Know.');
+      setDraft(null);
+    } catch (error) { setEditError(error instanceof Error ? error.message : String(error)); }
+    finally { setSaving(false); }
+  };
   return <section className="graph-note graph-know" data-episode-id={episodeId}>
     <div className="graph-think-heading"><h5>{renderText ? renderText(String(know.title || heading)) : String(know.title || heading)}</h5></div>
-    <>
+    {draft ? <form className="graph-record-edit" onSubmit={event => { event.preventDefault(); void save(); }}>
+      <label>Finding<textarea required maxLength={8000} value={draft.observation}
+        onChange={event => setDraft({ ...draft, observation: event.target.value })} /></label>
+      <label>Interpretation<textarea required maxLength={8000} value={draft.interpretation}
+        onChange={event => setDraft({ ...draft, interpretation: event.target.value })} /></label>
+      {(['url', 'title', 'publisher', 'locator'] as const).map(field => <label key={field}>
+        {({ url: 'Citation URL', title: 'Citation title', publisher: 'Publisher', locator: 'Source location' })[field]}
+        <input required={field !== 'locator'} value={String(draft.citation[field] || '')}
+          onChange={event => setDraft({ ...draft, citation: { ...draft.citation, [field]: event.target.value } })} />
+      </label>)}
+      <label>Source passage<textarea required minLength={20} maxLength={12000}
+        value={String(draft.citation.evidence || '')}
+        onChange={event => setDraft({ ...draft, citation: { ...draft.citation, evidence: event.target.value } })} /></label>
+      <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+      <button type="button" disabled={saving} onClick={() => { setDraft(null); setEditError(null); }}>Cancel</button>
+    </form> : <>
       {observation ? <div className="graph-know-finding">
         <strong>Finding</strong>
         <p>{renderText ? renderText(observation) : observation}</p>
@@ -389,10 +451,13 @@ export function KnowGraphKnow({
         <summary>Source passage</summary>
         <blockquote>{evidence}</blockquote>
       </details> : null}
-    </>
+    </>}
+    {editError ? <p role="alert">{editError}</p> : null}
     {entryTime ? <p className="graph-record-time"><span>Retrieved</span>{' '}<time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
     {sourceDate ? <p className="graph-record-time"><span>Source date</span>{' '}<time dateTime={sourceDate.dateTime}>{sourceDate.label}</time></p> : null}
-    {onRemove ? <button
+    {projectId && !draft ? <button type="button" aria-label="Edit record" disabled={removing}
+      onClick={() => { setDraft({ observation, interpretation, citation: { ...citation } }); setEditError(null); }}>Edit</button> : null}
+    {onRemove && !draft ? <button
       type="button"
       aria-label="Delete record"
       disabled={removing}

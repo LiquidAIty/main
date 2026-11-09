@@ -105,6 +105,27 @@ def test_choice_uses_exact_vocabulary_and_preserves_graphiti_fact() -> None:
     assert result["novel_relationship_candidate"] == ""
 
 
+def test_full_legal_know_source_is_not_rejected_as_an_episode_preview() -> None:
+    from graphiti_core.knows import KnowCitation, KnowDirection, know_episode_content
+
+    content = know_episode_content(
+        observation="o" * 8_000, interpretation="i" * 8_000,
+        citation=KnowCitation(url="https://example.test/source", title="t" * 1_000,
+                             publisher="p" * 1_000, evidence="e" * 12_000,
+                             locator="l" * 1_000, publishedAt="d" * 1_000, eventAt="d" * 1_000),
+        direction=KnowDirection(proposition="p" * 4_000, relation="context"),
+    )
+    fact = graphiti_fact()
+    fact["supportingEpisodes"] = [{"uuid": "know-1", "source_type": "web_research", "content": content}]
+    captured = {}
+    def transport(body):
+        captured.update(body)
+        return choice_response()
+    classify_knowgraph_fact(fact, transport=transport)
+    assert len(content) > 4_000
+    assert captured["state"]["supporting_source_episodes"][0]["content"] == content
+
+
 def test_materially_malformed_probability_total_is_rejected() -> None:
     response = choice_response()
     response["answers"]["relationship"]["probabilities"]["PROVIDES"] = 0.50

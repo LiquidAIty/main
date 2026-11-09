@@ -4,7 +4,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
-# Relationship: Binds Engraphis Smart operations and the Entity-owned Think-writing tool to authenticated Project scope, with retained application reads and retirements.
+# Relationship: Binds Engraphis Think writes, corrections, lineage-aware reads and retirement to authenticated Project scope.
 # Entity: Tool Catalog
 # Relationship: This file projects the installed Smart operation schemas, explicit effects, grant eligibility, and ThinkGraph-only update ceiling into canonical definitions.
 # Entity: Data Anchors
@@ -47,6 +47,8 @@ WRITE_TOOLS = frozenset({
     "engraphis_add_thinks",
     "engraphis_session",
     "engraphis_update_memory",
+    "engraphis_correct",
+    "engraphis_retire",
 })
 
 
@@ -142,7 +144,7 @@ def operation_definitions() -> list[Any]:
                 },
                 grant_profiles=(
                     frozenset({"thinkgraph"})
-                    if name in {"engraphis_update_memory", "engraphis_add_thinks"} else frozenset()
+                    if name in {"engraphis_update_memory", "engraphis_add_thinks", "engraphis_correct", "engraphis_retire"} else frozenset()
                 ),
                 external_source_id="engraphis",
                 output_schema=deepcopy(item.get("outputSchema")),
@@ -224,6 +226,9 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
                     not data.get("semantic_support") or data.get("degraded_mode")
                 ):
                     raise RuntimeError("thinkgraph_semantic_search_unavailable")
+                if name in {"engraphis_correct", "engraphis_retire"}:
+                    from app.backend_operation_transport import notify_graph_changed
+                    await asyncio.to_thread(notify_graph_changed, project, project_principal(project)["id"], "thinkgraph")
                 return data
     raise RuntimeError("thinkgraph_result_invalid")
 
@@ -294,7 +299,8 @@ def inspect(project: str, id_field: str, identifier: str) -> dict:
         return {"entity": entity}
     if id_field != "engraphisMemoryId":
         raise ValueError("engraphis_reference_type_invalid")
-    result = service.inspect(identifier, workspace=project)
+    result = service.inspect(identifier, workspace=project, follow_corrections=True)
+    identifier = result["memory"]["id"]
     result["memory"]["metadata"] = public_think_metadata(
         service.store.get_memory(identifier).metadata
     )

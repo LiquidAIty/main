@@ -81,6 +81,38 @@ afterEach(() => {
 });
 
 describe('KnowGraph document project authority', () => {
+  it('edits only the exact record in the authenticated Project and discards owner overrides', async () => {
+    process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
+    mocks.getOwnedProjectByReference.mockResolvedValueOnce({ id: 'project-canonical' });
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const forwarded: unknown[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (String(input) === 'http://knowgraph.test/edit_know') {
+        forwarded.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      }
+      return realFetch(input, init);
+    });
+    const { server, baseUrl } = await createApiServer('user-one');
+    try {
+      const response = await fetch(`${baseUrl}/edit-know`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: 'project-alias', uuid: 'exact-know',
+          observation: 'Corrected observation.', entity_uuid: 'different-owner', group_id: 'foreign' }),
+      });
+      expect(response.status).toBe(200);
+      expect(forwarded).toEqual([{ project_id: 'project-canonical', uuid: 'exact-know',
+        observation: 'Corrected observation.' }]);
+      mocks.getOwnedProjectByReference.mockResolvedValueOnce(null);
+      const denied = await fetch(`${baseUrl}/edit-know`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: 'foreign', uuid: 'exact-know', observation: 'No.' }),
+      });
+      expect(denied.status).toBe(404);
+      expect(forwarded).toHaveLength(1);
+    } finally { await closeServer(server); }
+  });
+
   it('resolves the authenticated project selector to its canonical id before Graphiti ingest', async () => {
     process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
     mocks.getOwnedProjectByReference.mockResolvedValueOnce({ id: 'project-canonical' });

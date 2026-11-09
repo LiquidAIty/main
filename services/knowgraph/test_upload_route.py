@@ -30,6 +30,7 @@ APP_SPEC = importlib.util.spec_from_file_location(
 if APP_SPEC is None or APP_SPEC.loader is None:
     raise RuntimeError("Unable to load services/knowgraph/app.py")
 app = importlib.util.module_from_spec(APP_SPEC)
+sys.modules[APP_SPEC.name] = app
 APP_SPEC.loader.exec_module(app)
 
 import graphiti_runtime
@@ -47,6 +48,24 @@ async def _request(method: str, path: str, **kwargs: object) -> httpx.Response:
 
 
 class KnowGraphUploadRouteTests(unittest.TestCase):
+    def test_edit_know_uses_the_existing_writer_with_exact_project_and_record(self) -> None:
+        written = {"uuid": "know-one", "entity_uuid": "owner-one"}
+        graphiti = SimpleNamespace(
+            update_know=AsyncMock(return_value=SimpleNamespace(model_dump=lambda **_: written)),
+            driver=SimpleNamespace(close=AsyncMock()),
+        )
+        with patch.object(graphiti_runtime, "create_graphiti_runtime", return_value=(None, graphiti, None)):
+            response = asyncio.run(_request("POST", "/edit_know", json={
+                "project_id": "project-one", "uuid": "know-one", "observation": "Corrected observation.",
+            }))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "know": written})
+        graphiti.update_know.assert_awaited_once_with(
+            "know-one", group_id="liquidaity-project-one", name=None,
+            observation="Corrected observation.", interpretation=None, citation=None,
+        )
+        graphiti.driver.close.assert_awaited_once()
+
     def test_research_settlement_reads_one_scoped_know_without_custom_client_api(self) -> None:
         import jev_fact_settlement
         row = {"content": "Verified observation and interpretation", "title": "Source",

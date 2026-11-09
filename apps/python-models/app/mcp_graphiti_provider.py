@@ -237,7 +237,7 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
     graphiti_module_ref = _GRAPHITI_MODULE
     if graphiti_module_ref is None:
         raise RuntimeError("graphiti_not_initialized")
-    if name == "add_know":
+    if name in {"add_know", "update_know", "remove_know", "delete_entity_edge"}:
         from app import mcp_auth
         from graphiti_core.knows import KnowCitation, KnowDirection
         from graphiti_core.utils.datetime_utils import utc_now
@@ -248,9 +248,28 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
         if not project_id or arguments.get("group_id") != f"liquidaity-{project_id}":
             raise PermissionError("know_project_scope_mismatch")
         args = dict(arguments)
-        args["citation"] = KnowCitation.model_validate(args["citation"])
+        if args.get("citation") is not None:
+            args["citation"] = KnowCitation.model_validate(args["citation"])
         if args.get("direction"):
             args["direction"] = KnowDirection.model_validate(args["direction"])
+        if name != "add_know":
+            if name == "update_know":
+                know = await graphiti_module_ref.graphiti_client.update_know(**args)
+                payload = {"status": "completed", "know_uuid": know.uuid,
+                           "know": graphiti_module_ref._know_result(know), "message": "Know updated in place."}
+            elif name == "remove_know":
+                await graphiti_module_ref.graphiti_client.remove_know(**args)
+                payload = {"status": "completed", "know_uuid": args["uuid"], "message": "Know removed."}
+            else:
+                result = await graphiti_module_ref.delete_entity_edge(**args)
+                if result.get("error"):
+                    raise ValueError(result["error"])
+                payload = {"status": "completed", "relationship_uuid": args["uuid"], "message": result["message"]}
+            await _notify_know_change(project_id, payload)
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
+                structuredContent={"result": payload}, isError=payload["status"] != "completed",
+            )
         args["reference_time"] = utc_now()
         written = await graphiti_module_ref.graphiti_client.add_know(**args)
         payload = {
@@ -260,12 +279,14 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
             "group_id": written.know.group_id,
             "entity_name": written.entity.name,
             "entity_uuid": written.know.entity_uuid,
-            "know": graphiti_module_ref._know_result(written.know),
             "created": written.created, "entity_created": written.entity_created,
             "relationships": [edge.uuid for edge in written.relationships],
         }
         try:
-            if written.relationships:
+            if args.get("relationships"):
+                # A duplicate write can be retrying a prior partial settlement.
+                # Existing edge IDs stay stable; Jev itself reuses current decisions.
+                payload["relationships"] = list(written.know.entity_edges)
                 payload["jev"] = await _settle_research_relationships(project_id, written.know.uuid)
                 if payload["jev"].get("status") not in {"success", "current"}:
                     payload["status"] = "partial"
@@ -273,21 +294,28 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
                 payload["jev"] = {"status": "not_applicable", "classified_fact_count": 0}
         except Exception as error:
             payload.update(status="partial", error=str(error))
-        try:
-            from app.backend_operation_transport import notify_graph_changed
-            from app.python_models.engraphis import project_principal
-            await asyncio.to_thread(
-                notify_graph_changed, project_id, project_principal(project_id)["id"], "knowgraph",
-            )
-        except Exception as error:
-            payload.update(status="partial", visibility="notification_failed", notificationError=str(error))
+        await _notify_know_change(project_id, payload)
         if payload["status"] != "completed":
             payload["message"] = "Know stored; relationship settlement or graph notification is incomplete."
+        # Keep outcome and repair details ahead of the long evidence record in
+        # bounded Hermes tool output. The exact Know remains available unchanged.
+        payload["know"] = graphiti_module_ref._know_result(written.know)
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
             structuredContent={"result": payload}, isError=payload["status"] != "completed",
         )
     return await graphiti_module_ref.mcp.call_tool(name, dict(arguments))
+
+
+async def _notify_know_change(project_id: str, payload: dict) -> None:
+    try:
+        from app.backend_operation_transport import notify_graph_changed
+        from app.python_models.engraphis import project_principal
+        await asyncio.to_thread(
+            notify_graph_changed, project_id, project_principal(project_id)["id"], "knowgraph",
+        )
+    except Exception as error:
+        payload.update(status="partial", visibility="notification_failed", notificationError=str(error))
 
 
 async def _settle_research_relationships(project_id: str, know_id: str) -> dict[str, Any]:

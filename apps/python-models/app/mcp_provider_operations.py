@@ -51,6 +51,8 @@ _CARD_CATALOG_PROVIDER_TOOL_NAMES = {
     }),
     "graphiti": frozenset({
         "add_know",
+        "update_know",
+        "remove_know",
         "add_memory",
         "build_communities",
         "clear_graph",
@@ -82,6 +84,8 @@ _PROVIDER_TOOL_TITLES = {
     },
     "graphiti": {
         "add_know": "Add a Know to an Entity",
+        "update_know": "Edit an exact Know",
+        "remove_know": "Remove an exact Know",
         "add_memory": "Add a KnowGraph memory episode",
         "build_communities": "Build KnowGraph communities",
         "clear_graph": "Clear KnowGraph data",
@@ -124,6 +128,24 @@ def _inline_graphiti_know_schema(payload: dict[str, Any]) -> None:
         return {key: inline(item) for key, item in value.items()}
 
     schema["properties"] = properties = inline(properties)
+    if "observation" in properties:
+        properties["observation"]["description"] = (
+            "One source-backed finding. Every factual detail must be supported by citation.evidence. "
+            "Do not put a proposed experiment or untested hypothesis here."
+        )
+    if "interpretation" in properties:
+        properties["interpretation"]["description"] = (
+            "Bounded implications and limitations of the cited observation, separate from what the source establishes."
+        )
+    citation_schema = properties.get("citation", {})
+    for variant in [citation_schema, *citation_schema.get("anyOf", [])]:
+        evidence = variant.get("properties", {}).get("evidence")
+        if isinstance(evidence, dict):
+            evidence["description"] = (
+                "Verbatim supporting passages from this cited document, covering all factual details in observation. "
+                "Include the relevant numbers and table rows; headings or fragments alone are not evidence for omitted details. "
+                "Use locator to identify the sections or pages."
+            )
     properties.pop("update_communities", None)
     properties.pop("reference_time", None)
     required = schema.get("required")
@@ -187,7 +209,7 @@ def namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
             "connectionKind": "external-mcp",
         }
         payload["_meta"] = meta
-        if provider == "graphiti" and provider_tool_name == "add_know":
+        if provider == "graphiti" and provider_tool_name in {"add_know", "update_know"}:
             _inline_graphiti_know_schema(payload)
         if provider == "graphiti" and provider_tool_name == "get_episodes":
             schema = copy.deepcopy(payload.get("inputSchema") or {})

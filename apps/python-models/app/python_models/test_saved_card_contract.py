@@ -92,6 +92,14 @@ def test_saved_profiles_stay_unique_and_stable_grants_are_preserved():
         }, "d")
 
 
+def test_current_think_correction_grant_survives_saved_card_projection():
+    card = _agent("thinkgraph")
+    card["runtimeOptions"]["tools"] = ["engraphis_get_memory", "engraphis_correct"]
+    assert saved_card_contract.stable_card_record(card)["grants"]["tools"] == [
+        "engraphis_get_memory", "engraphis_correct",
+    ]
+
+
 @pytest.mark.parametrize("effort", ("low", "medium", "high", "xhigh", "max", "ultra"))
 def test_reasoning_effort_uses_one_saved_enum(effort: str) -> None:
     card = _agent("reasoning-card")

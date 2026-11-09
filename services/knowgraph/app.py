@@ -4,7 +4,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
-# Relationship: This file exposes bounded PDF ingestion, Project-scoped Know and episode deletion, process-authenticated research settlement, provider-safe ingestion errors, and runtime health.
+# Relationship: Exposes PDF ingestion, exact Project-scoped Know edits/removal, episode deletion, research settlement, provider-safe errors and health through Graphiti's owners.
 # Entity: Jev Decisions
 # Relationship: This file loads one persisted Know and its actual Graphiti facts, then supplies web evidence and Project vocabulary to the existing Jev settlement owner.
 
@@ -20,6 +20,7 @@ from fastapi import FastAPI, File, Form, UploadFile, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from graphiti_core.errors import NodeNotFoundError
+from graphiti_core.knows import KnowCitation
 from graphiti_core.helpers import parse_db_date
 
 import graphiti_runtime
@@ -36,6 +37,33 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 class GraphitiEpisodeDeleteRequest(BaseModel):
     project_id: str
     graphiti_episode_uuid: str
+
+
+class KnowEditRequest(BaseModel):
+    project_id: str
+    uuid: str
+    name: str | None = None
+    observation: str | None = None
+    interpretation: str | None = None
+    citation: KnowCitation | None = None
+
+
+@app.post("/edit_know")
+async def edit_know(payload: KnowEditRequest) -> JSONResponse:
+    _runtime, graphiti, _database = graphiti_runtime.create_graphiti_runtime()
+    try:
+        know = await graphiti.update_know(
+            payload.uuid, group_id=graphiti_project_group_id(payload.project_id),
+            name=payload.name, observation=payload.observation,
+            interpretation=payload.interpretation, citation=payload.citation,
+        )
+        return JSONResponse(content={"ok": True, "know": know.model_dump(mode="json", by_alias=True)})
+    except NodeNotFoundError:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "Know not found in this Project."})
+    except ValueError as exc:
+        return JSONResponse(status_code=409, content={"ok": False, "error": str(exc)})
+    finally:
+        await graphiti.driver.close()
 
 
 class ResearchSettlementRequest(BaseModel):
@@ -107,24 +135,7 @@ async def _delete_graphiti_episode(
         if knows:
             if len(knows) != 1 or knows[0]["group_id"] != expected_group:
                 raise LookupError("knowgraph_graphiti_episode_not_found")
-            async with graphiti.driver.transaction() as tx:
-                await tx.run(
-                    "MATCH ()-[r:RELATES_TO {group_id:$group}]->() "
-                    "WHERE $uuid IN coalesce(r.supporting_know_uuids,[]) "
-                    "AND all(id IN r.supporting_know_uuids WHERE id=$uuid) "
-                    "AND size(coalesce(r.episodes,[]))=0 DELETE r",
-                    uuid=payload.graphiti_episode_uuid, group=expected_group,
-                )
-                await tx.run(
-                    "MATCH ()-[r:RELATES_TO {group_id:$group}]->() "
-                    "WHERE $uuid IN coalesce(r.supporting_know_uuids,[]) "
-                    "SET r.supporting_know_uuids=[id IN r.supporting_know_uuids WHERE id<>$uuid]",
-                    uuid=payload.graphiti_episode_uuid, group=expected_group,
-                )
-                await tx.run(
-                    "MATCH (know:Know {uuid:$uuid,group_id:$group}) DETACH DELETE know",
-                    uuid=payload.graphiti_episode_uuid, group=expected_group,
-                )
+            await graphiti.remove_know(payload.graphiti_episode_uuid, group_id=expected_group)
         else:
             episode = await EpisodicNode.get_by_uuid(graphiti.driver, payload.graphiti_episode_uuid)
             if episode.group_id != expected_group:

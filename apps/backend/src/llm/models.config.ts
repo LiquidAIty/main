@@ -20,13 +20,29 @@ export type ConfiguredModelOption = {
 
 /**
  * The ACTIVE, selectable model catalog. Account-login entries are the currently
- * supported OpenAI GPT-5 family. OpenRouter entries are curated defaults that
+ * supported OpenAI GPT families. OpenRouter entries are curated defaults that
  * were ALL confirmed present in the live provider catalog (checked 2026-08-05).
  *
  * No stale/discontinued entries are retained here: anything absent is an
  * unknown key at resolution time and fails honestly.
  */
 export const MODEL_REGISTRY: Record<string, ModelEntry> = {
+  // Confirmed by the authenticated Hermes openai-codex catalog, 2026-11-09.
+  "gpt-6.1-sol": {
+    label: "GPT-6.1 Sol", provider: "openai", id: "gpt-6.1-sol",
+  },
+  "gpt-6.1-terra": {
+    label: "GPT-6.1 Terra", provider: "openai", id: "gpt-6.1-terra",
+  },
+  "gpt-6-astra": {
+    label: "GPT-6 Astra", provider: "openai", id: "gpt-6-astra",
+  },
+  "gpt-6-sol": {
+    label: "GPT-6 Sol", provider: "openai", id: "gpt-6-sol",
+  },
+  "gpt-6-luna": {
+    label: "GPT-6 Luna", provider: "openai", id: "gpt-6-luna",
+  },
   // --- OpenAI GPT-5.6 family (account-login / OAuth runtime) ---
   "gpt-5.6-sol": {
     label: "GPT-5.6 Sol", provider: "openai", id: "gpt-5.6-sol",

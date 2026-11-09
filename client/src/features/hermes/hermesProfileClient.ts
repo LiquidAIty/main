@@ -1,6 +1,6 @@
 /**
  * Entity: Card Profiles
- * Relationship: Reads and configures one Hermes profile through profiles.describe/configure and authenticated Hermes Webapp APIs, including profile-scoped skill files, Holographic-only memory policy, skill auto-load, and exact MCP tool-selection readback.
+ * Relationship: Reads and configures one Hermes profile through profiles.describe/configure and authenticated Hermes Webapp APIs, including parent reasoning, native delegation depth, profile-scoped skills, Holographic policy, and exact tool-selection readback.
  */
 
 import type {
@@ -32,6 +32,8 @@ export type HermesProfileView = {
   description: string;
   soul: string;
   model: { provider: string; default: string };
+  reasoningEffort: string;
+  subagentType: 'none' | 'leaf' | 'recursive';
   skills: Array<{ name: string; enabled: boolean }>;
   autoLoadSkills: string[];
   toolsets: Array<{
@@ -65,6 +67,7 @@ export type HermesProfileView = {
 };
 
 type ProfileConfig = {
+  agent?: { reasoning_effort?: unknown };
   skills?: { auto_load?: unknown };
   memory?: {
     provider?: unknown;
@@ -79,6 +82,8 @@ type ProfileConfig = {
     provider?: unknown;
     model?: unknown;
     reasoning_effort?: unknown;
+    max_spawn_depth?: unknown;
+    orchestrator_enabled?: unknown;
   };
   plugins?: {
     enabled?: unknown;
@@ -155,6 +160,12 @@ function projectProfile(
         ? described.model.default
         : '',
     },
+    reasoningEffort: typeof config.agent?.reasoning_effort === 'string'
+      ? config.agent.reasoning_effort : '',
+    subagentType: !described.toolsets?.some((toolset) => toolset.name === 'delegation' && toolset.enabled)
+      ? 'none'
+      : config.delegation?.orchestrator_enabled !== false
+        && Number(config.delegation?.max_spawn_depth || 1) > 1 ? 'recursive' : 'leaf',
     skills: (described.skills || []).map((skill) => ({
       name: skill.name,
       enabled: skill.enabled === true,
@@ -263,6 +274,8 @@ export async function configureHermesProfile(input: {
   description?: string;
   model?: string;
   provider?: string;
+  reasoningEffort?: string;
+  subagentType?: 'none' | 'leaf' | 'recursive';
   enabledSkills?: string[];
   autoLoadSkills?: string[];
   enabledToolsets?: string[];
@@ -285,6 +298,22 @@ export async function configureHermesProfile(input: {
     ...enabledSkills,
     ...before.skills.filter((skill) => HERMES_REQUIRED_SKILLS.has(skill.name)).map((skill) => skill.name),
   ])];
+  const enabledToolsets = new Set(input.enabledToolsets === undefined
+    ? before.toolsets.filter((toolset) => toolset.enabled).map((toolset) => toolset.name)
+    : strings(input.enabledToolsets));
+  if (input.subagentType === 'none') enabledToolsets.delete('delegation');
+  else if (input.subagentType !== undefined) enabledToolsets.add('delegation');
+  const delegation = {
+    ...(input.subagentModel === undefined ? {} : {
+      provider: input.subagentModel?.provider || '',
+      model: input.subagentModel?.model || '',
+      reasoning_effort: input.subagentModel?.reasoningEffort || '',
+    }),
+    ...(input.subagentType === undefined ? {} : {
+      max_spawn_depth: input.subagentType === 'recursive' ? 2 : 1,
+      orchestrator_enabled: input.subagentType === 'recursive',
+    }),
+  };
   const configure = {
     name: input.profile,
     ...(input.soul === undefined ? {} : { soul: input.soul }),
@@ -294,9 +323,7 @@ export async function configureHermesProfile(input: {
     disabled_skills: before.skills
       .map((skill) => skill.name)
       .filter((name) => !effectiveEnabledSkills.includes(name)),
-    enabled_toolsets: input.enabledToolsets === undefined
-      ? before.toolsets.filter((toolset) => toolset.enabled).map((toolset) => toolset.name)
-      : strings(input.enabledToolsets),
+    enabled_toolsets: [...enabledToolsets],
     enabled_mcp_servers: input.enabledMcpServers === undefined
       ? before.enabledMcpServers
       : strings(input.enabledMcpServers),
@@ -313,6 +340,9 @@ export async function configureHermesProfile(input: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       config: {
+        ...(input.reasoningEffort === undefined ? {} : {
+          agent: { reasoning_effort: input.reasoningEffort || null },
+        }),
         memory: {
           provider: CARD_MEMORY_POLICY.provider,
           memory_enabled: CARD_MEMORY_POLICY.memoryEnabled,
@@ -331,15 +361,7 @@ export async function configureHermesProfile(input: {
         ...(input.taskMode === undefined ? {} : {
           kanban: { task_mode: input.taskMode },
         }),
-        ...(input.subagentModel === undefined ? {} : {
-          delegation: input.subagentModel
-            ? {
-                provider: input.subagentModel.provider,
-                model: input.subagentModel.model,
-                reasoning_effort: input.subagentModel.reasoningEffort || '',
-              }
-            : {},
-        }),
+        ...(Object.keys(delegation).length ? { delegation } : {}),
         ...(input.applicationTools === undefined ? {} : {
           mcp_servers: {
             [APPLICATION_MCP_SERVER]: {
@@ -350,8 +372,8 @@ export async function configureHermesProfile(input: {
         ...(input.autoLoadSkills === undefined ? {} : {
           skills: { auto_load: strings(input.autoLoadSkills) },
         }),
-        ...(input.enabledToolsets === undefined ? {} : {
-          platform_toolsets: { cli: strings(input.enabledToolsets) },
+        ...(input.enabledToolsets === undefined && input.subagentType === undefined ? {} : {
+          platform_toolsets: { cli: [...enabledToolsets] },
         }),
         plugins: {
           enabled: [...new Set([...before.enabledPlugins, 'liquidaity'])],
@@ -410,10 +432,16 @@ export async function configureHermesProfile(input: {
   ) !== JSON.stringify([...effectiveEnabledSkills].sort())) {
     throw new Error('Hermes enabled-skill readback mismatch.');
   }
-  if (input.enabledToolsets !== undefined && JSON.stringify(
+  if ((input.enabledToolsets !== undefined || input.subagentType !== undefined) && JSON.stringify(
     after.toolsets.filter((toolset) => toolset.enabled).map((toolset) => toolset.name).sort(),
-  ) !== JSON.stringify([...strings(input.enabledToolsets)].sort())) {
+  ) !== JSON.stringify([...enabledToolsets].sort())) {
     throw new Error('Hermes toolset readback mismatch.');
+  }
+  if (input.reasoningEffort !== undefined && after.reasoningEffort !== input.reasoningEffort) {
+    throw new Error('Hermes parent reasoning readback mismatch.');
+  }
+  if (input.subagentType !== undefined && after.subagentType !== input.subagentType) {
+    throw new Error('Hermes subagent-type readback mismatch.');
   }
   if (input.enabledMcpServers !== undefined && JSON.stringify(
     [...after.enabledMcpServers].sort(),

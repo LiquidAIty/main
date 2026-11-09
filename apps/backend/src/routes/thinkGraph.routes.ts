@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: ThinkGraph
- * Relationship: Exposes owner-scoped graph/source reads, retirement and committed-graph notifications while Engraphis owns persistence and semantics.
+ * Relationship: Exposes owner-scoped graph/source reads, exact content correction, retirement and committed-graph notifications while Engraphis owns persistence and semantics.
  * Entity: Authentication
  * Relationship: This file requires ownership of the exact Project before forwarding any ThinkGraph read or retirement operation.
  * Entity: Project Knowledge Graph
@@ -145,6 +145,25 @@ thinkGraphRoutes.post('/retire', async (req, res) => {
     return res.json(result);
   } catch (error: any) {
     return res.status(409).json({ error: String(error?.message || 'thinkgraph_remove_failed') });
+  }
+});
+
+thinkGraphRoutes.post('/correct', async (req, res) => {
+  const { projectId, memoryId, content } = req.body || {};
+  if (typeof projectId !== 'string' || typeof memoryId !== 'string' || !memoryId
+    || typeof content !== 'string' || !content.trim()) {
+    return res.status(400).json({ error: 'Project, exact Think ID and content required.' });
+  }
+  const scope = await requireOwnedProject(req, res, projectId);
+  if (!scope) return undefined;
+  try {
+    return res.json(await requestPythonRailsJson('/thinkgraph/operation', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: scope.projectId, operation: 'engraphis_correct',
+        arguments: { memory_id: memoryId, new_content: content, reason: 'Edited in ThinkGraph Inspector' } }),
+    }));
+  } catch (error) {
+    return res.status(409).json({ error: error instanceof Error ? error.message : 'Think correction failed.' });
   }
 });
 

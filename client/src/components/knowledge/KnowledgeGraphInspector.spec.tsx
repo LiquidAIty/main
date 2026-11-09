@@ -217,6 +217,34 @@ describe('shared knowledge inspector', () => {
     expect(container.textContent).not.toMatch(/1969|1970/);
   });
 
+  it('edits the exact Know through its writer without deleting, adding or losing citation fields', async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal('fetch', fetch);
+    const onRemove = vi.fn();
+    render(<KnowGraphKnow projectId="project-one" heading="Know" onRemove={onRemove} record={{
+      episodeId: 'existing-know', episode: {}, know: {
+        observation: 'Original finding.', interpretation: 'Bounded interpretation.',
+        citation: { url: 'https://example.test/report', title: 'Report', publisher: 'Publisher',
+          evidence: 'The original supporting passage.', publishedAt: '2026', retrievedAt: '2026-11-01' },
+      },
+    }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit record' }));
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Finding'), { target: { value: 'Corrected finding.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+    await screen.findByRole('button', { name: 'Edit record' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toBe('/api/knowgraph/edit-know');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      project_id: 'project-one', uuid: 'existing-know', observation: 'Corrected finding.',
+      interpretation: 'Bounded interpretation.', citation: {
+        url: 'https://example.test/report', title: 'Report', publisher: 'Publisher',
+        evidence: 'The original supporting passage.', publishedAt: '2026', retrievedAt: '2026-11-01',
+      },
+    });
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
   it('keeps a complete Know readable and deduplicates its safe citation source', () => {
     const record: KnowInspectorRecord = {
       episodeId: 'episode-one',

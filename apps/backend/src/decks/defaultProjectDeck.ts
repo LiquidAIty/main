@@ -76,6 +76,8 @@ const THINKGRAPH_TOOLS = [
   'engraphis_recall_context',
   'engraphis_get_memory',
   'engraphis_add_thinks',
+  'engraphis_correct',
+  'engraphis_retire',
   'engraphis_discover_actions',
   'engraphis_execute_read',
 ];
@@ -84,6 +86,7 @@ const KNOWGRAPH_TOOLS = [
   'canvas.inspect',
   'engraphis_get_memory',
   'graphiti.get_entity_edge',
+  'graphiti.delete_entity_edge',
   'graphiti.get_know',
   'graphiti.get_entity_knows',
   'graphiti.get_episode_entities',
@@ -93,6 +96,8 @@ const KNOWGRAPH_TOOLS = [
   'graphiti.search_knows',
   'graphiti.search_nodes',
   'graphiti.add_know',
+  'graphiti.update_know',
+  'graphiti.remove_know',
 ];
 
 const TEAM_TOOLS = [

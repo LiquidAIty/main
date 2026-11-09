@@ -26,6 +26,8 @@ _GRAPHITI_READ_OPERATIONS = frozenset({
 })
 _GRAPHITI_WRITE_OPERATIONS = frozenset({
     "graphiti.add_know",
+    "graphiti.update_know",
+    "graphiti.remove_know",
     "graphiti.add_memory",
     "graphiti.add_triplet",
     "graphiti.build_communities",
@@ -48,6 +50,7 @@ def graphiti_operation_policy(canonical_id: str) -> dict[str, object] | None:
         return None
     read_only = canonical_id in _GRAPHITI_READ_OPERATIONS
     destructive = canonical_id in {
+        "graphiti.remove_know",
         "graphiti.clear_graph",
         "graphiti.delete_entity_edge",
         "graphiti.delete_episode",

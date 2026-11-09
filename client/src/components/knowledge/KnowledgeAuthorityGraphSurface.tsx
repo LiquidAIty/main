@@ -376,6 +376,7 @@ export function KnowledgeGraphProjectionSurface({
   const [selectedAuthority, setSelectedAuthority] = useState<GraphAuthority | 'codegraph' | null>(null);
   const [selectedMemberKey, setSelectedMemberKey] = useState<string | null>(null);
   const [selectedKnowEpisodeId, setSelectedKnowEpisodeId] = useState<string | null>(null);
+  const [selectedThinkMemoryId, setSelectedThinkMemoryId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [configurationLayer, setConfigurationLayer] = useState<'thinkgraph' | 'knowgraph' | 'codegraph' | null>(authority === 'joined' ? null : authority);
@@ -384,7 +385,7 @@ export function KnowledgeGraphProjectionSurface({
   type NavigationEntry = {
     featureId: string | null; selectedId: string | null; selectedEdgeId: string | null;
     selectedAuthority: typeof selectedAuthority; selectedMemberKey: string | null;
-    selectedKnowEpisodeId: string | null; inspectorOpen: boolean;
+    selectedKnowEpisodeId: string | null; selectedThinkMemoryId: string | null; inspectorOpen: boolean;
     viewport: GraphViewport; paper: { x: number; y: number; zoom: number };
     layers?: GraphLayerVisibility;
     codeSource: CodeGraphFileSource | null;
@@ -501,6 +502,7 @@ export function KnowledgeGraphProjectionSurface({
     setRemoveError(null);
     setSelectedMemberKey(null);
     setSelectedKnowEpisodeId(null);
+    setSelectedThinkMemoryId(null);
     setSelectedId(visualNodeId);
     setSelectedEdgeId(null);
     setInspectorOpen(true);
@@ -511,7 +513,7 @@ export function KnowledgeGraphProjectionSurface({
     const viewport = graphRef.current?.captureView();
     if (!viewport) return;
     setNavigation(current => [...current, { featureId: expandedCodeFeatureId, selectedId,
-      selectedEdgeId, selectedAuthority, selectedMemberKey, selectedKnowEpisodeId, inspectorOpen,
+      selectedEdgeId, selectedAuthority, selectedMemberKey, selectedKnowEpisodeId, selectedThinkMemoryId, inspectorOpen,
       viewport, paper: { ...paperViewport }, codeSource,
       layers: layerVisibility ? { ...layerVisibility } : undefined }]);
   };
@@ -526,6 +528,7 @@ export function KnowledgeGraphProjectionSurface({
     setSelectedId(previous.selectedId); setSelectedEdgeId(previous.selectedEdgeId);
     setSelectedAuthority(previous.selectedAuthority); setSelectedMemberKey(previous.selectedMemberKey);
     setSelectedKnowEpisodeId(previous.selectedKnowEpisodeId);
+    setSelectedThinkMemoryId(previous.selectedThinkMemoryId);
     setInspectorOpen(previous.inspectorOpen); setControlsOpen(false);
     setCodeSource(previous.codeSource);
     setPaperViewport(previous.paper); cameraRef.current = null;
@@ -880,6 +883,14 @@ export function KnowledgeGraphProjectionSurface({
         setSelectedKnowEpisodeId(entityFocusRequest.graphitiEpisodeId);
       }
     }
+    if (entityFocusRequest.engraphisMemoryId) {
+      const member = entityFocusRequest.members.find(item => item.authority === 'thinkgraph');
+      if (member) {
+        setSelectedAuthority('thinkgraph');
+        setSelectedMemberKey(providerMemberKey('thinkgraph', member.entityId));
+        setSelectedThinkMemoryId(entityFocusRequest.engraphisMemoryId);
+      }
+    }
   }, [
     authority,
     canonicalEntityDirectory,
@@ -988,7 +999,10 @@ export function KnowledgeGraphProjectionSurface({
       return rightTime.localeCompare(leftTime) || left.index - right.index;
     })
     .map(({ item }) => item);
-  const visibleThinks = thinks.slice(0, INSPECTOR_RECORD_LIMIT);
+  const focusedThink = selectedThinkMemoryId
+    ? thinks.find(item => item.id === selectedThinkMemoryId
+      || item.metadata?.supersedes?.includes(selectedThinkMemoryId)) : null;
+  const visibleThinks = (focusedThink ? [focusedThink] : thinks).slice(0, INSPECTOR_RECORD_LIMIT);
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
   const providerNodeLabel = (id: string) => inspectedProjection?.nodes.find(node => node.id === id)?.label || id;
   const directKnowItems: KnowInspectorRecord[] = inspectedAuthority === 'knowgraph' && selected && !selectedEdge
@@ -1425,6 +1439,7 @@ export function KnowledgeGraphProjectionSurface({
           <h4>{visibleKnowItems.length > 1 ? 'Current Knows' : 'Current Know'}</h4>
           {visibleKnowItems.map((record, index) => <KnowGraphKnow
             key={record.episodeId}
+            projectId={projection?.projectId}
             record={record}
             heading={visibleKnowItems.length > 1 ? `Know ${index + 1}` : 'Know'}
             renderText={text => renderLinkedText(text, record.know.mentions)}

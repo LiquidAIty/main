@@ -32,6 +32,7 @@ export type CanonicalEntityFocusTarget = {
   view: CanonicalEntityProviderAuthority | 'all';
   members: CanonicalEntityFocusMember[];
   graphitiEpisodeId?: string;
+  engraphisMemoryId?: string;
 };
 
 export type CanonicalEntityFocusRequest = CanonicalEntityFocusTarget & {
@@ -331,6 +332,17 @@ export function createCanonicalEntityMatcher(
     for (const member of target.members) {
       addReference(member.entityId, { text: target.canonicalName, target });
     }
+    const thinkRecord = records.find(item => item.authority === 'thinkgraph'
+      && item.canonicalName === target.canonicalName);
+    const thinks = thinkRecord?.node.properties?.evidence;
+    if (Array.isArray(thinks)) for (const think of thinks) {
+      if (!think || typeof think.id !== 'string'
+        || think.metadata?.thinkgraph_origin?.authority !== 'thinkgraph') continue;
+      const link = { text: think.title || `Think about ${target.canonicalName}`,
+        target: { ...target, view: 'thinkgraph' as const, engraphisMemoryId: think.id } };
+      for (const id of new Set([think.id, ...(Array.isArray(think.metadata?.supersedes)
+        ? think.metadata.supersedes : [])])) addReference(id, link);
+    }
     const record = records.find(item => item.authority === 'knowgraph'
       && item.canonicalName === target.canonicalName);
     const evidence = record?.node.properties?.evidence;
@@ -457,10 +469,11 @@ export function resolveCanonicalEntityFocusVisualId({
       ? visualId
       : null;
   }
-  const exactKnowFocus = Boolean(request.graphitiEpisodeId)
-    && request.view === 'knowgraph'
-    && request.members.some(member => member.authority === 'knowgraph');
-  if ((!exactKnowFocus && request.view !== 'all')
+  const exactRecordFocus = (Boolean(request.graphitiEpisodeId) && request.view === 'knowgraph'
+    && request.members.some(member => member.authority === 'knowgraph'))
+    || (Boolean(request.engraphisMemoryId) && request.view === 'thinkgraph'
+      && request.members.some(member => member.authority === 'thinkgraph'));
+  if ((!exactRecordFocus && request.view !== 'all')
     || request.members.length !== 2
     || !joinedPresentation
     || joinedPresentation.projection.projectId !== request.projectId) return null;

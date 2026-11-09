@@ -3371,6 +3371,21 @@ class MemoryEngine:
             metadata["exact_value"] = old_bound
         metadata["corrects"] = memory_id
         metadata["supersedes"] = [memory_id]
+        structured = old.metadata.get("structured_extraction")
+        think = structured.get("think") if isinstance(structured, dict) else None
+        origin = old.metadata.get("thinkgraph_origin")
+        is_think = (old.claim_kind == "think"
+                    and isinstance(origin, dict) and origin.get("authority") == "thinkgraph"
+                    and isinstance(think, dict))
+        if is_think:
+            # The corrected prose and its Inspector representation are one fact.
+            metadata["structured_extraction"] = {
+                **old.metadata["structured_extraction"], "think": {**think, "summary": new_content},
+            }
+            # Existing lineage remains the authority for older user-facing references.
+            metadata["supersedes"] = list(dict.fromkeys([
+                *old.metadata.get("supersedes", []), memory_id,
+            ]))
         # Missing/legacy provenance must not fall through to the direct-engine trusted
         # default. A correction preserves trust only when the source was approved.
         metadata["provenance"] = (
@@ -3385,6 +3400,31 @@ class MemoryEngine:
         )
 
         def finalize_correction(new_id: str) -> None:
+            if is_think:
+                for incidence in self.store.list_memory_entities(
+                    SearchFilter(workspace_id=old.workspace_id), memory_ids=[memory_id],
+                ):
+                    provenance = json.loads(incidence["provenance"] or "{}")
+                    self.store.link_memory_entity(
+                        memory_id=new_id, entity_id=incidence["entity_id"],
+                        workspace_id=old.workspace_id, repo_id=old.repo_id,
+                        source_kind=incidence["source_kind"], confidence=incidence["confidence"],
+                        valid_from=effective_at, provenance={**provenance, "memory_id": new_id},
+                        commit=False,
+                    )
+                supports = self.store.conn.execute(
+                    "SELECT DISTINCT s.edge_id,s.provenance FROM edge_supports s "
+                    "JOIN edges e ON e.id=s.edge_id WHERE s.memory_id=? AND e.workspace_id=? "
+                    "AND s.valid_to IS NULL AND s.expired_at IS NULL "
+                    "AND e.valid_to IS NULL AND e.expired_at IS NULL",
+                    (memory_id, old.workspace_id),
+                ).fetchall()
+                for support in supports:
+                    provenance = json.loads(support["provenance"] or "{}")
+                    self.store.add_edge_support(
+                        support["edge_id"], {**provenance, "memory_id": new_id, "memory_ids": [new_id]},
+                        valid_from=effective_at, commit=False,
+                    )
             self.store.advance_memory_modified_hlc(new_id, commit=False)
             self.store.conn.execute(
                 "UPDATE memories SET pinned=?, sensitivity=?, stability=?, access_count=?, "
@@ -3420,6 +3460,7 @@ class MemoryEngine:
             resolve_conflicts=False,
             subject_key=old.subject_key,
             claim_kind=old.claim_kind,
+            _trusted_graph_keys=frozenset({"structured_extraction"}) if is_think else None,
             _transactional_finalizer=finalize_correction,
             _transactional_validator=validate_correction,
         )

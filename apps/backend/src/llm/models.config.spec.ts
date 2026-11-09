@@ -44,6 +44,13 @@ describe('canonical model catalog — DeepSeek V4 Pro 0813', () => {
 });
 
 describe('configured model options', () => {
+  it('offers the verified 6-series provider IDs without replacing saved 5.6 choices', () => {
+    const options = listConfiguredModelOptions('gpt-6.1-terra');
+    for (const id of ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']) {
+      expect(options.find((option) => option.key === id)).toMatchObject({ provider: 'openai', providerModelId: id });
+    }
+    expect(options.some((option) => option.key === 'gpt-5.6-sol')).toBe(true);
+  });
   it('projects each canonical registry key exactly once without Direct ID aliases', () => {
     const options = listConfiguredModelOptions('gpt-5.6-luna');
 

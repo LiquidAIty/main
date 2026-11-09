@@ -1494,3 +1494,45 @@ def test_graph_edge_history_visibility_sql_uses_current_time_when_known_at_omitt
     # known_anchor slots: params[1], params[2], params[4], params[5] — all from time.time()
     for slot in (1, 2, 4, 5):
         assert before <= params[slot] <= after
+
+
+def test_think_correction_retains_owner_mentions_source_and_supported_edge():
+    svc = MemoryService.create(":memory:", extractor="none", graph_extractor="none")
+    try:
+        target = svc.add_thinks([{"entity_name": "Volatility", "content": "Volatility measures variation."}],
+                                workspace="trading")["thinks"][0]
+        original = svc.add_thinks([{"entity_name": "Forecast", "content": "Forecasts differ from Volatility.",
+                                   "detail": "Original detail."}], workspace="trading",
+                                  source_reference="pair_original")["thinks"][0]
+        old_id = original["id"]
+        old = svc.store.get_memory(old_id)
+        flt = SearchFilter(workspace_id=old.workspace_id)
+        before = svc.store.list_memory_entities(flt, memory_ids=[old_id])
+        edge_id = svc.store.upsert_edge(Edge(
+            id="", src=original["entity_id"], dst=target["entity_id"], relation="EXPLAINS",
+            workspace_id=old.workspace_id, provenance={"memory_id": old_id},
+        ))
+        corrected = svc.correct(old_id, "A directional forecast does not establish volatility.", workspace="trading")
+        new_id = corrected["id"]
+        current = svc.inspect(old_id, workspace="trading", follow_corrections=True)["memory"]
+        assert current["id"] == new_id != old_id
+        successor = svc.store.get_memory(new_id)
+        assert successor.metadata["structured_extraction"]["think"]["summary"] == successor.content
+        assert successor.metadata["structured_extraction"]["think"]["detail"] == "Original detail."
+        assert successor.metadata["thinkgraph_origin"] == old.metadata["thinkgraph_origin"]
+        after = svc.store.list_memory_entities(flt, memory_ids=[new_id])
+        assert {(r["entity_id"], r["source_kind"]) for r in before} <= {
+            (r["entity_id"], r["source_kind"]) for r in after}
+        assert svc.store.get_memory(old_id).valid_to is not None
+        assert svc.store.conn.execute("SELECT valid_to FROM edges WHERE id=?", (edge_id,)).fetchone()[0] is None
+        assert any(s["memory_id"] == new_id for s in svc.store.edge_supports_in_scope([edge_id], flt=flt))
+        latest_id = svc.correct(new_id, "Direction and volatility are distinct targets.", workspace="trading")["id"]
+        assert svc.inspect(old_id, workspace="trading", follow_corrections=True)["memory"]["id"] == latest_id
+        assert old_id in svc.store.get_memory(latest_id).metadata["supersedes"]
+        svc.store.get_or_create_workspace("other")
+        with pytest.raises(ValidationError):
+            svc.correct(latest_id, "Wrong Project.", workspace="other")
+        svc.retire(latest_id, workspace="trading", reason="Explicit test removal")
+        assert svc.store.get_memory(latest_id).valid_to is not None
+    finally:
+        svc.close()

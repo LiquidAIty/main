@@ -7741,7 +7741,8 @@ class MemoryService:
         self._authorize_memory_session(record)
         return record
 
-    def inspect(self, memory_id: str, *, workspace: str, repo: Optional[str] = None) -> dict:
+    def inspect(self, memory_id: str, *, workspace: str, repo: Optional[str] = None,
+                follow_corrections: bool = False) -> dict:
         """Everything the inspector shows for one memory: the record, its links, its
         audit trail, and the full supersession chain (oldest→newest) reconstructed from
         the ``supersedes``/``corrects`` pointers the write path records."""
@@ -7749,6 +7750,17 @@ class MemoryService:
         wid, rid = self._require_scope(workspace, repo)
         self._check_owns(mid, wid, rid)
         rec = self.store.get_memory(mid)
+        requested_id = mid
+        if follow_corrections and rec.claim_kind == "think":
+            chain = self._chain_for(rec, wid)
+            current = [item for item in chain if item.claim_kind == "think"
+                       and item.valid_to is None and item.expired_at is None]
+            if len(current) > 1:
+                raise ValidationError("Think correction lineage is ambiguous")
+            if current:
+                rec = current[0]
+                mid = rec.id
+                self._check_owns(mid, wid, rid)
         links = []
         for link in self.store.get_links(mid):
             other_id = link["b"] if link["a"] == mid else link["a"]
@@ -7766,7 +7778,7 @@ class MemoryService:
         audit = [dict(r) for r in self.store.conn.execute(
             "SELECT ts, actor, action, detail FROM audit WHERE target=? ORDER BY ts", (mid,))]
         chain = [self._chain_entry(r, wid) for r in self._chain_for(rec, wid)]
-        return {"memory": {**_mem_to_dict(rec),
+        return {**({"requested_id": requested_id} if follow_corrections else {}), "memory": {**_mem_to_dict(rec),
                            "can_revise": self.engine.can_revise_memory(mid)},
                 "links": links, "audit": audit,
                 "chain": chain}

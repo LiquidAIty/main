@@ -69,8 +69,16 @@ class KnowRelationship(BaseModel):
         default=None, min_length=1,
         description='Omit to use the Entity owning this Know as the source.',
     )
-    target_entity_uuid: str = Field(min_length=1)
-    fact: str = Field(min_length=1)
+    target_entity_uuid: str = Field(
+        min_length=1, description='Exact Graphiti UUID of the target Entity that owns a Know in this Project.',
+    )
+    fact: str = Field(
+        min_length=1,
+        description="Authored prose explaining the source Entity's meaningful directed relationship to the target, "
+                    "supported by this Know. Jev classifies this prose; do not supply a label, probability, "
+                    "generic related-to phrase or mirrored reverse paraphrase. The sentence and source/target "
+                    "direction must agree; use source_entity_uuid if the Know's owner is not the source.",
+    )
 
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 
@@ -134,29 +142,16 @@ class KnowNode(Node):
     async def save(self, driver: GraphDriver):
         return await self.save_know(driver)
 
-    async def save_know(
-        self, driver: GraphDriver, *, entity: EntityNode | None = None,
-        owner_by_name: bool = False, mentions: list[str] | None = None,
-        relationships: list[EntityEdge] | None = None,
-    ) -> tuple['KnowNode', EntityNode, bool, bool, list[EntityEdge]]:
-        """Commit one Know and owner atomically, without episode ingestion.
-
-        Neo4j is the product's graph authority. Do not pretend a driver's
-        non-transactional compatibility wrapper provides rollback guarantees.
-        """
-        if driver.provider != GraphProvider.NEO4J:
-            raise NotImplementedError('Atomic Know writes require Neo4j')
-        entity = entity or await EntityNode.get_by_uuid(driver, self.entity_uuid)
-        if entity.group_id != self.group_id:
-            raise ValueError('Know owner belongs to a different group')
+    def _properties(self) -> dict:
+        """The shared storage representation for creation and in-place edits."""
         citation = self.citation
         direction = self.direction
-        properties = {
+        return {
             'uuid': self.uuid, 'name': self.name, 'group_id': self.group_id,
             'created_at': self.created_at, 'valid_at': self.valid_at,
             'source': self.source, 'source_description': self.source_description,
-            'content': self.content, 'entity_edges': [],
-            'entity_uuid': entity.uuid, 'observation': self.observation,
+            'content': self.content, 'entity_edges': self.entity_edges,
+            'entity_uuid': self.entity_uuid, 'observation': self.observation,
             'interpretation': self.interpretation, 'content_hash': self.content_hash,
             'citation_url': citation.url, 'citation_title': citation.title,
             'citation_publisher': citation.publisher, 'citation_evidence': citation.evidence,
@@ -168,6 +163,20 @@ class KnowNode(Node):
             'proposition': direction.proposition if direction else None,
             'direction': direction.relation if direction else None, 'know_format': 3,
         }
+
+    async def save_know(
+        self, driver: GraphDriver, *, entity: EntityNode | None = None,
+        owner_by_name: bool = False, mentions: list[str] | None = None,
+        relationships: list[EntityEdge] | None = None,
+    ) -> tuple['KnowNode', EntityNode, bool, bool, list[EntityEdge]]:
+        """Commit one Know and owner atomically, without episode ingestion."""
+        if driver.provider != GraphProvider.NEO4J:
+            raise NotImplementedError('Atomic Know writes require Neo4j')
+        entity = entity or await EntityNode.get_by_uuid(driver, self.entity_uuid)
+        if entity.group_id != self.group_id:
+            raise ValueError('Know owner belongs to a different group')
+        properties = self._properties()
+        properties['entity_uuid'] = entity.uuid
         identity = hashlib.sha256(f'{self.group_id}\0{self.content_hash}'.encode()).hexdigest()
         written_edges: list[EntityEdge] = []
         async with driver.transaction() as tx:
@@ -288,6 +297,91 @@ class KnowNode(Node):
                              uuid=stored.uuid, group=self.group_id, ids=ids)
                 stored.entity_edges = ids
         return stored, owner, created, owner_created, written_edges
+
+    @classmethod
+    async def update_know(
+        cls, driver: GraphDriver, uuid: str, *, group_id: str,
+        name: str | None = None, observation: str | None = None,
+        interpretation: str | None = None, citation: KnowCitation | None = None,
+    ) -> 'KnowNode':
+        """Edit one exact Know in place, retaining its ownership and graph links."""
+        if driver.provider != GraphProvider.NEO4J:
+            raise NotImplementedError('Atomic Know writes require Neo4j')
+        async with driver.transaction() as tx:
+            # Lock before reading so disjoint partial edits do not lose each other.
+            result = await tx.run(
+                'MATCH (know:Know {uuid:$uuid,group_id:$group}) '
+                'SET know.content_hash=know.content_hash '
+                'RETURN properties(know) AS properties', uuid=uuid, group=group_id,
+            )
+            rows = await result.data()
+            if len(rows) != 1:
+                raise NodeNotFoundError(uuid)
+            current = _know_from_record(rows[0]['properties'])
+            result = await tx.run(
+                'MATCH (owner:Entity {uuid:$owner,group_id:$group}) RETURN owner.name AS name',
+                owner=current.entity_uuid, group=group_id,
+            )
+            owners = await result.data()
+            if len(owners) != 1:
+                raise ValueError('Stored Know owner is unavailable')
+            values = current.model_dump()
+            for key, value in dict(name=name, observation=observation,
+                                   interpretation=interpretation, citation=citation).items():
+                if value is not None:
+                    values[key] = value
+            edited = cls.model_validate(values)
+            edited.content_hash = know_content_hash(
+                entity_name=owners[0]['name'], observation=edited.observation,
+                interpretation=edited.interpretation, citation=edited.citation,
+                direction=edited.direction,
+            )
+            edited.content = know_episode_content(
+                observation=edited.observation, interpretation=edited.interpretation,
+                citation=edited.citation, direction=edited.direction,
+            )
+            edited.source_description = f'{edited.citation.publisher}: {edited.citation.title}'
+            result = await tx.run(
+                'MATCH (other:Know {group_id:$group,content_hash:$digest}) '
+                'WHERE other.uuid<>$uuid RETURN other.uuid AS uuid LIMIT 1',
+                group=group_id, digest=edited.content_hash, uuid=uuid,
+            )
+            if await result.data():
+                raise ValueError('Edited finding duplicates another Know')
+            identity = hashlib.sha256(f'{group_id}\0{edited.content_hash}'.encode()).hexdigest()
+            await tx.run(
+                'MATCH (know:Know {uuid:$uuid,group_id:$group}) '
+                'SET know += $properties,know.know_write_key=$identity',
+                uuid=uuid, group=group_id, properties=edited._properties(), identity=identity,
+            )
+        return edited
+
+    @classmethod
+    async def remove_know(cls, driver: GraphDriver, uuid: str, *, group_id: str) -> None:
+        """Remove an explicitly selected Know and only its unsupported relationships."""
+        if driver.provider != GraphProvider.NEO4J:
+            raise NotImplementedError('Atomic Know writes require Neo4j')
+        async with driver.transaction() as tx:
+            result = await tx.run(
+                'MATCH (know:Know {uuid:$uuid,group_id:$group}) RETURN know.uuid AS uuid',
+                uuid=uuid, group=group_id,
+            )
+            if len(await result.data()) != 1:
+                raise NodeNotFoundError(uuid)
+            await tx.run(
+                'MATCH ()-[r:RELATES_TO {group_id:$group}]->() '
+                'WHERE $uuid IN coalesce(r.supporting_know_uuids,[]) '
+                'AND all(id IN r.supporting_know_uuids WHERE id=$uuid) '
+                'AND size(coalesce(r.episodes,[]))=0 DELETE r', uuid=uuid, group=group_id,
+            )
+            await tx.run(
+                'MATCH ()-[r:RELATES_TO {group_id:$group}]->() '
+                'WHERE $uuid IN coalesce(r.supporting_know_uuids,[]) '
+                'SET r.supporting_know_uuids=[id IN r.supporting_know_uuids WHERE id<>$uuid]',
+                uuid=uuid, group=group_id,
+            )
+            await tx.run('MATCH (know:Know {uuid:$uuid,group_id:$group}) DETACH DELETE know',
+                         uuid=uuid, group=group_id)
 
     @classmethod
     async def get_by_uuid(cls, driver: GraphDriver, uuid: str) -> 'KnowNode':

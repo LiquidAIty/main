@@ -115,7 +115,9 @@ async def read_project_relationship_vocabulary(
     base_url = os.getenv("PYTHON_RAILS_URL", "http://127.0.0.1:8003").strip().rstrip("/")
     if not base_url:
         raise RuntimeError("knowgraph_jev_python_rails_unavailable")
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+    # The first scoped read can initialize Engraphis's existing engine. Use the
+    # same bounded wait as settlement instead of abandoning that cold read at 30s.
+    async with httpx.AsyncClient(timeout=300.0, follow_redirects=False) as client:
         response = await client.post(
             f"{base_url}/graph/relationship-vocabulary/read",
             json={"projectId": project_id},
