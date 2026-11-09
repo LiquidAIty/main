@@ -276,12 +276,17 @@ export function JoinedKnowledgeGraphSurface({
   );
 }
 
+type GraphViewport = {
+  center: { x: number; y: number }; zoom: number;
+  positions: Array<{ id: string; x?: number; y?: number; vx?: number; vy?: number; fx?: number; fy?: number }>;
+};
 type EngraphisRenderer = {
+  captureView: () => GraphViewport;
   nodeWeights: () => Record<string, number>;
   setPreset: (name: RendererLayout) => Record<string, number | boolean | string>;
   setStyle: (name: RendererStyle) => void;
   setSettings: (settings: Record<string, number | boolean | string>) => void;
-  setData: (data: { nodes: unknown[]; links?: unknown[]; edges?: unknown[] }) => void;
+  setData: (data: { nodes: unknown[]; links?: unknown[]; edges?: unknown[] }, restoredView?: GraphViewport) => void;
   setHighlight: (id: string | null) => void;
   setThemeColors: (colors: Record<string, string>) => void;
   setColorBy: (name: string) => void;
@@ -371,6 +376,17 @@ export function KnowledgeGraphProjectionSurface({
   const [selectedKnowEpisodeId, setSelectedKnowEpisodeId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [configurationLayer, setConfigurationLayer] = useState<'thinkgraph' | 'knowgraph' | 'codegraph'>('thinkgraph');
+  const [expandedCodeFeatureId, setExpandedCodeFeatureId] = useState<string | null>(null);
+  type NavigationEntry = {
+    featureId: string | null; selectedId: string | null; selectedEdgeId: string | null;
+    selectedAuthority: typeof selectedAuthority; selectedMemberKey: string | null;
+    selectedKnowEpisodeId: string | null; inspectorOpen: boolean;
+    viewport: GraphViewport; paper: { x: number; y: number; zoom: number };
+    layers?: GraphLayerVisibility;
+  };
+  const [navigation, setNavigation] = useState<NavigationEntry[]>([]);
+  const restoreViewport = useRef<GraphViewport | undefined>(undefined);
   const savedPresentation = useMemo(
     () => safePresentationPreferences(authority),
     [authority],
@@ -398,10 +414,15 @@ export function KnowledgeGraphProjectionSurface({
   const codeSourceSelectionRef = useRef(0);
   const [paperViewport, setPaperViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef<{ x: number; y: number; scale: number } | null>(null);
-  const activeJoinedPresentation = joinedPresentation;
-  const displayProjection = useMemo(() => projection
-    ? applyCodeGraphPhysics(authority === 'codegraph' ? projection : applyJevGraphPhysics(projection, physicsProfile))
-    : null, [authority, physicsProfile, projection]);
+  const activeJoinedPresentation = useMemo(() => expandedCodeFeatureId && joinedPresentation?.codeProviderProjection
+    ? composeVisibleGraphLayers(joinedPresentation.providerProjections.thinkgraph,
+      joinedPresentation.providerProjections.knowgraph, joinedPresentation.codeProviderProjection,
+      joinedPresentation.layerVisibility || DEFAULT_GRAPH_LAYER_VISIBILITY, expandedCodeFeatureId)
+    : joinedPresentation, [joinedPresentation, expandedCodeFeatureId]);
+  const activeProjection = activeJoinedPresentation?.projection || projection;
+  const displayProjection = useMemo(() => activeProjection
+    ? applyCodeGraphPhysics(authority === 'codegraph' ? activeProjection : applyJevGraphPhysics(activeProjection, physicsProfile))
+    : null, [authority, physicsProfile, activeProjection]);
   const selectedVisual = displayProjection?.nodes.find(node => node.id === selectedId);
   const availableCodeNode = authority === 'codegraph'
     ? selectedVisual
@@ -477,6 +498,36 @@ export function KnowledgeGraphProjectionSurface({
     setInspectorOpen(true);
     setCodeSource(null);
     setCodeSourceError(null);
+  };
+  const rememberNavigation = () => {
+    const viewport = graphRef.current?.captureView();
+    if (!viewport) return;
+    setNavigation(current => [...current, { featureId: expandedCodeFeatureId, selectedId,
+      selectedEdgeId, selectedAuthority, selectedMemberKey, selectedKnowEpisodeId, inspectorOpen,
+      viewport, paper: { ...paperViewport }, layers: layerVisibility ? { ...layerVisibility } : undefined }]);
+  };
+  const returnToView = (project = false) => {
+    const index = project ? 0 : navigation.length - 1;
+    const previous = navigation[index];
+    if (!previous) return;
+    restoreViewport.current = previous.viewport;
+    setNavigation(current => current.slice(0, index));
+    setExpandedCodeFeatureId(previous.featureId);
+    setSelectedId(previous.selectedId); setSelectedEdgeId(previous.selectedEdgeId);
+    setSelectedAuthority(previous.selectedAuthority); setSelectedMemberKey(previous.selectedMemberKey);
+    setSelectedKnowEpisodeId(previous.selectedKnowEpisodeId);
+    setInspectorOpen(previous.inspectorOpen); setControlsOpen(false);
+    setPaperViewport(previous.paper); cameraRef.current = null;
+    if (previous.layers && layerVisibility) Object.entries(previous.layers).forEach(([layer, enabled]) => {
+      if (layerVisibility[layer as keyof GraphLayerVisibility] !== enabled)
+        onLayerVisibilityChange?.(layer as keyof GraphLayerVisibility, enabled);
+    });
+  };
+  const openCodeFile = (file: GraphProjectionNode) => {
+    if (!expandedCodeFeatureId || selected?.properties?.recordKind === 'file') rememberNavigation();
+    if (!expandedCodeFeatureId && selected?.properties?.recordKind === 'feature') setExpandedCodeFeatureId(selected.id);
+    setSelectedAuthority('codegraph');
+    openNodeInspector(`codegraph:${encodeURIComponent(file.id)}`);
   };
   inspectNodeRef.current = openNodeInspector;
   const mentionVisualId = (target: CanonicalEntityFocusTarget) => displayProjection
@@ -766,7 +817,8 @@ export function KnowledgeGraphProjectionSurface({
       }),
     };
     const graph = graphRef.current;
-    graph?.setData(data);
+    graph?.setData(data, restoreViewport.current);
+    restoreViewport.current = undefined;
   }, [
     activeJoinedPresentation,
     authority,
@@ -884,6 +936,10 @@ export function KnowledgeGraphProjectionSurface({
       if (requestId === codeSourceSelectionRef.current) setCodeSourceLoading(false);
     }
   };
+  useEffect(() => {
+    if (expandedCodeFeatureId && selectedCodeNode?.properties?.recordKind === 'file')
+      void loadCodeSource(String(selectedCodeNode.properties.filePath));
+  }, [selectedId, expandedCodeFeatureId]);
   const allNodes = displayProjection?.nodes.length ?? 0;
   const noVisibleLayers = authority === 'joined'
     && layerVisibility
@@ -1005,10 +1061,10 @@ export function KnowledgeGraphProjectionSurface({
   const jevWinnerProbability = probabilityLabel(
     jevDistribution.find(([choice]) => choice === jevWinner)?.[1],
   );
-  const availableNodeAuthorities = (['thinkgraph', 'knowgraph'] as const)
+  const availableNodeAuthorities = (['thinkgraph', 'knowgraph', 'codegraph'] as const)
     .filter(candidate => candidate === 'thinkgraph'
       ? directThinkAvailable
-      : directKnowAvailable);
+      : candidate === 'knowgraph' ? directKnowAvailable : Boolean(availableCodeNode));
   const visualNodeIdForProvider = (providerId: string) => inspectedAuthority === 'codegraph'
     ? authority === 'joined'
       ? activeJoinedPresentation?.visualNodeIdByCodeProviderMember?.get(providerId) || providerId
@@ -1028,6 +1084,11 @@ export function KnowledgeGraphProjectionSurface({
         }
       }}>
       <GraphPaperBackground viewport={paperViewport} />
+      {navigation.length > 0 ? <nav aria-label="Graph navigation" className="graph-breadcrumb">
+        <button type="button" onClick={() => returnToView()}>Back</button>
+        <button type="button" onClick={() => returnToView(true)}>Project graph</button>
+        <span> / {codeFeatures?.find(feature => feature.id === expandedCodeFeatureId)?.label} / Code</span>
+      </nav> : null}
       <div className="knowledge-authority-canvas">
         <div ref={hostRef} className="knowledge-authority-network graph-canvas"
           data-renderer="engraphis-1.7.1"
@@ -1088,7 +1149,39 @@ export function KnowledgeGraphProjectionSurface({
               <CodeGraphChangeReview key={projection.projectId} projectId={projection.projectId}
                 selectedNode={selectedCodeNode || null} />
             </div> : null}
-          {layerVisibility?.codegraph && Boolean(codeFeatures?.length) && onToggleCodeGraphFeature ? (
+          {inspectorOpen ? <button type="button" onClick={() => {
+            setInspectorOpen(false); setControlsOpen(true);
+          }}>Graph settings</button> : null}
+          {!inspectorOpen ? <div ref={panelBodyRef} className="knowledge-authority-controls" tabIndex={-1}>
+            {authority !== 'codegraph' && projection?.projectId ? <SourceSearchControls key={projection.projectId} projectId={projection.projectId} /> : null}
+            {authority === 'joined' && layerVisibility && onLayerVisibilityChange
+              ? <fieldset className="graph-layer-controls" aria-label="Graph layers">
+                <legend>Layers</legend>
+                <div className="graph-layer-legend" role="tablist" aria-label="Configure graph layer">
+                  {([
+                    ['thinkgraph', 'Think', solarpunkColors.think],
+                    ['knowgraph', 'Know', solarpunkColors.know],
+                    ['codegraph', 'Code', CODE_GRAPH_LAYER_COLOR],
+                  ] as const).map(([layer, label, color]) => (
+                    <button
+                      key={layer}
+                      type="button"
+                      role="tab"
+                      aria-label={`${label} configuration`}
+                      aria-selected={configurationLayer === layer}
+                      data-layer={layer}
+                      onClick={() => setConfigurationLayer(layer)}
+                    >
+                      <span className="graph-layer-swatch" style={{ background: color }} aria-hidden="true" />
+                      <span>{label}</span>
+                      <small>{layerCounts?.[layer] ?? 0}</small>
+                    </button>
+                  ))}
+                </div>
+                <label><input type="checkbox" role="switch" aria-label={`${configurationLayer === 'thinkgraph' ? 'Think' : configurationLayer === 'knowgraph' ? 'Know' : 'Code'} visible`}
+                  checked={layerVisibility[configurationLayer]}
+                  onChange={event => onLayerVisibilityChange(configurationLayer, event.target.checked)} />Visible</label>
+          {!inspectorOpen && configurationLayer === 'codegraph' && Boolean(codeFeatures?.length) && onToggleCodeGraphFeature ? (
             <details className="knowledge-authority-controls codegraph-categories" open>
               <summary>Code categories · {selectedCodeFeatureIds?.length || 0} / {codeFeatures?.length} selected</summary>
               {codeConnections ? <p role="status">{codeConnections}</p> : null}
@@ -1108,31 +1201,6 @@ export function KnowledgeGraphProjectionSurface({
               </div>
             </details>
           ) : null}
-          {!inspectorOpen ? <div ref={panelBodyRef} className="knowledge-authority-controls" tabIndex={-1}>
-            {authority !== 'codegraph' && projection?.projectId ? <SourceSearchControls key={projection.projectId} projectId={projection.projectId} /> : null}
-            {authority === 'joined' && layerVisibility && onLayerVisibilityChange
-              ? <fieldset className="graph-layer-controls" aria-label="Graph layers">
-                <legend>Layers</legend>
-                <div className="graph-layer-legend">
-                  {([
-                    ['thinkgraph', 'Think', solarpunkColors.think],
-                    ['knowgraph', 'Know', solarpunkColors.know],
-                    ['codegraph', 'Code', CODE_GRAPH_LAYER_COLOR],
-                  ] as const).map(([layer, label, color]) => (
-                    <button
-                      key={layer}
-                      type="button"
-                      aria-label={`${label} source`}
-                      aria-pressed={layerVisibility[layer]}
-                      data-layer={layer}
-                      onClick={() => onLayerVisibilityChange(layer, !layerVisibility[layer])}
-                    >
-                      <span className="graph-layer-swatch" style={{ background: color }} aria-hidden="true" />
-                      <span>{label}</span>
-                      <small>{layerCounts?.[layer] ?? 0}</small>
-                    </button>
-                  ))}
-                </div>
                 <small className="graph-layer-scope" data-testid="codegraph-scope">
                   CodeGraph · Repository-scoped
                   {layerVisibility.codegraph
@@ -1198,7 +1266,7 @@ export function KnowledgeGraphProjectionSurface({
             }}>Reset to preset defaults</button>
           </div> : (selected || selectedEdge) ? <div ref={panelBodyRef} className="knowledge-authority-controls" role="region" aria-label={`${entryTitle} details`}>
         {authority === 'joined' && selected && availableNodeAuthorities.length > 0
-          && (availableNodeAuthorities.length > 1 || visibleThinks.length > 0 || visibleKnowItems.length > 0) ? (
+          && (availableNodeAuthorities.length > 1 || visibleThinks.length > 0 || visibleKnowItems.length > 0 || availableCodeNode) ? (
           <div role="tablist" aria-label={`${selected.label} graph evidence`} style={{ display: 'flex', gap: 6 }}>
             {availableNodeAuthorities.map(candidate => (
               <button
@@ -1227,7 +1295,7 @@ export function KnowledgeGraphProjectionSurface({
                   fontWeight: 700,
                 }}
               >
-                {candidate === 'thinkgraph' ? 'Think' : 'Know'}
+                {candidate === 'thinkgraph' ? 'Think' : candidate === 'knowgraph' ? 'Know' : 'Code'}
               </button>
             ))}
           </div>
@@ -1241,6 +1309,12 @@ export function KnowledgeGraphProjectionSurface({
           source={codeSource}
           sourceLoading={codeSourceLoading}
           sourceError={codeSourceError}
+          files={inspectedProjection?.nodes.filter(node => node.properties?.recordKind === 'file'
+            && Array.isArray(node.properties.features) && node.properties.features.includes(selected.properties?.featureName))}
+          onExpand={() => {
+            rememberNavigation(); setExpandedCodeFeatureId(selected.id);
+            setSelectedId(null); setSelectedEdgeId(null); setInspectorOpen(false);
+          }}
           onLoadSource={onReadCodeGraphSource ? filePath => { void loadCodeSource(filePath); } : undefined}
           connectionLoading={codeFileLoading}
           connectionError={codeFileError}
@@ -1263,7 +1337,7 @@ export function KnowledgeGraphProjectionSurface({
           onOpenFile={path => {
             const file = inspectedProjection?.nodes.find(node => node.properties?.recordKind === 'file'
               && node.properties?.filePath === path);
-            if (file) openNodeInspector(visualNodeIdForProvider(file.id));
+            if (file) openCodeFile(file);
           }}
         /> : null}
         {visibleThinks.length ? <section className="graph-inspector-records" data-testid="knowledge-think-records">

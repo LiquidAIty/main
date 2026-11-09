@@ -282,8 +282,7 @@ export function codeGraphCategoryProjection(
   const selectedFiles = new Set([...files.values()].filter(node =>
     Array.isArray(node.properties?.features)
     && node.properties.features.some(name => categories.has(name))).map(node => node.id));
-  // Membership is a selector, never a visible hub or a caller edge.
-  // Off-category neighbors remain inspectable connections, not visible graph nodes.
+  // Keep declared categories for the Entity overview; files are revealed on expansion.
   const structuralEdges = projection.edges.filter(edge =>
     ['CALLS', 'IMPORTS'].includes(edge.predicate)
     && edge.properties?.structuralAuthority === 'cbm'
@@ -291,7 +290,8 @@ export function codeGraphCategoryProjection(
     && edge.source !== edge.target);
   const visibleIds = selectedFiles;
   const edges = structuralEdges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target));
-  const nodes = [...files.values()].filter(node => visibleIds.has(node.id));
+  const nodes = [...projection.nodes.filter(node => codeNodeKind(node) === 'feature' && selectedIds.has(node.id)),
+    ...[...files.values()].filter(node => visibleIds.has(node.id))];
   return { ...projection, scene: undefined,
     counts: { nodes: nodes.length, edges: edges.length }, nodes, edges };
 }

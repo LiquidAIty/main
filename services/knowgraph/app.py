@@ -4,7 +4,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
-# Relationship: This file exposes bounded PDF ingestion, Project-scoped episode deletion, process-authenticated research settlement, provider-safe ingestion errors, and runtime health.
+# Relationship: This file exposes bounded PDF ingestion, Project-scoped Know and episode deletion, process-authenticated research settlement, provider-safe ingestion errors, and runtime health.
 # Entity: Jev Decisions
 # Relationship: This file loads one persisted Know and its actual Graphiti facts, then supplies web evidence and Project vocabulary to the existing Jev settlement owner.
 
@@ -99,12 +99,37 @@ async def _delete_graphiti_episode(
     expected_group = graphiti_project_group_id(payload.project_id)
     _runtime, graphiti, _database = graphiti_runtime.create_graphiti_runtime()
     try:
-        episode = await EpisodicNode.get_by_uuid(
-            graphiti.driver, payload.graphiti_episode_uuid
+        result = await graphiti.driver.execute_query(
+            "MATCH (know:Know {uuid:$uuid}) RETURN know.group_id AS group_id",
+            uuid=payload.graphiti_episode_uuid, routing_="r",
         )
-        if episode.group_id != expected_group:
-            raise LookupError("knowgraph_graphiti_episode_not_found")
-        await graphiti.remove_episode(payload.graphiti_episode_uuid)
+        knows = graphiti_runtime.graphiti_records(result)
+        if knows:
+            if len(knows) != 1 or knows[0]["group_id"] != expected_group:
+                raise LookupError("knowgraph_graphiti_episode_not_found")
+            async with graphiti.driver.transaction() as tx:
+                await tx.run(
+                    "MATCH ()-[r:RELATES_TO {group_id:$group}]->() "
+                    "WHERE $uuid IN coalesce(r.supporting_know_uuids,[]) "
+                    "AND all(id IN r.supporting_know_uuids WHERE id=$uuid) "
+                    "AND size(coalesce(r.episodes,[]))=0 DELETE r",
+                    uuid=payload.graphiti_episode_uuid, group=expected_group,
+                )
+                await tx.run(
+                    "MATCH ()-[r:RELATES_TO {group_id:$group}]->() "
+                    "WHERE $uuid IN coalesce(r.supporting_know_uuids,[]) "
+                    "SET r.supporting_know_uuids=[id IN r.supporting_know_uuids WHERE id<>$uuid]",
+                    uuid=payload.graphiti_episode_uuid, group=expected_group,
+                )
+                await tx.run(
+                    "MATCH (know:Know {uuid:$uuid,group_id:$group}) DETACH DELETE know",
+                    uuid=payload.graphiti_episode_uuid, group=expected_group,
+                )
+        else:
+            episode = await EpisodicNode.get_by_uuid(graphiti.driver, payload.graphiti_episode_uuid)
+            if episode.group_id != expected_group:
+                raise LookupError("knowgraph_graphiti_episode_not_found")
+            await graphiti.remove_episode(payload.graphiti_episode_uuid)
         return {"graphiti_episode_uuid": payload.graphiti_episode_uuid}
     finally:
         await graphiti.driver.close()

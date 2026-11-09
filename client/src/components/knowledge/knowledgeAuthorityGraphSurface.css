@@ -19,7 +19,9 @@
 .graph-layer-controls legend { padding:0 5px; color:#a7b0ba; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
 .graph-layer-legend { display:flex; flex-wrap:wrap; gap:6px; }
 .graph-layer-legend button { display:inline-flex; align-items:center; gap:6px; min-width:0; padding:5px 8px; border:1px solid rgba(167,176,186,.22); border-radius:999px; background:rgba(8,15,20,.76); color:#9dabb0; font-size:11px; }
-.graph-layer-legend button[aria-pressed="true"] { border-color:rgba(220,232,232,.48); background:rgba(220,232,232,.1); color:#f5f7fa; }
+.graph-layer-legend button[aria-selected="true"] { border-color:rgba(220,232,232,.48); background:rgba(220,232,232,.1); color:#f5f7fa; }
+.graph-breadcrumb { position:absolute; top:6px; left:12px; z-index:7; display:flex; align-items:center; gap:8px; font-size:12px; }
+.graph-breadcrumb button { padding:5px 8px; border:1px solid #35454a; border-radius:7px; color:#dce8e8; background:#101b20; cursor:pointer; }
 .graph-layer-legend button small { color:inherit; font-size:9px; font-variant-numeric:tabular-nums; opacity:.72; }
 .graph-layer-swatch { width:8px; height:8px; flex:0 0 8px; border-radius:50%; box-shadow:0 0 0 1px rgba(255,255,255,.2); }
 .graph-layer-scope { color:#85949a; font-size:10px; line-height:1.4; }

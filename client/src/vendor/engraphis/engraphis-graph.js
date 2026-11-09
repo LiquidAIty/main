@@ -2649,9 +2649,14 @@
         window.removeEventListener('pointercancel', endManualDrag, true);
       };
     }
-    api.setData = data => {
+    api.captureView = () => ({
+      center: { ...fg.centerAt() }, zoom: fg.zoom(),
+      positions: raw.nodes.map(({ id, x, y, vx, vy, fx, fy }) => ({ id, x, y, vx, vy, fx, fy }))
+    });
+    api.setData = (data, restoredView) => {
       if (destroyed) return;
-      const previousNodes = new Map(raw.nodes.map(node => [node.id, node]));
+      const previousNodes = new Map((restoredView ? restoredView.positions : raw.nodes)
+        .map(node => [node.id, node]));
       const preserveViewport = previousNodes.size > 0;
       const inputNodes = Array.isArray(data && data.nodes) ? data.nodes : [];
       const nodes = [], nodeIds = new Set();
@@ -2787,7 +2792,20 @@
       /* A graph revision is an in-place knowledge update. Retain established coordinates and
          the current camera; new/changed edges then pull only their local neighborhood through
          the existing force engine instead of refitting the mature galaxy on every turn. */
-      render(!preserveViewport, true, false, preserveViewport);
+      if (restoredView) {
+        cancelAutoFit();
+        clearTimeout(softAlphaTimer);
+        softAlphaTimer = 0;
+        if (fg.d3AlphaTarget) fg.d3AlphaTarget(0);
+        setSimulationBudget(false, true);
+      }
+      render(!preserveViewport && !restoredView, !restoredView, false, preserveViewport);
+      if (restoredView) {
+        // Returning to a view restores its layout; it is not a new force-layout request.
+        setSimulationBudget(false, true);
+        fg.centerAt(restoredView.center.x, restoredView.center.y, 0);
+        fg.zoom(restoredView.zoom, 0);
+      }
     };
     /* Which of these settings changes the *layout* rather than just the paint, matching the
        classic path's `key==='repel'||key==='link'||key==='gravity'||key==='size'` in

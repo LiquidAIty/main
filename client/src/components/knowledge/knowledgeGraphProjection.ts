@@ -11,7 +11,7 @@
  * Entity: KnowGraph
  * Relationship: This file preserves exact Graphiti Entity and relationship identities as KnowGraph members of the shared presentation.
  * Entity: CodeGraph
- * Relationship: This file keeps Code Files separate from Think/Know Entities and supplies exact annotation-name layout associations without merging provider identity.
+ * Relationship: This file attaches declared Code categories to matching overview Entities and reveals their separate CBM File identities only in an expanded code view.
  */
 
 import { GRAPH_THEME, SOLARPUNK_PALETTE } from '../graph/graphVisualTokens';
@@ -450,6 +450,7 @@ export function composeVisibleGraphLayers(
   knowProjection: GraphProjectionV1,
   codeProjection: GraphProjectionV1,
   layerVisibility: GraphLayerVisibility,
+  expandedCodeFeatureId?: string | null,
 ): JoinedGraphPresentation {
   const joined = composeThinkKnowPresentation(
     layerVisibility.thinkgraph
@@ -471,25 +472,28 @@ export function composeVisibleGraphLayers(
     entitiesByName.set(node.label, [...(entitiesByName.get(node.label) || []), node]);
   }
   const associatedKnowledgeIds = new Set<string>();
+  const expandedFeature = codeProjection.nodes.find(node => node.id === expandedCodeFeatureId
+    && node.properties?.recordKind === 'feature');
+  const codeRecords = expandedFeature
+    ? codeProjection.nodes.filter(node => node.properties?.recordKind === 'file'
+      && Array.isArray(node.properties.features)
+      && node.properties.features.includes(expandedFeature.properties?.featureName))
+    : codeProjection.nodes.filter(node => node.properties?.recordKind === 'feature');
   const codeNodes = layerVisibility.codegraph
-    ? codeProjection.nodes.filter(node => node.properties?.recordKind === 'file').map(node => {
-      const visualId = codeProviderRenderId(node.id);
+    ? codeRecords.flatMap(node => {
+      const matches = !expandedFeature ? entitiesByName.get(String(node.properties?.featureName)) : undefined;
+      const joinedEntity = matches?.length === 1 ? matches[0] : undefined;
+      const visualId = joinedEntity?.id || codeProviderRenderId(node.id);
       codeNodeVariants.set(visualId, node);
       visualNodeIdByCodeProviderMember.set(node.id, visualId);
-      const categories = Array.isArray(node.properties?.features) ? node.properties.features : [];
-      const categoryTargets = Object.fromEntries(categories.flatMap(name => {
-        if (typeof name !== 'string') return [];
-        const matches = entitiesByName.get(name);
-        if (matches?.length !== 1) return [];
-        associatedKnowledgeIds.add(matches[0].id);
-        return [[name, matches[0].id]];
-      }));
-      return { ...node, id: visualId, authority: 'codegraph',
-        properties: { ...node.properties, categoryTargets },
-      };
+      if (joinedEntity) {
+        associatedKnowledgeIds.add(joinedEntity.id);
+        return [];
+      }
+      return [{ ...node, id: visualId, authority: 'codegraph' as const }];
     }) : [];
   const visibleCodeNodeIds = new Set([...joined.projection.nodes, ...codeNodes].map(node => node.id));
-  const codeEdges = layerVisibility.codegraph
+  const codeEdges = layerVisibility.codegraph && expandedFeature
     ? codeProjection.edges.flatMap((edge): GraphProjectionEdge[] => {
       const source = visualNodeIdByCodeProviderMember.get(edge.source);
       const target = visualNodeIdByCodeProviderMember.get(edge.target);
@@ -508,10 +512,10 @@ export function composeVisibleGraphLayers(
       }];
     })
     : [];
-  const nodes = [...codeNodes, ...joined.projection.nodes.map(node => ({
+  const nodes = [...codeNodes, ...(expandedFeature ? [] : joined.projection.nodes).map(node => ({
     ...node, material_code_present: associatedKnowledgeIds.has(node.id),
   }))];
-  const edges = [...joined.projection.edges, ...codeEdges];
+  const edges = [...(expandedFeature ? [] : joined.projection.edges), ...codeEdges];
   return {
     ...joined,
     projection: {

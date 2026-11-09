@@ -464,6 +464,8 @@ export function CodeGraphNodeDetails({
   connectionLoading,
   connectionError,
   onLoadConnections,
+  files = [],
+  onExpand,
 }: {
   node: GraphProjectionNode;
   source: CodeGraphFileSource | null;
@@ -475,6 +477,8 @@ export function CodeGraphNodeDetails({
   connectionLoading?: boolean;
   connectionError?: string | null;
   onLoadConnections?: () => void;
+  files?: GraphProjectionNode[];
+  onExpand?: () => void;
 }) {
   const properties = node.properties || {};
   const recordKind = String(properties.recordKind || 'record');
@@ -486,6 +490,18 @@ export function CodeGraphNodeDetails({
     ))
     : [];
   return <div data-testid="codegraph-node-details" data-provider-id={node.id}>
+    {recordKind === 'feature' ? <section className="graph-inspector-records">
+      <h4>Declared code membership</h4>
+      <ul>{files.map(file => <li key={file.id}>
+        <button type="button" className="codegraph-file-link" onClick={() => onOpenFile?.(String(file.properties?.filePath))}>
+          {String(file.properties?.filePath)}
+        </button>
+        {(Array.isArray(file.properties?.contributions) ? file.properties.contributions : [])
+          .filter((contribution: any) => contribution.feature === properties.featureName)
+          .map((contribution: any, index: number) => <p key={index}>{String(contribution.relationship)}</p>)}
+      </li>)}</ul>
+      {onExpand ? <button type="button" onClick={onExpand}>Expand code</button> : null}
+    </section> : null}
     <dl className="graph-record-fields graph-edge-meaning">
       <div><dt>Kind</dt><dd>{recordKind}</dd></div>
       {filePath ? <div><dt>Path</dt><dd>{filePath}</dd></div> : null}
