@@ -11,12 +11,15 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from engraphis.core.interfaces import Edge, Node
 
 from .engraphis import canonical_entity_id, existing_entity_for_name
 from .thinkgraph_relationship_classification import (
+    classify_relationship,
+    classify_relationships,
     current_jev_pair_edges,
     jev_provenance,
     winner_probability,
@@ -27,6 +30,52 @@ from .thinkgraph_relationship_vocabulary import (
     project_relationship_vocabulary,
     relationship_vocabulary_hash,
 )
+
+
+def prepare_think_writes(store, project, workspace_id, texts, proposals, source_reference):
+    """Prepare Jev outside the transaction; return source metadata and its edge writer."""
+    from .conversations import read_pair
+    from .thinkgraph_completed_pair_preparation import source_pair
+
+    origin = {}
+    if source_reference:
+        row = store.conn.execute(
+            "SELECT content FROM events WHERE workspace_id=? AND kind='conversation_pair' "
+            "AND json_extract(content,'$.pairReference')=?",
+            (workspace_id, source_reference),
+        ).fetchone()
+        if row is None:
+            raise ValueError("think_source_pair_not_found")
+        reference = json.loads(row["content"])
+        payload = read_pair(project, reference["conversationId"],
+                            reference["userMessageIds"], reference["assistantMessageId"])
+        origin = {"completed_pair_reference": source_reference,
+                  "source_pair": source_pair(payload)}
+    else:
+        payload = {"eventType": "explicit_memory", "projectId": project,
+                   "toolName": "engraphis_add_thinks", "userMessage": "",
+                   "mainResponse": "\n\n".join(texts), "content": "\n\n".join(texts)}
+    vocabulary = project_relationship_vocabulary(store, workspace_id)
+    decisions = [classify_relationships(
+        store, workspace_id=workspace_id, payload=payload, summary=text,
+        relationships=relationships, classifier=classify_relationship,
+        relationship_vocabulary=vocabulary,
+    ) if relationships else [] for text, relationships in zip(texts, proposals, strict=True)]
+
+    def write(results):
+        written = []
+        for result, relationships, choices in zip(results, proposals, decisions, strict=True):
+            for relationship, decision in zip(relationships, choices, strict=True):
+                edge = apply_accepted_decision(
+                    store, workspace_id=workspace_id, payload=payload,
+                    memory_id=result["id"], relationship=relationship, decision=decision,
+                )
+                written.append({"id": edge["edge_id"], "source": edge["source"],
+                                "target": edge["target"], "relation": edge["relation"],
+                                "weight": edge["label_confidence"]})
+        return written
+
+    return origin, write
 
 
 def upsert_canonical_entity(

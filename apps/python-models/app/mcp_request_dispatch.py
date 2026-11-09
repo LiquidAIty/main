@@ -69,7 +69,7 @@ def request_tool_is_allowed(
     if access is None:
         return principal is None
     if principal is None:
-        if not mcp_auth.OAUTH_ENFORCED:
+        if not mcp_auth.access_token_available():
             return True
         context = mcp_auth.authenticated_project_context()
         if resolved_definition is not None and resolved_definition.external_entry:
@@ -106,7 +106,7 @@ async def list_resources() -> list[Any]:
         response_status=200,
         result_category="empty_catalog",
         completed=True,
-        **mcp_auth.oauth_trace_fields(),
+        **mcp_auth.credential_trace_fields(),
     )
     return []
 SERVER_OWNED_ARGUMENTS = {
@@ -281,7 +281,7 @@ async def execute_tool_request(
     trace_fields = {
         "tool_transport": transport,
         "tool_name": tool_name[:160],
-        **(mcp_auth.oauth_trace_fields() if transport == "mcp" else {}),
+        **(mcp_auth.credential_trace_fields() if transport == "mcp" else {}),
     }
     mcp_observability.trace("tool_call_started", **trace_fields)
     try:

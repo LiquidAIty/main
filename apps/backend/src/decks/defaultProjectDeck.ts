@@ -75,7 +75,7 @@ const MAIN_TOOLS = [
 const THINKGRAPH_TOOLS = [
   'engraphis_recall_context',
   'engraphis_get_memory',
-  'engraphis_remember_entities',
+  'engraphis_add_thinks',
   'engraphis_discover_actions',
   'engraphis_execute_read',
 ];

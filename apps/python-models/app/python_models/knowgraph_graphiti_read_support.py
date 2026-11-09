@@ -103,7 +103,7 @@ def knowgraph_driver() -> tuple[Any, str]:
     return GraphDatabase.driver(uri, auth=(user, password)), database
 def graphiti_episode_ids(item: dict[str, Any]) -> list[str]:
     values: list[str] = []
-    for key in ("episode_uuids", "episodes", "source_episode_uuids"):
+    for key in ("supporting_know_uuids", "episode_uuids", "episodes", "source_episode_uuids"):
         raw = item.get(key)
         if isinstance(raw, list):
             for value in raw:

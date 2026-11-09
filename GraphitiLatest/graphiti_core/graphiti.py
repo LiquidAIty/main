@@ -20,7 +20,7 @@ from time import time
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing_extensions import LiteralString
 
 from graphiti_core.cross_encoder.client import CrossEncoderClient
@@ -51,6 +51,7 @@ from graphiti_core.knows import (
     KnowCitation,
     KnowDirection,
     KnowNode,
+    KnowRelationship,
     know_content_hash,
     know_episode_content,
     know_uuid,
@@ -71,9 +72,6 @@ from graphiti_core.prompts.summarize_sagas import SagaSummary
 from graphiti_core.search.search import SearchConfig, search
 from graphiti_core.search.search_config import (
     DEFAULT_SEARCH_LIMIT,
-    EpisodeReranker,
-    EpisodeSearchConfig,
-    EpisodeSearchMethod,
     SearchResults,
 )
 from graphiti_core.search.search_config_recipes import (
@@ -138,7 +136,7 @@ class AddEpisodeResults(BaseModel):
 class AddKnowResults(BaseModel):
     know: KnowNode
     entity: EntityNode
-    episode_results: AddEpisodeResults | None
+    relationships: list[EntityEdge] = Field(default_factory=list)
     created: bool
     entity_created: bool
 
@@ -1329,23 +1327,10 @@ class Graphiti:
         direction: KnowDirection | None = None,
         group_id: str | None = None,
         uuid: str | None = None,
-        update_communities: bool = True,
-        entity_types: dict[str, type[BaseModel]] | None = None,
-        excluded_entity_types: list[str] | None = None,
-        previous_episode_uuids: list[str] | None = None,
-        edge_types: dict[str, type[BaseModel]] | None = None,
-        edge_type_map: dict[tuple[str, str], list[str]] | None = None,
-        custom_extraction_instructions: str | None = None,
-        saga: str | SagaNode | None = None,
-        saga_previous_episode_uuid: str | None = None,
+        mentions: list[str] | None = None,
+        relationships: list[KnowRelationship] | None = None,
     ) -> AddKnowResults:
-        """Store one first-class Know through the normal episode and Saga pipeline.
-
-        A Know remains a normal episode for extraction, temporal ordering, hybrid
-        retrieval, communities, and Saga membership. The additional ``Know`` label
-        stores its primary Entity UUID as data. Extracted ``MENTIONS`` links to
-        existing Entities remain intact; redundant ``ABOUT`` attachments do not.
-        """
+        """Write an explicit Know and its owner, never expanding prose into a graph."""
 
         observation = observation.strip()
         interpretation = interpretation.strip()
@@ -1354,10 +1339,8 @@ class Graphiti:
         if not interpretation or len(interpretation) > 8000:
             raise ValueError('Know interpretation must contain at most 8000 characters')
         group_id, driver, clients = self._resolve_request_scope(group_id)
-        if driver.provider == GraphProvider.KUZU:
-            raise NotImplementedError('Know storage is not available for Kuzu')
-        if not getattr(self, 'store_raw_episode_content', True):
-            raise ValueError('Know storage requires searchable episode content')
+        if driver.provider != GraphProvider.NEO4J:
+            raise NotImplementedError('Atomic Know writes require Neo4j')
 
         entity, entity_created = await resolve_know_entity(
             clients,
@@ -1372,64 +1355,18 @@ class Graphiti:
             citation=citation,
             direction=direction,
         )
-        existing = await KnowNode.get_by_content_hash(
-            driver,
-            group_id=group_id,
-            content_hash=digest,
-        )
-        if existing is not None:
-            if existing.entity_uuid != entity.uuid:
-                raise ValueError('Know content is already attached to a different Entity')
-            return AddKnowResults(
-                know=existing,
-                entity=entity,
-                episode_results=None,
-                created=False,
-                entity_created=False,
-            )
-
         know_id = uuid or know_uuid(group_id, entity.name, digest)
-        episode_body = know_episode_content(
+        content = know_episode_content(
             observation=observation,
             interpretation=interpretation,
             citation=citation,
             direction=direction,
         )
-        source_description = f'{citation.publisher}: {citation.title}'
-        try:
-            episode = await EpisodicNode.get_by_uuid(driver, know_id)
-        except NodeNotFoundError:
-            episode_results = await self.add_episode(
-                name=name,
-                episode_body=episode_body,
-                source_description=source_description,
-                reference_time=reference_time,
-                source=EpisodeType.text,
-                group_id=group_id,
-                uuid=know_id,
-                update_communities=update_communities,
-                entity_types=entity_types,
-                excluded_entity_types=excluded_entity_types,
-                previous_episode_uuids=previous_episode_uuids,
-                edge_types=edge_types,
-                edge_type_map=edge_type_map,
-                custom_extraction_instructions=custom_extraction_instructions,
-                saga=saga,
-                saga_previous_episode_uuid=saga_previous_episode_uuid,
-            )
-            episode = episode_results.episode
-        else:
-            if (
-                episode.group_id != group_id
-                or episode.name != name
-                or episode.source is not EpisodeType.text
-                or episode.content != episode_body
-                or episode.source_description != source_description
-            ):
-                raise ValueError('Know UUID is already used by a different episode')
-            episode_results = None
-        know = KnowNode.from_episode(
-            episode,
+        now = utc_now()
+        know = KnowNode(
+            uuid=know_id, name=name, group_id=group_id, created_at=now,
+            valid_at=reference_time, content=content,
+            source_description=f'{citation.publisher}: {citation.title}',
             entity_uuid=entity.uuid,
             observation=observation,
             interpretation=interpretation,
@@ -1437,14 +1374,26 @@ class Graphiti:
             direction=direction,
             content_hash=digest,
         )
-        know.entity_created = entity_created
-        await know.save_know(driver)
-        know = await KnowNode.get_by_uuid(driver, know.uuid)
+        edges = []
+        for relationship in relationships or []:
+            relationship = KnowRelationship.model_validate(relationship)
+            edge = EntityEdge(
+                source_node_uuid=relationship.source_entity_uuid,
+                target_node_uuid=relationship.target_entity_uuid,
+                name='RELATED_TO', fact=relationship.fact, group_id=group_id,
+                created_at=now, valid_at=reference_time,
+            )
+            await edge.generate_embedding(clients.embedder)
+            edges.append(edge)
+        know, entity, created, entity_created, written_edges = await know.save_know(
+            driver, entity=entity, owner_by_name=not bool(entity_uuid),
+            mentions=mentions, relationships=edges,
+        )
         return AddKnowResults(
             know=know,
             entity=entity,
-            episode_results=episode_results,
-            created=True,
+            relationships=written_edges,
+            created=created,
             entity_created=entity_created,
         )
 
@@ -1455,32 +1404,18 @@ class Graphiti:
         group_id: str | None = None,
         limit: int = DEFAULT_SEARCH_LIMIT,
     ) -> list[KnowNode]:
-        """Use Graphiti episode BM25 and cross-encoder retrieval for Knows only."""
+        """Search first-class Knows with BM25 and the existing cross-encoder."""
 
         if limit < 1 or limit > 100:
             raise ValueError('Know search limit must be between 1 and 100')
         group_id, driver, clients = self._resolve_request_scope(group_id)
         if driver.provider == GraphProvider.KUZU:
             raise NotImplementedError('Know search is not available for Kuzu')
-        config = SearchConfig(
-            episode_config=EpisodeSearchConfig(
-                search_methods=[EpisodeSearchMethod.bm25],
-                reranker=EpisodeReranker.cross_encoder,
-            ),
-            limit=limit,
-        )
-        results = await search(
-            clients,
-            query,
-            [group_id],
-            config,
-            SearchFilters(node_labels=['Know']),
-            driver=driver,
-        )
-        return await KnowNode.get_by_uuids(
-            driver,
-            [episode.uuid for episode in results.episodes],
-        )
+        candidates = await KnowNode.search(driver, query, group_id=group_id, limit=2 * limit)
+        if not candidates:
+            return []
+        ranked = await clients.cross_encoder.rank(query, list(dict.fromkeys(k.content for k in candidates)))
+        return [know for content, _score in ranked for know in candidates if know.content == content][:limit]
 
     async def get_entity_knows(
         self,

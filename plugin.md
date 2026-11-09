@@ -274,10 +274,12 @@ eager schema is not proof of a broken MCP connection. Inspect the saved grants, 
 description and call result before changing anything.
 See the [official Tool Search guide](https://github.com/NousResearch/hermes-agent/blob/v0.23.0/website/docs/user-guide/features/tool-search.md).
 
-**Authentication is not eliminated:** Hermes owns use of configured credentials and supported OAuth,
-but cannot invent a proprietary server credential or keep an already-issued custom token alive beyond
-its expiry. Report that exact failure and use an owner-approved supported setup. Do not restore the
-deleted credential issuer, silently broaden access, or replace the real tool with a manual graph write.
+**MCP has no OAuth dependency or timed expiry:** saved Hermes Cards keep their existing signed
+owner/Project/deck/profile credentials. Catalog and graph-read credentials also have no expiry.
+The server verifies signatures and rereads saved Card grants; key rotation invalidates old credentials.
+There is no OAuth discovery/challenge, host/origin allowlist, renewal loop or separate public login path.
+The former external OAuth connector is not served. Model-provider logins and Hermes dashboard
+authentication are unchanged. Do not restore startup provisioning or a second issuer.
 
 The approved shape is ordinary Hermes Bot Mode plus saved wire control, using real profile-scoped MCP
 tools. Application-owned startup synchronization/provisioning and forced-refresh helpers are rejected.

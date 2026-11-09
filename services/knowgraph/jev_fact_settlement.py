@@ -36,13 +36,15 @@ async def read_episode_facts(
     result = await graphiti.driver.execute_query(
         """
         MATCH (source:Entity)-[fact]->(target:Entity)
-        WHERE $episode_id IN coalesce(fact.episodes, [])
+        WHERE $episode_id IN coalesce(fact.supporting_know_uuids, [])
+           OR $episode_id IN coalesce(fact.episodes, [])
         RETURN toString(fact.uuid) AS uuid,
-               toString(fact.source_node_uuid) AS source_node_uuid,
-               toString(fact.target_node_uuid) AS target_node_uuid,
+               toString(source.uuid) AS source_node_uuid,
+               toString(target.uuid) AS target_node_uuid,
                fact.name AS name,
                fact.fact AS fact,
                fact.episodes AS episodes,
+               fact.supporting_know_uuids AS supporting_know_uuids,
                fact.created_at AS created_at,
                fact.valid_at AS valid_at,
                fact.invalid_at AS invalid_at,
@@ -75,7 +77,7 @@ async def read_episode_facts(
         edges.append({
             key: record.get(key)
             for key in (
-                "uuid", "source_node_uuid", "target_node_uuid", "name", "fact",
+                "uuid", "source_node_uuid", "target_node_uuid", "name", "fact", "supporting_know_uuids",
                 "episodes", "created_at", "valid_at", "invalid_at", "expired_at",
             )
         })
@@ -574,6 +576,9 @@ async def classify_episode_facts_with_jev(
             "fact": statement,
             "supportingEpisodeUuids": [
                 str(value) for value in (graphiti_value(edge, "episodes") or []) if str(value)
+            ],
+            "supportingKnowUuids": [
+                str(value) for value in (graphiti_value(edge, "supporting_know_uuids") or []) if str(value)
             ],
             "supportingEpisodes": [{
                 "uuid": episode_id,

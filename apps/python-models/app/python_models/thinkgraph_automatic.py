@@ -5,7 +5,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
-# Relationship: Receives Main's exact post-LLM pair, prepares Engraphis chunks, delivers them to the authorized saved ThinkGraph Card, and settles its actual result.
+# Relationship: Delivers Main's exact post-LLM pair to the saved ThinkGraph Card for tool-owned writes and reports persisted Think IDs without interpreting its final answer.
 
 from __future__ import annotations
 
@@ -194,94 +194,58 @@ def _saved_authority(project: str, saved: list[dict[str, Any]], *, require_targe
     }
 
 
-def _delivery_message(prepared: dict[str, Any]) -> str:
-    preparation = prepared["preparation"]
-    sections = [
-        "AUTOMATIC THINKGRAPH EXTRACTION",
-        "This is application-produced post-turn input. Return only the required structured output.",
-    ]
-    sections.extend([
-        "EXTRACTION PROMPT:",
-        str(preparation["enrichmentPrompt"]),
-        "OUTPUT SCHEMA:",
-        json.dumps(preparation["enrichmentSchema"], ensure_ascii=False, separators=(",", ":")),
-    ])
-    return "\n\n".join(sections)
+def _delivery_message(source: dict[str, Any], reference: str) -> str:
+    return (
+        f"Completed Main exchange. Source reference: {reference}\n\n"
+        f"USER:\n{source['userMessage']}\n\nMAIN:\n{source['mainResponse']}"
+    )
 
 
 def _automatic_run(project: str, arguments: dict[str, Any], saved: list[dict[str, Any]]) -> dict[str, Any]:
     authority = _saved_authority(project, saved)
     if authority is None:
         return {"status": "skipped", "reason": "not_main", "changed": False}
-    reference = {
-        "conversationId": arguments["conversationId"],
-        "assistantMessageId": authority["assistant"]["messageId"],
-    }
+    from .conversations import read_pair, register_source_pair
+    from .thinkgraph_completed_pair_preparation import pair_reference, existing_source_pair_thinks
+    from .engraphis import get_service, SERVICE_LOCK
 
-    from .engraphis_operations import private_operation
-
-    prepared = private_operation(project, "prepare_conversation_pair", {
-        "conversationId": reference["conversationId"],
-        "userMessageIds": [item["messageId"] for item in authority["users"]],
-        "assistantMessageId": reference["assistantMessageId"],
-    })
-    preparation = prepared["preparation"]
-    if preparation.get("structuredExtractionRequired") is not True:
-        return {
-            "status": "completed", "operation": "noop", "changed": False,
-            "pairReference": preparation.get("pairReference"),
-        }
-
-    _LOGGER.info("[automatic-thinkgraph] prepared project=%s pair=%s",
-                 project, preparation["pairReference"])
-    delivery_id = _required_text(
-        preparation.get("pairReference"), "thinkgraph_pair_reference_missing"
-    ).removeprefix("pair_")
+    source = read_pair(project, arguments["conversationId"],
+                       [item["messageId"] for item in authority["users"]],
+                       authority["assistant"]["messageId"])
+    reference = pair_reference(source)
+    register_source_pair(project, reference, source["sourceReferences"][0])
+    _LOGGER.info("[automatic-thinkgraph] delivering project=%s pair=%s", project, reference)
+    delivery_id = reference.removeprefix("pair_")
     delivered = _bridge_request(
         {
             "operation": "deliver",
             "profileHome": str(_profile_home(authority["thinkGraphProfile"])),
             "profile": authority["thinkGraphProfile"],
             "deliveryId": delivery_id,
-            "message": _delivery_message(prepared),
+            "message": _delivery_message(source, reference),
             "timeoutSeconds": _DELIVERY_TIMEOUT_SECONDS,
         },
         timeout=_DELIVERY_TIMEOUT_SECONDS + 30.0,
     )
-    try:
-        structured_output = json.loads(delivered["finalResponse"])
-    except (KeyError, json.JSONDecodeError, TypeError) as error:
-        raise AutomaticThinkGraphError("thinkgraph_structured_output_invalid") from error
-
-    from .thinkgraph_completed_pair_settlement import settle_completed_pair
-
-    settled = settle_completed_pair({
-        **prepared["source"],
-        "pairReference": preparation["pairReference"],
-        "structuredOutput": structured_output,
-        "cardRun": {
-            "runId": delivered["admissionId"],
-            "cardId": authority["thinkGraphCardId"],
-            "revisionId": authority["thinkGraphRevisionId"],
-            "profile": authority["thinkGraphProfile"],
-            "hermesSessionId": delivered["sessionId"],
-            "resolvedProvider": delivered["provider"],
-            "resolvedModel": delivered["model"],
-        },
-    })
-    if settled.get("revisionChanged") is True:
+    with SERVICE_LOCK:
+        service = get_service(project)
+        workspace = service.store.get_or_create_workspace(project)
+        memories = existing_source_pair_thinks(service.store, workspace_id=workspace,
+                                               pair_reference=reference)
+        memory_ids = [memory.id for memory in memories]
+    if memory_ids:
         from app.backend_operation_transport import notify_graph_changed
         from .engraphis import project_principal
         notify_graph_changed(project, project_principal(project)["id"], "thinkgraph")
-    _LOGGER.info("[automatic-thinkgraph] settled project=%s admission=%s thinks=%s",
-                 project, delivered["admissionId"], settled.get("thinkMemoryIds", []))
+    _LOGGER.info("[automatic-thinkgraph] completed project=%s admission=%s thinks=%s",
+                 project, delivered["admissionId"], memory_ids)
     return {
         "status": "completed",
-        "operation": settled.get("intakeOperation"),
-        "changed": settled.get("revisionChanged") is True,
-        "pairReference": preparation["pairReference"],
+        "operation": "tool_write" if memory_ids else "no_write",
+        "changed": bool(memory_ids),
+        "pairReference": reference,
         "admissionId": delivered["admissionId"],
-        "thinkMemoryIds": settled.get("thinkMemoryIds", []),
+        "thinkMemoryIds": memory_ids,
     }
 
 

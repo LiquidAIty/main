@@ -168,7 +168,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
         source_sha256=mcp_observability.STARTUP_SOURCE_SHA256,
         response_status=200,
         completed=True,
-        **mcp_auth.oauth_trace_fields(),
+        **mcp_auth.credential_trace_fields(),
     )
     return catalog
 

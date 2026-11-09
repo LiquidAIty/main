@@ -3686,6 +3686,36 @@ def smart_remember_entities(
 
 
 @smart_mcp.tool(
+    name="engraphis_add_thinks",
+    annotations={"title": "Add Thinks to Entities", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+    structured_output=False,
+)
+def engraphis_add_thinks(
+    thinks: Annotated[List[dict], Field(
+        description="Thinks with entity_name and content; optional entity_id, title, detail and "
+                    "relationships. Each relationship has target (Entity name) and relation "
+                    "(authored prose explaining this Entity's directed relationship to that target). "
+                    "entity_id may be an Engraphis ent_ ID or its thinkgraph: map reference. "
+                    "Each Think has one owner. Text mentions are references, not extra owners. "
+                    "Do not supply Jev labels or probabilities.",
+    )],
+    workspace: Annotated[Optional[str], Field(description="Workspace.")] = None,
+    source_reference: Annotated[Optional[str], Field(
+        description="The exact pair_ source reference supplied with a completed exchange. "
+                    "Omit for an explicit Think-writing request without a source pair."
+    )] = None,
+) -> str:
+    """Save Entity-owned Thinks, textual mentions, and Jev-classified prose relationships."""
+    try:
+        return _ok(service().add_thinks(
+            thinks, workspace=workspace or "default", source_reference=source_reference,
+        ))
+    except Exception as exc:  # noqa: BLE001 - use the existing tool error contract
+        return _smart_error_from_string(_err(exc))
+
+
+@smart_mcp.tool(
     name="engraphis_discover_actions",
     annotations={"title": "Discover an advanced Engraphis capability", "readOnlyHint": True,
                  "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},

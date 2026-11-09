@@ -128,6 +128,12 @@ Source-default grants are:
 Saved Project configuration remains the runtime ceiling. The MCP host publishes one canonical catalog.
 Catalog version includes the root package version and source-manifest hash.
 
+MCP uses existing signed credentials without expiry for saved Cards, catalog reads and graph reads.
+The host has no OAuth provider, discovery challenge, host/origin allowlist or token-renewal loop.
+Signature, owner/Project/profile and saved-grant checks remain; key rotation revokes prior credentials.
+The former external OAuth connector is no longer served by this host. Model-provider logins and
+Hermes dashboard authentication are unchanged. Loaded connection and real graph proof remain separate.
+
 ### Shared graph navigation map
 
 The graph surface publishes one compact in-memory JSON snapshot matching the visible Think/Know/Code
@@ -146,23 +152,27 @@ tools and writers.
 
 ### ThinkGraph completed-turn intake
 
-Hermes's `on_session_end` plugin hook observes a successful Main turn. The hook captures the exact
+Hermes's `post_llm_call` plugin hook supplies a completed User/Main pair. The hook captures the exact
 profile/session context, then the Hermes plugin host uses `ctx.spawn_task` plus `asyncio.to_thread`;
 Main returns without waiting. Main does not supervise, invoke, steer, approve, or settle the work.
 
-The completed-turn hook passes the exact User/Main exchange to Python rails. The existing saved
-ThinkGraph profile executes the recovered chunk-grounded Entity-specific extraction contract from
-the October 30 / November 3 source: substantive reasoning stays on each distinct Entity, rather than
-being absorbed into a broad theme. The application supplies its matching Think schema without
-Engraphis's generic fact-prompt prefix. Engraphis settles the returned single-owner Thinks and their
-source references; there is no second model pass or Python semantic classifier.
+The completed-turn hook passes the exact User/Main exchange to Python rails. Automatic delivery sends
+that pair and its source reference to the saved ThinkGraph profile, which writes through
+`engraphis_add_thinks`. The final answer is not an extraction document or a graph writer. Thinks retain
+one owning Entity and separate textual mentions; relationship prose goes through the existing Jev
+classifier and edge writer. Source excerpts may resolve the original pair without chunk citations.
+The ThinkGraph context engine selects the current turn and its tool results, not earlier extraction
+turns; Main and KnowGraph context behavior is unchanged. Saved prompt/grant activation and live
+tool/write/readback proof remain separate requirements.
 
 Useful isolated Entities are permitted; neither a nonempty result nor an Entity needs an invented edge.
-One extraction emits at most one directed relationship per unordered Entity pair. Relationship prose
+The older chunk/JSON preparation and settlement entrypoints remain available at the owner's request,
+but automatic processing no longer calls them and they are not a fallback. The prompt discourages
+mirrored relationship spam. Relationship prose
 remains model-authored, without technical Jev labels or a fixed word limit. A new Jev decision creates
 a fresh edge and retires prior active Jev edges for that directed pair; their stored distributions
-and prose are not overwritten. The restored extraction still needs a fresh authorized live
-conversation to establish the resulting Entity and relationship quality.
+and prose are not overwritten. A real saved-Card tool call and durable readback are required to establish
+the resulting Entity and relationship quality; a build or agent completion alone is not proof.
 
 The deleted TypeScript conversation store is not replaced. There is no history polling, caller-supplied
 chat copy, Main route coupling, or duplicated transcript owner.

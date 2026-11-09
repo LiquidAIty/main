@@ -14,6 +14,7 @@ NEO4J_TO_FALKORDB_MAPPING = {
     'node_name_and_summary': 'Entity',
     'community_name': 'Community',
     'episode_content': 'Episodic',
+    'know_content': 'Know',
     'edge_name_and_fact': 'RELATES_TO',
 }
 # Mapping from fulltext index names to Kuzu node labels
@@ -32,7 +33,7 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
             'CREATE INDEX FOR (n:Entity) ON (n.uuid, n.group_id, n.name, n.created_at)',
             # Episodic node
             'CREATE INDEX FOR (n:Episodic) ON (n.uuid, n.group_id, n.created_at, n.valid_at)',
-            # First-class Know episode
+            # First-class Know
             'CREATE INDEX FOR (n:Know) ON (n.uuid, n.group_id, n.content_hash)',
             # Community node
             'CREATE INDEX FOR (n:Community) ON (n.uuid)',
@@ -54,6 +55,9 @@ def get_range_indices(provider: GraphProvider) -> list[LiteralString]:
         return []
 
     return [
+        'CREATE CONSTRAINT know_uuid_unique IF NOT EXISTS FOR (n:Know) REQUIRE n.uuid IS UNIQUE',
+        'CREATE CONSTRAINT know_write_unique IF NOT EXISTS FOR (n:Know) REQUIRE n.know_write_key IS UNIQUE',
+        'CREATE CONSTRAINT know_owner_unique IF NOT EXISTS FOR (n:Entity) REQUIRE n.know_owner_key IS UNIQUE',
         'CREATE INDEX entity_uuid IF NOT EXISTS FOR (n:Entity) ON (n.uuid)',
         'CREATE INDEX episode_uuid IF NOT EXISTS FOR (n:Episodic) ON (n.uuid)',
         'CREATE INDEX know_content_hash IF NOT EXISTS FOR (n:Know) ON (n.group_id, n.content_hash)',
@@ -106,6 +110,9 @@ def get_fulltext_indices(provider: GraphProvider) -> list[LiteralString]:
                                                 'content', 'source', 'source_description', 'group_id'
                                                 )""",
                 f"""CALL db.idx.fulltext.createNodeIndex(
+                    {{label: 'Know', stopwords: {stopwords_str}}},
+                    'content', 'source_description', 'group_id')""",
+                f"""CALL db.idx.fulltext.createNodeIndex(
                                                 {{
                                                     label: 'Entity',
                                                     stopwords: {stopwords_str}
@@ -132,6 +139,8 @@ def get_fulltext_indices(provider: GraphProvider) -> list[LiteralString]:
         ]
 
     return [
+        """CREATE FULLTEXT INDEX know_content IF NOT EXISTS
+        FOR (k:Know) ON EACH [k.content, k.source_description, k.group_id]""",
         """CREATE FULLTEXT INDEX episode_content IF NOT EXISTS
         FOR (e:Episodic) ON EACH [e.content, e.source, e.source_description, e.group_id]""",
         """CREATE FULLTEXT INDEX node_name_and_summary IF NOT EXISTS

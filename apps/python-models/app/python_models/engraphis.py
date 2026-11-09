@@ -69,6 +69,7 @@ def get_service(project: str):
     with SERVICE_LOCK:
         if owner not in _services:
             from engraphis.service import MemoryService
+            from .thinkgraph_relationship_settlement import prepare_think_writes
             database = DATABASE_ROOT / owner / "engraphis.sqlite"
             database.parent.mkdir(parents=True, exist_ok=True)
             service = MemoryService.create(
@@ -76,6 +77,7 @@ def get_service(project: str):
                 require_immutable_models=True, require_exact_backends=True,
                 extractor="none", graph_extractor="none",
                 retention_supervisor="none", allow_automatic_critical_retention=False,
+                prepare_thinks=prepare_think_writes,
             )
             _services[owner] = service
         return _services[owner]

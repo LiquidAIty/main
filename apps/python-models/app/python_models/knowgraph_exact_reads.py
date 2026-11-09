@@ -81,7 +81,7 @@ def _read_knowgraph_entity_knows(
                 MATCH (entity:Entity)
                 WHERE (elementId(entity) = $entityId OR toString(entity.uuid) = $entityId)
                   AND toString(entity.group_id) IN $scopeIds
-                MATCH (episode:Episodic:Know)
+                MATCH (episode:Know)
                 WHERE toString(episode.entity_uuid) = coalesce(toString(entity.uuid), elementId(entity))
                   AND toString(episode.group_id) IN $scopeIds
                 RETURN coalesce(toString(episode.uuid), elementId(episode)) AS episodeId,
@@ -165,7 +165,7 @@ def read_recent_knowgraph_knows(
         with driver.session(database=database) as session:
             rows = neo4j_rows(session.run(
                 """
-                MATCH (episode:Episodic:Know)
+                MATCH (episode:Know)
                 WHERE toString(episode.group_id) IN $scopeIds
                   AND episode.entity_uuid IS NOT NULL
                 MATCH (entity:Entity)
@@ -290,8 +290,9 @@ def read_knowgraph_episodes_exact(
         with driver.session(database=database) as session:
             rows = neo4j_rows(session.run(
                 """
-                MATCH (episode:Episodic)
-                WHERE toString(episode.uuid) IN $episodeIds
+                MATCH (episode)
+                WHERE (episode:Know OR episode:Episodic)
+                  AND toString(episode.uuid) IN $episodeIds
                   AND (
                     toString(episode.group_id) IN $scopeIds
                     OR toString(episode.project_id) = $projectId
@@ -461,7 +462,7 @@ def read_knowgraph_exact(
     identifier = str(center.get("graphitiId") or identifier)
     resolved_id_field = (
         "graphitiRelationshipId" if relationship_center
-        else "graphitiEpisodeId" if "Episodic" in labels
+        else "graphitiEpisodeId" if "Episodic" in labels or "Know" in labels
         else "graphitiEntityId"
     )
     if resolved_id_field != id_field:

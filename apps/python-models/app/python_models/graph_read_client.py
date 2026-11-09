@@ -4,9 +4,9 @@
 # Entity: MCP Host
 # Relationship: This file uses the one official loopback MCP host and official client transport instead of importing or duplicating provider catalogs.
 # Entity: Authentication
-# Relationship: This file signs a short-lived graph-read principal scoped to the exact Project, deck, Card, conversation, and requested read operations.
+# Relationship: Signs a non-expiring graph-read principal scoped to the exact Project, deck, Card, conversation, and requested read operations.
 # Entity: Credentials
-# Relationship: This file reads the supervised internal MCP secret only to sign the short-lived principal and rejects missing or non-loopback transport configuration.
+# Relationship: Reads the existing internal MCP secret to sign the scoped read principal and rejects missing or non-loopback transport configuration.
 # Entity: Tool Catalog
 # Relationship: This file delegates read-only operation classification to the live MCP host and never mirrors the canonical catalog in Python rails.
 
@@ -28,7 +28,6 @@ from mcp.client.streamable_http import streamable_http_client
 _INTERNAL_MCP_ISSUER = "liquidaity-runtime"
 _INTERNAL_MCP_AUDIENCE = "liquidaity-internal-mcp"
 _DEFAULT_INTERNAL_MCP_URL = "http://127.0.0.1:8765/mcp"
-_GRAPH_READ_TOKEN_LIFETIME_SECONDS = 60
 
 
 def _required_secret() -> str:
@@ -56,7 +55,7 @@ def create_graph_read_token(
     granted_tools: list[str],
     conversation_id: str = "",
 ) -> str:
-    """Issue a short-lived read-only principal for pre-dispatch graph hydration.
+    """Issue a non-expiring read-only principal for pre-dispatch graph hydration.
 
     A graph projection read has no Run, so this token deliberately carries no
     invented Run or conversation identity. The official MCP host accepts it
@@ -83,7 +82,6 @@ def create_graph_read_token(
             "aud": _INTERNAL_MCP_AUDIENCE,
             "sub": f"graph-read:{principal['callerCardId']}",
             "iat": now,
-            "exp": now + _GRAPH_READ_TOKEN_LIFETIME_SECONDS,
             "scope": "liquidaity.main",
             "principal": principal,
         },

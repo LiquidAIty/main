@@ -127,18 +127,6 @@ class ThinkGraphStructuredFact(_StructuredModel):
 class ThinkGraphStructuredOutput(_StructuredModel):
     facts: list[ThinkGraphStructuredFact] = Field(max_length=20)
 
-    @model_validator(mode="after")
-    def validate_relationship_pairs(self) -> "ThinkGraphStructuredOutput":
-        pairs: set[tuple[str, str]] = set()
-        for fact in self.facts:
-            for relationship in fact.relations:
-                source, target = relationship.source.casefold(), relationship.target.casefold()
-                pair = tuple(sorted((source, target)))
-                if pair in pairs:
-                    raise ValueError("thinkgraph_card_pair_duplicate")
-                pairs.add(pair)
-        return self
-
 
 class _SavedCardStructuredResult:
     """LLM protocol bridge: the saved Card already performed the model call."""

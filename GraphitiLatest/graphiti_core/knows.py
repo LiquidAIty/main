@@ -1,10 +1,11 @@
-"""First-class sourced Knows built on Graphiti episodes."""
+"""First-class cited Knows with one Project-scoped Entity owner."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import unicodedata
+from datetime import datetime
 from typing import Literal
 from uuid import UUID, uuid5
 
@@ -13,8 +14,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from graphiti_core.driver.driver import GraphDriver, GraphProvider
 from graphiti_core.errors import NodeNotFoundError
 from graphiti_core.graphiti_types import GraphitiClients
+from graphiti_core.driver.record_parsers import entity_node_from_record
+from graphiti_core.edges import EntityEdge
+from graphiti_core.graph_queries import get_nodes_query
 from graphiti_core.helpers import parse_db_date
-from graphiti_core.nodes import EntityNode, EpisodeType, EpisodicNode
+from graphiti_core.models.nodes.node_db_queries import get_entity_node_return_query
+from graphiti_core.nodes import EntityNode, EpisodicNode, Node
+from graphiti_core.search.search_utils import fulltext_query
 from graphiti_core.utils.datetime_utils import utc_now
 
 
@@ -56,9 +62,24 @@ class KnowDirection(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 
 
-class KnowNode(EpisodicNode):
+class KnowRelationship(BaseModel):
+    """An explicitly authored relationship supported by the submitted Know."""
+
+    source_entity_uuid: str = Field(min_length=1)
+    target_entity_uuid: str = Field(min_length=1)
+    fact: str = Field(min_length=1)
+
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+
+
+class KnowNode(Node):
     """A durable, searchable, cited observation attached to one Entity."""
 
+    source: str = 'text'
+    source_description: str
+    content: str
+    valid_at: datetime
+    entity_edges: list[str] = Field(default_factory=list)
     entity_uuid: str = Field(min_length=1)
     observation: str = Field(min_length=1, max_length=8000)
     interpretation: str = Field(min_length=1, max_length=8000)
@@ -79,8 +100,7 @@ class KnowNode(EpisodicNode):
 
     @model_validator(mode='after')
     def require_know_label(self) -> 'KnowNode':
-        if 'Know' not in self.labels:
-            self.labels.append('Know')
+        self.labels[:] = ['Know']
         return self
 
     @classmethod
@@ -95,8 +115,11 @@ class KnowNode(EpisodicNode):
         direction: KnowDirection | None,
         content_hash: str,
     ) -> 'KnowNode':
+        # Decode an existing legacy object; this does not ingest or promote it.
+        values = episode.model_dump()
+        values['source'] = episode.source.value
         return cls(
-            **episode.model_dump(),
+            **values,
             entity_uuid=entity_uuid,
             observation=observation,
             interpretation=interpretation,
@@ -105,78 +128,158 @@ class KnowNode(EpisodicNode):
             content_hash=content_hash,
         )
 
-    async def save_know(self, driver: GraphDriver) -> None:
-        """Promote the episode without discarding its extracted Entity mentions."""
+    async def save(self, driver: GraphDriver):
+        return await self.save_know(driver)
 
-        if driver.provider == GraphProvider.KUZU:
-            raise NotImplementedError('Know storage is not available for Kuzu')
-        existing, _, _ = await driver.execute_query(
-            """
-            MATCH (know:Episodic {uuid: $know_uuid})
-            RETURN know.entity_uuid AS entity_uuid
-            """,
-            know_uuid=self.uuid,
-            routing_='r',
-        )
-        attached = str(existing[0].get('entity_uuid') or '') if existing else ''
-        if attached and attached != self.entity_uuid:
-            raise ValueError('Know is already attached to a different Entity')
+    async def save_know(
+        self, driver: GraphDriver, *, entity: EntityNode | None = None,
+        owner_by_name: bool = False, mentions: list[str] | None = None,
+        relationships: list[EntityEdge] | None = None,
+    ) -> tuple['KnowNode', EntityNode, bool, bool, list[EntityEdge]]:
+        """Commit one Know and owner atomically, without episode ingestion.
 
+        Neo4j is the product's graph authority. Do not pretend a driver's
+        non-transactional compatibility wrapper provides rollback guarantees.
+        """
+        if driver.provider != GraphProvider.NEO4J:
+            raise NotImplementedError('Atomic Know writes require Neo4j')
+        entity = entity or await EntityNode.get_by_uuid(driver, self.entity_uuid)
+        if entity.group_id != self.group_id:
+            raise ValueError('Know owner belongs to a different group')
         citation = self.citation
         direction = self.direction
-        records, _, _ = await driver.execute_query(
-            """
-            MATCH (know:Episodic {uuid: $know_uuid})
-            MATCH (entity:Entity {uuid: $entity_uuid})
-            WHERE know.group_id = $group_id AND entity.group_id = $group_id
-            OPTIONAL MATCH (know)-[attachment:ABOUT]->()
-            WITH know, entity, collect(attachment) AS attachments
-            FOREACH (edge IN attachments | DELETE edge)
-            SET know:Know,
-                know.entity_uuid = $entity_uuid,
-                know.entity_created = $entity_created,
-                know.observation = $observation,
-                know.interpretation = $interpretation,
-                know.citation_url = $citation_url,
-                know.citation_title = $citation_title,
-                know.citation_publisher = $citation_publisher,
-                know.citation_evidence = $citation_evidence,
-                know.citation_locator = $citation_locator,
-                know.citation_published_at = $citation_published_at,
-                know.citation_event_at = $citation_event_at,
-                know.citation_resolved_url = $citation_resolved_url,
-                know.citation_retrieved_at = $citation_retrieved_at,
-                know.citation_document_title = $citation_document_title,
-                know.citation_content_fingerprint = $citation_content_fingerprint,
-                know.proposition = $proposition,
-                know.direction = $direction,
-                know.content_hash = $content_hash,
-                know.know_format = 2
-            RETURN know.uuid AS uuid, entity.uuid AS entity_uuid
-            """,
-            know_uuid=self.uuid,
-            entity_uuid=self.entity_uuid,
-            group_id=self.group_id,
-            observation=self.observation,
-            interpretation=self.interpretation,
-            citation_url=citation.url,
-            citation_title=citation.title,
-            citation_publisher=citation.publisher,
-            citation_evidence=citation.evidence,
-            citation_locator=citation.locator,
-            citation_published_at=citation.published_at,
-            citation_event_at=citation.event_at,
-            citation_resolved_url=citation.resolved_url,
-            citation_retrieved_at=citation.retrieved_at,
-            citation_document_title=citation.document_title,
-            citation_content_fingerprint=citation.content_fingerprint,
-            proposition=direction.proposition if direction else None,
-            direction=direction.relation if direction else None,
-            content_hash=self.content_hash,
-            entity_created=self.entity_created,
-        )
-        if len(records) != 1:
-            raise RuntimeError('Know could not be stored with one exact Entity identity')
+        properties = {
+            'uuid': self.uuid, 'name': self.name, 'group_id': self.group_id,
+            'created_at': self.created_at, 'valid_at': self.valid_at,
+            'source': self.source, 'source_description': self.source_description,
+            'content': self.content, 'entity_edges': [],
+            'entity_uuid': entity.uuid, 'observation': self.observation,
+            'interpretation': self.interpretation, 'content_hash': self.content_hash,
+            'citation_url': citation.url, 'citation_title': citation.title,
+            'citation_publisher': citation.publisher, 'citation_evidence': citation.evidence,
+            'citation_locator': citation.locator, 'citation_published_at': citation.published_at,
+            'citation_event_at': citation.event_at, 'citation_resolved_url': citation.resolved_url,
+            'citation_retrieved_at': citation.retrieved_at,
+            'citation_document_title': citation.document_title,
+            'citation_content_fingerprint': citation.content_fingerprint,
+            'proposition': direction.proposition if direction else None,
+            'direction': direction.relation if direction else None, 'know_format': 3,
+        }
+        identity = hashlib.sha256(f'{self.group_id}\0{self.content_hash}'.encode()).hexdigest()
+        written_edges: list[EntityEdge] = []
+        async with driver.transaction() as tx:
+            # Existing legacy Knows remain untouched and retain their IDs/labels.
+            result = await tx.run(
+                'MATCH (know:Know) WHERE know.uuid=$uuid OR '
+                '(know.group_id=$group AND know.content_hash=$digest) '
+                'RETURN properties(know) AS properties LIMIT 2',
+                uuid=self.uuid, group=self.group_id, digest=self.content_hash,
+            )
+            rows = await result.data()
+            if len(rows) > 1:
+                raise ValueError('Know identity is not unique')
+            created = False
+            if rows:
+                existing = rows[0]['properties']
+                if existing.get('group_id') != self.group_id or existing.get('content_hash') != self.content_hash:
+                    raise ValueError('Know UUID is already used by a different finding')
+                stored = _know_from_record(existing)
+            else:
+                result = await tx.run(
+                    'MERGE (know:Know {know_write_key:$identity}) '
+                    'ON CREATE SET know += $properties '
+                    'RETURN properties(know) AS properties',
+                    identity=identity, properties=properties,
+                )
+                rows = await result.data()
+                created = (await result.consume()).counters.nodes_created == 1
+                stored = _know_from_record(rows[0]['properties'])
+
+            owner_created = False
+            if not created:
+                result = await tx.run(
+                    'MATCH (n:Entity {uuid:$uuid,group_id:$group}) RETURN '
+                    + get_entity_node_return_query(driver.provider),
+                    uuid=stored.entity_uuid, group=self.group_id,
+                )
+            else:
+                selector = (
+                    'toLower(trim(n.name))=toLower(trim($name))' if owner_by_name
+                    else 'n.uuid=$uuid'
+                )
+                result = await tx.run(
+                    'MATCH (n:Entity) WHERE n.group_id=$group AND ' + selector
+                    + ' RETURN ' + get_entity_node_return_query(driver.provider) + ' LIMIT 2',
+                    group=self.group_id, name=entity.name, uuid=entity.uuid,
+                )
+            owners = await result.data()
+            if len(owners) > 1:
+                raise ValueError('entity_name is ambiguous; provide entity_uuid')
+            if owners:
+                owner = entity_node_from_record(owners[0])
+            elif not created:
+                raise ValueError('Stored Know owner is unavailable')
+            else:
+                owner_identity = ('name:' + normalize_entity_name(entity.name)) if owner_by_name else ('uuid:' + entity.uuid)
+                owner_key = hashlib.sha256(f'{self.group_id}\0{owner_identity}'.encode()).hexdigest()
+                result = await tx.run(
+                    'MERGE (n:Entity {know_owner_key:$identity}) '
+                    'ON CREATE SET n.uuid=$uuid,n.name=$name,n.group_id=$group,'
+                    'n.created_at=$created,n.summary=$summary,n.name_embedding=$embedding '
+                    'RETURN ' + get_entity_node_return_query(driver.provider),
+                    identity=owner_key, uuid=entity.uuid, name=entity.name, group=self.group_id,
+                    created=entity.created_at, summary=entity.summary, embedding=entity.name_embedding,
+                )
+                owner = entity_node_from_record((await result.data())[0])
+                owner_created = (await result.consume()).counters.nodes_created == 1
+            if normalize_entity_name(owner.name) != normalize_entity_name(entity.name):
+                raise ValueError('Know owner identity does not match its name')
+            if not owner_by_name and owner.uuid != entity.uuid:
+                raise ValueError('Know is already attached to a different Entity')
+            if created:
+                result = await tx.run(
+                    'MATCH (know:Know {uuid:$uuid,group_id:$group}) '
+                    'SET know.entity_uuid=$owner,know.entity_created=$created '
+                    'RETURN properties(know) AS properties',
+                    uuid=stored.uuid, group=self.group_id, owner=owner.uuid, created=owner_created,
+                )
+                stored = _know_from_record((await result.data())[0]['properties'])
+
+            # Names do nothing. Only explicitly supplied IDs can become references.
+            for target in dict.fromkeys(mentions or []):
+                if target == owner.uuid:
+                    continue
+                await tx.run(
+                    'MATCH (know:Know {uuid:$know,group_id:$group}),(target:Entity {uuid:$target,group_id:$group}) '
+                    'WHERE EXISTS { MATCH (support:Know {group_id:$group}) WHERE support.entity_uuid=target.uuid } '
+                    'MERGE (know)-[m:MENTIONS {uuid:$uuid}]->(target) '
+                    'ON CREATE SET m.group_id=$group,m.created_at=$created',
+                    know=stored.uuid, group=self.group_id, target=target, created=self.created_at,
+                    uuid=str(uuid5(KNOW_UUID_NAMESPACE, f'mention\0{stored.uuid}\0{target}')),
+                )
+            for edge in relationships or []:
+                endpoints = {edge.source_node_uuid, edge.target_node_uuid}
+                result = await tx.run(
+                    'MATCH (n:Entity) WHERE n.uuid IN $ids AND n.group_id=$group '
+                    'AND EXISTS { MATCH (support:Know {group_id:$group}) WHERE support.entity_uuid=n.uuid } '
+                    'RETURN n.uuid AS uuid', ids=list(endpoints), group=self.group_id,
+                )
+                if len(endpoints) != 2 or {r['uuid'] for r in await result.data()} != endpoints:
+                    raise ValueError('Relationship endpoints must own Knows in this Project')
+                edge.uuid = str(uuid5(KNOW_UUID_NAMESPACE,
+                    f'relationship\0{stored.uuid}\0{edge.source_node_uuid}\0{edge.target_node_uuid}\0{edge.fact}'))
+                edge.attributes['supporting_know_uuids'] = [stored.uuid]
+                result = await tx.run('MATCH ()-[r:RELATES_TO {uuid:$uuid}]->() RETURN r.uuid AS uuid', uuid=edge.uuid)
+                if await result.data():
+                    continue
+                await driver.entity_edge_ops.save(driver, edge, tx=tx)
+                written_edges.append(edge)
+            if written_edges:
+                ids = list(dict.fromkeys(stored.entity_edges + [edge.uuid for edge in written_edges]))
+                await tx.run('MATCH (know:Know {uuid:$uuid,group_id:$group}) SET know.entity_edges=$ids',
+                             uuid=stored.uuid, group=self.group_id, ids=ids)
+                stored.entity_edges = ids
+        return stored, owner, created, owner_created, written_edges
 
     @classmethod
     async def get_by_uuid(cls, driver: GraphDriver, uuid: str) -> 'KnowNode':
@@ -256,9 +359,23 @@ class KnowNode(EpisodicNode):
             raise RuntimeError('Know content identity is not unique')
         return knows[0] if knows else None
 
+    @classmethod
+    async def search(cls, driver: GraphDriver, query: str, *, group_id: str, limit: int) -> list['KnowNode']:
+        query = fulltext_query(query, [group_id], driver)
+        if not query:
+            return []
+        records, _, _ = await driver.execute_query(
+            get_nodes_query('know_content', '$query', limit=limit, provider=driver.provider)
+            + ' YIELD node AS know, score WHERE know.group_id=$group '
+              'WITH know, score OPTIONAL MATCH (saga:Saga)-[:HAS_EPISODE]->(know) '
+              'RETURN ' + _KNOW_RETURN + ' ORDER BY score DESC LIMIT $limit',
+            query=query, group=group_id, limit=limit, routing_='r',
+        )
+        return [_know_from_record(record) for record in records]
+
 
 _KNOW_MATCH = """
-    MATCH (know:Episodic:Know)
+    MATCH (know:Know)
     OPTIONAL MATCH (saga:Saga)-[:HAS_EPISODE]->(know)
     WITH know, saga
 """
@@ -342,7 +459,7 @@ def know_episode_content(
     citation: KnowCitation,
     direction: KnowDirection | None,
 ) -> str:
-    """Build normal episode text for Graphiti extraction and retrieval."""
+    """Build plain searchable Know text; never send it through extraction."""
 
     parts = [
         f'Observation: {observation.strip()}',
@@ -374,7 +491,7 @@ async def resolve_know_entity(
     entity_name: str,
     entity_uuid: str | None,
 ) -> tuple[EntityNode, bool]:
-    """Reuse one exact Entity or create it without semantic target substitution."""
+    """Resolve an exact owner or prepare it without committing an empty Entity."""
 
     name = ' '.join(entity_name.split()).strip()
     if not name:
@@ -391,7 +508,6 @@ async def resolve_know_entity(
                 created_at=utc_now(),
             )
             await entity.generate_name_embedding(clients.embedder)
-            await entity.save(driver)
             return entity, True
         if entity.group_id != group_id:
             raise ValueError('entity_uuid belongs to a different group')
@@ -420,7 +536,6 @@ async def resolve_know_entity(
 
     entity = EntityNode(name=name, group_id=group_id, created_at=utc_now())
     await entity.generate_name_embedding(clients.embedder)
-    await entity.save(driver)
     return entity, True
 
 
@@ -456,7 +571,7 @@ def _know_from_record(record: dict) -> KnowNode:
         group_id=record['group_id'],
         labels=['Know'],
         created_at=created_at,
-        source=EpisodeType.from_str(record['source']),
+        source=str(record.get('source') or 'text'),
         source_description=record['source_description'],
         content=record['content'],
         valid_at=valid_at,

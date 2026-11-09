@@ -91,7 +91,7 @@ def citation_from_properties(properties: dict[str, Any]) -> dict[str, str] | Non
 
 
 def know_from_properties(properties: dict[str, Any]) -> dict[str, Any] | None:
-    """Read one typed ``Episodic:Know`` node without parsing its episode content."""
+    """Read a typed Know (including legacy records) without parsing its content."""
 
     observation = _text(properties.get("observation"), maximum=8000)
     interpretation = _text(properties.get("interpretation"), maximum=8000)

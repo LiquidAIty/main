@@ -1,9 +1,9 @@
-"""OAuth, internal-principal, and authenticated Project/profile context for MCP."""
+"""Signed MCP credentials and saved Project/profile context without OAuth or expiry."""
 
 # Entity: Authentication
-# Relationship: This file verifies Auth0 bearer tokens and internal signed principals before any MCP request receives Project, Card, or tool authority.
+# Relationship: Verifies signed MCP principals without a timed login cutoff.
 # Entity: MCP Host
-# Relationship: This file supplies the MCP host's OAuth resource contract, token verifier, authenticated request context, and internal-principal validation.
+# Relationship: Supplies the MCP host's credential verifier and saved request context without an external login provider.
 # Entity: Projects
 # Relationship: This file validates owner-scoped Project bindings from verified tokens and exposes their exact saved Card grants to MCP dispatch.
 # Entity: Card Profiles
@@ -17,8 +17,6 @@ import asyncio
 from contextvars import ContextVar, Token
 import json
 import os
-import time
-from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
@@ -36,27 +34,9 @@ BACKEND = validated_backend_origin(
     os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000")
 )
 HTTP_MCP_PATH = "/mcp"
-PUBLIC_MCP_RESOURCE_URL = os.environ.get("MCP_PUBLIC_RESOURCE_URL", "").strip()
-AUTH0_ISSUER_URL = os.environ.get("MCP_AUTH0_ISSUER_URL", "").strip()
-AUTH0_AUDIENCE = os.environ.get("MCP_AUTH0_AUDIENCE", "").strip()
-AUTH0_CLIENT_ID = os.environ.get("MCP_AUTH0_CLIENT_ID", "").strip()
-AUTH0_REQUIRED_SCOPE = os.environ.get(
-    "MCP_AUTH0_REQUIRED_SCOPE", "liquidaity.main"
-).strip()
-AUTH0_CLOCK_SKEW_SECONDS = 30
 INTERNAL_MCP_SECRET = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "").strip()
 INTERNAL_MCP_ISSUER = "liquidaity-runtime"
 INTERNAL_MCP_AUDIENCE = "liquidaity-internal-mcp"
-OAUTH_SCOPES = (
-    "openid",
-    "profile",
-    "email",
-    "offline_access",
-    "liquidaity.main",
-)
-OAUTH_ENFORCED = os.environ.get("MCP_OAUTH_ENFORCED", "false").strip().lower() in {
-    "1", "true", "yes", "on",
-}
 _MAIN_CONTEXT_TIMEOUT_SECONDS = 30.0
 PROJECT_CONTEXT_FIELDS = frozenset(
     {"projectId", "deckId", "conversationId", "callerCardId"}
@@ -125,7 +105,7 @@ def requested_conversation_id() -> str:
     return _REQUESTED_CONVERSATION_ID.get()
 
 
-def oauth_trace_fields() -> dict[str, str]:
+def credential_trace_fields() -> dict[str, str]:
     access_token = get_access_token()
     if access_token is None:
         return {}
@@ -143,73 +123,6 @@ def oauth_trace_fields() -> dict[str, str]:
 
 def access_token_available() -> bool:
     return get_access_token() is not None
-
-
-def authenticated_external_identity() -> dict[str, str] | None:
-    """Return the verified external issuer/subject without exposing token material."""
-
-    access_token = get_access_token()
-    if access_token is None or internal_mcp_principal() is not None:
-        return None
-    expires_at = getattr(access_token, "expires_at", None)
-    if expires_at is not None and float(expires_at) <= time.time():
-        return None
-    claims = getattr(access_token, "claims", None)
-    issuer = str(claims.get("iss") or "").strip() if isinstance(claims, dict) else ""
-    subject = str(getattr(access_token, "subject", "") or "").strip()
-    if not subject and isinstance(claims, dict):
-        subject = str(claims.get("sub") or "").strip()
-    if not issuer or not subject:
-        return None
-    return {"issuer": issuer, "subject": subject}
-
-
-@dataclass(frozen=True)
-class OAuthConfig:
-    resource_url: str
-    issuer_url: str
-    audience: str
-    client_id: str
-    required_scope: str
-
-
-def oauth_config() -> OAuthConfig:
-    issuer = AUTH0_ISSUER_URL.rstrip("/") + "/" if AUTH0_ISSUER_URL else ""
-    config = OAuthConfig(
-        resource_url=PUBLIC_MCP_RESOURCE_URL.rstrip("/"),
-        issuer_url=issuer,
-        audience=AUTH0_AUDIENCE.rstrip("/"),
-        client_id=AUTH0_CLIENT_ID,
-        required_scope=AUTH0_REQUIRED_SCOPE,
-    )
-    if not OAUTH_ENFORCED:
-        if config.resource_url:
-            raise RuntimeError("public_mcp_resource_requires_oauth")
-        return config
-    missing = [
-        name
-        for name, value in (
-            ("MCP_PUBLIC_RESOURCE_URL", config.resource_url),
-            ("MCP_AUTH0_ISSUER_URL", config.issuer_url),
-            ("MCP_AUTH0_AUDIENCE", config.audience),
-            ("MCP_AUTH0_CLIENT_ID", config.client_id),
-        )
-        if not value
-    ]
-    if missing:
-        raise RuntimeError(f"oauth_config_missing: {','.join(missing)}")
-    if (
-        not config.resource_url.startswith("https://")
-        or not config.resource_url.endswith(HTTP_MCP_PATH)
-    ):
-        raise RuntimeError("oauth_resource_url_must_be_canonical_https_mcp")
-    if config.audience != config.resource_url:
-        raise RuntimeError("oauth_audience_must_equal_resource_url")
-    if not config.issuer_url.startswith("https://"):
-        raise RuntimeError("oauth_issuer_must_be_https")
-    if config.required_scope not in OAUTH_SCOPES:
-        raise RuntimeError("oauth_required_scope_not_supported")
-    return config
 
 
 def validated_principal_tool_names(value: Any) -> frozenset[str] | None:
@@ -247,9 +160,6 @@ def authenticated_project_context() -> dict[str, Any] | None:
     access_token = get_access_token()
     if access_token is None:
         return None
-    expires_at = getattr(access_token, "expires_at", None)
-    if expires_at is not None and float(expires_at) <= time.time():
-        return None
     claims = getattr(access_token, "claims", None)
     context = claims.get("project") if isinstance(claims, dict) else None
     return _validated_project_context(context)
@@ -260,40 +170,6 @@ def internal_mcp_principal() -> dict[str, Any] | None:
     claims = getattr(access_token, "claims", None) if access_token is not None else None
     principal = claims.get("internal") if isinstance(claims, dict) else None
     return dict(principal) if isinstance(principal, dict) else None
-
-
-def _resolve_external_project_context_sync(
-    issuer: str,
-    subject: str,
-) -> dict[str, Any] | None:
-    try:
-        headers = {"Content-Type": "application/json"}
-        if INTERNAL_MCP_SECRET:
-            headers["X-LiquidAIty-Internal-MCP-Secret"] = INTERNAL_MCP_SECRET
-        request = Request(
-            f"{BACKEND}/api/mcp/context",
-            data=json.dumps({
-                "issuer": issuer,
-                "subject": subject,
-                "projectId": requested_project_id(),
-                "profile": requested_card_profile(),
-            }).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-        with open_backend_request(
-            request,
-            timeout_seconds=_MAIN_CONTEXT_TIMEOUT_SECONDS,
-        ) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TypeError, ValueError):
-        return None
-    context = (
-        payload.get("context")
-        if isinstance(payload, dict) and payload.get("ok") is True
-        else None
-    )
-    return _validated_project_context(context)
 
 
 def _resolve_internal_card_context_sync(principal: dict[str, Any]) -> dict[str, Any] | None:
@@ -328,19 +204,8 @@ def _resolve_internal_card_context_sync(principal: dict[str, Any]) -> dict[str, 
     return _validated_project_context(context)
 
 
-class Auth0TokenVerifier:
-    """Verify Auth0 JWTs and attach an authorized Project/profile context when one exists."""
-
-    def __init__(self, config: OAuthConfig, jwk_client: Any | None = None):
-        from jwt import PyJWKClient
-
-        self.config = config
-        self.jwk_client = jwk_client or PyJWKClient(
-            f"{config.issuer_url}.well-known/jwks.json"
-        )
-
-    def _principal_context(self, subject: str) -> dict[str, Any] | None:
-        return _resolve_external_project_context_sync(self.config.issuer_url, subject)
+class McpTokenVerifier:
+    """Verify the existing signed credential and resolve its saved Card grants."""
 
     def _verify_sync(self, token: str) -> AccessToken | None:
         import jwt
@@ -356,7 +221,7 @@ class Auth0TokenVerifier:
                     algorithms=["HS256"],
                     audience=INTERNAL_MCP_AUDIENCE,
                     issuer=INTERNAL_MCP_ISSUER,
-                    options={"require": ["exp", "iat", "sub", "principal"]},
+                    options={"require": ["iat", "sub", "principal"], "verify_exp": False},
                 )
                 principal = claims.get("principal")
                 if not isinstance(principal, dict) or principal.get("kind") not in {
@@ -387,9 +252,8 @@ class Auth0TokenVerifier:
                 access_token = AccessToken(
                     token=token,
                     client_id="liquidaity-internal-runtime",
-                    scopes=[self.config.required_scope],
-                    expires_at=int(claims["exp"]),
-                    resource=self.config.resource_url,
+                    scopes=[],
+                    expires_at=None,
                 )
                 object.__setattr__(access_token, "subject", str(claims["sub"]))
                 object.__setattr__(
@@ -402,55 +266,7 @@ class Auth0TokenVerifier:
                     },
                 )
                 return access_token
-            if header.get("alg") != "RS256":
-                return None
-            signing_key = self.jwk_client.get_signing_key_from_jwt(token).key
-            claims = jwt.decode(
-                token,
-                signing_key,
-                algorithms=["RS256"],
-                audience=self.config.audience,
-                issuer=self.config.issuer_url,
-                options={"require": ["exp", "iat", "sub"]},
-                leeway=AUTH0_CLOCK_SKEW_SECONDS,
-            )
-            client_id = str(
-                claims.get("azp") or claims.get("client_id") or ""
-            ).strip()
-            raw_scope = claims.get("scope") or ""
-            scopes = (
-                raw_scope.split()
-                if isinstance(raw_scope, str)
-                else [str(value) for value in raw_scope]
-            )
-            if client_id != self.config.client_id:
-                return None
-            if self.config.required_scope not in scopes:
-                return None
-            subject = str(claims.get("sub") or "").strip()
-            if not subject:
-                return None
-            # Project context is optional enrichment after the OAuth/JWT
-            # contract has already been verified. A transient backend lookup
-            # failure must not turn a valid access token into an invalid one;
-            # context-dependent tools fail closed when no binding is present.
-            try:
-                context = self._principal_context(subject)
-            except Exception:
-                context = None
-            access_token = AccessToken(
-                token=token,
-                client_id=client_id,
-                scopes=scopes,
-                expires_at=int(claims["exp"]),
-                resource=self.config.resource_url,
-            )
-            object.__setattr__(access_token, "subject", subject)
-            verified_claims = dict(claims)
-            if context is not None:
-                verified_claims["project"] = context
-            object.__setattr__(access_token, "claims", verified_claims)
-            return access_token
+            return None
         except Exception:
             return None
 

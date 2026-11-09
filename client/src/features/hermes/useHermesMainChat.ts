@@ -1,6 +1,6 @@
 /**
  * Entity: Main Chat
- * Relationship: Opens or resumes Main's native Bot Chat session, renders Hermes history/events and reported authors, and maps Send, Stop, voice, and image gestures directly onto the generated Gateway contract.
+ * Relationship: Opens or resumes the selected saved profile's Hermes Bot Chat, renders its history/events and reported authors, and maps Send, Stop, voice, and images directly onto the generated Gateway contract.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -66,7 +66,7 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
 }
 
-function transcriptMessage(row: TranscriptMessage): HermesChatMessage | null {
+function transcriptMessage(row: TranscriptMessage, ownerName: string): HermesChatMessage | null {
   const metadata = objectRecord(row.display_metadata);
   const author = objectRecord(metadata.turn_author || row.turn_author);
   const botAuthored = author.is_bot === true;
@@ -92,7 +92,7 @@ function transcriptMessage(row: TranscriptMessage): HermesChatMessage | null {
     text: body,
     speaker: botAuthored
       ? text(author.name || author.id)
-      : role === 'assistant' ? 'Main' : 'You',
+      : role === 'assistant' ? ownerName : 'You',
     status: row.display_kind === 'failed_turn' ? 'error' : 'complete',
     rowId: typeof row.row_id === 'number' ? row.row_id : undefined,
     linkedEvidenceIds: Array.isArray(metadata.linkedEvidenceIds)
@@ -101,9 +101,9 @@ function transcriptMessage(row: TranscriptMessage): HermesChatMessage | null {
   };
 }
 
-function historyMessages(rows: TranscriptMessage[]): HermesChatMessage[] {
+function historyMessages(rows: TranscriptMessage[], ownerName: string): HermesChatMessage[] {
   return rows.flatMap((row) => {
-    const mapped = transcriptMessage(row);
+    const mapped = transcriptMessage(row, ownerName);
     return mapped ? [mapped] : [];
   });
 }
@@ -113,9 +113,9 @@ function base64(dataUrl: string): string {
   return marker >= 0 ? dataUrl.slice(marker + 1) : dataUrl;
 }
 
-export default function useHermesMainChat(projectId: string) {
-  const profile = 'main';
+export default function useHermesMainChat(projectId: string, profile = 'main', ownerName = 'Main') {
   const generationRef = useRef(0);
+  const boundProfileRef = useRef('');
   const sessionRef = useRef('');
   const streamingIndexRef = useRef<number | null>(null);
   const visibleTurnRef = useRef(true);
@@ -171,16 +171,17 @@ export default function useHermesMainChat(projectId: string) {
         next[index] = { ...next[index], text: next[index].text + value, status: 'pending' };
         return next;
       }
-      const next = [...current, { role: 'assistant', text: value, status: 'pending' as const }];
+      const next = [...current, { role: 'assistant', text: value, speaker: ownerName, status: 'pending' as const }];
       streamingIndexRef.current = next.length - 1;
       return next;
     });
-  }, []);
+  }, [ownerName]);
 
   useEffect(() => {
     const project = String(projectId || '').trim();
     generationRef.current += 1;
     const generation = generationRef.current;
+    boundProfileRef.current = '';
     sessionRef.current = '';
     streamingIndexRef.current = null;
     visibleTurnRef.current = true;
@@ -218,7 +219,7 @@ export default function useHermesMainChat(projectId: string) {
           || generationRef.current !== generation
           || sessionRef.current !== sessionId
         ) return;
-        setMessages(historyMessages(history.messages));
+        setMessages(historyMessages(history.messages, ownerName));
       };
       const resumeAfterReconnect = (sessionId: string): Promise<void> => {
         const pending = gateway.request<SessionResumeResult>('session.resume', {
@@ -232,7 +233,7 @@ export default function useHermesMainChat(projectId: string) {
             || sessionRef.current !== sessionId
           ) return;
           sessionRef.current = opened.session_id;
-          setMessages(historyMessages(opened.messages));
+          setMessages(historyMessages(opened.messages, ownerName));
           setBusy(opened.running === true);
           setError(null);
         });
@@ -357,7 +358,7 @@ export default function useHermesMainChat(projectId: string) {
             return next;
           }
           return finalText ? [...current, {
-            role: 'assistant', text: finalText,
+            role: 'assistant', text: finalText, speaker: ownerName,
             status: failed ? 'error' : 'complete',
           }] : current;
         });
@@ -399,24 +400,29 @@ export default function useHermesMainChat(projectId: string) {
         const submissionId = randomUuid();
         void (async () => {
           if (resumePromiseRef.current) await resumePromiseRef.current;
+          if (disposed || generationRef.current !== generation) return;
+          const sessionId = sessionRef.current;
           for (const image of pending.images) {
             await gateway.request('image.attach_bytes', {
-              session_id: sessionRef.current, profile,
+              session_id: sessionId, profile,
               content_base64: base64(image.dataUrl), filename: image.name,
             });
           }
+          if (disposed || generationRef.current !== generation) return;
           await gateway.request('prompt.submit', {
-            session_id: sessionRef.current,
+            session_id: sessionId,
             profile,
             submission_id: submissionId,
             text: literal,
             voice_turn: true,
           });
+          if (disposed || generationRef.current !== generation) return;
           setMessages((current) => [...current, {
             role: 'user', text: literal, speaker: 'You', status: 'complete',
           }]);
           setBusy(true);
         })().catch((cause) => {
+          if (disposed || generationRef.current !== generation) return;
           setVoicePhase('error');
           setVoiceError(cause instanceof Error ? cause.message : String(cause));
         });
@@ -446,7 +452,8 @@ export default function useHermesMainChat(projectId: string) {
       }
       if (disposed || generationRef.current !== generation) return;
       sessionRef.current = opened.session_id;
-      setMessages(historyMessages(opened.messages));
+      boundProfileRef.current = profile;
+      setMessages(historyMessages(opened.messages, ownerName));
       setHistoryLoading(false);
       if ('running' in opened && opened.running) setBusy(true);
     }).catch((cause) => {
@@ -456,29 +463,37 @@ export default function useHermesMainChat(projectId: string) {
     });
     return () => {
       disposed = true;
+      generationRef.current += 1;
+      boundProfileRef.current = '';
+      sessionRef.current = '';
       for (const unsubscribe of unsubscribers) unsubscribe();
     };
-  }, [appendAssistantDelta, projectId]);
+  }, [appendAssistantDelta, projectId, profile, ownerName]);
 
   const send = useCallback(async (literal: string, input?: { images?: ComposerImage[] }) => {
     const body = String(literal || '');
-    if (!body.trim() || !sessionRef.current) return false;
+    if (!body.trim() || !sessionRef.current || boundProfileRef.current !== profile) return false;
+    const generation = generationRef.current;
     try {
       const submissionId = randomUuid();
       const gateway = await hermesGateway(profile);
       if (resumePromiseRef.current) await resumePromiseRef.current;
+      if (generationRef.current !== generation || boundProfileRef.current !== profile) return false;
+      const sessionId = sessionRef.current;
       for (const image of input?.images || []) {
         await gateway.request('image.attach_bytes', {
-          session_id: sessionRef.current, profile,
+          session_id: sessionId, profile,
           content_base64: base64(image.dataUrl), filename: image.name,
         });
       }
+      if (generationRef.current !== generation || boundProfileRef.current !== profile) return false;
       await gateway.request('prompt.submit', {
-        session_id: sessionRef.current,
+        session_id: sessionId,
         profile,
         submission_id: submissionId,
         text: body,
       });
+      if (generationRef.current !== generation) return true;
       setMessages((current) => [...current, {
         role: 'user', text: body, speaker: 'You', status: 'complete',
       }]);
@@ -486,15 +501,15 @@ export default function useHermesMainChat(projectId: string) {
       setError(null);
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (generationRef.current === generation) setError(cause instanceof Error ? cause.message : String(cause));
       return false;
     }
-  }, []);
+  }, [profile]);
 
   const stop = useCallback(() => {
     const sessionId = sessionRef.current;
     const requestGeneration = generationRef.current;
-    if (!sessionId) return;
+    if (!sessionId || boundProfileRef.current !== profile) return;
     setError(null);
     void (async () => {
       const gateway = await hermesGateway(profile);
@@ -519,42 +534,49 @@ export default function useHermesMainChat(projectId: string) {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     });
-  }, []);
+  }, [profile]);
 
   const startVoice = useCallback(async (draft: string, input: { images?: ComposerImage[] }) => {
-    if (!sessionRef.current) return false;
+    if (!sessionRef.current || boundProfileRef.current !== profile) return false;
+    const generation = generationRef.current;
     setVoiceError(null);
     setVoicePhase('requesting');
     pendingVoiceRef.current = { draft, images: input.images || [] };
     try {
       const gateway = await hermesGateway(profile);
       if (resumePromiseRef.current) await resumePromiseRef.current;
+      if (generationRef.current !== generation || boundProfileRef.current !== profile) return false;
       const result = await gateway.request<VoiceRecordResult>('voice.record', {
         action: 'start', session_id: sessionRef.current, profile,
       });
+      if (generationRef.current !== generation) return false;
       if (result.status !== 'recording') throw new Error(result.reason || 'Hermes microphone is busy.');
       setVoicePhase('listening');
       return true;
     } catch (cause) {
+      if (generationRef.current !== generation) return false;
       pendingVoiceRef.current = null;
       setVoicePhase('error');
       setVoiceError(cause instanceof Error ? cause.message : String(cause));
       return false;
     }
-  }, []);
+  }, [profile]);
 
   const stopVoice = useCallback(() => {
-    if (!sessionRef.current) return;
+    const sessionId = sessionRef.current;
+    const generation = generationRef.current;
+    if (!sessionId || boundProfileRef.current !== profile) return;
     void hermesGateway(profile).then((gateway) => gateway.request('voice.record', {
-      action: 'stop', session_id: sessionRef.current, profile,
+      action: 'stop', session_id: sessionId, profile,
     })).catch((cause) => {
+      if (generationRef.current !== generation) return;
       setVoicePhase('error');
       setVoiceError(cause instanceof Error ? cause.message : String(cause));
     });
-  }, []);
+  }, [profile]);
 
   return {
-    messages, busy, historyLoading, error, voiceError, voicePhase,
+    messages, busy, historyLoading: historyLoading || Boolean(projectId && boundProfileRef.current !== profile && !error), error, voiceError, voicePhase,
     pendingRequest: pendingRequests[0] || null,
     answerApproval, answerClarify, cancelRequest,
     send, stop, startVoice, stopVoice,

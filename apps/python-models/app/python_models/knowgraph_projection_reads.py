@@ -89,7 +89,7 @@ def _attach_entity_knows(
         return
     rows = neo4j_rows(session.run(
         """
-        MATCH (episode:Episodic:Know)
+        MATCH (episode:Know)
         WHERE toString(episode.entity_uuid) IN $entityIds
           AND toString(episode.group_id) IN $projectScopeIds
         OPTIONAL MATCH (episode)-[mention:MENTIONS]->(mentioned:Entity)

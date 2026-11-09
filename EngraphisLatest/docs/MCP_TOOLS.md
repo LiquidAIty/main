@@ -1,9 +1,10 @@
 # MCP tool reference
 
-`engraphis-mcp` is the zero-configuration Smart MCP gateway. It initially exposes nine concise
+`engraphis-mcp` is the zero-configuration Smart MCP gateway. It exposes eleven concise
 tools: `engraphis_session`, `engraphis_recall_context`, `engraphis_remember`,
 `engraphis_discover_actions`, `engraphis_execute_read`, `engraphis_execute_action`,
-`engraphis_get_memory`, `engraphis_update_memory`, and `engraphis_conflict_review`. Agents use
+`engraphis_get_memory`, `engraphis_update_memory`, `engraphis_conflict_review`,
+`engraphis_remember_entities`, and `engraphis_add_thinks`. Agents use
 the routine tools directly; for any advanced capability, they discover the best action and execute
 the returned, version-bound capability ID. Discovery returns the precise schema and side-effect
 class, and execution revalidates availability, scope, authorization, and arguments.
@@ -15,6 +16,8 @@ class, and execution revalidates availability, scope, authorization, and argumen
 | `engraphis_session` | Starts or resumes a session, or ends it with a next-session handoff. |
 | `engraphis_recall_context` | Returns one compact, bounded context packet for routine agent work. |
 | `engraphis_remember` | Stores a routine durable memory with safe default provenance and deduplication. |
+| `engraphis_remember_entities` | Stores one memory with one exact owning Entity per item. |
+| `engraphis_add_thinks` | Appends Entity-owned Thinks and separate textual mentions; the configured Project classifier settles authored relationship prose. |
 | `engraphis_discover_actions` | Returns exact schemas for a small set of matching advanced actions. |
 | `engraphis_execute_read` | Executes only a discovered action that is read-only and idempotent. |
 | `engraphis_execute_action` | Executes a discovered write, admin, or destructive-capable action. |
@@ -22,8 +25,18 @@ class, and execution revalidates availability, scope, authorization, and argumen
 | `engraphis_update_memory` | Edits memory metadata; content changes use the governed correction path. |
 | `engraphis_conflict_review` | Lists pending, quarantined, or conflicting memories for review. |
 
-The Smart gateway exposes these ten tools directly; advanced capabilities remain available through
+The Smart gateway exposes these eleven tools directly; advanced capabilities remain available through
 discovery and the validated executors.
+
+`engraphis_add_thinks` accepts `thinks`, optional `workspace`, and optional `source_reference`.
+Each Think supplies `entity_name` and `content`, with optional `entity_id`, `title`, `detail`,
+and `relationships` (`target` Entity name plus `relation` prose). A mention does not copy the Think
+to another Entity. Records have `claim_kind="think"`; the existing atomic Entity-memory writer and
+text-mention mechanism remain the storage owners. No extraction model is called by this tool.
+The optional `MemoryService.prepare_thinks` host function prepares source metadata and relationship
+decisions before the write transaction and returns an edge finalizer for that transaction. In
+LiquidAIty that function uses the existing Jev classifier and writer. Without a configured classifier,
+relationship proposals are not written as unclassified edges. Existing generic memory tools are unchanged.
 
 For a deliberate cross-agent handoff, pass the source ID as `session_id` when starting
 `engraphis_session`, or as `resume_from_session_id` to `engraphis_start_session`. The source must

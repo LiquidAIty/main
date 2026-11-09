@@ -195,22 +195,15 @@ class QueueService:
         observation: str,
         interpretation: str,
         citation: Any,
-        entity_types: Any,
         *,
         entity_uuid: str | None = None,
         direction: Any = None,
         uuid: str | None = None,
         reference_time: datetime | None = None,
-        edge_types: Any = None,
-        edge_type_map: Any = None,
-        excluded_entity_types: list[str] | None = None,
-        previous_episode_uuids: list[str] | None = None,
-        custom_extraction_instructions: str | None = None,
-        update_communities: bool = True,
-        saga: str | None = None,
-        saga_previous_episode_uuid: str | None = None,
+        mentions: list[str] | None = None,
+        relationships: list[Any] | None = None,
     ) -> int:
-        """Queue one Entity-attached Know through Graphiti's episode pipeline."""
+        """Queue one direct Know write using the existing group work queue."""
 
         if self._graphiti_client is None:
             raise RuntimeError('Queue service not initialized. Call initialize() first.')
@@ -229,15 +222,8 @@ class QueueService:
                     group_id=group_id,
                     uuid=uuid,
                     reference_time=reference_time or datetime.now(timezone.utc),
-                    entity_types=entity_types,
-                    edge_types=edge_types,
-                    edge_type_map=edge_type_map,
-                    excluded_entity_types=excluded_entity_types,
-                    previous_episode_uuids=previous_episode_uuids,
-                    custom_extraction_instructions=custom_extraction_instructions,
-                    update_communities=update_communities,
-                    saga=saga,
-                    saga_previous_episode_uuid=saga_previous_episode_uuid,
+                    mentions=mentions,
+                    relationships=relationships,
                 )
                 logger.info(f'Successfully processed Know {uuid} for group {group_id}')
             except Exception as e:

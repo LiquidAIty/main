@@ -4,7 +4,7 @@
 # Entity: MCP Host
 # Relationship: This file discovers the selected live provider families through host-owned clients and freezes their namespaced tools into the host catalog.
 # Entity: Authentication
-# Relationship: This file attaches the OAuth security declaration and narrows each external or internal graph-read request to its authenticated Project tool authority.
+# Relationship: Narrows each signed MCP request to its saved Project tool authority.
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ async def application_tools() -> list[Tool]:
 
 
 def bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
-    """Attach OAuth metadata without filtering the canonical registry."""
+    """Project server-owned scope without advertising an OAuth login."""
     result: list[Tool] = []
     for tool in tools:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
@@ -89,9 +89,6 @@ def bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
         payload["inputSchema"] = projected_schema
         source["authenticatedProjection"] = True
         meta["liquidaitySource"] = source
-        meta["securitySchemes"] = [{
-            "type": "oauth2", "scopes": [mcp_auth.AUTH0_REQUIRED_SCOPE],
-        }]
         payload["_meta"] = meta
         result.append(Tool.model_validate(payload))
     return result
@@ -157,18 +154,9 @@ def project_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
     return namespaced
 
 
-def _apply_authentication(tools: list[Tool]) -> list[Tool]:
-    return (
-        bind_authenticated_catalog(tools)
-        if mcp_auth.OAUTH_ENFORCED
-        or mcp_auth.authenticated_project_context() is not None
-        else tools
-    )
-
-
 def finalize_provider_catalog(tools: list[Tool]) -> list[Tool]:
     tools = [mcp_provider_operations.bind_operation_access(tool) for tool in tools]
-    return _apply_authentication(tools)
+    return bind_authenticated_catalog(tools)
 
 
 def complete_catalog(application_catalog: list[Tool], provider_catalog: list[Tool]) -> list[Tool]:
@@ -177,8 +165,7 @@ def complete_catalog(application_catalog: list[Tool], provider_catalog: list[Too
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})
         raise RuntimeError("federated_duplicate_tool_name:" + ",".join(duplicates))
-    context = mcp_auth.authenticated_project_context()
-    return bind_authenticated_catalog(tools) if mcp_auth.OAUTH_ENFORCED or context is not None else tools
+    return bind_authenticated_catalog(tools)
 
 
 def catalog_for_request(tools: list[Tool]) -> list[Tool]:

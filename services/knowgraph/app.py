@@ -53,7 +53,7 @@ async def settle_research(payload: ResearchSettlementRequest, request: Request):
     try:
         # Settlement reads the stored Know, not a newer Graphiti client method.
         result = await graphiti.driver.execute_query(
-            "MATCH (k:Episodic:Know {uuid:$uuid,group_id:$group}) "
+            "MATCH (k:Know {uuid:$uuid,group_id:$group}) "
             "RETURN k.content AS content,k.valid_at AS valid_at,k.citation_title AS title,"
             "coalesce(k.citation_resolved_url,k.citation_url) AS source_url",
             uuid=payload.know_uuid, group=graphiti_project_group_id(payload.project_id), routing_="r")

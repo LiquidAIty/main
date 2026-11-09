@@ -4,7 +4,7 @@
  * Entity: Credentials
  * Relationship: This file loads and timing-safely verifies the supervised internal process secret used by protected backend and MCP seams.
  * Entity: Authentication
- * Relationship: This file signs the exact short-lived internal principal accepted by the MCP host and rejects unsupported principal kinds.
+ * Relationship: Signs the existing catalog-reader principal without expiry and rejects unsupported principal kinds.
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -12,7 +12,6 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 const INTERNAL_MCP_ISSUER = 'liquidaity-runtime';
 const INTERNAL_MCP_AUDIENCE = 'liquidaity-internal-mcp';
 const DEFAULT_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp';
-const TOKEN_LIFETIME_SECONDS = 12 * 60 * 60;
 export type InternalMcpPrincipal = { kind: 'catalog-reader' };
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {
@@ -50,7 +49,6 @@ export function createInternalMcpBearer(
     aud: INTERNAL_MCP_AUDIENCE,
     sub: principal.kind,
     iat: nowSeconds,
-    exp: nowSeconds + TOKEN_LIFETIME_SECONDS,
     scope: 'liquidaity.main',
     principal,
   });

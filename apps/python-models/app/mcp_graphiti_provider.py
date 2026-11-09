@@ -252,28 +252,25 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
         if args.get("direction"):
             args["direction"] = KnowDirection.model_validate(args["direction"])
         args["reference_time"] = utc_now()
-        for field in ("entity_types", "edge_types", "edge_type_map"):
-            args.setdefault(field, getattr(graphiti_module_ref.graphiti_service, field))
-        args["update_communities"] = False
         written = await graphiti_module_ref.graphiti_client.add_know(**args)
         payload = {
             "status": "completed", "know_uuid": written.know.uuid,
-            "message": "Know stored; verifying relationship settlement and exact read.",
+            "message": "Know stored." if written.created else "Know already exists.",
             "content_hash": written.know.content_hash,
             "group_id": written.know.group_id,
             "entity_name": args["entity_name"],
             "entity_uuid": written.know.entity_uuid,
             "know": graphiti_module_ref._know_result(written.know),
             "created": written.created, "entity_created": written.entity_created,
+            "relationships": [edge.uuid for edge in written.relationships],
         }
         try:
-            payload["jev"] = await _settle_research_relationships(project_id, written.know.uuid)
-            known = await graphiti_module_ref.graphiti_client.get_know(
-                written.know.uuid, group_id=args["group_id"],
-            )
-            payload["know"] = graphiti_module_ref._know_result(known)
-            if payload["jev"].get("status") not in {"success", "current"}:
-                payload["status"] = "partial"
+            if written.relationships:
+                payload["jev"] = await _settle_research_relationships(project_id, written.know.uuid)
+                if payload["jev"].get("status") not in {"success", "current"}:
+                    payload["status"] = "partial"
+            else:
+                payload["jev"] = {"status": "not_applicable", "classified_fact_count": 0}
         except Exception as error:
             payload.update(status="partial", error=str(error))
         try:
@@ -284,11 +281,8 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
             )
         except Exception as error:
             payload.update(status="partial", visibility="notification_failed", notificationError=str(error))
-        payload["message"] = (
-            "Know stored and exact-read after Jev settlement."
-            if payload["status"] == "completed"
-            else "Know stored; settlement, exact read, or graph notification is incomplete."
-        )
+        if payload["status"] != "completed":
+            payload["message"] = "Know stored; relationship settlement or graph notification is incomplete."
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
             structuredContent={"result": payload}, isError=payload["status"] != "completed",
@@ -297,7 +291,7 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
 
 
 async def _settle_research_relationships(project_id: str, know_id: str) -> dict[str, Any]:
-    """Apply the existing Jev owner after Graphiti's completed hybrid extraction."""
+    """Classify explicit, Know-supported relationships through the existing Jev owner."""
     import httpx
     from app import mcp_auth
 

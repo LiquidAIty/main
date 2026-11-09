@@ -113,21 +113,17 @@ def _inline_graphiti_know_schema(payload: dict[str, Any]) -> None:
         payload["inputSchema"] = schema
         return
 
-    citation = definitions.get("KnowCitation")
-    if isinstance(citation, dict) and properties.get("citation") == {
-        "$ref": "#/$defs/KnowCitation",
-    }:
-        properties["citation"] = copy.deepcopy(citation)
+    def inline(value: Any) -> Any:
+        if isinstance(value, list):
+            return [inline(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        reference = value.get("$ref", "")
+        if isinstance(reference, str) and reference.startswith("#/$defs/"):
+            return inline(definitions[reference.removeprefix("#/$defs/")])
+        return {key: inline(item) for key, item in value.items()}
 
-    direction = properties.get("direction")
-    if isinstance(direction, dict) and isinstance(direction.get("anyOf"), list):
-        direction["anyOf"] = [
-            copy.deepcopy(definitions["KnowDirection"])
-            if item == {"$ref": "#/$defs/KnowDirection"}
-            and isinstance(definitions.get("KnowDirection"), dict)
-            else item
-            for item in direction["anyOf"]
-        ]
+    schema["properties"] = properties = inline(properties)
     properties.pop("update_communities", None)
     properties.pop("reference_time", None)
     required = schema.get("required")

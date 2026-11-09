@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from graphiti_core import Graphiti
 from graphiti_core.edges import EntityEdge
 from graphiti_core.knows import (
+    KnowRelationship,
     KnowCitation,
     KnowDirection,
     KnowNode,
@@ -545,30 +546,21 @@ async def add_know(
     entity_uuid: str | None = None,
     direction: KnowDirection | None = None,
     uuid: str | None = None,
-    reference_time: str | None = None,
-    excluded_entity_types: list[str] | None = None,
-    custom_extraction_instructions: str | None = None,
-    previous_episode_uuids: list[str] | None = None,
-    update_communities: bool = True,
-    saga: str | None = None,
-    saga_previous_episode_uuid: str | None = None,
+    mentions: list[str] | None = None,
+    relationships: list[KnowRelationship] | None = None,
 ) -> KnowAcceptedResponse | ErrorResponse:
-    """Add one cited Know to one exact Entity through normal episode processing.
+    """Save one cited Know on one exact owner, without extracting Entities or edges.
 
-    The target Entity is reused when ``entity_uuid`` or an exact existing name identifies it;
-    otherwise Graphiti creates it. The Know is stored as an ``Episodic:Know`` node, receives
-    one exact Entity UUID property, removes Know attachment edges, and remains compatible
-    with hybrid episode retrieval, communities, temporal fields, and Sagas.
+    Reuse entity_uuid or the exact owner name, or atomically create the owner with its first
+    Know. Names in the finding or citation create nothing. mentions contains optional existing
+    Know-backed Entity UUIDs; unknown mentions stay prose. relationships contains only explicitly
+    authored source_entity_uuid, target_entity_uuid and fact text; both endpoints must own Knows
+    in this Project. Each relationship is supported by this Know and classified separately by Jev.
     """
 
     global graphiti_service, queue_service
     if graphiti_service is None or queue_service is None:
         return ErrorResponse(error='Services not initialized')
-    try:
-        parsed_reference_time = parse_reference_time(reference_time)
-    except ValueError as e:
-        return ErrorResponse(error=f'Invalid reference_time: {e}')
-
     try:
         effective_group_id = group_id or config.graphiti.group_id
         digest = know_content_hash(
@@ -588,17 +580,10 @@ async def add_know(
             interpretation=interpretation,
             citation=citation,
             direction=direction,
-            entity_types=graphiti_service.entity_types,
             uuid=know_id,
-            reference_time=parsed_reference_time,
-            edge_types=graphiti_service.edge_types,
-            edge_type_map=graphiti_service.edge_type_map,
-            excluded_entity_types=excluded_entity_types,
-            previous_episode_uuids=previous_episode_uuids,
-            custom_extraction_instructions=custom_extraction_instructions,
-            update_communities=update_communities,
-            saga=saga,
-            saga_previous_episode_uuid=saga_previous_episode_uuid,
+            reference_time=datetime.now(timezone.utc),
+            mentions=mentions,
+            relationships=relationships,
         )
         return KnowAcceptedResponse(
             message=f"Know '{name}' accepted for processing in group '{effective_group_id}'",
@@ -644,7 +629,7 @@ async def search_knows(
     group_id: str | None = None,
     max_knows: int = 10,
 ) -> KnowSearchResponse | ErrorResponse:
-    """Search first-class Knows with Graphiti episode BM25 and cross-encoder retrieval."""
+    """Search first-class Knows with BM25 and cross-encoder retrieval."""
 
     global graphiti_service
     if graphiti_service is None:

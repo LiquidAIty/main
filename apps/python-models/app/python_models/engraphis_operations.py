@@ -4,7 +4,7 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: ThinkGraph
-# Relationship: This file binds Engraphis Smart operations and application-only reads or retirements to the authenticated Project's ThinkGraph scope.
+# Relationship: Binds Engraphis Smart operations and the Entity-owned Think-writing tool to authenticated Project scope, with retained application reads and retirements.
 # Entity: Tool Catalog
 # Relationship: This file projects the installed Smart operation schemas, explicit effects, grant eligibility, and ThinkGraph-only update ceiling into canonical definitions.
 # Entity: Data Anchors
@@ -43,6 +43,7 @@ WRITE_TOOLS = frozenset({
     "engraphis_recall_context",
     "engraphis_remember",
     "engraphis_remember_entities",
+    "engraphis_add_thinks",
     "engraphis_session",
     "engraphis_update_memory",
 })
@@ -140,7 +141,7 @@ def operation_definitions() -> list[Any]:
                 },
                 grant_profiles=(
                     frozenset({"thinkgraph"})
-                    if name == "engraphis_update_memory" else frozenset()
+                    if name in {"engraphis_update_memory", "engraphis_add_thinks"} else frozenset()
                 ),
                 external_source_id="engraphis",
                 output_schema=deepcopy(item.get("outputSchema")),
@@ -157,14 +158,15 @@ def operation_definitions() -> list[Any]:
 
 
 async def invoke_tool(project: str, name: str, arguments: dict) -> dict:
-    # FastMCP synchronous tools execute on their caller's thread. Keep
-    # embedding and SQLite work off Python rails' shared HTTP event loop.
+    # Service creation can load embeddings; keep it off the HTTP event loop.
     return await asyncio.to_thread(_invoke_tool_sync, project, name, arguments)
 
 
 def _invoke_tool_sync(project: str, name: str, arguments: dict) -> dict:
-    with SERVICE_LOCK:
-        return asyncio.run(_invoke_tool(project, name, arguments))
+    # MCP dispatches synchronous handlers on another worker. Holding SERVICE_LOCK
+    # here deadlocks a handler that resolves its source pair through get_service.
+    # Engraphis owns storage transactions; get_service locks its own creation.
+    return asyncio.run(_invoke_tool(project, name, arguments))
 
 
 async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:

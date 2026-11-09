@@ -204,7 +204,7 @@ explain Feature meaning; CBM remains the independent structural authority.
 
 ## ThinkGraph completed-turn intake
 
-Hermes's `on_session_end` hook observes a successful, non-interrupted Main session. Main does not call,
+Hermes's `post_llm_call` hook supplies a completed User/Main pair. Main does not call,
 supervise, steer, approve, or settle intake. Its completed turn is only the source event.
 
 The plugin captures the exact Main profile/session and validated loopback Python-rails origin. The Hermes
@@ -212,15 +212,18 @@ plugin host schedules the background coroutine with `ctx.spawn_task` and runs bl
 `asyncio.to_thread`, so Hermes owns task lifecycle and unload cancellation while Main returns.
 
 The hook sends the exact completed User/Main exchange and resolves authenticated Project context.
-Python rails prepares its source chunks and refuses an already settled pair. The existing saved
-ThinkGraph profile receives the recovered Entity-specific extraction prompt and matching Think schema,
-without the generic Engraphis fact-prompt prefix. Each Think has one exact owner; substantive reasoning
-about a member Entity must not be absorbed by a broad theme, and mentions never copy ownership.
-Engraphis settles the returned Thinks and separately Jev-classified relationship proposals. There is
-no minimum Think count, TypeScript conversation store, history poller, or Python semantic validator.
+Python rails records the source pair and sends its text and reference to the existing saved ThinkGraph
+profile. ThinkGraph calls `engraphis_add_thinks`; its final answer is not parsed into graph data.
+The tool writes one owner per Think and separate textual mentions. Authored relationship prose goes
+through the existing Jev classifier before the atomic Think/edge write. The automatic completion
+reports persisted records for that pair, not IDs claimed in answer prose. No minimum Think count,
+TypeScript conversation store, history poller, or replacement extraction model is introduced.
 
-The raw pair remains source evidence, not another memory graph. Existing preparation, extraction, and
-settlement owners remain distinct.
+The raw pair remains source evidence. The request-only context engine sends ThinkGraph only the current
+turn and its tool results, with no model compaction of earlier extraction turns. Main and KnowGraph
+retain their existing context behavior. Older chunk/JSON preparation and settlement entrypoints remain
+available at the owner's request, but are not an automatic fallback. Saved profile activation and live
+write/readback are separate from this source contract.
 
 ## KnowGraph
 
@@ -280,8 +283,12 @@ LiquidAIty executes inside the authenticated Hermes dashboard origin. The dashbo
 authenticated HTTP/WebSocket requests. Profile-scoped Hermes connections remain Hermes-owned.
 
 Each profile's `liquidaity` MCP connection uses the existing signed owner/Project/deck/profile scope.
-The MCP host rechecks saved grants. External ChatGPT/plugin publication is a separate OAuth-protected
-resource and never exposes internal backend routes.
+Saved-Card, catalog-reader and graph-read credentials have no expiry claim or renewal cycle.
+The MCP host verifies the existing signature and rechecks saved Card grants. It has no OAuth verifier,
+discovery metadata/challenge, external issuer lookup or host/origin allowlist. The former external
+OAuth connector is not served; remote requests still need a signed credential. Rotating the existing
+signing key revokes old credentials. Model-provider logins and Hermes dashboard authentication remain
+unchanged; internal backend routes are not exposed by MCP.
 
 No source test proves a loaded secret, provider credential, remote connector, or deployed topology.
 
@@ -389,6 +396,16 @@ The vendored Graphiti fork has this bounded additive divergence:
 Graphiti community-result aggregation repair (2026-10-31): **VENDORED PROJECT:** the same `getzep/graphiti` fork/version above. **PURPOSE:** unblock the existing custom Know writer when episode extraction returns other than two Entities. **EXTERNAL ALTERNATIVE CHECK:** disabling communities or adding an application-side writer/retry would change behavior; the existing owner must collect its own results correctly. **FILES AND SYMBOLS:** `GraphitiLatest/graphiti_core/graphiti.py::Graphiti.add_episode` and the existing caller-supplied-UUID test in `GraphitiLatest/tests/test_knows.py`. **UPSTREAM BEHAVIOR PRESERVED:** the same native `update_community` calls, concurrency limit, persistence, exception propagation, and enabled/disabled choice; no Jev or graph-rule change. **CONTRACTS:** flatten the returned per-Entity Community and CommunityEdge lists into the existing `AddEpisodeResults` fields. **TESTS:** zero, one, two, and three Entities with community updates both enabled and disabled, including an Entity with no community; loaded Know persistence remains a separate acceptance tier. **FORK COST:** one result-aggregation correction and bounded regression coverage. **ROLLBACK:** remove only this correction/test expansion on explicit owner instruction; no data migration or deletion.
 
 The installed Engraphis runtime and the separately retained browser-renderer fork have these bounded local divergences:
+
+The additive Think-tool delta against Engraphis 1.7.9 (`619f49860f293ab1826aaf4e11a158bc22f03fcf`)
+is `MemoryService.add_thinks`/`prepare_thinks` in `engraphis/service.py` and
+`engraphis_add_thinks` in `engraphis/mcp_server.py`. Existing `remember_entities`, Fact storage and
+text mentions already supply the needed primitives; no other service or extraction model is needed.
+The host supplies only source-reference resolution and the existing Jev edge finalizer. Generic memory
+operations, workspace authorization, one-owner storage and rollback remain unchanged. The contract is
+one owner per Think, reference-only mentions and classified prose edges. Existing incidence/rollback
+checks pass; live Card/tool proof is recorded separately. Fork cost is this additive service/tool API;
+rollback removes its registration, saved grant and caller without changing stored graph schema.
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |

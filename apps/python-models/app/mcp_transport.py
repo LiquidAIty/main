@@ -3,21 +3,19 @@
 # Entity: MCP Host
 # Relationship: This file owns the MCP host's stdio and Streamable HTTP lifecycles, readiness endpoints, request context, transport security, and provider cleanup.
 # Entity: Authentication
-# Relationship: This file protects the public Streamable HTTP endpoint with OAuth verification, bearer challenges, host checks, and origin checks.
+# Relationship: Resolves the existing signed MCP credential without OAuth discovery, timed expiry, or host/origin restrictions.
 # Entity: Tool Catalog
 # Relationship: This file initializes the canonical tool catalog before accepting requests and exposes catalog health and readiness without rebuilding the catalog per client.
 # Entity: Card Profiles
-# Relationship: This file binds validated Project and Card profile headers to one request context for profile-owned MCP connections.
+# Relationship: Binds Project/profile headers to saved-Card requests.
 
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 from contextlib import asynccontextmanager
 from typing import Any
-from urllib.parse import urlsplit
 
 from app import mcp_auth, mcp_catalog_runtime, mcp_cbm_provider, mcp_graphiti_provider, mcp_observability, mcp_provider_operations
 from mcp.server.lowlevel.server import Server
@@ -169,50 +167,29 @@ async def run_streamable_http(
     import uvicorn
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from mcp.server.transport_security import TransportSecuritySettings
-    from pydantic import AnyHttpUrl
-    from starlette.authentication import AuthenticationBackend
     from starlette.applications import Starlette
     from starlette.middleware.authentication import AuthenticationMiddleware
     from starlette.responses import JSONResponse, PlainTextResponse
     from starlette.routing import Mount, Route
 
     from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
-    from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
-    from mcp.server.auth.routes import build_resource_metadata_url, create_protected_resource_routes
-
-    config_values = mcp_auth.oauth_config()
-
-    local_authority = f"{HTTP_MCP_HOST}:{HTTP_MCP_PORT}"
-    allowed_hosts = {
-        HTTP_MCP_HOST,
-        local_authority,
-        "localhost",
-        f"localhost:{HTTP_MCP_PORT}",
-    }
-    allowed_origins = {
-        f"http://{local_authority}",
-        f"http://localhost:{HTTP_MCP_PORT}",
-    }
-    if config_values.resource_url:
-        public_url = urlsplit(config_values.resource_url)
-        if public_url.netloc:
-            allowed_hosts.add(public_url.netloc)
-            allowed_origins.add(f"{public_url.scheme}://{public_url.netloc}")
+    from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 
     session_manager = StreamableHTTPSessionManager(
         app=server,
         json_response=True,
         stateless=True,
         security_settings=TransportSecuritySettings(
-            enable_dns_rebinding_protection=True,
-            allowed_hosts=sorted(allowed_hosts),
-            allowed_origins=sorted(allowed_origins),
+            enable_dns_rebinding_protection=False,
         ),
     )
 
     async def endpoint(scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope.get("path") != mcp_auth.HTTP_MCP_PATH:
             await PlainTextResponse("not_found", status_code=404)(scope, receive, send)
+            return
+        if not mcp_auth.access_token_available():
+            await JSONResponse({"error": "mcp_credential_required"}, status_code=403)(scope, receive, send)
             return
         await session_manager.handle_request(scope, receive, send)
 
@@ -280,79 +257,11 @@ async def run_streamable_http(
         Route("/health/ready", endpoint=readiness_endpoint, methods=["GET"]),
     ]
 
-    if mcp_auth.OAUTH_ENFORCED:
-        class ScopedRequireAuthMiddleware(RequireAuthMiddleware):
-            """Emit the complete RFC 6750/MCP OAuth discovery challenge."""
-
-            async def _send_auth_error(
-                self,
-                send: Any,
-                status_code: int,
-                error: str,
-                description: str,
-            ) -> None:
-                challenge_parts = [
-                    f'error="{error}"',
-                    f'error_description="{description}"',
-                    f'scope="{" ".join(self.required_scopes)}"',
-                ]
-                if self.resource_metadata_url:
-                    challenge_parts.append(
-                        f'resource_metadata="{self.resource_metadata_url}"'
-                    )
-                body = json.dumps(
-                    {
-                        "error": error,
-                        "error_description": description,
-                        "scope": " ".join(self.required_scopes),
-                    }
-                ).encode("utf-8")
-                await send(
-                    {
-                        "type": "http.response.start",
-                        "status": status_code,
-                        "headers": [
-                            (b"content-type", b"application/json"),
-                            (b"content-length", str(len(body)).encode("ascii")),
-                            (
-                                b"www-authenticate",
-                                f'Bearer {", ".join(challenge_parts)}'.encode("utf-8"),
-                            ),
-                        ],
-                    }
-                )
-                await send({"type": "http.response.body", "body": body})
-
-        resource_url = AnyHttpUrl(config_values.resource_url)
-        metadata_url = build_resource_metadata_url(resource_url)
-        protected_endpoint: Any = ScopedRequireAuthMiddleware(
-            endpoint,
-            required_scopes=[config_values.required_scope],
-            resource_metadata_url=metadata_url,
-        )
-        protected_endpoint = AuthContextMiddleware(protected_endpoint)
-        auth_backend: AuthenticationBackend = BearerAuthBackend(
-            mcp_auth.Auth0TokenVerifier(config_values)
-        )
-        protected_endpoint = AuthenticationMiddleware(protected_endpoint, backend=auth_backend)
-        protected_resource_routes = create_protected_resource_routes(
-            resource_url=resource_url,
-            authorization_servers=[AnyHttpUrl(config_values.issuer_url)],
-            scopes_supported=list(mcp_auth.OAUTH_SCOPES),
-                resource_name=public_name,
-        )
-        routes = [
-            *health_routes,
-            Route(
-                "/.well-known/oauth-protected-resource",
-                endpoint=protected_resource_routes[0].endpoint,
-                methods=["GET", "OPTIONS"],
-            ),
-            *protected_resource_routes,
-            Mount("/", app=protected_endpoint),
-        ]
-    else:
-        routes = [*health_routes, Mount("/", app=endpoint)]
+    credential_endpoint = AuthenticationMiddleware(
+        AuthContextMiddleware(endpoint),
+        backend=BearerAuthBackend(mcp_auth.McpTokenVerifier()),
+    )
+    routes = [*health_routes, Mount("/", app=credential_endpoint)]
     http_app = _SafeRequestTraceMiddleware(_CardProfileContextMiddleware(
         Starlette(routes=routes, lifespan=lifespan)
     ))

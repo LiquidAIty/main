@@ -530,8 +530,8 @@ function MainProjectChatMessageBubble({
               : "inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.18), 0 4px 18px rgba(0,0,0,0.14)",
           }}
         >
-          {!isUser ? (
-            <div data-testid="main-chat-message-speaker">@{message.speaker || 'Main'}</div>
+          {!isUser && message.speaker && message.speaker.toLowerCase() !== 'main' ? (
+            <div data-testid="main-chat-message-speaker">@{message.speaker}</div>
           ) : null}
           {isUser
             ? text
@@ -706,7 +706,8 @@ export default function MainProjectChat({
   const addressSuggestions = addressPrefix === null
     ? []
     : directChatTargets.filter((agent) => (
-      agent.address.toLowerCase().startsWith(addressPrefix)
+      agent.address.toLowerCase() !== 'main'
+      && agent.address.toLowerCase().startsWith(addressPrefix)
     ));
   const boundedAddressIndex = addressSuggestions.length > 0
     ? Math.min(selectedAddressIndex, addressSuggestions.length - 1)

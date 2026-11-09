@@ -1290,9 +1290,11 @@ class MemoryService:
 
     def __init__(self, engine: MemoryEngine, *,
                  allowed_workspaces: Optional[list] = None,
-                 owned_connector: Optional[Any] = None) -> None:
+                 owned_connector: Optional[Any] = None,
+                 prepare_thinks=None) -> None:
         self.engine = engine
         self.store = engine.store
+        self.prepare_thinks = prepare_thinks
         connection = getattr(self.store, "conn", None)
         if connection is not None:
             connection.create_function(
@@ -1544,7 +1546,8 @@ class MemoryService:
                allow_automatic_critical_retention: Optional[bool] = None,
                query_planner=None, read_only: bool = False,
                require_exact_backends: bool = False,
-               sqlite_durability: Optional[str] = None) -> "MemoryService":
+               sqlite_durability: Optional[str] = None,
+               prepare_thinks=None) -> "MemoryService":
         database_path = str(db_path)
         physical_db_path = _physical_database_path(database_path)
         migration_allowed = (
@@ -1601,7 +1604,7 @@ class MemoryService:
             except Exception:  # noqa: BLE001 — diagnostics never block startup
                 pass
         return cls(engine, allowed_workspaces=allowed_workspaces,
-                   owned_connector=connect)
+                   owned_connector=connect, prepare_thinks=prepare_thinks)
 
     # ── name → id resolution ───────────────────────────────────────────────────
     def _lookup_workspace(self, name: str) -> Optional[str]:
@@ -2484,6 +2487,85 @@ class MemoryService:
             _entity_nodes=entities,
             _entity_source_kind="explicit",
         )
+
+    def add_thinks(self, thinks: list[dict], *, workspace: str,
+                   source_reference: Optional[str] = None) -> dict:
+        """Append Entity-owned Thinks; textual mentions never become owners."""
+        ws = self._clean_ws(workspace)
+        wid = self._get_or_create_workspace(ws)
+        provenance = _local_agent_provenance("agent", ingress="mcp")
+        specs: list[FactSpec] = []
+        entities: list[Node] = []
+        texts: list[str] = []
+        proposals: list[list[dict]] = []
+        for think in thinks:
+            entity_name = _clean_text(think["entity_name"], field="entity_name",
+                                      max_chars=MAX_NAME_CHARS)
+            content = _clean_text(think["content"], field="content", max_chars=MAX_CONTENT_CHARS)
+            title = _clean_text(think.get("title", ""), field="title",
+                               max_chars=MAX_TITLE_CHARS, required=False)
+            detail = _clean_text(think.get("detail", ""), field="detail",
+                                max_chars=MAX_CONTENT_CHARS, required=False)
+            _reject_secret_capture((("content", content), ("title", title), ("detail", detail)))
+            relationships = [{
+                "source": entity_name,
+                "target": _clean_text(item["target"], field="target", max_chars=MAX_NAME_CHARS),
+                "relation": _clean_text(item["relation"], field="relation", max_chars=MAX_CONTENT_CHARS),
+            } for item in think.get("relationships", [])]
+            proposals.append(relationships)
+            body = {"summary": content, "entity": entity_name, "relationships": relationships}
+            if detail:
+                body["detail"] = detail
+            origin = {"authority": "thinkgraph", "writer": "engraphis_add_thinks"}
+            if source_reference:
+                origin["source_reference"] = source_reference
+            specs.append(FactSpec(
+                content=content, title=title, mtype=MemoryType.EPISODIC, claim_kind="think",
+                metadata={"structured_extraction": {"think": body},
+                          "thinkgraph_origin": origin, "provenance": provenance,
+                          "consolidation_exempt": True},
+            ))
+            entity_id = str(think.get("entity_id") or "").removeprefix("thinkgraph:")
+            entities.append(Node(id=entity_id, name=entity_name,
+                                 ntype="person_or_concept", workspace_id=wid))
+            texts.append("\n\n".join(part for part in (content, detail) if part))
+
+        # The host prepares its classifier decisions before a storage transaction.
+        # Engraphis remains independent of the host's Jev provider and Project ledger.
+        origin, write_relationships = ({}, None)
+        if self.prepare_thinks is not None:
+            origin, write_relationships = self.prepare_thinks(
+                self.store, ws, wid, texts, proposals, source_reference,
+            )
+        elif any(proposals):
+            raise ValueError("Think relationship classification is not configured")
+        for spec in specs:
+            spec.metadata["thinkgraph_origin"].update(origin)
+        written_relationships: list[dict] = []
+
+        def finalize(results: list[dict]) -> None:
+            if write_relationships is not None:
+                written_relationships.extend(write_relationships(results))
+            # All owner Entities exist before references are resolved. The existing
+            # mention mechanism records text_mention, not another Think attachment.
+            for result, content in zip(results, texts, strict=True):
+                memory = self.store.get_memory(result["id"])
+                self.engine._link_memory_entities(
+                    memory.id, content, workspace_id=wid, repo_id=None,
+                    valid_from=memory.valid_from,
+                )
+
+        results = self.engine.remember_entities(
+            specs, entities, workspace_id=wid, mtype=MemoryType.EPISODIC,
+            scope=Scope.WORKSPACE, resolve_conflicts=False,
+            source_kind="structured_extractor",
+            _trusted_graph_keys=frozenset({"structured_extraction"}),
+            _transactional_finalizer=finalize,
+        )
+        return {"workspace": ws, "stored": True, "count": len(results),
+                "thinks": [{"id": result["id"], "entity_id": result["entity_id"]}
+                           for result in results],
+                "relationships": written_relationships}
 
     def ingest(self, content: str, *, workspace: str, repo: Optional[str] = None,
                session_id: Optional[str] = None, mtype: str = "semantic",
