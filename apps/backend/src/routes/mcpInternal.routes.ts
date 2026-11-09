@@ -10,6 +10,8 @@
 // Relationship: This file resolves one enabled persisted Card and returns only its exact profile, caller identity, and saved tool ceiling.
 // Entity: IDD
 // Relationship: This file returns the canonical Card-editor materialization for one exact Project, deck, and Card to the internal MCP process.
+// Entity: CodeGraph
+// Relationship: Carries authenticated Builder category-selection requests to the same active Project view operation as the user controls.
 
 import { Router, type Request } from 'express';
 
@@ -19,7 +21,7 @@ import { getDeckDocument } from '../decks/deckDomainClient';
 import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
 import { assertCardProfileOwner, getOwnedProjectByReference } from '../services/projectStore';
 import { materializeCardEditor } from './builderIdd.routes';
-import { notifyThinkGraphChanged } from './thinkGraph.routes';
+import { configureCodeCategories, notifyThinkGraphChanged } from './thinkGraph.routes';
 import {
   exactStrings,
   objectRecord,
@@ -45,6 +47,17 @@ mcpInternalRoutes.post('/graph-changed', async (req, res) => {
   if (!project) return res.status(403).json({ ok: false, error: 'graph_project_access_denied' });
   notifyThinkGraphChanged(project.id, authority);
   return res.json({ ok: true });
+});
+
+mcpInternalRoutes.post('/code-categories', async (req, res) => {
+  if (!processAuthorized(req)) return res.status(403).json({ ok: false, error: 'internal_mcp_authorization_required' });
+  const { projectId, ownerUserId, enable, disable, categories } = req.body || {};
+  if (typeof projectId !== 'string' || typeof ownerUserId !== 'string')
+    return res.status(400).json({ ok: false, error: 'graph_change_scope_required' });
+  const project = await getOwnedProjectByReference(projectId, ownerUserId);
+  if (!project) return res.status(403).json({ ok: false, error: 'graph_project_access_denied' });
+  try { return res.json(configureCodeCategories(project.id, { enable, disable, categories })); }
+  catch (error) { return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'code_selection_failed' }); }
 });
 
 mcpInternalRoutes.post('/context', async (req, res) => {

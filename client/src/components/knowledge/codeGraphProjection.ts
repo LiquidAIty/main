@@ -238,37 +238,6 @@ export function codeGraphFeatures(projection: GraphProjectionV1): GraphProjectio
     .sort((left, right) => left.label.localeCompare(right.label));
 }
 
-/** Exact paths returned by a successful CBM read, never filenames guessed from prose. */
-export function codeGraphInspectedPaths(name: string, result: unknown): string[] {
-  const operation = name.replace(/^mcp__liquidaity__/, '').replace(/^cbm_/, 'cbm.');
-  if (!['cbm.search_graph', 'cbm.search_code', 'cbm.trace_path', 'cbm.get_code_snippet',
-    'cbm.query_graph'].includes(operation)) return [];
-  const paths = new Set<string>();
-  const add = (value: unknown) => {
-    if (typeof value !== 'string') return;
-    const path = value.replace(/\\/g, '/');
-    if (/^(apps|client|services)\/.+\.(py|ts|tsx)$/.test(path)
-      && !path.split('/').some(part => ['..', 'vendor', 'node_modules', '.venv', 'dist'].includes(part))) paths.add(path);
-  };
-  const visit = (value: unknown, depth = 0): void => {
-    if (depth > 12) return;
-    if (typeof value === 'string') {
-      try { visit(JSON.parse(value), depth + 1); } catch { /* Plain prose is not CBM structure. */ }
-    } else if (Array.isArray(value)) value.forEach(item => visit(item, depth + 1));
-    else if (isRecord(value) && value.isError !== true && value.is_error !== true && !value.error) {
-      add(value.file_path);
-      if (Array.isArray(value.files)) value.files.forEach(add);
-      if (Array.isArray(value.columns) && Array.isArray(value.rows)) {
-        const indexes = value.columns.flatMap((column, index) =>
-          typeof column === 'string' && (column.endsWith('file_path') || ['selected', 'neighbor'].includes(column)) ? [index] : []);
-        for (const row of value.rows) if (Array.isArray(row)) indexes.forEach(index => add(row[index]));
-      }
-      Object.values(value).forEach(item => visit(item, depth + 1));
-    }
-  };
-  visit(result);
-  return [...paths].sort();
-}
 
 export function codeGraphCategoryProjection(
   projection: GraphProjectionV1,

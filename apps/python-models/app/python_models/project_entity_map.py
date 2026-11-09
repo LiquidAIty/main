@@ -39,7 +39,7 @@ def _validated_map(project: str, snapshot: dict[str, Any]) -> dict[str, Any]:
         raise GraphReadError("project_entity_map_records_invalid")
     ids: set[str] = set()
     for entity in entities:
-        if not isinstance(entity, dict) or not set(entity) <= {"id", "name", "providers", "filePath", "categories", "weight"}:
+        if not isinstance(entity, dict) or not set(entity) <= {"id", "name", "providers", "filePath", "files", "categories", "weight"}:
             raise GraphReadError("project_entity_map_entity_invalid")
         if not isinstance(entity.get("id"), str) or not entity["id"] or entity["id"] in ids \
                 or not isinstance(entity.get("name"), str) or not entity["name"]:

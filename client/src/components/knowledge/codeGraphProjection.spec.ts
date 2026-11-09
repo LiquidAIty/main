@@ -11,7 +11,6 @@ import type { GraphProjectionV1 } from './knowledgeGraphProjection';
 import {
   applyCodeGraphPhysics,
   codeGraphCategoryProjection,
-  codeGraphInspectedPaths,
   mergeCodeGraphProjections,
   validateCodeGraphProjection,
 } from './codeGraphProjection';
@@ -35,16 +34,6 @@ function projection(): GraphProjectionV1 {
 }
 
 describe('CodeGraph projection', () => {
-  it('activates only exact files returned by successful CBM operations, never answer prose', () => {
-    expect(codeGraphInspectedPaths('mcp__liquidaity__cbm_search_graph', JSON.stringify({
-      results: [{ file_path: 'client/shared.ts' }],
-    }))).toEqual(['client/shared.ts']);
-    expect(codeGraphInspectedPaths('cbm.search_code', { files: ['apps/example.py', '../outside.py'] }))
-      .toEqual(['apps/example.py']);
-    expect(codeGraphInspectedPaths('terminal', { files: ['client/shared.ts'] })).toEqual([]);
-    expect(codeGraphInspectedPaths('cbm.search_code', { isError: true, files: ['client/shared.ts'] })).toEqual([]);
-    expect(codeGraphInspectedPaths('cbm.search_code', 'I read client/shared.ts')).toEqual([]);
-  });
   it('retains source memberships internally but renders only selected files, once', () => {
     const source = validateCodeGraphProjection(projection(), 'project-1');
     const before = JSON.stringify(source);

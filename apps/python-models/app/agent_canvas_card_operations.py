@@ -13,9 +13,13 @@
 
 from __future__ import annotations
 
+# Entity: CodeGraph
+# Relationship: Publishes the Builder-only operation for the same Project category selection used by the graph configuration UI.
+
 from app.application_operation_handlers import (
     agentgraph_inspect,
     canvas_inspect_operation,
+    codegraph_configure,
     canvas_upsert_wire_operation,
     card_create_operation,
     card_update_configuration_operation,
@@ -72,6 +76,29 @@ def canvas_card_operation_definitions(
     external: frozenset[str],
 ) -> list[OperationDefinition]:
     return [
+        OperationDefinition(
+            canonical_id='codegraph.configure',
+            title='Configure visible Code categories',
+            description=('Read available category IDs and the current selection in this Project’s open graph view. '
+                         'Pass enable to add only those IDs or disable to remove only those IDs. '
+                         'When Code is on, enabling a category puts its code into the shared view for Main and the user. '
+                         'Omit changes to read the user’s current selection and selected file references. '
+                         'Code off means no selection changes; never override the user’s master switch. Reading source never changes selection. '
+                         'Does not edit source, graph records, Cards, or any other layer. '
+                         'No matching active view means no change.'),
+            parameters_schema={'type': 'object', 'properties': {
+                'projectId': {'type': 'string', 'minLength': 1},
+                'enable': {'type': 'array', 'items': {'type': 'string'}},
+                'disable': {'type': 'array', 'items': {'type': 'string'}},
+            }, 'additionalProperties': False},
+            handler=codegraph_configure, available=True, publishers=external,
+            access='write', namespace='main', grant_eligible=True,
+            grant_profiles=frozenset({'builder'}),
+            server_injected_arguments=frozenset({'projectId'}),
+            dispatcher_context_arguments=frozenset({'projectId'}),
+            annotations={'readOnlyHint': False, 'destructiveHint': False,
+                         'idempotentHint': True, 'openWorldHint': False},
+        ),
         OperationDefinition(
             canonical_id="canvas.inspect",
             title="Inspect the saved Canvas",

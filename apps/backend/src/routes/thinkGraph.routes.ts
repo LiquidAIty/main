@@ -8,7 +8,7 @@
  * Entity: Authentication
  * Relationship: This file requires ownership of the exact Project before forwarding any ThinkGraph read or retirement operation.
  * Entity: Project Knowledge Graph
- * Relationship: Supplies provider-owned ThinkGraph projections and neighborhoods with committed-change notifications over the Project-scoped stream.
+ * Relationship: Supplies provider-owned projections and notifications plus shared active-view Code category selection over the existing Project-scoped stream.
  */
 
 import { Router, type Response } from 'express';
@@ -22,6 +22,50 @@ import { requireOwnedProject } from './projectAccess';
 
 const thinkGraphRoutes = Router();
 const graphStreams = new Map<Response, string>();
+type CodeCategorySelection = { categories: Array<{ id: string; label: string; memberFilePaths?: string[] }>; selectedIds: string[]; visible: boolean };
+// View configuration shares the lifetime of the existing Project stream, not graph storage.
+const codeSelections = new Map<string, CodeCategorySelection>();
+
+export function configureCodeCategories(projectId: string, input: {
+  enable?: string[]; disable?: string[]; visible?: boolean; categories?: CodeCategorySelection['categories'];
+} = {}) {
+  const streams = [...graphStreams].filter(([response, project]) => project === projectId
+    && !response.destroyed && !response.writableEnded);
+  if (!streams.length) return { ok: true, active: false, changed: false, reason: 'no_active_view', categories: [], selectedIds: [] };
+  const current = codeSelections.get(projectId) || { categories: [], selectedIds: [], visible: false };
+  const categories = input.categories || current.categories;
+  if (!Array.isArray(categories) || categories.some(item => !item || typeof item.id !== 'string'
+    || !item.id || typeof item.label !== 'string')) throw new Error('invalid_code_categories');
+  const enable = input.enable || [], disable = input.disable || [];
+  if (![enable, disable].every(ids => Array.isArray(ids) && ids.every(id => typeof id === 'string')))
+    throw new Error('invalid_category_selection');
+  const available = new Set(categories.map(category => category.id));
+  if ([...enable, ...disable].some(id => !available.has(id))) throw new Error('unknown_code_category');
+  const visible = input.visible ?? current.visible;
+  if (!visible && enable.length) return { ok: true, active: true, changed: false,
+    reason: 'code_layer_off', visible: false, categories: categories.map(({ id, label }) => ({ id, label })),
+    selectedIds: [], selectedFiles: [] };
+  const selected = new Set(visible ? current.selectedIds.filter(id => available.has(id)) : []);
+  enable.forEach(id => selected.add(id));
+  disable.forEach(id => selected.delete(id));
+  if (input.visible !== undefined && typeof input.visible !== 'boolean') throw new Error('invalid_code_visibility');
+  const next = { categories, selectedIds: [...selected].sort(), visible };
+  const changed = JSON.stringify(next) !== JSON.stringify(current);
+  codeSelections.set(projectId, next);
+  const result = { ok: true, active: true, changed, visible: next.visible, selectedIds: next.selectedIds,
+    categories: categories.map(({ id, label }) => ({ id, label })),
+    selectedFiles: [...new Set(categories.filter(item => selected.has(item.id)).flatMap(item => item.memberFilePaths || []))] };
+  if (changed) for (const [response] of streams)
+    response.write(`event: code-categories\ndata: ${JSON.stringify({ projectId, ...result })}\n\n`);
+  return result;
+}
+
+thinkGraphRoutes.post('/code-categories', async (req, res) => {
+  const scope = await requireOwnedProject(req, res, String(req.body?.projectId || ''));
+  if (!scope) return undefined;
+  try { return res.json(configureCodeCategories(scope.projectId, req.body)); }
+  catch (error) { return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'code_selection_failed' }); }
+});
 
 thinkGraphRoutes.post('/view-context', async (req, res) => {
   const projectId = String(req.body?.projectId || '').trim();
@@ -95,7 +139,10 @@ thinkGraphRoutes.get('/events', async (req, res) => {
     const heartbeat = setInterval(() => {
       if (!res.write(': keepalive\n\n')) res.end();
     }, 25_000);
-    res.on('close', () => { clearInterval(heartbeat); graphStreams.delete(res); });
+    res.on('close', () => {
+      clearInterval(heartbeat); graphStreams.delete(res);
+      if (![...graphStreams.values()].includes(scope.projectId)) codeSelections.delete(scope.projectId);
+    });
     // Re-read on every connection, including reconnects, so missed changes need no replay queue.
     res.write(`event: ready\ndata: ${JSON.stringify({ projectId: scope.projectId })}\n\n`);
   } catch (error: any) {

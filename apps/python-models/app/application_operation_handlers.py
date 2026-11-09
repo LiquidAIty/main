@@ -14,6 +14,9 @@
 
 from __future__ import annotations
 
+# Entity: CodeGraph
+# Relationship: Forwards authenticated Builder category selections and declared file references to the existing active Project graph view without editing source or graph records.
+
 import asyncio
 from typing import Any
 
@@ -41,6 +44,37 @@ async def canvas_inspect_operation(**arguments: Any) -> Any:
     from app.saved_canvas_tools import canvas_inspect
 
     return await canvas_inspect(arguments)
+
+
+async def codegraph_configure(*, projectId: str, enable: list[str] | None = None,
+                              disable: list[str] | None = None) -> dict[str, Any]:
+    """Change only category visibility in an already-open Project graph view."""
+    from app import mcp_auth
+    from app.backend_operation_transport import request_backend_json
+
+    principal = mcp_auth.internal_mcp_principal() or {}
+    if principal.get('projectId') != projectId or not principal.get('ownerUserId'):
+        raise ApplicationToolError('graph_view_project_scope_required')
+    payload = {
+        'projectId': projectId, 'ownerUserId': principal['ownerUserId'],
+        'enable': enable or [], 'disable': disable or [],
+    }
+    result = await asyncio.to_thread(request_backend_json, 'POST', '/api/mcp/code-categories',
+                                     payload, require_internal_secret=True)
+    if not enable and not disable and result.get('active') and not result.get('categories'):
+        from app.python_models.codegraph_reference_reads import read_codegraph_view
+        source = await asyncio.to_thread(read_codegraph_view, {
+            'projectId': projectId, 'deckId': principal['deckId'], 'cardId': 'builder', 'mode': 'projection',
+        })
+        if not source.get('projection'):
+            raise ApplicationToolError('codegraph_categories_unavailable')
+        payload['categories'] = [{'id': node['id'], 'label': node['label'],
+                                  'memberFilePaths': node['properties'].get('memberFilePaths', [])}
+                                 for node in source['projection']['nodes']
+                                 if node.get('properties', {}).get('recordKind') == 'feature']
+        return await asyncio.to_thread(request_backend_json, 'POST', '/api/mcp/code-categories',
+                                       payload, require_internal_secret=True)
+    return result
 
 
 async def card_create_operation(**arguments: Any) -> Any:

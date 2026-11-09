@@ -195,7 +195,7 @@ export type GraphViewContext = {
     projectId: string;
     sources: GraphLayerVisibility;
     entities: Array<{ id: string; name: string; providers: Array<{ authority: GraphVisualLayer; id: string }>;
-      filePath?: string; categories?: string[]; weight?: number }>;
+      filePath?: string; files?: string[]; categories?: string[]; weight?: number }>;
     relationships: Array<{ id: string; source: string; target: string; authority: GraphVisualLayer;
       label: string; probability?: number }>;
   };
@@ -210,6 +210,9 @@ export function displayedEntityMap(presentation: JoinedGraphPresentation): Graph
     const code = presentation.codeNodeVariants?.get(node.id);
     if (code) providers.push({ authority: 'codegraph', id: code.id });
     return { id: node.id, name: node.label, providers,
+      ...(code?.properties?.recordKind === 'feature'
+        ? { categories: [String(code.properties.featureName)],
+          files: Array.isArray(code.properties.memberFilePaths) ? code.properties.memberFilePaths as string[] : [] } : {}),
       ...(code && typeof code.properties?.filePath === 'string'
         ? { filePath: code.properties.filePath, categories: Array.isArray(code.properties.features)
           ? code.properties.features.filter((name): name is string => typeof name === 'string') : [] } : {}),

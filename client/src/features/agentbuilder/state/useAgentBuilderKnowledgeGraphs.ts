@@ -20,7 +20,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GraphProjectionV1 } from '../../../components/knowledge/knowledgeGraphProjection';
 import {
   emptyCodeGraphProjection,
-  codeGraphInspectedPaths,
   mergeCodeGraphProjections,
   validateCodeGraphReadEnvelope,
   type CodeGraphFileSource,
@@ -28,7 +27,6 @@ import {
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 import { applicationApiUrl, applicationFetch } from '../../../lib/applicationApi';
 import type { KnowledgeGraphKind } from '../../../types/agentgraph';
-import { onHermesEvent } from '../../hermes/hermesHost';
 
 type KnowledgeGraphState = {
   projections: Record<KnowledgeGraphKind, GraphProjectionV1>;
@@ -43,11 +41,13 @@ type KnowledgeGraphState = {
     error: string | null;
     warning: string | null;
     freshness: string;
-    activatedCategoryIds?: string[];
+    selectedCategoryIds?: string[];
+    visible?: boolean;
   };
   loadCodeGraph: () => Promise<GraphProjectionV1 | null>;
   readCodeGraphFiles: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;
   readCodeGraphSource: (filePath: string) => Promise<CodeGraphFileSource | null>;
+  configureCodeCategories: (change: { enable?: string[]; disable?: string[]; visible?: boolean }) => Promise<void>;
 };
 
 const KNOWGRAPH_STARTUP_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
@@ -170,8 +170,6 @@ export default function useAgentBuilderKnowledgeGraphs({
     warning: null,
     freshness: 'unverified',
   }));
-  const codeGraphRef = useRef(codeGraph);
-  codeGraphRef.current = codeGraph;
   const codeProjectionRequestRef = useRef(0);
   const codeFileRequestRef = useRef(0);
   const codeSourceRequestRef = useRef(0);
@@ -316,14 +314,21 @@ export default function useAgentBuilderKnowledgeGraphs({
     const disconnected = () => {
       setErrors(current => ({ ...current, thinkgraph: 'ThinkGraph live updates disconnected. Reconnecting.' }));
     };
+    const categoriesChanged = (event: MessageEvent) => {
+      const value = JSON.parse(event.data);
+      if (value.projectId === projectId && Array.isArray(value.selectedIds))
+        setCodeGraph(current => ({ ...current, selectedCategoryIds: value.selectedIds, visible: value.visible }));
+    };
     stream.addEventListener('ready', refreshKnow);
     stream.addEventListener('changed', refresh);
     stream.addEventListener('knowgraph-changed', refreshKnow);
+    stream.addEventListener('code-categories', categoriesChanged as EventListener);
     stream.addEventListener('error', disconnected);
     return () => {
       stream.removeEventListener('ready', refreshKnow);
       stream.removeEventListener('changed', refresh);
       stream.removeEventListener('knowgraph-changed', refreshKnow);
+      stream.removeEventListener('code-categories', categoriesChanged as EventListener);
       stream.removeEventListener('error', disconnected);
       stream.close();
     };
@@ -373,6 +378,15 @@ export default function useAgentBuilderKnowledgeGraphs({
         warning,
         freshness: envelope.freshness.status,
       }));
+      const configured = await applicationFetch('/api/thinkgraph/code-categories', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, categories: envelope.projection.nodes
+          .filter(node => node.properties?.recordKind === 'feature')
+          .map(node => ({ id: node.id, label: node.label, memberFilePaths: node.properties?.memberFilePaths || [] })) }),
+      });
+      const selection = await configured.json();
+      if (!configured.ok || !selection.active) throw new Error(selection.error || 'codegraph_view_not_active');
+      setCodeGraph(current => ({ ...current, selectedCategoryIds: selection.selectedIds, visible: selection.visible }));
       return envelope.projection;
     } catch (error) {
       if (controller.signal.aborted || requestId !== codeProjectionRequestRef.current) return null;
@@ -384,32 +398,19 @@ export default function useAgentBuilderKnowledgeGraphs({
     }
   }, [projectId]);
 
-  useEffect(() => {
-    if (!projectId) return;
-    let disposed = false;
-    let remove: (() => void) | undefined;
-    void onHermesEvent('builder', 'tool.complete', event => {
-      if (!event.payload) return;
-      const paths = codeGraphInspectedPaths(event.payload.name,
-        event.payload.result ?? event.payload.result_text);
-      if (!paths.length || disposed) return;
-      const existing = codeGraphRef.current;
-      const categories = existing.projection.projectId === projectId
-        && existing.projection.nodes.some(node => node.properties?.recordKind === 'feature')
-        ? Promise.resolve(existing.projection) : loadCodeGraph();
-      void categories.then(projection => {
-        if (disposed || !projection) return;
-        const activated = projection.nodes.filter(node => node.properties?.recordKind === 'feature'
-          && Array.isArray(node.properties.memberFilePaths)
-          && node.properties.memberFilePaths.some(path => typeof path === 'string' && paths.includes(path)))
-          .map(node => node.id);
-        setCodeGraph(current => ({ ...current, activatedCategoryIds:
-          [...new Set([...(current.activatedCategoryIds || []), ...activated])] }));
+  const configureCodeCategories = useCallback(async (change: { enable?: string[]; disable?: string[]; visible?: boolean }) => {
+    try {
+      const response = await applicationFetch('/api/thinkgraph/code-categories', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, ...change }),
       });
-    }).then(unsubscribe => { if (disposed) unsubscribe(); else remove = unsubscribe; })
-      .catch(() => { /* The existing Hermes connection surfaces its own failure. */ });
-    return () => { disposed = true; remove?.(); };
-  }, [projectId, loadCodeGraph]);
+      const result = await response.json();
+      if (!response.ok || !result.active) throw new Error(result.error || 'codegraph_view_not_active');
+      setCodeGraph(current => ({ ...current, selectedCategoryIds: result.selectedIds, visible: result.visible, warning: null }));
+    } catch (error) {
+      setCodeGraph(current => ({ ...current, warning: error instanceof Error ? error.message : String(error) }));
+    }
+  }, [projectId]);
 
   const readCodeGraphFiles = useCallback(async (
     filePaths: string[],
@@ -522,5 +523,6 @@ export default function useAgentBuilderKnowledgeGraphs({
     loadCodeGraph,
     readCodeGraphFiles,
     readCodeGraphSource,
+    configureCodeCategories,
   };
 }

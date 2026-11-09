@@ -10,7 +10,7 @@
  * Entity: KnowGraph
  * Relationship: This file presents the Graphiti projection and its exact removal actions through the shared graph surface.
  * Entity: CodeGraph
- * Relationship: This file opens CodeGraph only when enabled and passes File connection and source reads into the same renderer and Inspector.
+ * Relationship: This file passes explicit Code selection, File connection and source reads into the same Entity-first renderer and Inspector.
  */
 
 import { Suspense, lazy } from 'react';
@@ -44,11 +44,13 @@ type Props = {
     error: string | null;
     warning: string | null;
     freshness: string;
-    activatedCategoryIds?: string[];
+    selectedCategoryIds?: string[];
+    visible?: boolean;
   };
   onOpenCodeGraph: () => Promise<GraphProjectionV1 | null>;
   onReadCodeGraphFiles: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;
   onReadCodeGraphSource: (filePath: string) => Promise<CodeGraphFileSource | null>;
+  onConfigureCodeCategories: (change: { enable?: string[]; disable?: string[]; visible?: boolean }) => Promise<void>;
   onViewContext?: (context: GraphViewContext) => void;
 };
 
@@ -65,6 +67,7 @@ export default function KnowledgeGraphFramework({
   onOpenCodeGraph,
   onReadCodeGraphFiles,
   onReadCodeGraphSource,
+  onConfigureCodeCategories,
   onViewContext,
 }: Props) {
   return (
@@ -109,6 +112,7 @@ export default function KnowledgeGraphFramework({
             onOpenCodeGraph={onOpenCodeGraph}
             onReadCodeGraphFiles={onReadCodeGraphFiles}
             onReadCodeGraphSource={onReadCodeGraphSource}
+            onConfigureCodeCategories={onConfigureCodeCategories}
             onViewContext={onViewContext}
           />
       </Suspense>

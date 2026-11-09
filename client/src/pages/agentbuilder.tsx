@@ -1469,6 +1469,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
             onOpenCodeGraph={knowledgeGraphs.loadCodeGraph}
             onReadCodeGraphFiles={knowledgeGraphs.readCodeGraphFiles}
             onReadCodeGraphSource={knowledgeGraphs.readCodeGraphSource}
+            onConfigureCodeCategories={knowledgeGraphs.configureCodeCategories}
             onViewContext={onGraphViewContext}
           />
         </KnowledgeSurfaceErrorBoundary>
