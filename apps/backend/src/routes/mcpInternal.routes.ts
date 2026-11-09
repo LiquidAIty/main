@@ -51,12 +51,12 @@ mcpInternalRoutes.post('/graph-changed', async (req, res) => {
 
 mcpInternalRoutes.post('/code-categories', async (req, res) => {
   if (!processAuthorized(req)) return res.status(403).json({ ok: false, error: 'internal_mcp_authorization_required' });
-  const { projectId, ownerUserId, enable, disable, categories } = req.body || {};
+  const { projectId, ownerUserId, enable, disable, selectionId, categories } = req.body || {};
   if (typeof projectId !== 'string' || typeof ownerUserId !== 'string')
     return res.status(400).json({ ok: false, error: 'graph_change_scope_required' });
   const project = await getOwnedProjectByReference(projectId, ownerUserId);
   if (!project) return res.status(403).json({ ok: false, error: 'graph_project_access_denied' });
-  try { return res.json(configureCodeCategories(project.id, { enable, disable, categories })); }
+  try { return res.json(await configureCodeCategories(project.id, { enable, disable, selectionId, categories })); }
   catch (error) { return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'code_selection_failed' }); }
 });
 

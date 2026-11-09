@@ -43,6 +43,7 @@ type KnowledgeGraphState = {
     freshness: string;
     selectedCategoryIds?: string[];
     visible?: boolean;
+    selectionId?: string;
   };
   loadCodeGraph: () => Promise<GraphProjectionV1 | null>;
   readCodeGraphFiles: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;
@@ -171,6 +172,16 @@ export default function useAgentBuilderKnowledgeGraphs({
     freshness: 'unverified',
   }));
   const codeProjectionRequestRef = useRef(0);
+  const selectionRef = useRef({ projectId, revision: -1, selectionId: '' });
+  const applyCodeSelection = useCallback((value: any) => {
+    if (selectionRef.current.projectId !== projectId)
+      selectionRef.current = { projectId, revision: -1, selectionId: '' };
+    if (!value.active || !Array.isArray(value.selectedIds) || typeof value.revision !== 'number'
+      || value.revision < selectionRef.current.revision) return;
+    selectionRef.current = { projectId, revision: value.revision, selectionId: value.selectionId };
+    setCodeGraph(current => ({ ...current, selectedCategoryIds: value.selectedIds,
+      visible: value.visible, selectionId: value.selectionId, warning: value.reason || null }));
+  }, [projectId]);
   const codeFileRequestRef = useRef(0);
   const codeSourceRequestRef = useRef(0);
   const codeProjectionAbortRef = useRef<AbortController | null>(null);
@@ -316,8 +327,7 @@ export default function useAgentBuilderKnowledgeGraphs({
     };
     const categoriesChanged = (event: MessageEvent) => {
       const value = JSON.parse(event.data);
-      if (value.projectId === projectId && Array.isArray(value.selectedIds))
-        setCodeGraph(current => ({ ...current, selectedCategoryIds: value.selectedIds, visible: value.visible }));
+      if (value.projectId === projectId) applyCodeSelection(value);
     };
     stream.addEventListener('ready', refreshKnow);
     stream.addEventListener('changed', refresh);
@@ -332,7 +342,7 @@ export default function useAgentBuilderKnowledgeGraphs({
       stream.removeEventListener('error', disconnected);
       stream.close();
     };
-  }, [projectId, refreshKnowGraph, refreshThinkGraph]);
+  }, [projectId, refreshKnowGraph, refreshThinkGraph, applyCodeSelection]);
 
   const loadCodeGraph = useCallback(async (): Promise<GraphProjectionV1 | null> => {
     const requestId = ++codeProjectionRequestRef.current;
@@ -386,7 +396,7 @@ export default function useAgentBuilderKnowledgeGraphs({
       });
       const selection = await configured.json();
       if (!configured.ok || !selection.active) throw new Error(selection.error || 'codegraph_view_not_active');
-      setCodeGraph(current => ({ ...current, selectedCategoryIds: selection.selectedIds, visible: selection.visible }));
+      applyCodeSelection(selection);
       return envelope.projection;
     } catch (error) {
       if (controller.signal.aborted || requestId !== codeProjectionRequestRef.current) return null;
@@ -396,21 +406,21 @@ export default function useAgentBuilderKnowledgeGraphs({
       }));
       return null;
     }
-  }, [projectId]);
+  }, [projectId, applyCodeSelection]);
 
   const configureCodeCategories = useCallback(async (change: { enable?: string[]; disable?: string[]; visible?: boolean }) => {
     try {
       const response = await applicationFetch('/api/thinkgraph/code-categories', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, ...change }),
+        body: JSON.stringify({ projectId, ...change, selectionId: selectionRef.current.selectionId }),
       });
       const result = await response.json();
       if (!response.ok || !result.active) throw new Error(result.error || 'codegraph_view_not_active');
-      setCodeGraph(current => ({ ...current, selectedCategoryIds: result.selectedIds, visible: result.visible, warning: null }));
+      applyCodeSelection(result);
     } catch (error) {
       setCodeGraph(current => ({ ...current, warning: error instanceof Error ? error.message : String(error) }));
     }
-  }, [projectId]);
+  }, [projectId, applyCodeSelection]);
 
   const readCodeGraphFiles = useCallback(async (
     filePaths: string[],

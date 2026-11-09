@@ -47,7 +47,7 @@ async def canvas_inspect_operation(**arguments: Any) -> Any:
 
 
 async def codegraph_configure(*, projectId: str, enable: list[str] | None = None,
-                              disable: list[str] | None = None) -> dict[str, Any]:
+                              disable: list[str] | None = None, selectionId: str | None = None) -> dict[str, Any]:
     """Change only category visibility in an already-open Project graph view."""
     from app import mcp_auth
     from app.backend_operation_transport import request_backend_json
@@ -58,6 +58,7 @@ async def codegraph_configure(*, projectId: str, enable: list[str] | None = None
     payload = {
         'projectId': projectId, 'ownerUserId': principal['ownerUserId'],
         'enable': enable or [], 'disable': disable or [],
+        'selectionId': selectionId,
     }
     result = await asyncio.to_thread(request_backend_json, 'POST', '/api/mcp/code-categories',
                                      payload, require_internal_secret=True)

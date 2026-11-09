@@ -17,6 +17,7 @@ from enum import Enum
 import json
 import threading
 from typing import Any
+from urllib.parse import unquote
 
 from engraphis.core.interfaces import SearchFilter
 
@@ -178,6 +179,19 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
         raise ValueError("thinkgraph_scope_is_owned_by_project")
     server, tool = catalog[name]
     arguments = dict(arguments)
+    if name == "engraphis_add_thinks" and "thinks" in arguments:
+        # Foreign-provider and joined canvas references are not Engraphis IDs.
+        # Keep the authored subject name; Engraphis owns exact-name reuse/creation.
+        arguments["thinks"] = [
+            {key: value for key, value in think.items() if key != "entity_id"}
+            if str(think.get("entity_id") or "").startswith("knowgraph:")
+            or unquote(str(think.get("entity_id") or "")) in (
+                f"codegraph:feature:{think.get('entity_name', '')}",
+                f"node-name:{think.get('entity_name', '')}",
+            )
+            else think
+            for think in arguments["thinks"]
+        ]
     if "workspace" in tool.input_schema.get("properties", {}):
         arguments["workspace"] = project
     if name in {"engraphis_execute_read", "engraphis_execute_action"}:

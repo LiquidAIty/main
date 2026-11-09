@@ -7,7 +7,7 @@
  * Relationship: This file renders the shared inspector for Think, Know, Code, source, relationship, probability, time, and removal details on one evidence surface.
  *
  * Entity: ThinkGraph
- * Relationship: Presents Think details and the research tag, lazily opens cited source excerpts before the full exchange, and searches retained conversation sources.
+ * Relationship: Presents Think details and the research tag, and lazily opens cited source excerpts before the full exchange.
  *
  * Entity: KnowGraph
  * Relationship: This file presents bounded first-class Knows and safe HTTPS citation provenance for the exact selected Graphiti Entity without rendering citations as graph nodes.
@@ -292,33 +292,6 @@ function ThinkSourceExchange({ projectId, memoryId, chunkCount = 0 }: { projectI
   </details>;
 }
 
-export function SourceSearchControls({ projectId }: { projectId: string }) {
-  const [query, setQuery] = useState('');
-  const [error, setError] = useState('');
-  const [matches, setMatches] = useState<Array<{ memoryId: string; excerpt: string;
-    source: { role: string; conversationId: string; messageId: string } }> | null>(null);
-  const search = async () => {
-    setError('');
-    try {
-      const response = await applicationFetch(`/api/thinkgraph/source-search?${new URLSearchParams({ projectId, query })}`);
-      const value = await response.json();
-      if (!response.ok || !Array.isArray(value.matches)) throw new Error('Source search unavailable.');
-      setMatches(value.matches);
-    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Source search unavailable.'); }
-  };
-  return <details>
-    <summary>Source search</summary>
-    {error ? <p role="alert">{error}</p> : null}
-    <label>Search original exchanges<input value={query} onChange={event => setQuery(event.target.value)} /></label>
-    <button type="button" disabled={!query.trim()} onClick={() => void search()}>Search sources</button>
-    {matches?.length === 0 ? <p>No matching indexed source excerpts.</p> : matches?.map(match => <section key={match.memoryId}>
-      <small>{match.source.role === 'user' ? 'User' : 'Main'} · {match.source.conversationId}</small>
-      <p>{match.excerpt}</p>
-      <ThinkSourceExchange projectId={projectId} memoryId={match.memoryId} />
-    </section>)}
-  </details>;
-}
-
 export type KnowInspectorRecord = {
   episodeId: string;
   know: Record<string, any>;
@@ -493,12 +466,13 @@ export function CodeGraphNodeDetails({
     {recordKind === 'feature' ? <section className="graph-inspector-records">
       <h4>Declared code membership</h4>
       <ul>{files.map(file => <li key={file.id}>
-        <button type="button" className="codegraph-file-link" onClick={() => onOpenFile?.(String(file.properties?.filePath))}>
-          {String(file.properties?.filePath)}
-        </button>
+        <strong>{file.label}</strong>
+        <small style={{ display: 'block' }}>{String(file.properties?.filePath)}</small>
         {(Array.isArray(file.properties?.contributions) ? file.properties.contributions : [])
           .filter((contribution: any) => contribution.feature === properties.featureName)
           .map((contribution: any, index: number) => <p key={index}>{String(contribution.relationship)}</p>)}
+        <button type="button" className="codegraph-file-link" aria-label={`View source ${file.label}`}
+          onClick={() => onOpenFile?.(String(file.properties?.filePath))}>View source</button>
       </li>)}</ul>
       {onExpand ? <button type="button" onClick={onExpand}>Expand code</button> : null}
     </section> : null}

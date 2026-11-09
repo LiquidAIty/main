@@ -83,6 +83,7 @@ def canvas_card_operation_definitions(
                          'Pass enable to add only those IDs or disable to remove only those IDs. '
                          'When Code is on, enabling a category puts its code into the shared view for Main and the user. '
                          'Omit changes to read the user’s current selection and selected file references. '
+                         'For a category change, pass selectionId from that read; a cleared or changed selection must be read again. '
                          'Code off means no selection changes; never override the user’s master switch. Reading source never changes selection. '
                          'Does not edit source, graph records, Cards, or any other layer. '
                          'No matching active view means no change.'),
@@ -90,6 +91,7 @@ def canvas_card_operation_definitions(
                 'projectId': {'type': 'string', 'minLength': 1},
                 'enable': {'type': 'array', 'items': {'type': 'string'}},
                 'disable': {'type': 'array', 'items': {'type': 'string'}},
+                'selectionId': {'type': 'string'},
             }, 'additionalProperties': False},
             handler=codegraph_configure, available=True, publishers=external,
             access='write', namespace='main', grant_eligible=True,

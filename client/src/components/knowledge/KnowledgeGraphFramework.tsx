@@ -46,6 +46,7 @@ type Props = {
     freshness: string;
     selectedCategoryIds?: string[];
     visible?: boolean;
+    selectionId?: string;
   };
   onOpenCodeGraph: () => Promise<GraphProjectionV1 | null>;
   onReadCodeGraphFiles: (filePaths: string[]) => Promise<GraphProjectionV1 | null>;

@@ -296,7 +296,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
   const graphMapKeyRef = useRef('');
   const onGraphViewContext = useCallback((view: GraphViewContext) => {
     if (view.map.projectId !== canvasProjectId) return;
-    const key = JSON.stringify({ projectId: view.map.projectId, map: view.map, openNode: view.openNode });
+    const key = JSON.stringify({ projectId: view.map.projectId, map: view.map, openNode: view.openNode, selectionId: view.selectionId });
     if (graphMapKeyRef.current !== key) {
       graphMapKeyRef.current = key;
       void publishGraphView(key).catch(() => { graphMapKeyRef.current = ''; });

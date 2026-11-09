@@ -17,9 +17,16 @@
 .knowledge-authority-controls { width:100%; min-width:0; overflow:auto; display:flex; flex-direction:column; gap:12px; }
 .graph-layer-controls { display:grid; gap:9px; margin:0; padding:10px; border:1px solid rgba(167,176,186,.22); border-radius:10px; background:rgba(11,20,24,.72); }
 .graph-layer-controls legend { padding:0 5px; color:#a7b0ba; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
-.graph-layer-legend { display:flex; flex-wrap:wrap; gap:6px; }
-.graph-layer-legend button { display:inline-flex; align-items:center; gap:6px; min-width:0; padding:5px 8px; border:1px solid rgba(167,176,186,.22); border-radius:999px; background:rgba(8,15,20,.76); color:#9dabb0; font-size:11px; }
-.graph-layer-legend button[aria-selected="true"] { border-color:rgba(220,232,232,.48); background:rgba(220,232,232,.1); color:#f5f7fa; }
+.graph-layer-legend { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+.graph-layer-control { display:flex; min-width:0; }
+.graph-layer-legend button { display:inline-flex; align-items:center; justify-content:center; gap:4px; min-width:0; min-height:32px; padding:5px; border:1px solid rgba(167,176,186,.22); background:rgba(8,15,20,.76); color:#9dabb0; font-size:11px; }
+.graph-layer-legend button[role="switch"] { flex:1; border-radius:999px 0 0 999px; }
+.graph-layer-legend button[aria-checked="true"] { border-color:rgba(220,232,232,.48); background:rgba(220,232,232,.14); color:#f5f7fa; }
+.graph-layer-legend button[aria-checked="false"] { color:#85949a; }
+.graph-layer-legend button[aria-checked="false"] .graph-layer-swatch { opacity:.3; }
+.graph-layer-legend .graph-layer-settings { min-width:24px; padding:4px; border-left:0; border-radius:0 999px 999px 0; font-size:15px; }
+.graph-layer-legend .graph-layer-settings[aria-expanded="true"] { background:rgba(29,162,126,.2); color:#b0eee8; }
+.graph-layer-settings-panel { display:grid; gap:12px; }
 .graph-breadcrumb { position:absolute; top:6px; left:12px; z-index:7; display:flex; align-items:center; gap:8px; font-size:12px; }
 .graph-breadcrumb button { padding:5px 8px; border:1px solid #35454a; border-radius:7px; color:#dce8e8; background:#101b20; cursor:pointer; }
 .graph-layer-legend button small { color:inherit; font-size:9px; font-variant-numeric:tabular-nums; opacity:.72; }

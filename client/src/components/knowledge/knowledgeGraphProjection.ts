@@ -31,7 +31,7 @@ export type GraphLayerVisibility = Record<GraphVisualLayer, boolean>;
 export const DEFAULT_GRAPH_LAYER_VISIBILITY: GraphLayerVisibility = Object.freeze({
   thinkgraph: true,
   knowgraph: true,
-  codegraph: false,
+  codegraph: true,
 });
 
 export const CODE_GRAPH_LAYER_COLOR = '#8d61ff';
@@ -190,6 +190,7 @@ export type JoinedGraphPresentation = {
 };
 
 export type GraphViewContext = {
+  selectionId?: string;
   map: {
     schemaVersion: 'project-entity-map';
     projectId: string;
@@ -454,6 +455,7 @@ export function composeVisibleGraphLayers(
   codeProjection: GraphProjectionV1,
   layerVisibility: GraphLayerVisibility,
   expandedCodeFeatureId?: string | null,
+  expandedFileId?: string | null,
 ): JoinedGraphPresentation {
   const joined = composeThinkKnowPresentation(
     layerVisibility.thinkgraph
@@ -477,10 +479,17 @@ export function composeVisibleGraphLayers(
   const associatedKnowledgeIds = new Set<string>();
   const expandedFeature = codeProjection.nodes.find(node => node.id === expandedCodeFeatureId
     && node.properties?.recordKind === 'feature');
+  const expandedIds = new Set(codeProjection.nodes.filter(node => node.properties?.recordKind === 'file'
+    && (node.id === expandedFileId || (Array.isArray(node.properties.features)
+      && node.properties.features.includes(expandedFeature?.properties?.featureName)))).map(node => node.id));
+  const seeds = new Set(expandedIds);
+  if (expandedFeature) for (const edge of codeProjection.edges) {
+    if (edge.properties?.structuralAuthority !== 'cbm' || !['CALLS', 'IMPORTS'].includes(edge.predicate)) continue;
+    if (seeds.has(edge.source)) expandedIds.add(edge.target);
+    if (seeds.has(edge.target)) expandedIds.add(edge.source);
+  }
   const codeRecords = expandedFeature
-    ? codeProjection.nodes.filter(node => node.properties?.recordKind === 'file'
-      && Array.isArray(node.properties.features)
-      && node.properties.features.includes(expandedFeature.properties?.featureName))
+    ? codeProjection.nodes.filter(node => node.properties?.recordKind === 'file' && expandedIds.has(node.id))
     : codeProjection.nodes.filter(node => node.properties?.recordKind === 'feature');
   const codeNodes = layerVisibility.codegraph
     ? codeRecords.flatMap(node => {

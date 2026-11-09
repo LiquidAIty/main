@@ -205,7 +205,16 @@ async def project_entity_map_read(payload: dict[str, Any]):
 async def project_entity_map_view(payload: dict[str, Any]):
     from app.python_models.project_entity_map import publish_project_entity_map
     try:
-        return publish_project_entity_map(str(payload["projectId"]), payload["map"], payload.get("openNode"))
+        return publish_project_entity_map(str(payload["projectId"]), payload["map"], payload.get("openNode"), payload.get('selectionId'))
+    except (ValueError, KeyError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@graph_read_router.post('/project/entity-map/code-selection')
+async def project_code_selection(payload: dict[str, Any]):
+    from app.python_models.project_entity_map import configure_project_code_selection
+    try:
+        return configure_project_code_selection(str(payload['projectId']), payload)
     except (ValueError, KeyError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
