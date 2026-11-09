@@ -141,7 +141,8 @@ async def _entity_know_provider_arguments(
     provider_arguments = dict(arguments)
     raw_citation = provider_arguments.get("citation")
     entity_name = str(provider_arguments.get("entity_name") or "").strip()
-    if not project_id or not entity_name or not isinstance(raw_citation, dict):
+    entity_uuid = str(provider_arguments.get("entity_uuid") or "").strip()
+    if not project_id or not (entity_name or entity_uuid) or not isinstance(raw_citation, dict):
         raise ValueError("know_project_and_entity_required")
     return provider_arguments
 

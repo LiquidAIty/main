@@ -733,7 +733,7 @@ export function KnowledgeGraphProjectionSurface({
             directional_arrow_rel_pos: 0.88,
           };
         }
-        if (edgeAuthority !== 'thinkgraph') {
+        if (edgeAuthority !== 'thinkgraph' && edgeAuthority !== 'knowgraph') {
           return {
             ...materialEdge,
             relation: materialEdge.predicate,

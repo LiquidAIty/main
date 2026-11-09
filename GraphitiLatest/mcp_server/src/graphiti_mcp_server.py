@@ -538,10 +538,10 @@ async def add_memory(
 @mcp.tool()
 async def add_know(
     name: Annotated[str, Field(min_length=1, max_length=1000)],
-    entity_name: Annotated[str, Field(min_length=1, max_length=1000)],
     observation: Annotated[str, Field(min_length=1, max_length=8000)],
     interpretation: Annotated[str, Field(min_length=1, max_length=8000)],
     citation: KnowCitation,
+    entity_name: Annotated[str | None, Field(min_length=1, max_length=1000)] = None,
     group_id: str | None = None,
     entity_uuid: str | None = None,
     direction: KnowDirection | None = None,
@@ -549,13 +549,16 @@ async def add_know(
     mentions: list[str] | None = None,
     relationships: list[KnowRelationship] | None = None,
 ) -> KnowAcceptedResponse | ErrorResponse:
-    """Save one cited Know on one exact owner, without extracting Entities or edges.
+    """Save one cited Know and its authored Entity-to-Entity relationship triplets.
 
-    Reuse entity_uuid or the exact owner name, or atomically create the owner with its first
-    Know. Names in the finding or citation create nothing. mentions contains optional existing
-    Know-backed Entity UUIDs; unknown mentions stay prose. relationships contains only explicitly
-    authored source_entity_uuid, target_entity_uuid and fact text; both endpoints must own Knows
-    in this Project. Each relationship is supported by this Know and classified separately by Jev.
+    Supply entity_uuid to reuse an exact owner (entity_name is then optional), or entity_name
+    to reuse/create the owner with its first Know. relationships carries the supported connections
+    discovered during research: target_entity_uuid and meaningful fact prose. The owner is the
+    default source; supply source_entity_uuid only for a different explicit direction. Both endpoints
+    must own Knows in this Project. Each saved triplet references this Know; Jev classifies its prose.
+    Resubmitting an identical finding with relationships reuses the Know rather than copying it.
+    mentions references existing Know-backed Entities without asserting a relationship. A name in
+    the finding or citation creates nothing. This tool does not run generic episode extraction.
     """
 
     global graphiti_service, queue_service
@@ -563,6 +566,14 @@ async def add_know(
         return ErrorResponse(error='Services not initialized')
     try:
         effective_group_id = group_id or config.graphiti.group_id
+        if entity_uuid and entity_name is None:
+            client = await graphiti_service.get_client()
+            owner = await EntityNode.get_by_uuid(client.driver, entity_uuid)
+            if owner.group_id != effective_group_id:
+                raise ValueError('entity_uuid belongs to a different group')
+            entity_name = owner.name
+        if not entity_name:
+            raise ValueError('Provide entity_uuid or entity_name for the Know owner')
         digest = know_content_hash(
             entity_name=entity_name,
             observation=observation,

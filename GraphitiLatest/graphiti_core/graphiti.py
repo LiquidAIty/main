@@ -1317,12 +1317,12 @@ class Graphiti:
     async def add_know(
         self,
         name: str,
-        entity_name: str,
         observation: str,
         interpretation: str,
         citation: KnowCitation,
         reference_time: datetime,
         *,
+        entity_name: str | None = None,
         entity_uuid: str | None = None,
         direction: KnowDirection | None = None,
         group_id: str | None = None,
@@ -1378,7 +1378,7 @@ class Graphiti:
         for relationship in relationships or []:
             relationship = KnowRelationship.model_validate(relationship)
             edge = EntityEdge(
-                source_node_uuid=relationship.source_entity_uuid,
+                source_node_uuid=relationship.source_entity_uuid or entity.uuid,
                 target_node_uuid=relationship.target_entity_uuid,
                 name='RELATED_TO', fact=relationship.fact, group_id=group_id,
                 created_at=now, valid_at=reference_time,

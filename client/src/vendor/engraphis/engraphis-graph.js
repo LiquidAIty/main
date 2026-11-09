@@ -373,7 +373,15 @@
   }
   function preserveRefreshPosition(previous, incoming) {
     const copy = Object.assign({}, incoming);
-    if (!previous) return copy;
+    if (!previous) {
+      // Provider scenes use a different coordinate scale from this force layout.
+      // New knowledge nodes must use D3's local initialization even when another
+      // provider has already painted; only established renderer positions survive.
+      if (['thinkgraph', 'knowgraph', 'joined', 'engraphis'].includes(copy.authority)) {
+        ['x', 'y', 'vx', 'vy', 'fx', 'fy'].forEach(key => { delete copy[key]; });
+      }
+      return copy;
+    }
     ['x', 'y', 'vx', 'vy', 'fx', 'fy'].forEach(key => {
       if (Number.isFinite(previous[key])) copy[key] = previous[key];
     });

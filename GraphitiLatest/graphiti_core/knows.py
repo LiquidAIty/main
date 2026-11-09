@@ -65,7 +65,10 @@ class KnowDirection(BaseModel):
 class KnowRelationship(BaseModel):
     """An explicitly authored relationship supported by the submitted Know."""
 
-    source_entity_uuid: str = Field(min_length=1)
+    source_entity_uuid: str | None = Field(
+        default=None, min_length=1,
+        description='Omit to use the Entity owning this Know as the source.',
+    )
     target_entity_uuid: str = Field(min_length=1)
     fact: str = Field(min_length=1)
 
@@ -258,6 +261,11 @@ class KnowNode(Node):
                     uuid=str(uuid5(KNOW_UUID_NAMESPACE, f'mention\0{stored.uuid}\0{target}')),
                 )
             for edge in relationships or []:
+                # A concurrently resolved owner may replace the prepared new Entity.
+                if edge.source_node_uuid == entity.uuid:
+                    edge.source_node_uuid = owner.uuid
+                if edge.target_node_uuid == entity.uuid:
+                    edge.target_node_uuid = owner.uuid
                 endpoints = {edge.source_node_uuid, edge.target_node_uuid}
                 result = await tx.run(
                     'MATCH (n:Entity) WHERE n.uuid IN $ids AND n.group_id=$group '
@@ -488,19 +496,19 @@ async def resolve_know_entity(
     clients: GraphitiClients,
     *,
     group_id: str,
-    entity_name: str,
+    entity_name: str | None,
     entity_uuid: str | None,
 ) -> tuple[EntityNode, bool]:
     """Resolve an exact owner or prepare it without committing an empty Entity."""
 
-    name = ' '.join(entity_name.split()).strip()
-    if not name:
-        raise ValueError('entity_name must not be blank')
+    name = ' '.join((entity_name or '').split()).strip()
     driver = clients.driver
     if entity_uuid:
         try:
             entity = await EntityNode.get_by_uuid(driver, entity_uuid)
         except NodeNotFoundError:
+            if not name:
+                raise
             entity = EntityNode(
                 uuid=entity_uuid,
                 name=name,
@@ -511,10 +519,12 @@ async def resolve_know_entity(
             return entity, True
         if entity.group_id != group_id:
             raise ValueError('entity_uuid belongs to a different group')
-        if normalize_entity_name(entity.name) != normalize_entity_name(name):
+        if name and normalize_entity_name(entity.name) != normalize_entity_name(name):
             raise ValueError('entity_uuid does not match entity_name')
         return entity, False
 
+    if not name:
+        raise ValueError('Provide entity_uuid or entity_name for the Know owner')
     records, _, _ = await driver.execute_query(
         """
         MATCH (entity:Entity)

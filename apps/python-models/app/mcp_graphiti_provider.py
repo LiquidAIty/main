@@ -258,7 +258,7 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
             "message": "Know stored." if written.created else "Know already exists.",
             "content_hash": written.know.content_hash,
             "group_id": written.know.group_id,
-            "entity_name": args["entity_name"],
+            "entity_name": written.entity.name,
             "entity_uuid": written.know.entity_uuid,
             "know": graphiti_module_ref._know_result(written.know),
             "created": written.created, "entity_created": written.entity_created,
