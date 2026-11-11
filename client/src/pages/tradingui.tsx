@@ -95,11 +95,34 @@ function PlanTerms({ job }: { job: TradeJob }) {
 }
 
 function JournalDecision({ decision, backtests }: { decision: TradeDecision; backtests: TradingBacktest[] }) {
+  const downloadJournal = () => {
+    const text = (decision.journalEntries || []).map(entry =>
+      `## ${entry.phase} — ${entry.created_at}\n\nAuthor: ${entry.source_execution.profile}\nEntry: ${entry.entry_id}\nDecision: ${entry.decision_id}\n\n${entry.markdown}`,
+    ).join('\n\n');
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `journal-${decision.decisionId}.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
   return <article className="border-t py-2 mt-2" style={{ borderColor: DARK.edge }}>
     <time style={{ color: MUTED, fontSize: 11 }}>{new Date(decision.createdAt).toLocaleString()}</time>
     <div><strong>{decision.action}</strong> · {decision.subject}{decision.kind === 'research' ? ' · Research decision' : ''}</div>
     <p>{decision.rationale}</p>
     {decision.missingTerms.length > 0 && <p>Unresolved: {decision.missingTerms.join(' · ')}</p>}
+    {!!decision.journalEntries?.length && <section aria-label="Dated trade journal">
+      <button type="button" onClick={downloadJournal}>Download journal .md</button>
+      {decision.journalWindowComplete === false && <p>Recent entries shown; the full trail remains available through Trading evidence.</p>}
+      {decision.journalEntries.map(entry => <details key={entry.entry_id} open={entry.phase === 'BEFORE'}>
+        <summary>{entry.phase} · {entry.source_execution.profile} · {new Date(entry.created_at).toLocaleString()}</summary>
+        <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: 'inherit' }}>{entry.markdown}</pre>
+        <details><summary>References</summary><pre className="whitespace-pre-wrap break-all">{JSON.stringify({
+          entryId: entry.entry_id, proposalIds: entry.proposal_ids, assessmentIds: entry.assessment_ids,
+          evidence: entry.evidence, review: entry.review, execution: entry.source_execution,
+        }, null, 2)}</pre></details>
+      </details>)}
+    </section>}
     {decision.evidence.filter(item => typeof item.backtestId === 'string').map((item, index) => {
       const receipt = backtests.find(result => result.backtestId === item.backtestId);
       return receipt ? <details key={`${item.backtestId}:${index}`}>

@@ -25,6 +25,7 @@ import { buildBasicHermesCardSkill } from '../features/hermes/hermesCardSkill';
 import type { HermesRuntimeSnapshot } from '../features/hermes/hermesRuntimeClient';
 import {
   configureHermesProfile,
+  connectHermesApplicationTools,
   createHermesProfile,
   createHermesSkill,
   loadHermesProfile,
@@ -484,6 +485,7 @@ export function CardEditor({
   const [hermesProfileStatus, setHermesProfileStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [hermesProfileError, setHermesProfileError] = useState<string | null>(null);
   const [hermesProfileBusy, setHermesProfileBusy] = useState(false);
+  const [appToolsConnected, setAppToolsConnected] = useState(false);
   const [skillEditor, setSkillEditor] = useState<{
     name: string;
     content: string;
@@ -625,6 +627,7 @@ export function CardEditor({
       : '';
     setHermesProfile(null);
     setHermesProfileError(null);
+    setAppToolsConnected(false);
     setSkillEditor(null);
     if (!isLocalConfigMode || !profile) {
       setHermesProfileStatus('idle');
@@ -948,6 +951,26 @@ export function CardEditor({
       markDraftDirty();
     } catch (error) {
       setHermesProfileError(error instanceof Error ? error.message : 'Hermes profile update failed.');
+    } finally {
+      setHermesProfileBusy(false);
+    }
+  };
+
+  const connectAppTools = async () => {
+    if (!projectId || !deckId || !cardId || localConfig?.runtime.kind !== 'hermes'
+      || hermesProfileBusy) return;
+    setHermesProfileBusy(true);
+    setHermesProfileError(null);
+    setAppToolsConnected(false);
+    try {
+      await runSaveConfig();
+      const state = await connectHermesApplicationTools({ projectId, deckId, cardId,
+        profile: localConfig.runtime.profile });
+      setHermesProfile(state);
+      setHermesProfileStatus('ready');
+      setAppToolsConnected(true);
+    } catch (error) {
+      setHermesProfileError(error instanceof Error ? error.message : 'App-tool setup failed.');
     } finally {
       setHermesProfileBusy(false);
     }
@@ -1678,6 +1701,11 @@ export function CardEditor({
           </section>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
             Application capabilities
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button type="button" disabled={hermesProfileBusy || !projectId || !cardId}
+              onClick={() => void connectAppTools()}>Connect app tools</button>
+            {appToolsConnected ? <span role="status">Connection tested</span> : null}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
             <input

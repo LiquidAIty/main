@@ -4,13 +4,14 @@
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
 # Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
 # Entity: KnowGraph
-# Relationship: Exposes PDF ingestion, exact Project-scoped Know edits/removal, episode deletion, research settlement, provider-safe errors and health through Graphiti's owners.
+# Relationship: Exposes Project-scoped document/passages, exact Know edits/removal, episode deletion, research settlement, provider-safe errors and health through the existing KnowGraph owners.
 # Entity: Jev Decisions
 # Relationship: This file loads one persisted Know and its actual Graphiti facts, then supplies web evidence and Project vocabulary to the existing Jev settlement owner.
 
 from __future__ import annotations
 
 import logging
+import asyncio
 import hmac
 import os
 from pathlib import Path
@@ -18,7 +19,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, UploadFile, Request, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from graphiti_core.errors import NodeNotFoundError
 from graphiti_core.knows import KnowCitation
 from graphiti_core.helpers import parse_db_date
@@ -27,9 +28,11 @@ import graphiti_runtime
 import ingest as knowgraph_ingest
 from graphiti_identity import graphiti_project_group_id
 import pdf_upload_storage
+import document_store
 
 app = FastAPI(title="KnowGraph")
 logger = logging.getLogger(__name__)
+DOCUMENT_INGEST_TIMEOUT_SECONDS = 240
 UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -71,11 +74,77 @@ class ResearchSettlementRequest(BaseModel):
     know_uuid: str
 
 
-@app.post("/research/settle")
-async def settle_research(payload: ResearchSettlementRequest, request: Request):
+def _require_internal(request: Request) -> None:
     secret = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "")
     if len(secret) < 32 or not hmac.compare_digest(secret, request.headers.get("X-LiquidAIty-Internal-MCP-Secret", "")):
         raise HTTPException(403, "internal_process_authorization_required")
+
+
+class DocumentTextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: str
+    document_id: str = Field(min_length=1, max_length=256)
+    source_name: str = Field(min_length=1, max_length=512)
+    source_url: str = Field(min_length=1, max_length=4096)
+    text: str = Field(min_length=1, max_length=document_store.MAX_DOCUMENT_CHARS)
+    publication_date: str | None = None
+    source_execution: dict[str, Any] | None = None
+
+
+class DocumentSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: str
+    query: str = Field(min_length=1, max_length=2000)
+    limit: int = Field(default=5, ge=1, le=20)
+    document_ids: list[str] | None = Field(default=None, max_length=32)
+
+
+class DocumentPassageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: str
+    passage_id: str = Field(min_length=1, max_length=256)
+    context_chars: int = Field(default=1200, ge=0, le=4000)
+
+
+async def _document_result(operation, arguments, *, timeout=20):
+    try:
+        return {"ok": True, **await asyncio.wait_for(operation(**arguments), timeout=timeout)}
+    except TimeoutError:
+        raise HTTPException(504, "document_operation_timeout") from None
+    except LookupError:
+        raise HTTPException(404, "document_passage_not_found") from None
+    except ValueError as error:
+        code = str(error)
+        if code in {"document_ingest_busy", "document_embedding_space_changed", "document_vector_index_unavailable"}:
+            raise HTTPException(409, code) from None
+        raise HTTPException(400, "document_input_or_embedding_invalid") from None
+    except Exception as error:
+        logger.warning("document_operation_failed error_type=%s", type(error).__name__)
+        raise HTTPException(502, "document_operation_failed") from None
+
+
+@app.post("/documents/ingest")
+async def ingest_document_text(payload: DocumentTextRequest, request: Request):
+    _require_internal(request)
+    return await _document_result(document_store.ingest_text, payload.model_dump(),
+                                  timeout=DOCUMENT_INGEST_TIMEOUT_SECONDS)
+
+
+@app.post("/documents/search")
+async def search_document_passages(payload: DocumentSearchRequest, request: Request):
+    _require_internal(request)
+    return await _document_result(document_store.search_passages, payload.model_dump())
+
+
+@app.post("/documents/passage")
+async def read_document_passage(payload: DocumentPassageRequest, request: Request):
+    _require_internal(request)
+    return await _document_result(document_store.get_passage, payload.model_dump())
+
+
+@app.post("/research/settle")
+async def settle_research(payload: ResearchSettlementRequest, request: Request):
+    _require_internal(request)
     import jev_fact_settlement
     _runtime, graphiti, _database = graphiti_runtime.create_graphiti_runtime()
     try:
@@ -100,8 +169,16 @@ async def settle_research(payload: ResearchSettlementRequest, request: Request):
 
 
 def _ingest_error(error: Exception) -> tuple[int, str, str]:
+    if isinstance(error, TimeoutError):
+        return 504, "document_operation_timeout", "Document import exceeded its processing deadline."
     error_type = error.__class__.__name__.lower()
     error_text = str(error).lower()
+    if error_text in {"document_text_limit", "document_passage_limit"}:
+        return 413, error_text, "Document exceeds the bounded import capacity."
+    if error_text == "document_ocr_required":
+        return 422, error_text, "This PDF has no extractable text; OCR is required."
+    if error_text in {"document_ingest_busy", "document_embedding_space_changed"}:
+        return 409, error_text, "Document import cannot proceed with the current operation or embedding configuration."
     if "ratelimit" in error_type or any(
         marker in error_text
         for marker in ("rate limit", "insufficient_quota", "quota exceeded")
@@ -172,24 +249,30 @@ async def delete_episode(payload: GraphitiEpisodeDeleteRequest) -> JSONResponse:
 
 @app.post("/ingest")
 async def ingest(
+    request: Request,
     project_id: str = Form(...),
     document_id: str = Form(...),
     file: UploadFile = File(...),
+    publication_date: str | None = Form(None),
+    source_url: str | None = Form(None),
 ) -> JSONResponse:
+    _require_internal(request)
     try:
         stored = pdf_upload_storage.store_pdf_upload(
             file.file,
             file.filename or "upload.pdf",
             UPLOADS_DIR,
         )
-        result = await knowgraph_ingest.ingest_pdf(
+        result = await asyncio.wait_for(knowgraph_ingest.ingest_pdf(
             str(stored.path),
             project_id,
             document_id,
             source_name=stored.source_name,
             source_reference=stored.source_reference,
             source_content_sha256=stored.content_sha256,
-        )
+            publication_date=publication_date,
+            source_url=source_url,
+        ), timeout=DOCUMENT_INGEST_TIMEOUT_SECONDS)
         return JSONResponse(
             status_code=200,
             content={

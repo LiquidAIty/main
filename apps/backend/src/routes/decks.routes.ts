@@ -6,7 +6,7 @@
  * Entity: Projects
  * Relationship: This file resolves every deck operation against the canonical owner-scoped Project identity rather than a caller-supplied alias.
  * Entity: Authentication
- * Relationship: This file requires authenticated Project ownership before any deck, Card, membership, or topology read or write.
+ * Relationship: Requires authenticated Project ownership for deck operations and explicit exact-revision app-tool credential setup for a saved Card.
  */
 import { Router } from 'express';
 import {
@@ -20,8 +20,49 @@ import {
   listSavedCardsForProject,
 } from '../services/projectStore';
 import { requireOwnedProject } from './projectAccess';
+import { createInternalMcpBearer, resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
 
 const router = Router();
+
+router.post('/:projectId/decks/:deckId/cards/:cardId/app-tools', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const revision = req.body?.expectedCardRevisionId;
+  if (!req.body || Object.keys(req.body).length !== 1
+    || typeof revision !== 'string' || !revision.trim()) {
+    return res.status(400).json({ ok: false, error: 'card_revision_required' });
+  }
+  try {
+    const access = await requireOwnedProject(req, res, req.params.projectId);
+    if (!access) return;
+    const loaded = await getDeckDocument(access.projectId, req.params.deckId);
+    const card = loaded.deck?.nodes.find(node => node.id === req.params.cardId);
+    if (!card || card.kind !== 'agent' || card.enabled === false
+      || card.runtime?.kind !== 'hermes' || !card.runtime.profile) {
+      return res.status(404).json({ ok: false, error: 'saved_hermes_card_not_found' });
+    }
+    if (card._cardRevisionId !== revision) {
+      return res.status(409).json({ ok: false, error: 'card_revision_stale' });
+    }
+    const profile = card.runtime.profile;
+    if (loaded.deck!.nodes.filter(node => node.runtime?.profile === profile).length !== 1) {
+      return res.status(409).json({ ok: false, error: 'card_profile_ambiguous' });
+    }
+    const tools = card.runtimeOptions?.tools || [];
+    if (!Array.isArray(tools) || tools.some(tool => typeof tool !== 'string')) {
+      return res.status(409).json({ ok: false, error: 'card_tool_selection_invalid' });
+    }
+    const url = resolveInternalMcpUrl();
+    const bearerToken = createInternalMcpBearer({ kind: 'card-runtime',
+      ownerUserId: access.ownerUserId, projectId: access.projectId,
+      deckId: req.params.deckId, profile });
+    // No token is persisted here. Hermes owns its profile credential storage;
+    // each MCP call resolves current membership and grants from the saved Card.
+    return res.json({ ok: true, cardId: card.id, cardRevisionId: revision, profile,
+      serverName: 'liquidaity', url, bearerToken, tools });
+  } catch {
+    return res.status(500).json({ ok: false, error: 'card_app_tools_setup_failed' });
+  }
+});
 
 router.get('/:projectId/decks/:deckId', async (req, res) => {
   try {

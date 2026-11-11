@@ -1,6 +1,6 @@
 /**
  * Entity: MCP Host
- * Relationship: Verifies loopback-only MCP transport and the existing catalog-reader issuance without the rejected Card credential issuer.
+ * Relationship: Verifies loopback-only MCP transport and exact scoped issuance for catalog reads and explicitly requested saved-Card setup.
  * Entity: Credentials
  * Relationship: This file verifies missing, short, or foreign internal process secrets are rejected without weakening timing-safe comparison.
  * Entity: Authentication
@@ -35,7 +35,7 @@ function verifyBearer(token: string): Record<string, any> {
 }
 
 describe('internal MCP catalog authentication', () => {
-  it('signs only the catalog-reader principal', () => {
+  it('signs the catalog-reader principal and rejects unknown or incomplete principals', () => {
     const claims = verifyBearer(createInternalMcpBearer({ kind: 'catalog-reader' }, env, 1000));
     expect(claims).toMatchObject({
       iss: 'liquidaity-runtime',
@@ -47,7 +47,19 @@ describe('internal MCP catalog authentication', () => {
     expect(() => createInternalMcpBearer({ kind: 'unknown' } as any, env))
       .toThrow('internal_mcp_principal_kind_invalid');
     expect(() => createInternalMcpBearer({ kind: 'card-runtime' } as any, env))
-      .toThrow('internal_mcp_principal_kind_invalid');
+      .toThrow('internal_mcp_card_principal_invalid');
+  });
+
+  it('binds a Card credential to the exact owner, Project, deck and stable profile without embedding grants', () => {
+    const principal = { kind: 'card-runtime' as const, ownerUserId: 'owner',
+      projectId: 'project', deckId: 'deck', profile: 'research' };
+    const claims = verifyBearer(createInternalMcpBearer(principal, env, 1000));
+    expect(claims.principal).toEqual(principal);
+    expect(claims).not.toHaveProperty('exp');
+    for (const bad of [ { ...principal, profile: '../main' }, { ...principal, ownerUserId: '' },
+      { ...principal, projectId: ' project' }, { ...principal, grantedTools: ['*'] } ]) {
+      expect(() => createInternalMcpBearer(bad as any, env)).toThrow('internal_mcp_card_principal_invalid');
+    }
   });
 
   it('accepts only the canonical loopback MCP seam', () => {

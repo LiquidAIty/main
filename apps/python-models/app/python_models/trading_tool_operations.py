@@ -1,6 +1,6 @@
 """Trading state and decision Python tool handlers and definitions."""
 # Entity: Trading
-# Relationship: Publishes explicitly grantable Trade Job, decision-journal, LumiBot simulation, and bounded forecast operations without adding broker order execution.
+# Relationship: Publishes separately grantable Trading proposals, comparisons, work products, journal/review reads and writes alongside existing LumiBot and forecast tools without broker order execution.
 
 from __future__ import annotations
 
@@ -12,6 +12,130 @@ from app.python_models.operation_definition import OperationDefinition
 from app.python_models.trading_contract import TradingBoundaryError
 from app.python_models.trading_forecast import forecast_market_bars
 from app.python_models.trading_backtest import trading_list_bots, trading_backtest, trading_get_backtest
+from app.python_models import trading_evidence, trading_journal
+from app.python_models.trading_proposals import TradeProposal
+
+
+async def _evidence_call(function, arguments):
+    try:
+        return await asyncio.to_thread(function, **arguments)
+    except TradingBoundaryError as error:
+        raise ApplicationToolError(str(error)) from None
+
+
+async def trading_record_proposal_tool(proposal, idempotencyKey, *, projectId, deckId, _callerCardId, _sourceExecution):
+    return await _evidence_call(trading_evidence.record_proposal, dict(project_id=projectId, deck_id=deckId,
+        card_id=_callerCardId, source_execution=_sourceExecution, proposal=proposal, idempotency_key=idempotencyKey))
+
+
+async def trading_invert_proposal_tool(proposalId, alternative=None, *, projectId, deckId, _callerCardId, _sourceExecution):
+    return await _evidence_call(trading_evidence.invert_proposal, dict(project_id=projectId, deck_id=deckId,
+        card_id=_callerCardId, source_execution=_sourceExecution, proposal_id=proposalId, alternative=alternative))
+
+
+async def trading_record_assessment_tool(candidateId, kind, proposalIds, content, idempotencyKey,
+                                         *, projectId, deckId, _callerCardId, _sourceExecution):
+    return await _evidence_call(trading_evidence.record_assessment, dict(project_id=projectId, deck_id=deckId,
+        card_id=_callerCardId, source_execution=_sourceExecution, candidate_id=candidateId, kind=kind,
+        proposal_ids=proposalIds, content=content, idempotency_key=idempotencyKey))
+
+
+async def trading_read_evidence_tool(proposalId=None, decisionId=None, limit=50, offset=0,
+                                     *, projectId, deckId, _callerCardId):
+    return await _evidence_call(trading_evidence.read_evidence, dict(project_id=projectId, deck_id=deckId,
+        card_id=_callerCardId, proposal_id=proposalId, decision_id=decisionId, limit=limit, offset=offset))
+
+
+async def trading_compare_proposals_tool(originalId, opposingId, underlyingPrices, *, projectId, deckId, _callerCardId):
+    return await _evidence_call(trading_evidence.compare_scenarios, dict(project_id=projectId, deck_id=deckId,
+        card_id=_callerCardId, original_id=originalId, opposing_id=opposingId, underlying_prices=underlyingPrices))
+
+
+async def trading_observe_proposals_tool(originalId, opposingId, idempotencyKey, *, projectId, deckId, _callerCardId, _sourceExecution):
+    return await _evidence_call(trading_evidence.observe_proposals, dict(project_id=projectId, deck_id=deckId,
+        card_id=_callerCardId, source_execution=_sourceExecution, original_id=originalId,
+        opposing_id=opposingId, idempotency_key=idempotencyKey))
+
+
+async def trading_append_journal_tool(decisionId, phase, markdown, proposalIds, assessmentIds, evidence,
+                                      idempotencyKey, *, projectId, deckId, _callerCardId, _sourceExecution):
+    return await _evidence_call(trading_journal.append_journal, dict(project_id=projectId, deck_id=deckId,
+        card_id=_callerCardId, source_execution=_sourceExecution, decision_id=decisionId, phase=phase,
+        markdown=markdown, proposal_ids=proposalIds, assessment_ids=assessmentIds, evidence=evidence,
+        idempotency_key=idempotencyKey))
+
+
+async def trading_record_review_tool(decisionId, markdown, proposalIds, assessmentIds, evidence,
+                                     review, idempotencyKey, *, projectId, deckId, _callerCardId, _sourceExecution):
+    return await _evidence_call(trading_journal.append_journal, dict(project_id=projectId, deck_id=deckId,
+        card_id=_callerCardId, source_execution=_sourceExecution, decision_id=decisionId, phase="REVIEW",
+        markdown=markdown, proposal_ids=proposalIds, assessment_ids=assessmentIds, evidence=evidence,
+        review=review, idempotency_key=idempotencyKey))
+
+
+def _evidence_definitions():
+    proposal = TradeProposal.model_json_schema()
+    nested = proposal.pop("$defs", {})
+    uuid = {"type": "string", "format": "uuid"}
+    ids = {"type": "array", "items": uuid, "maxItems": 8, "uniqueItems": True}
+    key = {"type": "string", "minLength": 1, "maxLength": 160}
+    text = {"type": "string", "minLength": 1, "maxLength": 12000}
+    journal = {"decisionId": uuid, "markdown": {**text, "maxLength": 30000}, "proposalIds": ids,
+               "assessmentIds": {**ids, "maxItems": 32}, "evidence": {"type": "array", "maxItems": 64, "items": {"type": "object"}},
+               "idempotencyKey": key}
+    review = {"type": "object", "additionalProperties": False, "properties": {
+        **{field: {"type": "array", "maxItems": 64, "items": {}} for field in (
+            "contributing_cards", "observed_outcomes", "supported_findings", "contradictions", "repeated_patterns",
+            "proposed_job_specific_lessons", "evidence_references")},
+        "decision_quality": text, "uncertainty": text},
+        "required": ["contributing_cards", "observed_outcomes", "supported_findings", "contradictions",
+                     "decision_quality", "repeated_patterns", "proposed_job_specific_lessons", "evidence_references", "uncertainty"]}
+    review["properties"]["contributing_cards"]["items"] = {"type": "string", "minLength": 1, "maxLength": 160}
+    review["properties"]["proposed_job_specific_lessons"]["items"] = {
+        "type": "object", "properties": {"card_id": key, "lesson": {**text, "maxLength": 4000},
+            "evidence_references": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "object"}},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1}},
+        "required": ["card_id", "lesson", "evidence_references", "confidence"], "additionalProperties": False}
+    definitions = [
+        ("record_proposal", trading_record_proposal_tool, False,
+         "Persist one Designer proposal with actual saved Card/Hermes authorship. Supplied quotes retain their sources but are not independently verified by this calculator. Equities and fully specified single options have payoff math; other markets return unavailable economics. Never allocates capital or submits orders.",
+         {"proposal": proposal, "idempotencyKey": key}, ["proposal", "idempotencyKey"]),
+        ("invert_proposal", trading_invert_proposal_tool, False,
+         "Read an exact saved original and persist its mechanical counterparty, separately from an optional supplied defined-risk opposing strategy. Reuses exact terms/cutoff; never invents quotes or borrow. Missing/unsafe terms remain visible. The Contrarian must independently assess this result, not claim the copied original thesis as its own.",
+         {"proposalId": uuid, "alternative": proposal}, ["proposalId"]),
+        ("record_assessment", trading_record_assessment_tool, False,
+         "Retain one explicit specialist work product, not hidden reasoning or a transcript. Contrarian and Quant comparison require original then opposing proposal IDs. Quant recommendations: SUPPORT_ORIGINAL, SUPPORT_OPPOSING, REVISE_STRUCTURE, INSUFFICIENT_EVIDENCE or WAIT. Keep calculations tied to actual tool receipts.",
+         {"candidateId": key, "kind": {"type": "string", "enum": ["opportunity", "research", "contrarian", "quant_initial", "quant_comparison"]},
+          "proposalIds": ids, "content": {"type": "object", "properties": {"summary": text, "uncertainty": text,
+              "recommendation": text, "evidence_references": {"type": "array", "maxItems": 64, "items": {"type": "object"}}},
+              "required": ["summary", "uncertainty", "recommendation", "evidence_references"], "additionalProperties": False},
+          "idempotencyKey": key}, ["candidateId", "kind", "proposalIds", "content", "idempotencyKey"]),
+        ("read_evidence", trading_read_evidence_tool, True,
+         "Read a bounded Project/deck decision trail by exact proposalId OR decisionId. Preserves every historical producer, references and dated journal entries, including retired producers. Use next_offset for more. Does not read arbitrary Hermes profile databases or infer broker outcomes.",
+         {"proposalId": uuid, "decisionId": uuid, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+          "offset": {"type": "integer", "minimum": 0, "maximum": 10000, "default": 0}}, []),
+        ("compare_proposals", trading_compare_proposals_tool, True,
+         "Calculate independent SHADOW payoff scenarios for a retained original/opposing pair at supplied hypothetical underlying prices. Not a forecast, backtest, current option valuation, actual outcome or broker profit. Unknown costs remain unknown; no automatic equal-risk sizing. Options are evaluated at expiration only.",
+         {"originalId": uuid, "opposingId": uuid, "underlyingPrices": {"type": "array", "minItems": 1, "maxItems": 20,
+             "items": {"type": "number", "minimum": 0, "maximum": 1e12}}}, ["originalId", "opposingId", "underlyingPrices"]),
+        ("observe_proposals", trading_observe_proposals_tool, False,
+         "After a retained pair's horizon, fetch the exact subsequent completed US-equity daily IEX bar and retain a SHADOW comparison with actual provider data and execution provenance. Not actual/paper fills, portfolio earnings or a strategy backtest. Missing observations remain incomplete; options return unavailable rather than inferred profit. Reuse the key for exact retry.",
+         {"originalId": uuid, "opposingId": uuid, "idempotencyKey": key}, ["originalId", "opposingId", "idempotencyKey"]),
+        ("append_journal", trading_append_journal_tool, False,
+         "Trader appends intentional BEFORE/DURING/AFTER/CORRECTION Markdown to its exact saved decision. BEFORE records original/opposing proposals once; later entries cannot rewrite it. No job state, P&L or order changes. Cite confirmed execution records before describing a fill; simulation and shadow results are not earnings.",
+         {**journal, "phase": {"type": "string", "enum": ["BEFORE", "DURING", "AFTER", "CORRECTION"]}}, [*journal, "phase"]),
+        ("record_review", trading_record_review_tool, False,
+         "Learner appends its own attributed REVIEW and structured job-specific learning proposals to a Trader-owned journal. Review both proposals and WAIT, distinguish decision quality from luck, and state incomplete outcomes. Does not edit other Cards' memory or overwrite Trader's BEFORE. Lessons require their own evidence references.",
+         {**journal, "review": review}, [*journal, "review"]),
+    ]
+    return [OperationDefinition(canonical_id=f"trading.{name}", title=name.replace("_", " ").capitalize(),
+        description=description, parameters_schema={"type": "object", "properties": properties,
+        "required": required, "additionalProperties": False, **({"$defs": nested} if name in {"record_proposal", "invert_proposal"} else {})},
+        output_schema={"type": "object"}, handler=handler, available=True, publishers=frozenset({"internal-plugin"}),
+        access="read" if read else "write", namespace="trading", grant_eligible=True, external_source_id="python_runtime",
+        dispatcher_context_arguments=frozenset({"projectId", "deckId", "_callerCardId"} | (set() if read else {"_sourceExecution"})),
+        annotations=_annotations(read_only=read, destructive=False, idempotent=True, open_world=False))
+        for name, handler, read, description, properties, required in definitions]
 
 async def trading_get_state_tool(
     *, projectId: str, deckId: str, _callerCardId: str,
@@ -92,6 +216,7 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
         read_only=False, destructive=False, idempotent=True, open_world=False,
     )
     return [
+        *_evidence_definitions(),
         OperationDefinition(
             canonical_id="trading.list_bots", title="Read available LumiBot strategies",
             description="Inspect the installed, supported LumiBot strategy examples and their exact rules and limits. Does not run a bot or submit orders.",

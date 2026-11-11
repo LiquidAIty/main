@@ -16,6 +16,8 @@ def main() -> int:
     checks = [
         ('product-api', 'node', ['--check', '/opt/liquidaity/apps/backend/dist/src/main.js']),
         ('product-api', 'node', ['-e',
+         "const fs=require('node:fs');const root='/opt/liquidaity/apps/backend';const name='064_trading_proposal_evidence.sql';if(!fs.existsSync(root+'/migrations/'+name)||!fs.readFileSync(root+'/dist/src/db/migrations.js','utf8').includes(name))throw new Error('Trading evidence migration not packaged/registered');console.log('Trading evidence migration packaged and registered; not applied')"]),
+        ('product-api', 'node', ['-e',
          "const fs=require('node:fs');const path=require('node:path');const root='/opt/liquidaity/node_modules/.prisma/client';const engine=fs.readdirSync(root).find(n=>n.endsWith('debian-openssl-3.0.x.so.node'));if(!engine)throw new Error('Prisma OpenSSL3 engine missing');require(path.join(root,engine));console.log('Prisma native OpenSSL3 engine loads; no database connection')"]),
         ('python-rails', '/opt/liquidaity/apps/python-models/.venv/bin/python', ['-c',
          "import sys,sqlite3,fastapi,mcp,graphiti_core,engraphis,torch; from importlib.metadata import version; from pathlib import Path; assert sys.version_info[:2]==(3,11); assert sqlite3.sqlite_version_info==(3,53,4); assert version('lumibot')=='4.6.48+mcp2.1'; assert torch.__version__=='2.14.0+cpu' and torch.version.cuda is None; assert torch.tensor([1.,2.]).sum().item()==3.; assert not Path('/opt/data/state.db').exists(); print('rails imports, Torch CPU, shared SQLite3.53.4 and separate CPython verified')"]),
@@ -25,9 +27,11 @@ def main() -> int:
          "import sys;sys.path.insert(0,'/opt/liquidaity/agent-products/kronos');from model import KronosPredictor;print('Kronos package imports; no model weights or inference')"]),
         ('python-rails', '/opt/liquidaity/apps/python-models/.venv/bin/python', ['-c',
          "from lumibot.traders import Trader;print('Pinned LumiBot Trader imports; no broker or strategy started')"]),
+        ('python-rails', '/opt/liquidaity/apps/python-models/.venv/bin/python', ['-c',
+         "import sys;sys.path.insert(0,'/opt/liquidaity/apps/python-models');from app.python_models.trading_tool_operations import trading_tool_operation_definitions;from app.python_models.document_tool_operations import document_tool_operation_definitions;from jsonschema import Draft202012Validator;definitions=trading_tool_operation_definitions()+document_tool_operation_definitions();[Draft202012Validator.check_schema(d.parameters_schema) for d in definitions];assert {'trading.invert_proposal','trading.record_review','documents.search'} <= {d.canonical_id for d in definitions};print('Trading/RAG handlers and nested schemas import; no database or provider called')"]),
         ('hermes-ui', '/opt/hermes/.venv/bin/python', ['-c',
          "from pathlib import Path; assert Path('/opt/liquidaity/client/dist/index.html').is_file(); assert Path('/opt/hermes/plugins/liquidaity/plugin.yaml').is_file(); assert not Path('/opt/data/state.db').exists(); print('UI and plugin artifacts present; no profile state baked in')"]),
-        ('knowgraph', 'python', ['-c', "import graphiti_core,fastapi,pypdf; print('KnowGraph dependencies import')"]),
+        ('knowgraph', 'python', ['-c', "import sys;sys.path.insert(0,'/opt/liquidaity/services/knowgraph');import graphiti_core,fastapi,pypdf,document_store;assert document_store.passage_spans('original text')==[(0,13)];print('KnowGraph document store imports; no vector/provider/database call')"]),
         ('worldview', 'node', ['--input-type=module', '-e',
          "import assert from 'node:assert/strict';import {createWorldViewServer} from '/opt/liquidaity/deploy/oci/worldview-server.mjs';const server=createWorldViewServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));try{const base='http://127.0.0.1:'+server.address().port;const body=await(await fetch(base+'/health')).json();assert.equal(body.ok,true);assert.equal(body.providers.length,19);assert.equal((await fetch(base+'/src/app/mount.js')).status,404);assert.equal((await fetch(base+'/.env')).status,404);console.log('Node24 WorldView HTTP registration and source denial pass; upstream providers not called')}finally{server.closeAllConnections();await new Promise(r=>server.close(r))}"]),
     ]

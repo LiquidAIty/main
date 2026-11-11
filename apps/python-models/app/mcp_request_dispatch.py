@@ -276,6 +276,10 @@ async def dispatch_tool(
 
 
 def mcp_tool_timeout_seconds(name: str) -> float:
+    if name == "documents.ingest":
+        # Bounded sequential embedding batches can exceed ordinary read latency.
+        # Finish below the existing 300 s Hermes MCP/server HTTP budget.
+        return 270.0
     if name == "graphiti.add_know":
         return mcp_provider_operations.GRAPHITI_KNOW_WRITE_TIMEOUT_SECONDS
     if name in {'building_model.read_case', 'building_model.edit_inputs'}:

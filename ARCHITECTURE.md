@@ -238,6 +238,17 @@ LiquidAIty does not add another web retriever, citation ledger, or graph writer.
 Main and Builder may search Graphiti through their saved grants. Only KnowGraph's saved write grants
 authorize persistence.
 
+Document RAG uses that same Neo4j database, not another vector service. The existing PDF upload and
+explicit `documents.ingest` text tool retain immutable document versions, extracted pages, passage
+offsets, checksums, source metadata and vectors. These raw-source labels are not Entities or Knows and
+do not populate the visible graph. `documents.search` performs bounded Project/model-space-filtered
+vector retrieval; it is not full-text search or fact verification. `documents.get_passage` checks an
+exact passage against the retained page and returns surrounding context. The service authenticates
+ingestion, batches embeddings serially, bounds import time and publishes a version transactionally.
+The Research Card is intended to investigate this corpus and hand selected findings to KnowGraph
+through its saved authorized Hermes connection. KnowGraph still verifies and writes canonical Knows
+and semantic Entity relationships. Passage storage does not itself prove that live Card handoff.
+
 ## MCP catalog and grants
 
 `apps/python-models/app/mcp_host.py` is the single application MCP composition boundary. Hermes
@@ -296,6 +307,13 @@ discovery metadata/challenge, external issuer lookup or host/origin allowlist. T
 OAuth connector is not served; remote requests still need a signed credential. Rotating the existing
 signing key revokes old credentials. Model-provider logins and Hermes dashboard authentication remain
 unchanged; internal backend routes are not exposed by MCP.
+
+The explicitly invoked saved-Card **Connect app tools** control is the approved credential-setup
+exception. Its authenticated route resolves the owned Project, exact current Card revision and unique
+Hermes profile, then signs that saved scope. The browser stores the bearer through Hermes's environment
+API, configures only that profile's existing HTTP MCP connection and tests it. Grants remain saved-Card
+authority and are checked on calls. Opening a Project, moving a Card or ordinary saves do not issue
+credentials, create an unconfigured MCP connection or run credential-refresh/reload loops.
 
 No source test proves a loaded secret, provider credential, remote connector, or deployed topology.
 
@@ -480,6 +498,25 @@ coverage, metrics, and the producing Card/revision. Trader may cite a same-Proje
 without taking credit for Quant's execution. The existing Journal renders research and exact cited
 receipts; these are simulations and recorded decisions, never broker orders. Migration 063 fails
 atomically on preexisting obsolete journal rows rather than inventing execution provenance.
+
+Migration 064 adds append-only proposals, explicit specialist assessments and intentional Markdown
+journal entries beneath this same Trading owner. `trading.record_proposal` keeps the original author;
+`trading.invert_proposal` retains the exact mechanical counterparty and any explicitly quoted opposing
+directional alternative separately. Equities and complete single-option contracts have deterministic
+payoff arithmetic; unsupported instruments, missing quotes/borrow/costs and unsafe structures remain
+explicit. Expiry payoff is not used to value an option at a different horizon. `trading.compare_proposals`
+returns hypothetical SHADOW scenarios. `trading.observe_proposals` retains an actual later completed
+US-equity daily bar with a SHADOW hold-to-horizon calculation, not orders, fills, a conditional strategy
+backtest or portfolio earnings. Existing LumiBot and Kronos owners remain separate.
+
+`trading.record_assessment` retains submitted rationale and validated local receipt references, not
+hidden reasoning or copied Hermes sessions. `trading.read_evidence` retrieves bounded exact proposal/
+decision trails and related IDs across authorized Project Cards, preserving historical producers.
+Trader appends BEFORE once and dated DURING/AFTER/CORRECTION entries to its own decision. Learner's
+separate `trading.record_review` grant appends an attributed structured REVIEW without rewriting Trader's
+reasoning, job state, P&L or another profile's memory. The existing Journal displays dated Markdown and
+exports the displayed entries as `.md`; the complete paginated evidence remains accessible through its
+reader. These source contracts do not establish live saved-Card orchestration or outcome-triggered learning.
 
 The vendored Graphiti fork has this bounded additive divergence:
 

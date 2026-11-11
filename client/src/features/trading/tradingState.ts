@@ -67,6 +67,23 @@ export type TradeDecision = {
   executionRequested: false;
   sourceExecution: HermesExecution;
   createdAt: string;
+  journalEntries?: TradingJournalEntry[];
+  journalWindowComplete?: boolean;
+};
+
+export type TradingJournalEntry = {
+  entry_id: string;
+  decision_id: string;
+  card_id: string;
+  card_revision_id: string;
+  source_execution: HermesExecution;
+  phase: 'BEFORE' | 'DURING' | 'AFTER' | 'CORRECTION' | 'REVIEW';
+  markdown: string;
+  proposal_ids: string[];
+  assessment_ids: string[];
+  evidence: Array<Record<string, unknown>>;
+  review: Record<string, unknown> | null;
+  created_at: string;
 };
 
 export type HermesExecution = {

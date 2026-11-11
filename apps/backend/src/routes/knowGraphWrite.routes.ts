@@ -4,7 +4,7 @@
  * Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
  * Change the smallest existing path; remove what it replaces, never duplicate, and update tags when meaning changes.
  * Entity: KnowGraph
- * Relationship: Transports bounded PDF ingestion and exact Know edits/removal to the existing Project-scoped Graphiti writer.
+ * Relationship: Transports authenticated bounded PDF passage indexing and exact Know edits/removal to the existing Project-scoped KnowGraph owners.
  * Entity: Authentication
  * Relationship: This file requires an authenticated Project owner before forwarding KnowGraph writes.
  */
@@ -88,10 +88,14 @@ function buildMultipartForm(
   projectId: string,
   documentId: string,
   file: UploadedFile,
+  sourceUrl?: string,
+  publicationDate?: string,
 ): FormData {
   const form = new FormData();
   form.append('project_id', projectId);
   form.append('document_id', documentId);
+  if (sourceUrl) form.append('source_url', sourceUrl);
+  if (publicationDate) form.append('publication_date', publicationDate);
   form.append(
     'file',
     new Blob([Uint8Array.from(file.buffer)], {
@@ -157,6 +161,8 @@ async function proxyKnowgraphPdfIngest(input: {
   projectId: string;
   documentId: string;
   file?: UploadedFile | null;
+  sourceUrl?: string;
+  publicationDate?: string;
 }): Promise<{ status: number; data: any }> {
   const projectId = String(input.projectId || '').trim();
   const documentId = String(input.documentId || '').trim();
@@ -185,10 +191,15 @@ async function proxyKnowgraphPdfIngest(input: {
     };
   }
 
-  const form = buildMultipartForm(projectId, documentId, file);
+  const form = buildMultipartForm(projectId, documentId, file, input.sourceUrl, input.publicationDate);
+  const secret = String(process.env.LIQUIDAITY_INTERNAL_MCP_SECRET || '').trim();
+  if (secret.length < 32) throw new Error('internal_process_authorization_missing');
   const response = await fetch(`${knowgraphBaseUrl()}/ingest`, {
     method: 'POST',
+    headers: { 'X-LiquidAIty-Internal-MCP-Secret': secret },
     body: form,
+    redirect: 'error',
+    signal: AbortSignal.timeout(270_000),
   });
   const data = await readResponseDataSafe(response);
   if (response.ok) {
@@ -231,6 +242,8 @@ router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
       projectId,
       documentId,
       file,
+      sourceUrl: typeof req.body?.source_url === 'string' ? req.body.source_url : undefined,
+      publicationDate: typeof req.body?.publication_date === 'string' ? req.body.publication_date : undefined,
     });
     return res.status(upstream.status).json(upstream.data);
   } catch {

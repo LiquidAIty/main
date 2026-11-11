@@ -12,7 +12,7 @@
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import router from './knowGraphWrite.routes';
 
 const mocks = vi.hoisted(() => ({
@@ -74,7 +74,9 @@ function uploadBody(projectId: string): FormData {
   return body;
 }
 
+beforeEach(() => vi.stubEnv('LIQUIDAITY_INTERNAL_MCP_SECRET', 's'.repeat(32)));
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   mocks.getOwnedProjectByReference.mockReset();
   delete process.env.KNOWGRAPH_URL;
@@ -139,6 +141,8 @@ describe('KnowGraph document project authority', () => {
     try {
       const body = uploadBody('project-alias');
       body.append('prompt_template', 'This retired Card prompt must not reach Graphiti.');
+      body.append('source_url', 'https://example.test/filing.pdf');
+      body.append('publication_date', '2026-10-01');
       const response = await fetch(`${baseUrl}/ingest`, {
         method: 'POST',
         body,
@@ -148,9 +152,13 @@ describe('KnowGraph document project authority', () => {
       const forwardedCall = upstreamFetch.mock.calls.find(([input]) =>
         String(input).startsWith('http://knowgraph.test/'),
       );
+      expect(forwardedCall?.[1]?.headers).toEqual({ 'X-LiquidAIty-Internal-MCP-Secret': 's'.repeat(32) });
+      expect(forwardedCall?.[1]?.redirect).toBe('error');
       const forwardedBody = forwardedCall?.[1]?.body as FormData;
       expect(forwardedBody.get('project_id')).toBe('project-canonical');
       expect(forwardedBody.get('document_id')).toBe('document-1');
+      expect(forwardedBody.get('source_url')).toBe('https://example.test/filing.pdf');
+      expect(forwardedBody.get('publication_date')).toBe('2026-10-01');
       expect(forwardedBody.get('prompt_template')).toBeNull();
       const forwardedHeaders = new Headers(forwardedCall?.[1]?.headers);
       expect(forwardedHeaders.get('x-agent-id')).toBeNull();

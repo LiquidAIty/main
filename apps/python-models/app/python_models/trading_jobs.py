@@ -325,6 +325,15 @@ def _read_trading_history(
                 (project_id, deck_id, list(cited)),
             )
             backtests = [_public_backtest(row) for row in cursor.fetchall()]
+        from app.python_models.trading_journal import read_journal_entries
+        visible_decisions = research + [entry for entries in decisions.values() for entry in entries]
+        journal = read_journal_entries(cursor, project_id, deck_id,
+                                       [entry["decisionId"] for entry in visible_decisions])
+        for entry in visible_decisions:
+            attached = [item for item in journal if item["decision_id"] == entry["decisionId"]]
+            if attached:
+                entry["journalEntries"] = sorted(attached, key=lambda item: (item["created_at"], item["entry_id"]))
+                entry["journalWindowComplete"] = len(journal) < 200
     return jobs, decisions, interventions, research, backtests
 
 

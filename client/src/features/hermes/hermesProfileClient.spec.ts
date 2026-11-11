@@ -6,7 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const host = vi.hoisted(() => ({
   fetchJSON: vi.fn(),
   request: vi.fn(),
+  applicationFetch: vi.fn(),
 }));
+vi.mock('../../lib/applicationApi', () => ({ applicationFetch: host.applicationFetch }));
 
 vi.mock('./hermesHost', () => ({
   hermesWebappHost: () => ({ fetchJSON: host.fetchJSON }),
@@ -16,6 +18,7 @@ vi.mock('./hermesHost', () => ({
 import {
   configureHermesBotRoster,
   configureHermesProfile,
+  connectHermesApplicationTools,
   createHermesProfile,
   createHermesSkill,
   loadHermesProfile,
@@ -61,6 +64,7 @@ describe('Hermes profile skill binding', () => {
     servers = [{
       name: 'liquidaity',
       enabled: true,
+      transport: 'http', url: 'http://127.0.0.1:8765/mcp',
       tools: { include: ['engraphis_get_memory'] },
     }];
     host.request.mockImplementation(async (_profile: string, method: string, params: Record<string, any>) => {
@@ -68,13 +72,16 @@ describe('Hermes profile skill binding', () => {
         if (!params.name) throw new Error('name required');
         return structuredClone(described);
       }
+      if (method === 'mcp.servers.test') return { ok: true, tools: [{ name: 'trading.get_state' }] };
       if (method === 'profiles.configure') {
         if (!params.name) throw new Error('name required');
-        const disabled = new Set(params.disabled_skills || []);
-        described.skills = described.skills.map((skill: Record<string, any>) => ({
-          ...skill,
-          enabled: skill.name === 'hermes-agent' || !disabled.has(skill.name),
-        }));
+        if (Array.isArray(params.disabled_skills)) {
+          const disabled = new Set(params.disabled_skills);
+          described.skills = described.skills.map((skill: Record<string, any>) => ({
+            ...skill,
+            enabled: skill.name === 'hermes-agent' || !disabled.has(skill.name),
+          }));
+        }
         if (typeof params.soul === 'string') described.soul = params.soul;
         if (typeof params.description === 'string') described.description = params.description;
         if (typeof params.model === 'string') {
@@ -99,6 +106,7 @@ describe('Hermes profile skill binding', () => {
           ok: true,
           applied: {
             skills: true,
+            mcp_servers: Array.isArray(params.enabled_mcp_servers),
             bot_mode_roster: Array.isArray(params.bot_mode_roster),
           },
         };
@@ -106,6 +114,7 @@ describe('Hermes profile skill binding', () => {
       throw new Error(`Unexpected Hermes method: ${method}`);
     });
     host.fetchJSON.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path.startsWith('/api/env') && init?.method === 'PUT') return { success: true };
       if (path.startsWith('/api/mcp/servers')) return { servers: structuredClone(servers) };
       if (path.startsWith('/api/config') && init?.method === 'PUT') {
         const body = JSON.parse(String(init.body || '{}')).config || {};
@@ -154,8 +163,8 @@ describe('Hermes profile skill binding', () => {
         }
         if (Array.isArray(include)) {
           const existing = servers.find((server) => server.name === 'liquidaity');
-          if (existing) existing.tools = { include };
-          else servers.push({ name: 'liquidaity', enabled: true, tools: { include } });
+          if (existing) Object.assign(existing, body.mcp_servers.liquidaity, { tools: { include } });
+          else servers.push({ name: 'liquidaity', enabled: true, transport: 'http', ...body.mcp_servers.liquidaity });
           config.mcp_servers = {
             ...config.mcp_servers,
             liquidaity: { ...config.mcp_servers?.liquidaity,
@@ -397,6 +406,65 @@ describe('Hermes profile skill binding', () => {
     expect(config.mcp_servers).toBeUndefined();
     expect(profile.toolsets.filter((toolset) => toolset.enabled).map((toolset) => toolset.name))
       .toEqual(['web']);
+  });
+
+  it('saves requested app grants without creating an unauthenticated transport stub', async () => {
+    servers = [];
+    delete config.mcp_servers;
+    const profile = await configureHermesProfile({ profile: 'trading',
+      applicationTools: ['trading.get_state'], enabledMcpServers: ['liquidaity'] });
+    expect(config.mcp_servers).toBeUndefined();
+    expect(profile.applicationConnectionConfigured).toBe(false);
+    expect(profile.applicationTools).toEqual([]);
+    expect(host.applicationFetch).not.toHaveBeenCalled();
+  });
+
+  function mockSetup(profile = 'trading') {
+    const receipt = { ok: true, cardId: 'trading-card', cardRevisionId: 'revision', profile,
+      serverName: 'liquidaity', url: 'http://127.0.0.1:8765/mcp',
+      bearerToken: 'test-card-token', tools: ['trading.get_state'] };
+    host.applicationFetch.mockImplementation(async (path: string) => new Response(JSON.stringify(
+      path.endsWith('/app-tools') ? receipt : {
+        deck: { nodes: [{ id: 'trading-card', _cardRevisionId: 'revision', runtime: { profile: 'trading' } }] },
+      }), { status: 200 }));
+    return receipt;
+  }
+
+  const setupInput = { projectId: 'p', deckId: 'd', cardId: 'trading-card', profile: 'trading' };
+
+  it('connects only on an explicit action through owned Card and native Hermes credential APIs', async () => {
+    servers = [];
+    delete config.mcp_servers;
+    const receipt = mockSetup();
+    const result = await connectHermesApplicationTools(setupInput);
+    expect(host.applicationFetch).toHaveBeenCalledWith('/api/projects/p/decks/d/cards/trading-card/app-tools', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedCardRevisionId: 'revision' }),
+    });
+    expect(host.fetchJSON).toHaveBeenCalledWith('/api/env?profile=trading', expect.objectContaining({
+      body: JSON.stringify({ key: 'MCP_LIQUIDAITY_API_KEY', value: receipt.bearerToken }),
+    }));
+    expect(JSON.stringify(config)).not.toContain(receipt.bearerToken);
+    expect(config.mcp_servers.liquidaity.headers).toEqual({
+      Authorization: 'Bearer ${MCP_LIQUIDAITY_API_KEY}', 'X-LiquidAIty-Hermes-Profile': 'trading',
+    });
+    expect(host.request).toHaveBeenCalledWith('trading', 'mcp.servers.test', { name: 'liquidaity' });
+    expect(result.applicationConnectionConfigured).toBe(true);
+    expect(result.applicationTools).toEqual(['trading.get_state']);
+  });
+
+  it('rejects a credential for another profile before writing any secret', async () => {
+    mockSetup('main');
+    await expect(connectHermesApplicationTools(setupInput)).rejects.toThrow('mismatched saved identity');
+    expect(host.fetchJSON.mock.calls.some(([path]) => path.startsWith('/api/env'))).toBe(false);
+  });
+
+  it('does not report a failed native probe as a working connection', async () => {
+    mockSetup();
+    const original = host.request.getMockImplementation()!;
+    host.request.mockImplementation(async (...args) => args[1] === 'mcp.servers.test'
+      ? { ok: false, error: 'unauthorized' } : original(...args));
+    await expect(connectHermesApplicationTools(setupInput)).rejects.toThrow('tool-access test failed');
   });
 
   it('clears an existing connection selection without removing its credentials or re-enabling it', async () => {

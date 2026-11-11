@@ -46,8 +46,9 @@ def test_saved_card_tools_share_one_authenticated_mcp_projection(monkeypatch):
     assert {
         "calculator",
         "get_market_snapshot",
-        "worldsignals.capabilities",
-        "worldsignals.package",
+        "worldview.read",
+        "worldview.action",
+        "documents.search",
     }.issubset(names)
     assert all(
         tool.output_schema is None or tool.output_schema.get("type") == "object"
@@ -105,14 +106,7 @@ def test_card_runtime_bearer_requires_exact_saved_card_context(monkeypatch):
     import jwt
 
     secret = "s" * 32
-    config = mcp_auth.OAuthConfig(
-        resource_url="https://example.test/mcp",
-        issuer_url="https://tenant.example/",
-        audience="https://example.test/mcp",
-        client_id="external-client",
-        required_scope="liquidaity.main",
-    )
-    verifier = mcp_auth.Auth0TokenVerifier(config, SimpleNamespace())
+    verifier = mcp_auth.McpTokenVerifier()
     monkeypatch.setattr(mcp_auth, "INTERNAL_MCP_SECRET", secret)
     context = {
         "projectId": "project-one",
@@ -135,7 +129,6 @@ def test_card_runtime_bearer_requires_exact_saved_card_context(monkeypatch):
         "aud": mcp_auth.INTERNAL_MCP_AUDIENCE,
         "sub": "card-runtime",
         "iat": now,
-        "exp": now + 300,
         "scope": "liquidaity.main",
         "principal": principal,
     }, secret, algorithm="HS256")
@@ -312,7 +305,7 @@ def test_ungranted_and_destructive_tools_are_not_callable(
     assert mcp_request_dispatch.request_tool_is_allowed("graphiti.clear_graph") is False
 
 
-def test_external_main_entries_use_verified_project_binding_not_card_grants(monkeypatch):
+def test_authenticated_operations_do_not_expose_an_unpublished_main_entry(monkeypatch):
     context = {
         "projectId": "project-one",
         "deckId": "deck_builder",
@@ -321,20 +314,23 @@ def test_external_main_entries_use_verified_project_binding_not_card_grants(monk
         "grantedTools": ["canvas.inspect"],
         "mainEntryAuthorized": True,
     }
-    monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", True)
+    monkeypatch.setattr(mcp_auth, "access_token_available", lambda: True)
     monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
     monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: context)
     monkeypatch.setattr(
         mcp_catalog_runtime,
         "published_mcp_tool_names",
-        lambda: frozenset({"main.context", "canvas.inspect"}),
+        lambda: frozenset({"canvas.inspect"}),
     )
 
-    assert mcp_request_dispatch.request_tool_is_allowed("main.context") is True
     assert mcp_request_dispatch.request_tool_is_allowed("canvas.inspect") is True
+    import asyncio
+    unknown = asyncio.run(mcp_request_dispatch.dispatch_tool("main.context", {}))
+    assert unknown.is_error is True
+    assert unknown.structured_content["failureCode"] == "tool_not_granted"
 
     monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: None)
-    assert mcp_request_dispatch.request_tool_is_allowed("main.context") is False
+    assert mcp_request_dispatch.request_tool_is_allowed("canvas.inspect") is False
 
 
 def test_authenticated_catalog_keeps_external_main_entries_outside_saved_grants(monkeypatch):
@@ -743,8 +739,9 @@ def test_named_relationship_argument_error_is_actionable_before_any_write(monkey
     write.assert_not_awaited()
 
 
-def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return(
-    monkeypatch,
+@pytest.mark.parametrize("has_relationship", [False, True])
+def test_knowgraph_atomic_know_write_finishes_required_jev_before_return(
+    monkeypatch, has_relationship,
 ):
     import asyncio
     from datetime import datetime, timezone
@@ -763,6 +760,7 @@ def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return
     know = SimpleNamespace(
         uuid="know-one",
         entity_uuid="entity-one",
+        entity_edges=["edge-one"] if has_relationship else [],
         content_hash="a" * 64,
         group_id="liquidaity-project-one",
     )
@@ -771,6 +769,8 @@ def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return
             know=know,
             created=True,
             entity_created=False,
+            entity=SimpleNamespace(uuid="entity-one", name="Rocket Lab"),
+            relationships=[SimpleNamespace(uuid="edge-one")] if has_relationship else [],
         )),
         get_know=AsyncMock(return_value=know),
     )
@@ -808,6 +808,7 @@ def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return
         "name": "Bounded finding",
         "observation": "One source-backed observation.",
         "interpretation": "One bounded interpretation.",
+        **({"relationships": [{"target_entity_name": "Customer", "fact": "Provides launch services to Customer."}]} if has_relationship else {}),
         "citation": {
             "url": "https://example.test/source",
             "title": "Source",
@@ -822,17 +823,21 @@ def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return
     assert result.is_error is False
     assert result.structured_content["result"]["status"] == "completed"
     graphiti_client.add_know.assert_awaited_once()
-    assert graphiti_client.add_know.await_args.kwargs["update_communities"] is False
+    assert set(graphiti_client.add_know.await_args.kwargs) == {
+        "entity_name", "name", "observation", "interpretation", "citation", "group_id", "reference_time",
+    } | ({"relationships"} if has_relationship else set())
     assert write_started <= graphiti_client.add_know.await_args.kwargs["reference_time"] <= write_finished
     receipt = result.structured_content["result"]
     assert all(key in receipt for key in (
         "message", "know_uuid", "content_hash", "group_id", "entity_name", "entity_uuid",
     ))
-    settle.assert_awaited_once_with("project-one", "know-one")
+    if has_relationship:
+        settle.assert_awaited_once_with("project-one", "know-one")
+    else:
+        settle.assert_not_awaited()
     notification.assert_called_once_with("project-one", "owner-one", "knowgraph")
-    graphiti_client.get_know.assert_awaited_once_with(
-        "know-one", group_id="liquidaity-project-one",
-    )
+    assert receipt["know"] == know_payload
+    graphiti_client.get_know.assert_not_awaited()
 
 
 @pytest.mark.parametrize("operation", ["get_know", "search_knows"])

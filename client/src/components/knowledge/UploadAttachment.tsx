@@ -1,6 +1,6 @@
 /**
  * Entity: KnowGraph
- * Relationship: This file validates one selected PDF and Project, submits KnowGraph ingestion, clears the picker, and renders bounded application-owned success or failure feedback.
+ * Relationship: Submits a Project PDF to source-passage indexing and reports import status without claiming verified Knows or graph relationships were created.
  */
 
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
@@ -140,8 +140,8 @@ export default function UploadAttachment({
       }
 
       setToastType("ok");
-      const sectionCount = Number(payload?.section_count || 0);
-      setToast(sectionCount > 1 ? `Knowledge imported (${sectionCount} sections)` : "Knowledge imported");
+      const passageCount = Number(payload?.passage_count || 0);
+      setToast(`Document indexed (${passageCount} passages)`);
     } catch {
       setToastType("error");
       setToast("KnowGraph ingest request could not reach the application.");

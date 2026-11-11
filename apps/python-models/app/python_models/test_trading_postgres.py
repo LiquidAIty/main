@@ -53,7 +53,8 @@ def database():
             owner.execute('''CREATE TABLE ag_catalog.card_capability_grants (
                 revision_id uuid, grant_kind text, grant_id text)''')
             for filename in ['032_paper_trade_jobs.sql', '033_trading_lifecycle_runs.sql',
-                             '063_trading_hermes_evidence.sql']:
+                             '062_trading_forecasts.sql', '063_trading_hermes_evidence.sql',
+                             '064_trading_proposal_evidence.sql']:
                 owner.execute((MIGRATIONS / filename).read_text(encoding='utf-8'))
             owner.execute(sql.SQL('GRANT USAGE ON SCHEMA ag_catalog TO {}').format(sql.Identifier(role)))
             owner.execute(sql.SQL('GRANT SELECT ON ALL TABLES IN SCHEMA ag_catalog TO {}').format(sql.Identifier(role)))
@@ -61,6 +62,8 @@ def database():
                 owner.execute(sql.SQL('GRANT INSERT, UPDATE ON ag_catalog.{} TO {}').format(
                     sql.Identifier(table), sql.Identifier(role)))
             owner.execute(sql.SQL('GRANT INSERT ON ag_catalog.trading_decisions TO {}').format(sql.Identifier(role)))
+            for table in ['trading_proposals', 'trading_assessments', 'trading_journal_entries']:
+                owner.execute(sql.SQL('GRANT INSERT ON ag_catalog.{} TO {}').format(sql.Identifier(table), sql.Identifier(role)))
         yield params, role
     finally:
         # Exact generated targets only. Never reset, truncate or drop the product database.

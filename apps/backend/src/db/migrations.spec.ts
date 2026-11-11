@@ -95,6 +95,7 @@ describe('canonical backend migrations', () => {
       }),
       expect.objectContaining({ filename: '062_trading_forecasts.sql', applied: true }),
       expect.objectContaining({ filename: '063_trading_hermes_evidence.sql', applied: true }),
+      expect.objectContaining({ filename: '064_trading_proposal_evidence.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -412,8 +413,9 @@ describe('canonical backend migrations', () => {
       '061_add_connected_card_introductions.sql',
       '062_trading_forecasts.sql',
       '063_trading_hermes_evidence.sql',
+      '064_trading_proposal_evidence.sql',
     ]);
-    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 10);
+    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 11);
   });
 
   it('adds Card Run selection and usage fields without another metrics store', async () => {

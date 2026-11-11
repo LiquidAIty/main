@@ -40,6 +40,7 @@ CATALOG_SOURCE_PATHS = (
     os.path.join(_APP_ROOT, "saved_card_operation_validation.py"),
     os.path.join(_APP_ROOT, "python_models", "engraphis_operations.py"),
     os.path.join(_APP_ROOT, "python_models", "general_tool_operations.py"),
+    os.path.join(_APP_ROOT, "python_models", "document_tool_operations.py"),
     os.path.join(_APP_ROOT, "python_models", "graph_reference_contracts.py"),
     os.path.join(_APP_ROOT, "python_models", "market_sec_tool_operations.py"),
     os.path.join(_APP_ROOT, "python_models", "operation_definition.py"),
@@ -47,6 +48,7 @@ CATALOG_SOURCE_PATHS = (
     os.path.join(_APP_ROOT, "python_models", "tool_catalog.py"),
     os.path.join(_APP_ROOT, "python_models", "tool_registry.py"),
     os.path.join(_APP_ROOT, "python_models", "trading_tool_operations.py"),
+    os.path.join(_APP_ROOT, "python_models", "trading_proposals.py"),
     os.path.join(_REPO_ROOT, "agent-products", "nrgsim", "services", "modeling_tools.py"),
 )
 

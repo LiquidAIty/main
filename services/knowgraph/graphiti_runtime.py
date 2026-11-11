@@ -232,6 +232,23 @@ def create_graphiti_driver() -> tuple[Any, str]:
     )
 
 
+def create_graphiti_embedder(runtime: RuntimeModelConfig | None = None) -> tuple[RuntimeModelConfig, Any]:
+    """Reuse the configured embedding provider without constructing an LLM or extractor."""
+    from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+    from openai import AsyncOpenAI
+
+    runtime = runtime or resolve_runtime_model_config()
+    return runtime, OpenAIEmbedder(
+        config=OpenAIEmbedderConfig(
+            embedding_model=runtime.embedding_model,
+            embedding_dim=runtime.embedding_dimensions,
+            api_key=runtime.embedding_client_kwargs["api_key"],
+            base_url=runtime.embedding_client_kwargs.get("base_url"),
+        ),
+        client=AsyncOpenAI(**runtime.embedding_client_kwargs),
+    )
+
+
 def create_graphiti_runtime() -> tuple[RuntimeModelConfig, Any, str]:
     """Create one configured Graphiti ingest runtime."""
 
@@ -239,7 +256,6 @@ def create_graphiti_runtime() -> tuple[RuntimeModelConfig, Any, str]:
     try:
         from graphiti_core import Graphiti
         from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
-        from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
         from graphiti_core.llm_client.config import LLMConfig
         from graphiti_core.llm_client.openai_client import OpenAIClient
         from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
@@ -264,16 +280,7 @@ def create_graphiti_runtime() -> tuple[RuntimeModelConfig, Any, str]:
     else:
         llm_client = OpenAIClient(config=llm_config, client=llm_transport)
 
-    embedding_transport = AsyncOpenAI(**runtime.embedding_client_kwargs)
-    embedder = OpenAIEmbedder(
-        config=OpenAIEmbedderConfig(
-            embedding_model=runtime.embedding_model,
-            embedding_dim=runtime.embedding_dimensions,
-            api_key=runtime.embedding_client_kwargs["api_key"],
-            base_url=runtime.embedding_client_kwargs.get("base_url"),
-        ),
-        client=embedding_transport,
-    )
+    _, embedder = create_graphiti_embedder(runtime)
     reranker = OpenAIRerankerClient(config=llm_config, client=llm_transport)
     graph_driver, database = create_graphiti_driver()
     return (

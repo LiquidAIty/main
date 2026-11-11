@@ -229,6 +229,15 @@ describe('Trading agent UI', () => {
       evidence: [{ backtestId: 'quant-receipt' }, { backtestId: 'missing-receipt' }],
       missingTerms: ['Current filing'], executionRequested: false, sourceExecution: execution,
       createdAt: snapshot.observedAt,
+      journalWindowComplete: true,
+      journalEntries: [{ entry_id: 'before-one', decision_id: 'research-one', card_id: trader.id,
+        card_revision_id: 'trader-revision', phase: 'BEFORE', markdown: '# Original thesis\n\nAwait verified funding.',
+        proposal_ids: ['original', 'opposing'], assessment_ids: ['quant-assessment'], evidence: [], review: null,
+        source_execution: execution, created_at: snapshot.observedAt },
+      { entry_id: 'review-one', decision_id: 'research-one', card_id: 'learner-card',
+        card_revision_id: 'learner-revision', phase: 'REVIEW', markdown: 'Outcome still incomplete.',
+        proposal_ids: ['original', 'opposing'], assessment_ids: [], evidence: [], review: { uncertainty: 'No completed outcome' },
+        source_execution: { ...execution, profile: 'learner' }, created_at: snapshot.observedAt }],
     }], backtests: [result, { ...result, backtestId: 'uncited', bot: 'uncited_same_symbol' }] };
     fireEvent.click(screen.getByRole('tab', { name: 'Journal' }));
     await screen.findByText('Wait for the next filing before considering a position.');
@@ -237,6 +246,10 @@ describe('Trading agent UI', () => {
     expect(screen.getByText(/Costs per side: 1 bps/)).toBeTruthy();
     expect(screen.getByText(/Data cutoff: 2026-09-01/)).toBeTruthy();
     expect(screen.getByText('Referenced backtest unavailable: missing-receipt')).toBeTruthy();
+    expect(screen.getByText(/BEFORE · trading/)).toBeTruthy();
+    expect(screen.getByText(/REVIEW · learner/)).toBeTruthy();
+    expect(screen.getByText(/Await verified funding/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Download journal .md' })).toBeTruthy();
     expect(screen.queryByText(/uncited_same_symbol/)).toBeNull();
     expect(screen.queryByText('Maximum loss')).toBeNull();
     expect(screen.getByRole('button', { name: 'Enter trade' }).hasAttribute('disabled')).toBe(true);

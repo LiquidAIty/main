@@ -1,4 +1,4 @@
-"""Route-level proof that PDF upload reaches the official Graphiti ingest path."""
+"""Route-level proof for document ingestion and existing canonical Know operations."""
 # Graph + less = more: less code that does the same work as more code is more useful.
 # Entity names the feature; Relationship explains why this file belongs and what it contributes.
 # Use codebase-memory-mcp cli to search tags, trace structure both ways, check coverage, then read source.
@@ -48,6 +48,59 @@ async def _request(method: str, path: str, **kwargs: object) -> httpx.Response:
 
 
 class KnowGraphUploadRouteTests(unittest.TestCase):
+    def setUp(self):
+        auth = patch.dict(app.os.environ, {"LIQUIDAITY_INTERNAL_MCP_SECRET": "s" * 32})
+        auth.start()
+        self.addCleanup(auth.stop)
+
+    def test_pdf_import_rejects_missing_internal_auth_before_storage(self):
+        with patch.object(pdf_upload_storage, "store_pdf_upload") as store:
+            response = asyncio.run(_request("POST", "/ingest",
+                data={"project_id": "foreign", "document_id": "doc"},
+                files={"file": ("source.pdf", b"%PDF-1.4", "application/pdf")}))
+        self.assertEqual(response.status_code, 403)
+        store.assert_not_called()
+
+    def test_document_timeout_cancels_work_instead_of_detaching_it(self):
+        cancelled = []
+        async def operation(**_):
+            try:
+                await asyncio.sleep(10)
+            finally:
+                cancelled.append(True)
+        async def check():
+            with self.assertRaises(app.HTTPException) as error:
+                await app._document_result(operation, {}, timeout=.01)
+            self.assertEqual(error.exception.status_code, 504)
+        asyncio.run(check())
+        self.assertEqual(cancelled, [True])
+
+    def test_document_operations_require_internal_authorization_and_preserve_project_scope(self) -> None:
+        calls = [
+            ("/documents/search", "search_passages", {"project_id": "project-one", "query": "funding"}),
+            ("/documents/passage", "get_passage", {"project_id": "project-one", "passage_id": "chunk-one"}),
+            ("/documents/ingest", "ingest_text", {"project_id": "project-one", "document_id": "doc",
+                "source_name": "Report", "source_url": "https://example.test/source", "text": "Original text"}),
+        ]
+        for path, name, payload in calls:
+            with self.subTest(path=path), patch.dict(app.os.environ, {"LIQUIDAITY_INTERNAL_MCP_SECRET": "s" * 32}):
+                operation = AsyncMock(return_value={"status": "indexed"})
+                with patch.object(app.document_store, name, operation):
+                    self.assertEqual(asyncio.run(_request("POST", path, json=payload)).status_code, 403)
+                    operation.assert_not_awaited()
+                    response = asyncio.run(_request("POST", path, json=payload,
+                        headers={"X-LiquidAIty-Internal-MCP-Secret": "s" * 32}))
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(operation.await_args.kwargs["project_id"], "project-one")
+
+    def test_document_provider_failure_does_not_expose_source_or_secrets(self) -> None:
+        with patch.dict(app.os.environ, {"LIQUIDAITY_INTERNAL_MCP_SECRET": "s" * 32}), patch.object(
+            app.document_store, "search_passages", AsyncMock(side_effect=RuntimeError("secret private source"))):
+            response = asyncio.run(_request("POST", "/documents/search",
+                json={"project_id": "project-one", "query": "funding"},
+                headers={"X-LiquidAIty-Internal-MCP-Secret": "s" * 32}))
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("secret", response.text)
     def test_edit_know_uses_the_existing_writer_with_exact_project_and_record(self) -> None:
         written = {"uuid": "know-one", "entity_uuid": "owner-one"}
         graphiti = SimpleNamespace(
@@ -90,7 +143,9 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                         headers={"X-LiquidAIty-Internal-MCP-Secret": "s" * 32}))
                 self.assertEqual(response.status_code, 200 if present else 404)
                 query, = driver.execute_query.await_args.args
-                self.assertIn("Episodic:Know", query)
+                # Current KnowNode requires the first-class Know label; existing
+                # retained records use it without the retired episode attachment.
+                self.assertIn("MATCH (k:Know {uuid:$uuid,group_id:$group})", query)
                 self.assertEqual(driver.execute_query.await_args.kwargs,
                                  {"uuid": "know-one", "group": "liquidaity-project-one", "routing_": "r"})
                 driver.close.assert_awaited_once()
@@ -114,19 +169,16 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
             "versions": {"graphiti_core": "0.30.2", "graphiti_mcp": None},
         })
 
-    def test_multipart_pdf_reaches_graphiti_ingest_with_project_authority(self) -> None:
+    def test_multipart_pdf_reaches_passage_indexing_with_project_authority(self) -> None:
         ingest_pdf = AsyncMock(
             return_value={
-                "status": "ingested",
-                "episode_id": "episode-1",
+                "status": "indexed",
                 "project_id": "project-1",
                 "document_id": "pdf:document:1",
                 "source_name": "source.pdf",
                 "content_fingerprint": "sha256:proof",
-                "provider": "openrouter",
-                "model": "deepseek/deepseek-chat",
-                "entity_count": 2,
-                "fact_count": 1,
+                "document": {"uuid": "document-version-1", "embedding_model_version": "test-embedding-model"},
+                "passage_count": 2,
             }
         )
         with tempfile.TemporaryDirectory() as upload_dir:
@@ -137,6 +189,7 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                 response = asyncio.run(_request(
                     "POST",
                     "/ingest",
+                    headers={"X-LiquidAIty-Internal-MCP-Secret": "s" * 32},
                     data={
                         "project_id": "project-1",
                         "document_id": "pdf:document:1",
@@ -155,16 +208,13 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
             response.json(),
             {
                 "ok": True,
-                "status": "ingested",
-                "episode_id": "episode-1",
+                "status": "indexed",
                 "project_id": "project-1",
                 "document_id": "pdf:document:1",
                 "source_name": "source.pdf",
                 "content_fingerprint": "sha256:proof",
-                "provider": "openrouter",
-                "model": "deepseek/deepseek-chat",
-                "entity_count": 2,
-                "fact_count": 1,
+                "document": {"uuid": "document-version-1", "embedding_model_version": "test-embedding-model"},
+                "passage_count": 2,
             },
         )
         ingest_pdf.assert_awaited_once()
@@ -197,6 +247,7 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                 response = asyncio.run(_request(
                     "POST",
                     "/ingest",
+                    headers={"X-LiquidAIty-Internal-MCP-Secret": "s" * 32},
                     data={"project_id": "project-1", "document_id": "document-1"},
                     files={"file": ("source.pdf", b"%PDF-1.4", "application/pdf")},
                 ))
@@ -228,6 +279,7 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                 response = asyncio.run(_request(
                     "POST",
                     "/ingest",
+                    headers={"X-LiquidAIty-Internal-MCP-Secret": "s" * 32},
                     data={"project_id": "project-1", "document_id": "document-1"},
                     files={"file": ("source.pdf", b"%PDF-1.4", "application/pdf")},
                 ))

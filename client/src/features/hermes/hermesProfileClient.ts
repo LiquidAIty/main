@@ -1,6 +1,8 @@
 /**
  * Entity: Card Profiles
  * Relationship: Reads and configures one Hermes profile through profiles.describe/configure and authenticated Hermes Webapp APIs, initializing new-Card memory defaults and preserving each existing profile's memory and learning choices alongside model, skills, and exact tool-selection readback.
+ * Entity: Credentials
+ * Relationship: Connects one saved Card to application tools only on explicit user action, using owner-scoped issuance and Hermes credential storage without startup provisioning.
  */
 
 import type {
@@ -8,6 +10,7 @@ import type {
   ProfilesDescribeResult,
 } from '../../../../HermesLatest/apps/shared/src/gateway-contract.generated';
 import { hermesRequest, hermesWebappHost } from './hermesHost';
+import { applicationFetch } from '../../lib/applicationApi';
 
 const APPLICATION_MCP_SERVER = 'liquidaity';
 const KNOWGRAPH_PROFILE = 'knowgraph';
@@ -24,6 +27,8 @@ const NEW_CARD_MEMORY_DEFAULTS = {
 
 type McpServerDetails = McpServerEntry & {
   source?: string;
+  url?: string;
+  auth?: string;
   tools?: { include?: string[] };
 };
 
@@ -46,6 +51,7 @@ export type HermesProfileView = {
   enabledMcpServers: string[];
   botModeRoster: string[];
   applicationTools: string[];
+  applicationConnectionConfigured: boolean;
   cardScript: Record<string, unknown> | null;
   enabledPlugins: string[];
   webSearchBackend: string;
@@ -67,6 +73,8 @@ export type HermesProfileView = {
 };
 
 type ProfileConfig = {
+  mcp_servers?: Record<string, { url?: string; headers?: Record<string, string>;
+    include_execution_context?: boolean; tools?: { include?: string[] } }>;
   agent?: { reasoning_effort?: unknown };
   skills?: { auto_load?: unknown };
   memory?: {
@@ -181,6 +189,7 @@ function projectProfile(
     enabledMcpServers: servers.filter((server) => server.enabled === true).map((server) => server.name),
     botModeRoster: strings(described.bot_mode_roster),
     applicationTools: strings(application?.tools?.include),
+    applicationConnectionConfigured: application?.transport === 'http' && Boolean(application.url),
     cardScript: cardScript && Object.keys(cardScript).length ? cardScript : null,
     enabledPlugins: strings(config.plugins?.enabled),
     webSearchBackend: typeof config.web?.search_backend === 'string'
@@ -309,13 +318,13 @@ export async function configureHermesProfile(input: {
   } | null;
 }): Promise<HermesProfileView> {
   const before = await loadHermesProfile(input.profile);
-  // An empty selection on a new Card must not create a transportless server:
-  // Hermes treats a newly configured MCP entry without enabled:false as enabled.
-  const updateApplicationTools = input.applicationTools !== undefined && (
-    strings(input.applicationTools).length > 0
-    || before.applicationTools.length > 0
-    || before.enabledMcpServers.includes(APPLICATION_MCP_SERVER)
-  );
+  // Saved grants do not create a transport or issue credentials. Explicit
+  // Connect app tools owns first setup; ordinary saves only update an existing connection.
+  const updateApplicationTools = input.applicationTools !== undefined
+    && before.applicationConnectionConfigured;
+  const enabledMcpServers = (input.enabledMcpServers === undefined
+    ? before.enabledMcpServers : strings(input.enabledMcpServers))
+    .filter(name => name !== APPLICATION_MCP_SERVER || before.applicationConnectionConfigured);
   const enabledSkills = input.enabledSkills === undefined
     ? before.skills.filter((skill) => skill.enabled).map((skill) => skill.name)
     : strings(input.enabledSkills);
@@ -349,9 +358,7 @@ export async function configureHermesProfile(input: {
       .map((skill) => skill.name)
       .filter((name) => !effectiveEnabledSkills.includes(name)),
     enabled_toolsets: [...enabledToolsets],
-    enabled_mcp_servers: input.enabledMcpServers === undefined
-      ? before.enabledMcpServers
-      : strings(input.enabledMcpServers),
+    enabled_mcp_servers: enabledMcpServers,
     ...(input.botModeRoster === undefined ? {} : { bot_mode_roster: strings(input.botModeRoster) }),
   };
   const configured = await hermesRequest(input.profile, 'profiles.configure', configure);
@@ -434,7 +441,7 @@ export async function configureHermesProfile(input: {
   ) {
     throw new Error('Hermes profile model readback mismatch.');
   }
-  if (input.applicationTools !== undefined && JSON.stringify(
+  if (updateApplicationTools && JSON.stringify(
     [...after.applicationTools].sort(),
   ) !== JSON.stringify([...strings(input.applicationTools)].sort())) {
     throw new Error('Hermes MCP tool-selection readback mismatch.');
@@ -462,7 +469,7 @@ export async function configureHermesProfile(input: {
   }
   if (input.enabledMcpServers !== undefined && JSON.stringify(
     [...after.enabledMcpServers].sort(),
-  ) !== JSON.stringify([...strings(input.enabledMcpServers)].sort())) {
+  ) !== JSON.stringify([...enabledMcpServers].sort())) {
     throw new Error('Hermes MCP-server readback mismatch.');
   }
   if (input.botModeRoster !== undefined && JSON.stringify(
@@ -506,6 +513,82 @@ export async function configureHermesProfile(input: {
     throw new Error('Hermes subagent-model readback mismatch.');
   }
   return after;
+}
+
+/** Explicit Card action only: authenticate its saved identity, let Hermes store
+ * the credential, configure this one connection, then test it. Never called on mount/save. */
+export async function connectHermesApplicationTools(input: {
+  projectId: string; deckId: string; cardId: string; profile: string;
+}): Promise<HermesProfileView> {
+  const path = `/api/projects/${encodeURIComponent(input.projectId)}/decks/${encodeURIComponent(input.deckId)}`;
+  const loaded = await applicationFetch(path);
+  if (!loaded.ok) throw new Error('Unable to read the owned saved Card.');
+  const deck = await loaded.json() as { deck?: { nodes?: Array<{
+    id: string; _cardRevisionId?: string; runtime?: { profile?: string };
+  }> } };
+  const card = deck.deck?.nodes?.find(node => node.id === input.cardId);
+  if (!card?._cardRevisionId || card.runtime?.profile !== input.profile) {
+    throw new Error('Saved Card identity changed. Reopen it before connecting app tools.');
+  }
+  const servers = await mcpServers(input.profile);
+  const existing = servers.find(server => server.name === APPLICATION_MCP_SERVER);
+  if (existing && (existing.source === 'plugin' || existing.transport === 'stdio' || existing.auth === 'oauth')) {
+    throw new Error('The existing app connection needs explicit repair in Hermes. It was not replaced.');
+  }
+  const response = await applicationFetch(`${path}/cards/${encodeURIComponent(input.cardId)}/app-tools`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedCardRevisionId: card._cardRevisionId }),
+  });
+  if (!response.ok) throw new Error('App-tool setup was refused. Check ownership and reopen the saved Card.');
+  const setup = await response.json() as { ok?: boolean; profile?: string; cardId?: string;
+    cardRevisionId?: string; serverName?: string; url?: string; bearerToken?: string; tools?: string[] };
+  if (!setup.ok || setup.profile !== input.profile || setup.cardId !== input.cardId
+    || setup.cardRevisionId !== card._cardRevisionId || setup.serverName !== APPLICATION_MCP_SERVER
+    || !setup.bearerToken || !setup.url || !Array.isArray(setup.tools)
+    || setup.tools.some(tool => typeof tool !== 'string')) {
+    throw new Error('App-tool setup returned a mismatched saved identity. Nothing was connected.');
+  }
+  const url = new URL(setup.url);
+  if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname)
+    || url.pathname !== '/mcp' || url.username || url.password || url.search || url.hash) {
+    throw new Error('App-tool setup returned an invalid internal endpoint. Nothing was connected.');
+  }
+  const fetchJSON = hermesWebappHost().fetchJSON;
+  if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
+  const profileQuery = `?profile=${encodeURIComponent(input.profile)}`;
+  const headers = { Authorization: 'Bearer ${MCP_LIQUIDAITY_API_KEY}',
+    'X-LiquidAIty-Hermes-Profile': input.profile };
+  try {
+    // Keep the bearer out of React state, browser storage and config.yaml.
+    await fetchJSON(`/api/env${profileQuery}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'MCP_LIQUIDAITY_API_KEY', value: setup.bearerToken }) });
+    await fetchJSON(`/api/config${profileQuery}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: { mcp_servers: { [APPLICATION_MCP_SERVER]: {
+        url: setup.url, enabled: true, headers, include_execution_context: true,
+        tools: { include: setup.tools },
+      } } } }) });
+    const enabled = [...new Set([...servers.filter(server => server.enabled).map(server => server.name), APPLICATION_MCP_SERVER])];
+    const configured = await hermesRequest(input.profile, 'profiles.configure', {
+      name: input.profile, enabled_mcp_servers: enabled,
+    });
+    if (configured.ok !== true || configured.applied?.mcp_servers !== true) {
+      throw new Error('Hermes did not enable the selected app connection.');
+    }
+  } catch {
+    // Hermes may have saved the credential before a later config failure. Never
+    // claim atomic setup or expose an error body containing credential input.
+    throw new Error('Hermes app-tool setup did not finish. The credential may be saved; retry this explicit action.');
+  }
+  const config = await profileConfig(input.profile);
+  const actual = config.mcp_servers?.[APPLICATION_MCP_SERVER];
+  if (actual?.url !== setup.url || actual.include_execution_context !== true
+    || Object.entries(headers).some(([key, value]) => actual.headers?.[key] !== value)
+    || canonicalJson(strings(actual.tools?.include).sort()) !== canonicalJson([...setup.tools].sort())) {
+    throw new Error('Hermes app-tool configuration readback did not match.');
+  }
+  const probe = await hermesRequest(input.profile, 'mcp.servers.test', { name: APPLICATION_MCP_SERVER });
+  if (probe.ok !== true) throw new Error('The app connection was saved but its tool-access test failed.');
+  return loadHermesProfile(input.profile);
 }
 
 export async function loadHermesSkill(profile: string, name: string): Promise<{

@@ -209,7 +209,7 @@ is separate and must not be removed as a side effect of deleting the rejected la
    revision must perform zero profile writes, credential refreshes, MCP reloads or roster publications.
 2. Publish only the configuration changed by an actual edit, through its existing owner. Do not republish
    the whole deck as a repair, readiness check, migration, reconciliation or safety measure.
-3. Do not add runtime coordination helpers, aliases, registries, credential issuers, managers, listeners,
+3. Do not add runtime coordination helpers, aliases, registries, automatic credential issuers, managers, listeners,
    watchers, pollers or caches to imitate Hermes. A different filename is not a different design.
 4. Treat `process_complete` and reported sender metadata as runtime evidence, not disposable spam.
    Never suppress a genuine result/failure merely to make chat look cleaner.
@@ -221,7 +221,10 @@ is separate and must not be removed as a side effect of deleting the rejected la
    prompts or background benchmark to hide the cost. Unknown elapsed time is not a pass.
 7. A missing/expired credential is an exact authentication problem to report. Hermes can use supported
    configured credentials/OAuth; it does not magically mint LiquidAIty's custom bearer or extend its
-   expiry. Do not resurrect the banned issuer or weaken authorization to conceal that limitation.
+   expiry. Do not resurrect automatic provisioning or weaken authorization to conceal that limitation.
+   The owner's later explicit saved-Card **Connect app tools** operation is the sole approved setup
+   exception: authenticated, revision-bound, user-invoked, and limited to that Card's profile. It must
+   never run on Project open, Card movement, ordinary save, Send, a timer, or a refresh loop.
 8. Remove exclusive callers, imports, mounts, types, tests and stale normative documentation with a
    rejected path. Preserve live authorization and unrelated working behavior. No replacement is implied.
 

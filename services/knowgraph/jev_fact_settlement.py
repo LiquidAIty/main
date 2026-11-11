@@ -134,25 +134,6 @@ async def read_project_relationship_vocabulary(
     return payload
 
 
-def relationship_vocabulary_guidance(
-    guidance: str | None,
-    vocabulary: dict[str, Any],
-) -> str:
-    labels = [str(label) for label in vocabulary["labels"]]
-    existing = str(guidance or "").strip()
-    instruction = (
-        "For each Graphiti relationship name, first prefer an exact predicate "
-        "from CURRENT_SHARED_PROJECT_RELATIONSHIP_VOCABULARY when it accurately fits. "
-        "If none fits, propose one concise UPPER_SNAKE_CASE predicate: prefer one word, "
-        "use two only when necessary, and never exceed three words. Do not invent a "
-        "synonym for an existing predicate. Keep the natural-language fact fully "
-        "expressive and continue normal entity and factual relationship extraction.\n"
-        "CURRENT_SHARED_PROJECT_RELATIONSHIP_VOCABULARY:\n"
-        + json.dumps(labels, ensure_ascii=False, separators=(",", ":"))
-    )
-    return f"{existing}\n\n{instruction}" if existing else instruction
-
-
 async def _call_knowgraph_jev(
     project_id: str,
     facts: list[dict[str, Any]],

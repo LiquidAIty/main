@@ -1,10 +1,10 @@
 /**
  * Entity: MCP Host
- * Relationship: Restricts backend-to-MCP transport to the canonical loopback endpoint and signs the existing catalog-reader principal only.
+ * Relationship: Restricts backend-to-MCP transport to the canonical loopback endpoint and signs catalog or explicitly authorized saved-Card principals.
  * Entity: Credentials
  * Relationship: This file loads and timing-safely verifies the supervised internal process secret used by protected backend and MCP seams.
  * Entity: Authentication
- * Relationship: Signs the existing catalog-reader principal without expiry and rejects unsupported principal kinds.
+ * Relationship: Signs exact scoped principals without expiry; saved-Card issuance is called only by authenticated explicit setup, not startup or refresh.
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -12,7 +12,9 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 const INTERNAL_MCP_ISSUER = 'liquidaity-runtime';
 const INTERNAL_MCP_AUDIENCE = 'liquidaity-internal-mcp';
 const DEFAULT_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp';
-export type InternalMcpPrincipal = { kind: 'catalog-reader' };
+export type InternalMcpPrincipal = { kind: 'catalog-reader' } | {
+  kind: 'card-runtime'; ownerUserId: string; projectId: string; deckId: string; profile: string;
+};
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {
   const secret = String(env.LIQUIDAITY_INTERNAL_MCP_SECRET || '').trim();
@@ -40,8 +42,18 @@ export function createInternalMcpBearer(
   nowSeconds = Math.floor(Date.now() / 1000),
 ): string {
   const secret = requiredSecret(env);
-  if (principal.kind !== 'catalog-reader') {
+  if (principal.kind !== 'catalog-reader' && principal.kind !== 'card-runtime') {
     throw new Error('internal_mcp_principal_kind_invalid');
+  }
+  if (principal.kind === 'card-runtime') {
+    const fields = ['kind', 'ownerUserId', 'projectId', 'deckId', 'profile'];
+    if (Object.keys(principal).length !== fields.length || fields.some(field => {
+      const value = principal[field as keyof typeof principal];
+      return typeof value !== 'string' || !value.trim() || value !== value.trim()
+        || value.length > 256 || /[\x00-\x1f\x7f]/.test(value);
+    }) || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(principal.profile)) {
+      throw new Error('internal_mcp_card_principal_invalid');
+    }
   }
   const header = base64UrlJson({ alg: 'HS256', typ: 'JWT' });
   const payload = base64UrlJson({
