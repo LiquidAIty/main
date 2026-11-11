@@ -1,0 +1,43 @@
+{
+  "verifiedTrials": 192,
+  "rawSampleCandles": 30720,
+  "exactTenTargets": true,
+  "meanIncludesEveryPath": true,
+  "validityRecomputed": true,
+  "inputHashesMatched": true,
+  "actualPriceErrorsRecomputed": true,
+  "causes": {
+    "Original": {
+      "lowAboveBody": 1153,
+      "highBelowBody": 960,
+      "nonpositivePrice": 0,
+      "negativeVolume": 1
+    },
+    "Balanced48": {
+      "lowAboveBody": 657,
+      "highBelowBody": 424,
+      "nonpositivePrice": 0,
+      "negativeVolume": 0
+    },
+    "Fit40": {
+      "lowAboveBody": 863,
+      "highBelowBody": 795,
+      "nonpositivePrice": 0,
+      "negativeVolume": 0
+    }
+  },
+  "relativeOhlcViolation": {
+    "Original": {
+      "median": 0.0018452117430671387,
+      "maximum": 0.0671411489511465
+    },
+    "Balanced48": {
+      "median": 0.0009353291774143793,
+      "maximum": 0.013254762370449551
+    },
+    "Fit40": {
+      "median": 0.0011565839719974015,
+      "maximum": 0.016080682927911934
+    }
+  }
+}

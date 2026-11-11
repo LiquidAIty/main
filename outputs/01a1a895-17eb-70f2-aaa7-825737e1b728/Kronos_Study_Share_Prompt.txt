@@ -1,0 +1,49 @@
+Use case: infographic-diagram.
+Create ONE finished, polished portrait infographic for sharing as an image in Facebook Messenger. Approximately 1024 x 1536, high resolution, large legible typography, phone-first. It explains an actual local Kronos forecasting experiment in the user's LiquidAIty app. This is an honest research progress graphic, not investment advertising.
+
+Visual style: clean editorial information design, deep navy background like a financial chart, off-white text, restrained teal for improved metrics and amber for the original. Spacious, carefully aligned sections with simple flat line icons. No glassy panels, no 3D, no robots, no fake candlestick price chart, no invented data, no stock-price arrows implying gains. Use only the precise text below, preserving all numerical values and distinctions. Avoid tiny disclaimers; every sentence must be readable at phone zoom.
+
+Composition: top title and short study description; a prominent before/after data-quality comparison; two smaller side-by-side metric panels for fit and compute; a compact settings strip; a clearly visible caution at the bottom. Keep under roughly 180 words. Small tasteful brand text 'LiquidAIty' at the top or bottom, spelled L-i-q-u-i-d-A-I-t-y, with no invented logo.
+
+Exact copy:
+TITLE: "Tuning Kronos"
+SUBTITLE: "What 158 controlled trials taught us"
+CONTEXT: "RDW daily candles • Mini, Small and Base"
+METHOD: "Same data cutoff. Final comparison repeated with 4 seeds."
+
+MAIN SECTION:
+"Far fewer invalid forecast candles"
+"Flagged paths"
+"BEFORE"
+"63 / 64"
+"AFTER"
+"0 / 64"
+"Across four runs of 16 paths each"
+"Flagged means invalid candle data — not prediction accuracy."
+Use a simple honest proportion graphic: 63 of 64 for Before and zero for After, with the printed counts doing the explanatory work. No implication of 100% forecasting accuracy.
+
+SECONDARY LEFT PANEL:
+"Price fit: modest improvement"
+"$0.552 → $0.546"
+"Average close-price error"
+"About 1.1% lower"
+
+SECONDARY RIGHT PANEL:
+"Less compute time"
+"1.84s → 0.85s"
+"Average inference time"
+"About 54% less time"
+Small but legible shared note under these panels: "Same CPU, 4 threads. Model loading excluded."
+
+SETTINGS SECTION:
+"Best balance in this test"
+"Kronos-mini • 48 input candles"
+"10 forecast bars • 16 sampled paths"
+"Temperature 0.6 • top-p 0.75 • top-k 0"
+
+BOTTOM CAUTION — visually prominent, not microscopic:
+"Cleaner output is not proof of a trading edge."
+"Fit was tuned on 5 known candles, not unseen data."
+"It still missed a sharp drop. No trades placed."
+
+Faithfulness: '63 / 64' and '0 / 64' are aggregated flagged paths over FOUR repeat-seed runs, not 64 paths in a single run. Before uses 128 input candles, temperature 1.0 and top-p 0.9; after uses the settings printed above. No need to add the before settings unless they fit cleanly. The average close error improvement must look small, not exaggerated. If you add any metric bar, use an honest common zero baseline. No promises of profitability, no confidence percentages, no investment recommendations, no unprovided performance claims. Deliver only the composed infographic.
