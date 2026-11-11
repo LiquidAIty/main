@@ -1,7 +1,7 @@
 """PostgreSQL Project, deck, saved-Card revision, save, and delete authority."""
 
 # Entity: Saved Cards
-# Relationship: This file persists Project-scoped decks and immutable Card revisions through optimistic, read-backed PostgreSQL transactions.
+# Relationship: Persists revision-checked Project decks and explicit Card membership removals while preserving reusable Card definitions and immutable revisions.
 # Entity: Projects
 # Relationship: This file resolves exact Project identity and stores each Project's deck name, portable Builder code folder, templates, revision, and save timestamp.
 # Entity: Card Topology
@@ -450,6 +450,7 @@ def _update_existing_deck_with_cursor(
     document: dict[str, Any], project_code_folder: str | None,
     expected_revision: str | None, incoming_nodes: list[dict[str, Any]],
     incoming_edges: list[dict[str, Any]], incoming_templates: list[dict[str, Any]],
+    remove_card_id: str | None = None,
 ) -> None:
     current = load_saved_deck_with_cursor(cursor, project_ref, deck_id, include_internal=True)
     if expected_revision and current["meta"]["deckRevision"] != expected_revision:
@@ -460,8 +461,27 @@ def _update_existing_deck_with_cursor(
         required_text(node.get("id"), "card_id"): node
         for node in incoming_nodes
     }
-    if set(current_by_id) - set(incoming_by_id):
+    removed_ids = set(current_by_id) - set(incoming_by_id)
+    if removed_ids and removed_ids != {remove_card_id}:
         raise CardDomainError("card_deletion_requires_explicit_operation")
+    if remove_card_id is not None:
+        from app.builder_worker_policy import PROTECTED_SYSTEM_CARD_IDS, PROTECTED_SYSTEM_PROFILES
+
+        if not expected_revision:
+            raise CardDomainError("card_removal_requires_revision")
+        if removed_ids != {remove_card_id}:
+            raise CardDomainError("card_removal_target_mismatch")
+        removed = current_by_id[remove_card_id]
+        if (remove_card_id in PROTECTED_SYSTEM_CARD_IDS
+                or card_runtime(removed).get("profile") in PROTECTED_SYSTEM_PROFILES):
+            raise CardDomainError("system_card_removal_forbidden")
+        # Remove only this Project's visible membership. Keep its saved Card,
+        # revisions, grants, Hermes profile/session and historical AGE vertex.
+        cursor.execute(
+            "DELETE FROM ag_catalog.deck_card_memberships "
+            "WHERE project_id=%s AND deck_id=%s AND card_id=%s",
+            (project_id, deck_id, remove_card_id),
+        )
     for ordinal, node in enumerate(incoming_nodes):
         card_id = node["id"]
         previous = current_by_id.get(card_id)
@@ -606,7 +626,10 @@ def save_deck(
     deck_id: str,
     document: dict[str, Any],
     expected_revision: str | None,
+    remove_card_id: str | None = None,
 ) -> dict[str, Any]:
+    if remove_card_id is not None:
+        remove_card_id = required_text(remove_card_id, "remove_card_id")
     incoming_nodes, incoming_edges, incoming_templates = _validated_deck_collections(
         document,
         deck_id,
@@ -625,6 +648,8 @@ def save_deck(
             )
             deck_exists = cursor.fetchone() is not None
             if not deck_exists:
+                if remove_card_id is not None:
+                    raise CardDomainError("card_removal_target_mismatch")
                 _create_new_deck_with_cursor(
                     cursor, project_id=project_id, deck_id=deck_id,
                     document=document, project_code_folder=project_code_folder,
@@ -638,6 +663,7 @@ def save_deck(
                 document=document, project_code_folder=project_code_folder,
                 expected_revision=expected_revision, incoming_nodes=incoming_nodes,
                 incoming_edges=incoming_edges, incoming_templates=incoming_templates,
+                remove_card_id=remove_card_id,
             )
         connection.commit()
     return load_deck(project_id, deck_id)

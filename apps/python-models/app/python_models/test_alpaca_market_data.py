@@ -72,6 +72,73 @@ def test_resolve_credentials_absent_returns_none():
     assert resolve_alpaca_credentials(env={}) is None
 
 
+def test_historical_pages_keep_cutoff_feed_order_and_bound_the_result():
+    urls = []
+    def transport(url, headers):
+        urls.append(url)
+        return {"bars": BARS_FIXTURE["bars"][:1], "next_page_token": "second"} if len(urls) == 1 else {"bars": BARS_FIXTURE["bars"][1:]}
+    result = get_historical_bars(RDW, "1Day", start="2024-05-01T00:00:00Z", end="2024-05-11T00:00:00Z",
+                                 limit=3, sort="desc", transport=transport, credentials=PAPER_CREDS)
+    assert len(result.bars) == 3
+    assert len(urls) == 2
+    assert all("sort=desc" in url and "adjustment=raw" in url and "feed=iex" in url for url in urls)
+    assert "page_token=second" in urls[1]
+
+
+def test_repeating_provider_page_token_fails_instead_of_looping():
+    result = get_historical_bars(RDW, "1Day", limit=20, credentials=PAPER_CREDS,
+                                 transport=lambda *_: {"bars": BARS_FIXTURE["bars"][:1], "next_page_token": "same"})
+    assert result.status == STATUS_ERROR
+
+
+@pytest.mark.parametrize("descending", [False, True])
+def test_history_summary_uses_running_peak_and_preserves_raw_order(descending):
+    rows = [{"t": f"2024-05-{day:02d}T00:00:00Z", "o": price, "h": price + 1,
+             "l": price - 1, "c": price, "v": 10}
+            for day, price in zip(range(6, 10), (100, 120, 90, 108))]
+    if descending:
+        rows.reverse()
+    result = get_historical_bars(RDW, "1Day", credentials=PAPER_CREDS,
+                                 transport=_RecordingTransport({"bars": rows})).to_dict()
+    assert result["barCount"] == 4 and result["adjustment"] == "raw"
+    assert [row["close"] for row in result["bars"]] == [row["c"] for row in rows]
+    summary = result["summary"]
+    assert summary["priceReturnPercent"] == pytest.approx(8)
+    assert summary["maxDrawdownPercent"] == pytest.approx(-25)
+    assert summary["drawdownPeakAt"] == "2024-05-07T00:00:00Z"
+    assert summary["drawdownTroughAt"] == "2024-05-08T00:00:00Z"
+    assert summary["calendarCompletenessVerified"] is False
+
+
+def test_rising_history_has_no_drawdown_from_a_low_before_a_later_peak():
+    result = get_historical_bars(RDW, "1Day", transport=_RecordingTransport(BARS_FIXTURE),
+                                 credentials=PAPER_CREDS).to_dict()
+    assert result["summary"]["maxDrawdownPercent"] == 0
+    assert result["summary"]["drawdownTroughAt"] is None
+
+
+def test_summary_and_pagination_report_only_the_returned_window():
+    result = get_historical_bars(RDW, "1Day", limit=2, credentials=PAPER_CREDS,
+        transport=_RecordingTransport({**BARS_FIXTURE, "next_page_token": "more"})).to_dict()
+    assert result["truncated"] is True
+    assert result["barCount"] == 2
+    assert result["summary"]["lastBarAt"] == BARS_FIXTURE["bars"][1]["t"]
+    assert result["summary"]["calendarCompletenessVerified"] is False
+
+
+@pytest.mark.parametrize("problem", ["duplicate", "nonpositive", "malformed", "empty"])
+def test_history_summary_does_not_invent_metrics_from_bad_or_missing_bars(problem):
+    rows = [dict(row) for row in BARS_FIXTURE["bars"]]
+    if problem == "duplicate": rows.append(dict(rows[0]))
+    elif problem == "nonpositive": rows[0]["c"] = 0
+    elif problem == "malformed": rows.append({"t": "bad"})
+    else: rows = []
+    result = get_historical_bars(RDW, "1Day", credentials=PAPER_CREDS,
+                                 transport=_RecordingTransport({"bars": rows})).to_dict()
+    assert result["summary"]["status"] == "unavailable"
+    assert "priceReturnPercent" not in result["summary"]
+
+
 # --- Market snapshot -------------------------------------------------------------
 
 

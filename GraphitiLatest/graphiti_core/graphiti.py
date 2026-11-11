@@ -55,6 +55,7 @@ from graphiti_core.knows import (
     know_content_hash,
     know_episode_content,
     know_uuid,
+    normalize_entity_name,
     resolve_know_entity,
 )
 from graphiti_core.namespaces import EdgeNamespace, NodeNamespace
@@ -1379,11 +1380,19 @@ class Graphiti:
             research_request_version=research_request_version,
         )
         edges = []
+        named_targets: dict[str, EntityNode] = {}
         for relationship in relationships or []:
             relationship = KnowRelationship.model_validate(relationship)
+            key = normalize_entity_name(relationship.target_entity_name)
+            if key not in named_targets:
+                target, _ = await resolve_know_entity(
+                    clients, group_id=group_id,
+                    entity_name=relationship.target_entity_name, entity_uuid=None,
+                )
+                named_targets[key] = target
             edge = EntityEdge(
                 source_node_uuid=relationship.source_entity_uuid or entity.uuid,
-                target_node_uuid=relationship.target_entity_uuid,
+                target_node_uuid=named_targets[key].uuid,
                 name='RELATED_TO', fact=relationship.fact, group_id=group_id,
                 created_at=now, valid_at=reference_time,
             )
@@ -1392,6 +1401,7 @@ class Graphiti:
         know, entity, created, entity_created, written_edges = await know.save_know(
             driver, entity=entity, owner_by_name=not bool(entity_uuid),
             mentions=mentions, relationships=edges,
+            relationship_targets=list(named_targets.values()),
         )
         return AddKnowResults(
             know=know,

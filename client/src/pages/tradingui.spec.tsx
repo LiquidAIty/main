@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TradingState } from '../features/trading/tradingState';
 import TradingUI from './tradingui';
+import type { AgentCardInstance } from '../types/agentgraph';
+const trader: AgentCardInstance = { id: 'card_trading_workbench', title: 'Trader', templateId: 'trader', runtime: { kind: 'hermes', mode: 'delegate', profile: 'trading' }, position: { x: 0, y: 0 } };
 
 const snapshot: TradingState = {
   cardId: 'card_trading_workbench',
@@ -69,16 +71,19 @@ const snapshot: TradingState = {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe('Trading agent UI', () => {
+  const visibleChart = () => screen.getAllByTestId('trading-candles').find(frame => !frame.closest('[hidden]'))!;
   const chartOptions = () => JSON.parse(decodeURIComponent(
-    new URL(screen.getByTestId('trading-candles').getAttribute('src')!).hash.slice(1),
+    new URL(visibleChart().getAttribute('src')!).hash.slice(1),
   ));
+  const readResponse = (url: string | URL | Request) => new Response(JSON.stringify(String(url).includes('/forecasts?') ? { forecasts: [] } : String(url).includes('/history?') ? { history: [], status: 'available' } : snapshot), { status: 200 });
   it('mounts visible Portfolio candles using TradingView and opens the selected chart', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })));
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => readResponse(url)));
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     const observers: IntersectionObserverCallback[] = [];
     const disconnect = vi.fn();
@@ -87,35 +92,35 @@ describe('Trading agent UI', () => {
       observe() {}
       disconnect = disconnect;
     });
-    render(<TradingUI symbol="RDW" projectId="project-one" />);
+    render(<TradingUI symbol="RDW" projectId="project-one" forecastCard={trader} />);
     expect(screen.getByRole('tab', { name: 'Add trade' }).getAttribute('aria-selected')).toBe('true');
-    expect(chartOptions()).toMatchObject({ symbol: 'NYSE:RDW', hide_top_toolbar: '0', interval: '5', theme: 'dark' });
+    expect(chartOptions()).toMatchObject({ symbol: 'NYSE:RDW', hide_top_toolbar: '0', interval: '5', theme: 'dark', allow_symbol_change: '1' });
+    expect(JSON.parse(new URL(visibleChart().getAttribute('src')!).searchParams.get('disabled_features')!)).toEqual([]);
+    expect(screen.queryByRole('button', { name: 'Load ticker' })).toBeNull();
     expect(document.querySelector('#tv-script')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
     await screen.findByTestId('trade-job-job-one');
     await waitFor(() => expect(observers).toHaveLength(1));
-    expect(screen.queryByTestId('trading-candles')).toBeNull();
+    expect(screen.getByTestId('trading-candles').closest('[hidden]')).toBeTruthy();
     act(() => observers[0]([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
     expect(chartOptions()).toMatchObject({ symbol: 'RDW', style: '1', hide_top_toolbar: '1', allow_symbol_change: '0' });
     fireEvent.click(screen.getByRole('button', { name: 'Open RDW chart' }));
-    expect(chartOptions()).toMatchObject({ symbol: 'RDW', style: '1', hide_top_toolbar: '0', allow_symbol_change: '1' });
+    expect(chartOptions()).toMatchObject({ symbol: 'RDW', style: '1', hide_top_toolbar: '0', allow_symbol_change: '0' });
     expect(disconnect).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(screen.getByTestId('active-trade-job-grid')).toBeTruthy();
   });
 
   it('keeps Portfolio charts and combines plans with their journal', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), {
-      status: 200, headers: { 'Content-Type': 'application/json' },
-    })));
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => readResponse(url)));
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
-    render(<TradingUI symbol="RDW" projectId="project-one" />);
+    render(<TradingUI symbol="RDW" projectId="project-one" forecastCard={trader} />);
 
     fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
     await waitFor(() => expect(screen.getAllByText('$100,000.00').length).toBeGreaterThan(0));
     expect(screen.getByRole('tab', { name: 'Portfolio' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.queryByTestId('trading-candles')).toBeNull();
-    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Add trade', 'Portfolio', 'Journal']);
+    expect(screen.getByTestId('trading-candles').closest('[hidden]')).toBeTruthy();
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Add trade', 'Portfolio', 'Journal', 'Forecast']);
     expect(screen.queryByText('Run local proof')).toBeNull();
     expect(screen.queryByText('Paper only')).toBeNull();
     expect(screen.getByRole('button', { name: 'Enter trade' }).hasAttribute('disabled')).toBe(true);
@@ -136,14 +141,80 @@ describe('Trading agent UI', () => {
     expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
     fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
     expect(screen.getByTestId('trading-portfolio')).toBeTruthy();
-    expect(screen.queryByTestId('trading-candles')).toBeNull();
+    expect(screen.getByTestId('trading-candles').closest('[hidden]')).toBeTruthy();
     expect(screen.getByText('Cash')).toBeTruthy();
-    expect(screen.queryByTestId('trading-candles')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Journal' }));
     expect(screen.getByText('Stop at the authorized level.')).toBeTruthy();
     expect(screen.getByTestId('trading-journal')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Add trade' }));
     expect(screen.getByTestId('trading-candles')).toBeTruthy();
+  });
+
+  it('keeps explicit forecast ticker/timeframe and preserves TradingView controls across tabs without inference', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => readResponse(url)));
+    render(<TradingUI symbol="RDW" projectId="project-one" forecastCard={trader} />);
+    const chart = visibleChart();
+    expect(screen.queryByRole('region', { name: 'Interactive forecast candle chart' })).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Forecast' }));
+    await screen.findByRole('button', { name: 'Forecast' });
+    expect(screen.getByRole('region', { name: 'Interactive forecast candle chart' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Enter trade' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Exit trade' })).toBeNull();
+    expect(chart.closest('[hidden]')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Add trade' }));
+    expect(visibleChart()).toBe(chart);
+    expect(screen.queryByLabelText('Trading ticker')).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Forecast' }));
+    fireEvent.change(screen.getByLabelText('Trading ticker'), { target: { value: 'SPY' } });
+    expect(screen.getByTestId('trading-candles')).toBe(chart); // Typing does not reload the embed.
+    fireEvent.click(screen.getByRole('button', { name: 'Load ticker' }));
+    fireEvent.change(screen.getByLabelText('Trading timeframe'), { target: { value: '1Day' } });
+    fireEvent.click(screen.getByRole('tab', { name: 'Add trade' }));
+    expect(chartOptions()).toMatchObject({ symbol: 'SPY', interval: 'D' });
+    expect(screen.queryByRole('region', { name: 'Interactive forecast candle chart' })).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Forecast' }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('symbol=SPY&timeframe=1Day'))).toBe(true));
+    expect(screen.getByRole('button', { name: 'Forecast' })).toBeTruthy();
+    expect(screen.queryByText(/Forecasts belong to/)).toBeNull();
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/forecast')).every(([url]) => String(url).includes('cardId=card_trading_workbench'))).toBe(true);
+    expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  });
+
+  it('retries a genuinely blank frame once, then exposes recovery instead of an endless blank or reload loop', () => {
+    vi.useFakeTimers();
+    const { unmount } = render(<TradingUI symbol="RDW" />);
+    const blank = () => vi.spyOn(visibleChart() as HTMLIFrameElement, 'contentWindow', 'get').mockReturnValue({ location: { href: 'about:blank' } } as Window);
+    blank();
+    const first = visibleChart();
+    fireEvent.load(first); // A load event for about:blank must not count as success.
+    expect(screen.getByRole('status').textContent).toContain('Opening');
+    act(() => vi.advanceTimersByTime(8000));
+    expect(visibleChart()).not.toBe(first);
+    blank();
+    const retried = visibleChart();
+    act(() => vi.advanceTimersByTime(8000));
+    expect(screen.getByRole('alert').textContent).toContain('did not open');
+    act(() => vi.advanceTimersByTime(60000));
+    expect(visibleChart()).toBe(retried);
+    fireEvent.click(screen.getByRole('button', { name: 'Reload chart' }));
+    expect(visibleChart()).not.toBe(retried);
+    expect(screen.queryByRole('alert')).toBeNull();
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not reload a frame that has navigated cross-origin, and clears old timers on ticker change', () => {
+    vi.useFakeTimers();
+    const { rerender } = render(<TradingUI symbol="RDW" />);
+    const chart = visibleChart();
+    vi.spyOn(chart as HTMLIFrameElement, 'contentWindow', 'get').mockReturnValue({ get location() { throw new DOMException('Cross-origin', 'SecurityError'); } } as unknown as Window);
+    fireEvent.load(chart);
+    act(() => vi.advanceTimersByTime(8000));
+    expect(visibleChart()).toBe(chart);
+    expect(screen.queryByRole('alert')).toBeNull();
+    rerender(<TradingUI symbol="SPY" />);
+    expect(visibleChart()).not.toBe(chart);
+    expect(vi.getTimerCount()).toBe(1);
   });
 });

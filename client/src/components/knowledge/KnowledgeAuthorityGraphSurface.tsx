@@ -131,13 +131,16 @@ export function JoinedKnowledgeGraphSurface({
   const [layerVisibility, setLayerVisibility] = useState<GraphLayerVisibility>(() => ({
     ...DEFAULT_GRAPH_LAYER_VISIBILITY,
   }));
-  const codeFeatureIds = codeGraph?.selectedCategoryIds || [];
+  // An unchanged empty Code selection must not rebuild/reheat the joined graph
+  // when an unrelated parent render (such as typing in Main) occurs.
+  const codeFeatureIds = useMemo(() => codeGraph?.selectedCategoryIds || [],
+    [codeGraph?.selectedCategoryIds]);
   useEffect(() => {
     if (typeof codeGraph?.visible === 'boolean')
       setLayerVisibility(current => ({ ...current, codegraph: codeGraph.visible! }));
   }, [codeGraph?.visible]);
   const [codeConnections, setCodeConnections] = useState('');
-  const codeLayer = codeGraph || {
+  const codeLayer = useMemo(() => codeGraph || {
     projection: {
       schemaVersion: 'codegraph.projection.v1',
       authority: 'codegraph',
@@ -150,7 +153,7 @@ export function JoinedKnowledgeGraphSurface({
     error: null,
     warning: null,
     freshness: 'unverified',
-  };
+  }, [codeGraph, projections.thinkgraph.projectId, projections.knowgraph.projectId]);
   const visibleCodeProjection = useMemo(
     () => codeGraphCategoryProjection(codeLayer.projection, codeFeatureIds),
     [codeFeatureIds, codeLayer.projection],

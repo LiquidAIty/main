@@ -29,15 +29,19 @@ _TERMINAL = frozenset({"settled", "failed", "cancelled", "ambiguous"})
 
 
 def _bot_chat_tip(home: Path) -> str | None:
-    """Current Bot Chat tip id, or None when the profile has no store or no Bot Chat yet."""
+    """Current Bot Chat transcript, following its owner's reset and compression lineage."""
     from hermes_state import SessionDB
+    from hermes_state_local import handoff_head
 
     if not (home / 'state.db').is_file():
         return None
     db = SessionDB(db_path=home / 'state.db', read_only=True)
     try:
         row = db.get_session_by_title('Bot Chat')
-        return db.get_compression_tip(row['id']) if row else None
+        # The title stays on the creation row after /new. The existing handoff
+        # reader follows its committed local target, then any compression tip;
+        # the receiving authority still validates that exact physical target.
+        return handoff_head(db, row['id'])[1] if row else None
     finally:
         db.close()
 

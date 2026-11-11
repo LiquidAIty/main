@@ -21,7 +21,7 @@ import { getDeckDocument } from '../decks/deckDomainClient';
 import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
 import { assertCardProfileOwner, getOwnedProjectByReference } from '../services/projectStore';
 import { materializeCardEditor } from './builderIdd.routes';
-import { configureCodeCategories, notifyThinkGraphChanged } from './thinkGraph.routes';
+import { configureCodeCategories, notifyThinkGraphChanged, requestWorldViewAction } from './thinkGraph.routes';
 import {
   exactStrings,
   objectRecord,
@@ -33,6 +33,28 @@ const mcpInternalRoutes = Router();
 function processAuthorized(req: Request): boolean {
   return internalMcpProcessSecretAuthorized(req.headers['x-liquidaity-internal-mcp-secret']);
 }
+
+// Entity: WorldView
+// Relationship: Authorizes the saved WorldView Card's exact view-control grant before routing to its active Project globe.
+mcpInternalRoutes.post('/worldview/action', async (req, res) => {
+  if (!processAuthorized(req)) return res.status(403).json({ ok: false, error: 'internal_mcp_authorization_required' });
+  const { projectId, ownerUserId, deckId, cardId, action, arguments: args } = req.body || {};
+  if (![projectId, ownerUserId, deckId, cardId, action].every(value => typeof value === 'string' && value)
+    || !args || typeof args !== 'object' || Array.isArray(args))
+    return res.status(400).json({ ok: false, error: 'worldview_action_scope_required' });
+  try {
+    const project = await getOwnedProjectByReference(projectId, ownerUserId);
+    if (!project) return res.status(403).json({ ok: false, error: 'worldview_project_access_denied' });
+    const { deck } = await getDeckDocument(project.id, deckId);
+    const card = deck?.nodes.find(candidate => candidate.id === cardId && candidate.enabled !== false);
+    if (card?.runtime.kind !== 'hermes' || card.runtime.profile !== 'worldview'
+      || !card.runtimeOptions?.tools?.includes('worldview.action'))
+      return res.status(403).json({ ok: false, error: 'worldview_action_not_granted' });
+    return res.json(await requestWorldViewAction(project.id, card.id, action, args));
+  } catch {
+    return res.status(502).json({ ok: false, error: 'worldview_action_unavailable' });
+  }
+});
 
 mcpInternalRoutes.post('/graph-changed', async (req, res) => {
   if (!processAuthorized(req)) {

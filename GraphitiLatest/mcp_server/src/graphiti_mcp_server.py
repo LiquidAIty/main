@@ -558,9 +558,9 @@ async def add_know(
         description='Claim token from engraphis_research. Required by the Project adapter for a request-linked Know.',
     )] = None,
     relationships: Annotated[list[KnowRelationship] | None, Field(
-        description="For each meaningful outgoing relationship, supply target_entity_uuid and fact: "
+        description="For each meaningful outgoing relationship, supply target_entity_name and fact: "
                     "authored prose explaining this Entity's directed connection, grounded in the cited Know. "
-                    "Jev classifies the prose. The target must already own a Know; use returned Entity IDs. "
+                    "Jev classifies the prose. Named targets are resolved or created in the same Project transaction, without requiring a separate target Know. "
                     "An unchanged existing finding can be submitted with its relationships without creating a copy. "
                     "Leave empty only when no meaningful supported connection is established.",
     )] = None,
@@ -569,9 +569,10 @@ async def add_know(
 
     Supply entity_uuid to reuse an exact owner (entity_name is then optional), or entity_name
     to reuse/create the owner with its first Know. relationships carries the supported connections
-    discovered during research: target_entity_uuid and meaningful fact prose. The owner is the
-    default source; supply source_entity_uuid only for a different explicit direction. Both endpoints
-    must own Knows in this Project. Each saved triplet references this Know; Jev classifies its prose.
+    discovered during research: target_entity_name and meaningful fact prose.
+    The owner is the default source; supply source_entity_uuid only for a different explicit direction.
+    Explicit named targets are reused or created in this Project with the Know and relationships;
+    they need not own another Know. Each saved triplet references this Know; Jev classifies its prose.
     Resubmitting an identical finding with relationships reuses the Know rather than copying it.
     mentions references existing Know-backed Entities without asserting a relationship. A name in
     the finding or citation creates nothing. This tool does not run generic episode extraction.

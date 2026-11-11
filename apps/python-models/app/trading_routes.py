@@ -1,15 +1,67 @@
 """Trading boundary routes."""
 
 # Entity: Trading
-# Relationship: Trading exposes Python readiness, Project-scoped state reads, and operator interventions while translating domain failures into stable HTTP conflicts.
+# Relationship: Exposes Trading readiness, Project-scoped forecasts and comparisons, state reads, and bounded interventions through the existing Python owners.
 
 from fastapi import APIRouter, HTTPException
 from typing import Any
 from app.python_models.trading_broker_observation import lumibot_readiness
 from app.python_models.trading_contract import TradingBoundaryError
 from app.python_models.trading_jobs import intervene_trade_job, read_trading_state
+from app.python_models.trading_forecast import TradingForecastError, forecast_market_bars, read_forecast_history
+from app.python_models.trading_forecast_store import read_forecasts, compare_forecast
+from pydantic import BaseModel, ConfigDict
 
 router = APIRouter()
+
+
+class ForecastRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    projectId: str
+    deckId: str
+    cardId: str
+    symbol: str
+    timeframe: str = "1Day"
+    start: str | None = None
+    end: str | None = None
+    history_limit: int = 128
+    horizon: int = 5
+    model_variant: str = "mini"
+    sample_count: int = 4
+    seed: int = 443
+    temperature: float = 1.0
+    top_p: float = 0.9
+    top_k: int = 0
+
+
+@router.post("/trading/forecast")
+async def trading_forecast(payload: ForecastRequest):
+    args = payload.model_dump()
+    args["_callerCardId"] = args.pop("cardId")
+    try:
+        return await forecast_market_bars(**args)
+    except (TradingBoundaryError, TradingForecastError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@router.get("/trading/forecasts")
+def trading_forecasts(projectId: str, deckId: str, cardId: str, forecastId: str | None = None, compare: bool = False):
+    try:
+        if compare:
+            if not forecastId:
+                raise TradingBoundaryError("trading_forecast_id_required")
+            return compare_forecast(projectId, deckId, cardId, forecastId)
+        return read_forecasts(projectId, deckId, cardId, forecastId)
+    except (TradingBoundaryError, TradingForecastError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@router.get("/trading/forecast/history")
+def trading_forecast_history(projectId: str, deckId: str, cardId: str, symbol: str, timeframe: str):
+    try:
+        return read_forecast_history(projectId, deckId, cardId, symbol, timeframe)
+    except (TradingBoundaryError, TradingForecastError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
 
 @router.get("/trading/readiness")
 def trading_readiness():

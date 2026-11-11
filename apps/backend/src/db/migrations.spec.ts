@@ -93,6 +93,7 @@ describe('canonical backend migrations', () => {
         filename: '061_add_connected_card_introductions.sql',
         applied: true,
       }),
+      expect.objectContaining({ filename: '062_trading_forecasts.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -383,7 +384,7 @@ describe('canonical backend migrations', () => {
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 
-  it('accepts an applied 053 ledger and schedules only the seven forward corrections', async () => {
+  it('accepts an applied 053 ledger and schedules only the forward corrections', async () => {
     const migrationsDirectory = resolve(__dirname, '../../migrations');
     const fresh = await applyBackendMigrations({
       client: fakeClient() as any,
@@ -408,8 +409,9 @@ describe('canonical backend migrations', () => {
       '059_enforce_current_hermes_status_and_main_delivery.sql',
       '060_align_main_research_sequence_and_know_identity.sql',
       '061_add_connected_card_introductions.sql',
+      '062_trading_forecasts.sql',
     ]);
-    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 8);
+    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 9);
   });
 
   it('adds Card Run selection and usage fields without another metrics store', async () => {

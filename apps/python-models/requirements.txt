@@ -20,12 +20,13 @@ mcp>=2,<3
 openai==2.41.0
 python-multipart>=0.0.31
 # Auth0 access-token verification for the public MCP resource server.
-PyJWT[crypto]==2.13.0
+PyJWT[crypto]==2.15.1
 # Python-owned AgentGraph assignments and run records use the same PostgreSQL store.
 psycopg[binary]==3.3.4
 # Deterministic paper-trading observation beneath Hermes Cards.
-# Stable PyPI release verified against the current Python 3.11 dependency graph.
-lumibot==4.4.56
+# One pinned vendor compatibility build for Windows and Oracle. Build before pip install:
+# python agent-products/lumibot/build.py
+./agent-products/lumibot/dist/lumibot-4.6.48+mcp2.1-py3-none-any.whl
 # Avoid an unsatisfiable newest-transitive pair: polygon 1.16.3 requires
 # certifi<2026 while ccxt 4.5.77 pins certifi==2026.6.17. This is the newest
 # inspected ccxt release whose supported certifi range overlaps polygon's.
@@ -37,3 +38,11 @@ databento==0.86.0
 # Use the current upstream source plus the bounded SDK-v2 MCP port in this tree.
 -e ./EngraphisLatest
 sentence-transformers==5.7.0
+# Kronos inference uses the existing Python owner; no vendor web server.
+torch==2.14.0
+numpy==2.4.6
+pandas==3.0.5
+einops==0.8.1
+huggingface-hub==1.31.0
+safetensors==0.8.0
+pandas-market-calendars==5.4.0

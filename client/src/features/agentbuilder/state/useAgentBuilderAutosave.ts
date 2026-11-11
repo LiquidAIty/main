@@ -2,7 +2,7 @@
  * Entity: Agent Builder
  * Relationship: This file serializes every Agent Builder deck write through one compare-and-swap coordinator and preserves newer local edits.
  * Entity: Saved Cards
- * Relationship: This file persists the exact current Card document and optimistic revision, promotes explicit saves, and freezes on an uncertain commit until canonical reload.
+ * Relationship: Persists revision-checked Card documents and explicit membership removals, retaining newer edits and freezing uncertain commits until canonical reload.
  * Entity: Card Topology
  * Relationship: Persists Card placement and edges through the same single writer, then publishes only changed saved wire memberships to Hermes.
  * Entity: Projects
@@ -36,6 +36,7 @@ type PersistRequest = {
   scopeGeneration: number;
   scopeKey: string;
   waiters: PersistWaiter[];
+  removeCardId?: string;
 };
 
 type PersistenceScope = {
@@ -182,6 +183,7 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
               id: config.builderDeckId,
             },
             expectedRevision: revisionBefore,
+            ...(request.removeCardId ? { removeCardId: request.removeCardId } : {}),
           }),
         },
       );
@@ -234,6 +236,9 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
       }
 
       const canonicalDeck = config.readDeckDocument(data.deck as DeckDocument);
+      if (request.removeCardId && canonicalDeck.nodes.some(node => node.id === request.removeCardId)) {
+        throw new Error('card_removal_readback_invalid');
+      }
       const previousDeck = config.lastPersistedBoardFingerprintRef.current
         ? { ...canonicalDeck, ...JSON.parse(config.lastPersistedBoardFingerprintRef.current) } as DeckDocument
         : canonicalDeck;
@@ -243,11 +248,27 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
       config.setDeckRevision(revisionAfter);
       config.lastPersistedBoardFingerprintRef.current = canonicalFingerprint;
       config.lastPersistedBoardSnapshotRef.current = config.snapshotDeckBoard(canonicalDeck);
-      config.setDeck((currentDeck) => (
-        boardFingerprint(currentDeck) === request.fingerprint
-          ? canonicalDeck
-          : currentDeck
-      ));
+      if (request.removeCardId) {
+        // A draft captured while deletion was in flight must not put the Card
+        // back. Newer local edits survive below and autosave their updated view.
+        pendingAutosaveRef.current = null;
+        manualQueueRef.current = manualQueueRef.current.filter(queued => {
+          if (!queued.document.nodes.some(node => node.id === request.removeCardId)) return true;
+          rejectRequest(queued, new Error('card_removed'));
+          return false;
+        });
+      }
+      config.setDeck((currentDeck) => {
+        if (boardFingerprint(currentDeck) === request.fingerprint) return canonicalDeck;
+        if (!request.removeCardId) return currentDeck;
+        return {
+          ...currentDeck,
+          version: Math.max(currentDeck.version, canonicalDeck.version),
+          nodes: currentDeck.nodes.filter(node => node.id !== request.removeCardId),
+          edges: currentDeck.edges.filter(edge => edge.source !== request.removeCardId
+            && edge.target !== request.removeCardId),
+        };
+      });
       if (request.reason === 'manual-save') {
         config.setDeckStatusMessage('Board saved.');
       }
@@ -324,6 +345,7 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
     document: DeckDocument,
     reason: string,
     waiter?: PersistWaiter,
+    removeCardId?: string,
   ): PersistRequest | null => {
     const config = configRef.current;
     const scope = scopeRef.current;
@@ -353,6 +375,7 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
       scopeGeneration: scope.generation,
       scopeKey: scope.key,
       waiters: waiter ? [waiter] : [],
+      ...(removeCardId ? { removeCardId } : {}),
     };
   }, []);
 
@@ -367,7 +390,7 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
     drain();
   }, [buildRequest, drain]);
 
-  const handleSaveDeck = useCallback((document?: DeckDocument): Promise<void> => (
+  const handleSaveDeck = useCallback((document?: DeckDocument, removeCardId?: string): Promise<void> => (
     new Promise<void>((resolve, reject) => {
       const config = configRef.current;
       if (!config.canvasProjectId) {
@@ -387,7 +410,7 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
         config.transientCardIds,
       );
       const waiter = { resolve, reject };
-      const request = buildRequest(requestedDeck, 'manual-save', waiter);
+      const request = buildRequest(requestedDeck, 'manual-save', waiter, removeCardId);
       if (!request) return;
 
       const inFlight = inFlightRequestRef.current;
@@ -413,6 +436,23 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
       drain();
     })
   ), [buildRequest, drain]);
+
+  const handleDeleteCard = useCallback((cardId: string): Promise<void> => {
+    const config = configRef.current;
+    const current = currentDeckRef.current;
+    if (!current.nodes.some(node => node.id === cardId)) return Promise.reject(new Error('card_not_found'));
+    const next = {
+      ...current,
+      version: current.version + 1,
+      nodes: current.nodes.filter(node => node.id !== cardId),
+      edges: current.edges.filter(edge => edge.source !== cardId && edge.target !== cardId),
+    };
+    if (config.transientCardIds.has(cardId)) {
+      config.setDeck(next);
+      return Promise.resolve();
+    }
+    return handleSaveDeck(projectDeckForPersistence(next, config.transientCardIds), cardId);
+  }, [handleSaveDeck]);
 
   const reloadCanonical = useCallback(() => {
     rejectPending(new Error('deck_reload_requested'));
@@ -498,6 +538,7 @@ export default function useAgentBuilderAutosave(args: UseAgentBuilderAutosaveArg
 
   return {
     handleSaveDeck,
+    handleDeleteCard,
     persistenceFrozen,
     reloadCanonical,
     reloadToken,

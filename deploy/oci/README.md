@@ -1,146 +1,211 @@
-# LiquidAIty on one OCI Ubuntu VM
+# Oracle Docker package
 
-This package prepares the existing root LiquidAIty application for one Ubuntu LTS AMD64 Oracle Cloud
-Infrastructure Compute VM. It does not provision OCI resources, networking, DNS, TLS certificates, or
-secrets. Caddy is the only public listener. Every application service binds to loopback, and the existing
-root `docker-compose.yml` remains the sole owner of PostgreSQL/AGE and Neo4j.
+This package prepares the current LiquidAIty owners for one Linux AMD64 host. It does not
+provision Oracle, change DNS, log in over SSH, restore data, start a stack or change saved models.
+The reported E5.Flex / 1 OCPU / 12 GB host is historical information until the owner audits it.
+Build images on the development machine; do not assume that host can efficiently build Hermes,
+the UI and the numerical Python dependencies while also serving the application.
 
-## Fixed host layout
+## Source save versus runtime data
 
-| Purpose | Path |
-| --- | --- |
-| Application checkout | `/opt/liquidaity` |
-| Production environment | `/etc/liquidaity/liquidaity.env` |
-| Durable host state | `/var/lib/liquidaity` |
-| Service account | `liquidaity:liquidaity` |
-| Frontend artifact | `/opt/liquidaity/client/dist` |
+Keep the existing ThinkGraph demo data. Saving the reviewed source changes to Git is separate
+from moving or backing up live runtime state, and no Git staging or commit is performed by this
+package. Do not commit live `db/users` SQLite databases or their WAL/SHM siblings, `.env` files,
+profile credentials, uploads, caches or generated outputs. Excluding them from a source image
+or source save does not delete them. A later, explicitly authorized deployment needs a consistent
+backup/restore through each existing owner's supported process, preserving the complete retained
+state and identity. No backup, checkpoint, reset, deletion or database migration is performed here.
 
-Use an encrypted OCI block volume for `/var/lib/liquidaity` and for Docker's data root, or place both on
-an encrypted block volume sized from the retained workstation data plus backup headroom. The owner must
-choose the region, shape, volume size, public IP, DNS name, SSH CIDR, firewall policy, and backup target.
+ShadowBroker, WorldMonitor and Trading-agent activation are deferred. Their source/state is not
+deleted. Existing numerical dependencies are retained where the current application imports them.
 
-## Verified process graph
+## Runtime ownership
 
-| Owner | Command | Listener |
+| Service | Image/command | Private endpoint |
 | --- | --- | --- |
-| Caddy | system package service, this `Caddyfile` | public TCP 80/443 |
-| Backend | `/usr/bin/node dist/src/main.js` in `apps/backend` | `127.0.0.1:4000` |
-| Python rails | `apps/python-models/.venv/bin/python -X utf8 -m uvicorn app.main:app --app-dir apps/python-models --host 127.0.0.1 --port 8003` | `127.0.0.1:8003` |
-| KnowGraph | `services/knowgraph/.venv/bin/python -X utf8 -m uvicorn app:app --app-dir services/knowgraph --host 127.0.0.1 --port 8001` | `127.0.0.1:8001` |
-| MCP | `apps/python-models/.venv/bin/python -X utf8 apps/python-models/app/mcp_host.py` | `127.0.0.1:8765` |
-| PostgreSQL/AGE | root Compose service `postgres` | `127.0.0.1:5433` |
-| Neo4j | root Compose service `neo4j` | `127.0.0.1:7474`, `127.0.0.1:7687` |
+| Hermes and LiquidAIty UI | Controlled `HermesLatest/Dockerfile` base, inherited s6 entrypoint, `gateway run` | `127.0.0.1:9120` |
+| Product API | `backend` target, `node dist/src/main.js` | `127.0.0.1:4000` |
+| Python rails | `application-python` target, existing FastAPI app | `127.0.0.1:8003` |
+| MCP | Same Python image, existing `app/mcp_host.py` | `127.0.0.1:8765` |
+| KnowGraph | Existing service Dockerfile with root build context | `127.0.0.1:8001` |
+| WorldView providers | `worldview` target, `worldview-server.mjs` | `127.0.0.1:4174` |
+| PostgreSQL/AGE and Neo4j | Existing root `docker-compose.yml` only | Existing loopback mappings |
+| Caddy | Caddy image and this `Caddyfile` | Public TCP 80/443 only |
 
-There is no production Vite server and no per-Card process. Codebase Memory remains an external host
-prerequisite because this repository does not own a production CBM daemon command. When that executable is
-absent, the MCP catalog must report the CBM family unavailable; this package does not invent another daemon.
+The application containers use Linux host networking to preserve existing loopback-only contracts.
+They publish no additional ports. Administrative SSH is a separate, owner-restricted host rule.
+Port 9119 is Hermes Dashboard, not the LiquidAIty Webapp. No duplicate Gateway is started.
 
-## Public boundary
+Hermes keeps its sealed managed interpreter at `/opt/hermes/.venv`. Python rails has its own
+CPython 3.11 at `/opt/python311` and its own venv. The build verifies the relocated interpreter's
+prefix, shared-library loading, SSL and SQLite inside the actual Hermes Debian base. It never
+installs application packages into Hermes's sealed environment. The image preserves
+`/opt/liquidaity/HermesLatest -> /opt/hermes` and `/opt/hermes/.hermes -> /opt/data` for the current
+automatic ThinkGraph bridge. Rails and Hermes must have matching numeric UID/GID and the same
+short native-Linux home mount for the existing authenticated Unix control socket.
 
-Caddy exposes only `/api` and descendants to the backend, `/mcp` and the exact OAuth protected-resource
-metadata paths to the MCP host, and the built SPA for every other browser path. Python rails, KnowGraph,
-The Card runtime, databases, MCP health/catalog diagnostics, WorldSignals, Shadowbroker, and other optional products
-remain private. Caddy preserves SSE flushing, WebSocket upgrades, forwarded host/scheme/client IP, immutable
-asset caching, and SPA fallback. Its 32 MB body ceiling covers the current 20 MB JSON limit and the current
-25 MiB PDF upload plus multipart framing.
+The observed base has two SQLite implementations: relocated Python 3.11 uses the pinned shared
+SQLite 3.53.4; sealed Hermes CPython 3.14.9 embeds SQLite 3.53.1. The latter is built-in and does
+not use `LD_LIBRARY_PATH`. The build checks exact shared 3.53.4, while preserving Hermes's actual
+upstream minimum 3.51.3 plus an in-memory FTS5 trigram test. The initial stricter sealed-version
+parity assertion failed and was corrected to the upstream contract, not bypassed by modifying
+Hermes. SQLite documents the WAL-reset fix in [3.51.3 and later](https://sqlite.org/wal.html#walresetbug);
+the observed version difference is not evidence of that vulnerability.
 
-## Host prerequisites and owner inputs
+## Build without saved state
 
-Install Ubuntu LTS AMD64, Caddy 2, Docker Engine with Compose v2, Git, Node `22.23.2`, npm `10.9.8`,
-Python 3.11 or newer with `venv`, and standard systemd utilities. Put the checkout at `/opt/liquidaity`.
-Migrate the supported Linux Card runtime environment and retained external state; this package deliberately does
-not build or modify controlled upstream source. Install the external `codebase-memory-mcp` runtime if the
-production CodeGraph family is required.
+From the repository root, with Docker's Linux AMD64 engine:
 
-Create `/etc/liquidaity/liquidaity.env` from `env.example`. Replace every placeholder. Generate the database,
-bootstrap, MCP-internal, and 64-hex Card runtime secrets on the host. Supply the final domain, Auth0 issuer,
-audience, client ID, scope, CORS origin, and optional provider credentials. Never commit the production file.
+```sh
+python deploy/oci/preflight.py
+python deploy/oci/build.py --tag oracle-prep
+python deploy/oci/smoke.py --tag oracle-prep
+```
 
-Open only inbound TCP 22 from the owner-selected SSH CIDR and TCP 80/443 from the intended public audience.
-Do not expose 4000, 8001, 8003, 8765, 5433, 7474, or 7687 in the OCI NSG, security list, or host firewall.
+`build.py` builds sequentially. It first builds the unchanged controlled Hermes Dockerfile,
+then the application targets. It does not start Compose or mount any saved directory. Resume a
+completed base with `--skip-hermes-base`, or select one image with `--target backend`,
+`application-python`, `hermes-ui`, `worldview`, `knowgraph`, or `proxy-test`.
 
-## Fresh-database limitation
+The canonical LumiBot compatibility artifact is generated by
+`python agent-products/lumibot/build.py` inside the image before pip reads the shared requirements.
+That script verifies the official input wheel hash and applies the reviewed MCP-2 patch. The
+image verifies `lumibot==4.6.48+mcp2.1`, MCP major 2, dependency consistency and core imports.
+The same requirements remain the Windows and container authority; there is no Docker-only fallback.
 
-Current backend startup applies migrations beginning at `025_async_kanban_card_runs.sql`; earlier retained
-schema authority is not bootstrapped by current startup. A blank PostgreSQL/AGE volume is therefore not a
-safe production initialization path. Migrate the retained PostgreSQL/AGE authority from the workstation.
-`install.sh` refuses to start application services until `ag_catalog.agent_card_revisions` exists. Restore
-the retained Neo4j authority as well. No migration was changed by this package.
+Kronos is a Git submodule: saving root source alone does not capture its existing dirty import
+compatibility edit. `patch_kronos_import.py` reproduces only that reviewed three-line import change
+inside the copied image source. It accepts the pinned upstream header or the already-patched
+working checkout, fails on another header, and leaves all model math unchanged. The helper and
+its tests belong to the root source save; no host vendor rewrite or Git mutation is performed.
 
-## Current Linux frontend lockfile blocker
+For the owner-approved CPU-only AMD64 Oracle target, that same venv first installs the official
+PyTorch `2.14.0+cpu` CPython 3.11 wheel, with SHA-256
+`673dbf5c9bbadfffab7a386b6dd7a0c219f1408a328b7b4e86d0ae551cdafa42`, then the canonical requirements.
+This satisfies the unchanged `torch==2.14.0` release constraint. It uses an exact wheel URL, not
+a broad extra package index; Windows requirements, LumiBot, API versions and model math remain
+unchanged. Build and smoke checks assert the CPU suffix, no CUDA runtime and a CPU tensor operator,
+plus `pip check`. The initial standard Linux PyPI build was stopped after it demonstrably selected
+multi-gigabyte CUDA dependencies that this CPU host does not need. No production state was touched.
 
-The current lockfile declares `lightningcss-linux-x64-gnu` as an optional dependency of `lightningcss` but
-contains only the Windows x64 package record. A fresh Linux `npm ci` therefore omits the Linux native binary,
-and the production client build fails while loading the Tailwind/PostCSS stack. `install.sh` detects that
-missing lockfile record before changing services. The lockfile requires a separate, owner-approved Linux
-optional-dependency correction; this OCI package does not change manifests, dependencies, or lockfiles.
+The UI build uses `/product` and `/worldview-native/` as its public prefixes. If required, supply
+`CESIUM_ION_TOKEN` and `GOOGLE_MAPS_API_KEY` in the build process environment; these are deliberately
+browser-visible tokens and must be restricted to the final domain/assets. No model key, password,
+MCP signing key, `.env`, private profile, database, upload or existing cache is a build input.
+Do not pass the filled runtime environment file to Docker build. Root `.dockerignore` allowlists
+the source neighborhoods; Hermes uses its separate existing `.dockerignore`.
 
-## Install
+Provider code is served by a real Express/Node HTTP server. It uses the existing God’s Eye
+handlers and caches and serves only the vendor public assets; there is no Vite source doorway
+or production `vite preview`. The UI remains the bundle served by Hermes.
 
-1. Place the repository at `/opt/liquidaity` and the completed environment file at the fixed path.
-2. Restore the retained database volumes and state described below. Infrastructure may be started manually
-   with the exact root Compose file while performing the restore.
-3. Run `sudo bash /opt/liquidaity/deploy/oci/install.sh` from `/opt/liquidaity`.
-4. Run `sudo bash /opt/liquidaity/deploy/oci/health-check.sh`.
+## Public routing and authentication
 
-The installer fails on missing prerequisites, unresolved placeholders, build errors, missing Card runtime state,
-an unrestored PostgreSQL authority, invalid Caddy/systemd configuration, or failed health. It uses `npm ci`,
-generates Prisma, builds backend and frontend, creates the two first-party Python environments from their
-current requirements, installs Caddy/systemd configuration, starts infrastructure first, then starts the
-application target. It never initializes over retained application state.
-
-## Persistent authorities
-
-| Authority | Production location / owner |
+| Browser path | Owner |
 | --- | --- |
-| PostgreSQL/AGE | Docker volume `sim-pg-data` |
-| Neo4j content and logs | Compose volumes resolved by `docker compose config --volumes` |
-| ThinkGraph | `/opt/liquidaity/db/thinkgraph.sqlite` and any SQLite WAL/SHM siblings |
-| KnowGraph uploads | `/opt/liquidaity/services/knowgraph/uploads` |
-| KnowGraph graph content | Neo4j volume |
-| Card runtime profiles and sessions | `/opt/liquidaity/HermesLatest/.hermes` |
-| Project workspaces | `/var/lib/liquidaity/workspaces` |
-| Builder code workspaces | `/var/lib/liquidaity/project-code` |
-| Canonical Run inputs | `/var/lib/liquidaity/run-inputs` |
-| Run/artifact catalog and lineage | PostgreSQL/AGE, with file locators backed up from their retained paths |
-| Environment and credentials | `/etc/liquidaity/liquidaity.env` |
+| `/product/*` | Strip `/product`, then Product API; its existing Project/session authorization remains |
+| `/worldview-native/*` | Hermes authentication first, then strip the prefix and reach WorldView |
+| `/mcp` and `/mcp/*` | Existing signed-credential MCP endpoint |
+| Everything else, including `/api/ws`, `/api/pty`, `/api/webapp/*` and login | Hermes Webapp |
 
-The repository checkout contains retained state directories, so updates must never use `git clean`, delete
-untracked data, or replace volumes. Keep all listed paths owned by `liquidaity:liquidaity`, except the
-environment file, which is `root:liquidaity` mode `0640`.
+WorldView auth uses Hermes's existing `GET /api/auth/me`. Anonymous/expired logins are refused;
+authentication outages fail closed. Successful cookie refresh forwards every `Set-Cookie`
+response to the browser. Browser credentials are removed before forwarding to the provider.
+The isolated `proxy-test` container verifies routing, anonymous/outage rejection, original POST
+bodies and rotated cookies without a model, provider account, Gateway or database.
 
-## Backup and restore
+The retained Hermes configuration must enable its existing public sign-in provider and contain
+the intended Webapp settings, for example:
 
-The commands below are an operator procedure, not proof that a backup or restore has been run.
+```yaml
+webapp:
+  enabled: true
+  host: 127.0.0.1
+  port: 9120
+  public_url: https://YOUR_VERIFIED_DOMAIN
+```
 
-1. Stop the public edge and application services: `sudo systemctl stop caddy liquidaity.target`.
-2. Create a mode-0700 backup directory on the encrypted backup destination.
-3. Export PostgreSQL while the container is available:
-   `docker exec postgres pg_dumpall -U "$POSTGRES_USER" > "$BACKUP_DIR/postgres.sql"`.
-4. Stop Neo4j and copy its retained data: `docker compose --env-file /etc/liquidaity/liquidaity.env -f /opt/liquidaity/docker-compose.yml stop neo4j`, then `docker cp neo4j:/data "$BACKUP_DIR/neo4j-data"` and `docker cp neo4j:/logs "$BACKUP_DIR/neo4j-logs"`.
-5. Archive `db/thinkgraph.sqlite*`, `services/knowgraph/uploads`, `HermesLatest/.hermes`,
-   `/var/lib/liquidaity/workspaces`, `/var/lib/liquidaity/project-code`, `/var/lib/liquidaity/run-inputs`,
-   and `/etc/liquidaity/liquidaity.env`. Protect the archive and environment file as secrets.
-6. Record the exact Git revision and the Docker volume names from `docker compose config --volumes`.
+An external `public_url` engages Hermes authentication even on loopback. Its existing Nous/OIDC
+registration and callback must match that URL. Do not inject a static session token into Caddy,
+disable authentication, or choose a new identity provider implicitly. Verify authenticated HTTP,
+socket tickets, WebSocket upgrades, sign-out and refresh through the final HTTPS origin.
 
-Restore in this order: exact application revision; production environment; PostgreSQL/AGE; Neo4j; ThinkGraph;
-KnowGraph uploads; Card runtime state; Project and Builder workspaces; Run inputs/artifacts; ownership and modes.
-Start `liquidaity-infrastructure.service`, verify both databases, then start `liquidaity.target`, then Caddy,
-and finally run the health check.
+## Runtime inputs and preservation
 
-## Update and rollback
+Copy `env.example` outside the checkout, for example `/etc/liquidaity/liquidaity.env`, mode 0600.
+It is a literal Compose interpolation file, not a shell script. Keep the existing database
+passwords and MCP signing secret; changing them can invalidate retained identity. The old Auth0
+MCP settings are retired. Each service receives an explicit environment allowlist in Compose.
+Single-quote credentials containing `$` to prevent Compose interpolation; preflight rejects
+unquoted/double-quoted dollar expansion and checks owner-only file permissions on Linux.
+Hermes itself receives configured OpenRouter, OpenAI, Anthropic, Gemini and Firecrawl credentials;
+passing a key only to Python rails would not authenticate Hermes model/tool calls. The host-path
+preflight reads each retained profile's parent/subagent provider and model identifiers and reports
+runtime-key presence separately from actual API success. Use the existing Hermes Python for this
+optional YAML inspection; it never imports or changes Hermes authentication state. Retained OAuth,
+Codex/local-process providers, custom endpoints and profile-local credentials require their own
+Linux verification. No key presence authorizes a provider/model switch, and no automatic fallback
+is configured by this package.
 
-Run `sudo bash /opt/liquidaity/deploy/oci/update.sh` only from a clean `main` deployment checkout. It records the
-prior revision, performs `git pull --ff-only`, stops through the same systemd owners, rebuilds and installs,
-starts the target, and runs health. Failure switches the checkout to the recorded prior revision, rebuilds
-that revision, restarts it, and reruns health. It never uses `git reset --hard`, deletes untracked data, or
-changes database volumes. A rollback leaves a detached checkout intentionally; inspect the failed revision
-before returning to the deployment branch.
+CodeGraph is a separate known deployment blocker: the controlled Hermes image does not contain
+`codebase-memory-mcp`, and this package neither installs nor mounts it. Setting `MCP_CBM_BINARY`
+alone does not supply an executable or its project/index state. A reviewed Linux AMD64 binary
+and its existing supported project ownership must be supplied before claiming CodeGraph works;
+this preparation does not mutate the host CBM installation or index lifecycle.
 
-## What moves and what is generated
+Set the exact audited existing PostgreSQL and Neo4j volume names. The overlay marks them
+external and refuses missing volumes. Do not change the Compose project/name casually, initialize
+empty volumes, run `down -v`, or import fixture data. Backend startup starts its migration list at
+025; a blank database is not a proven bootstrap path. Restoring the retained baseline is separate
+owner-authorized work.
 
-Migrate all persistent authorities listed above from the workstation. Generate fresh host-only service
-secrets only when they do not replace retained identity or credentials. Generate Node build output, frontend
-build output, and first-party Python virtual environments on the VM. Migrate or separately prepare the
-supported Linux Card runtime and its retained state. Never commit the production environment, credentials,
-database exports, provider keys, OAuth secrets, Card runtime state, Project data, uploads, or Run artifacts.
+All bind mounts must already exist; `create_host_path: false` prevents a typo from silently
+creating an empty replacement. Preserve these authorities and their ownership:
+
+| Variable | Contents |
+| --- | --- |
+| `HERMES_STATE_DIR` | Entire retained Hermes home, including profiles, sessions, skills, auth, Holographic, plugins and credentials |
+| `THINKGRAPH_STATE_DIR` | Current `db/users`, each owner's `engraphis.sqlite` and WAL/SHM siblings |
+| `KNOWGRAPH_UPLOAD_DIR` | Retained KnowGraph uploads |
+| `WORKSPACE_STATE_DIR` | Existing workspaces, project-code and run-inputs directories under one retained state root |
+| `MODEL_CACHE_DIR` | Existing/new model download cache, separate from source and images |
+| `WORLDVIEW_CACHE_DIR` | Existing God’s Eye `.gev-cache` |
+
+Hermes and Python services use `HERMES_UID/HERMES_GID` (default 10000). Product API and WorldView
+must be able to read/write their mounted workspace/cache paths as the configured service UID.
+The image includes current application plugin source in Hermes's existing bundled plugin directory.
+An existing profile-installed copy can override that directory: inspect effective plugin paths and
+publish only the requested plugin update through its existing owner; never rewrite saved profiles
+or delete their plugin state at container startup.
+
+On Docker Desktop, use disposable native Docker volumes for any SQLite runtime test, not writable
+Windows/macOS bind mounts of live profiles. The upstream Hermes Docker guide explains the WAL
+shared-memory limitation. This package does not mount production state during local tests.
+
+## Preflight and later deployment
+
+```sh
+python deploy/oci/preflight.py --env /etc/liquidaity/liquidaity.env --host-paths
+docker compose --env-file /etc/liquidaity/liquidaity.env -f docker-compose.yml -f deploy/oci/compose.docker.yml config --quiet
+```
+
+These commands inspect only; they do not deploy. Avoid unredacted `docker compose config`,
+`docker inspect` environment dumps and shell tracing because they can expose secrets.
+After the owner has audited the host, verified backups/restores and explicitly approved deployment,
+the same two Compose files are the start/update definition. Retire the old host services only as
+an explicit, exact-target deployment action; do not run both managers on the same ports.
+`install.sh` and `update.sh` now refuse the retired host/systemd path without making changes.
+The old `systemd/` files are retained historical packaging, not installed by this Docker workflow.
+
+After an authorized startup, run `python deploy/oci/health.py --public https://YOUR_VERIFIED_DOMAIN`.
+This checks private HTTP readiness and public anonymous denial. It does not prove a model turn.
+Required acceptance still includes actual provider access, paid-provider quota, saved-Card prompt,
+model and tools, Holographic persistence, graph writes/readback, restart persistence, and remote
+browser visual acceptance. OpenRouter was reported present and HTTP-200 locally and is paid;
+that does not prove any saved Card model. OpenAI was missing during preparation, so OpenAI-only
+features remain unavailable until configured. Never substitute or silently switch saved models.
+
+Before exposing Caddy, verify current Oracle shape/OS/disk/memory, existing listeners and service
+owners, volume names, DNS and firewall rules. Historical 1 OCPU/12 GB capacity is not a runtime
+capacity result. Keep existing DNS/state unchanged until that audit. Export/import or registry
+publication of reviewed images, SSH, database migration and production startup are separate actions.

@@ -88,6 +88,8 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
   const [sourceVersion, setSourceVersion] = useState<string | null>(null);
   const [navigationPosition, setNavigationPosition] = useState<{ right: number; bottom: number } | null>(null);
   const [layerState, setLayerState] = useState<GodsEyeLayerState | null>(null);
+  const layerStateRef = useRef(layerState);
+  layerStateRef.current = layerState;
   const [selection, setSelection] = useState<GodsEyeSelectionRef | null>(null);
   const [surfaceError, setSurfaceError] = useState<string | null>(null);
   const [projectWorldview, setProjectWorldview] = useState<ProjectWorldviewState | null>(null);
@@ -203,6 +205,29 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
   }, [projectId]);
 
   const sourceReady = Boolean(sourceVersion && layerState?.sourceStateReady);
+  const projectReady = projectWorldview?.projectId === projectId;
+  useEffect(() => {
+    const bridge = bridgeRef.current;
+    if (!bridge || !sourceReady || !projectReady || !projectId || !cardId) {
+      onBridgeChange?.(null);
+      return;
+    }
+    const guarded: GodsEyeBridge = { ...bridge,
+      executeAction: (name, args, options) => {
+        const confirmed = confirmedProjectRef.current;
+        if (currentProjectRef.current !== projectId || confirmed?.projectId !== projectId
+          || bridgeRef.current !== bridge || options?.signal?.aborted)
+          return Promise.reject(new Error('worldview_view_changed'));
+        const disabledLayerIds = (layerStateRef.current?.sources || []).filter(source =>
+          !(confirmed.capabilities.find(entry => entry.capabilityId === source.id)?.enabled
+            ?? confirmed.defaultEnabled)).map(source => source.id);
+        return bridge.executeAction(name, name === 'fly_to_location' ? { ...args, waitForArrival: true } : args,
+          { ...options, disabledLayerIds });
+      },
+    };
+    onBridgeChange?.(guarded);
+    return () => { onBridgeChange?.(null); };
+  }, [projectId, cardId, sourceReady, projectReady, onBridgeChange]);
   const acceptCapability = (savedProjectId: string, capability: ProjectWorldviewState['capabilities'][number]) => {
     const current = confirmedProjectRef.current;
     if (!current || current.projectId !== savedProjectId
@@ -410,7 +435,6 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
         onReady={(version) => {
           setSourceVersion(version);
           setSurfaceError(null);
-          onBridgeChange?.(bridgeRef.current);
         }}
         onBridgeUnavailable={() => {
           satelliteViewRequestRef.current = null;

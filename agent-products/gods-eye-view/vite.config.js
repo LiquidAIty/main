@@ -65,6 +65,18 @@ import { VOICE_MODELS, isKnownVoiceTier, resolveVoiceModel } from './src/voice/v
 /** Resolve __dirname for ESM context. */
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** One HTTP installer shared by Vite hooks and the production Node server. */
+function httpProvider({ name, install, preview = false, closeBundle }) {
+  const configureServer = (server) => install(server.middlewares, server.httpServer);
+  return {
+    name,
+    install,
+    configureServer,
+    ...(preview ? { configurePreviewServer: configureServer } : {}),
+    ...(closeBundle ? { closeBundle, dispose: closeBundle } : {}),
+  };
+}
+
 const WORLDVIEW_BROWSER_ORIGINS = ['http://127.0.0.1:9120', 'http://localhost:9120',
   'http://127.0.0.1:5173', 'http://localhost:5173'];
 
@@ -1278,14 +1290,14 @@ export function createRadioProxyMiddleware({ fetchImpl = null, lookupImpl = look
 
 function radioBrowserProxy() {
   const middleware = createRadioProxyMiddleware();
-  const install = (server) => {
-    server.middlewares.use('/api/radio', middleware);
+  const install = (middlewares) => {
+    middlewares.use('/api/radio', middleware);
   };
-  return {
+  return httpProvider({
     name: 'radio-browser-proxy',
-    configureServer: install,
-    configurePreviewServer: install,
-  };
+    install,
+    preview: true,
+  });
 }
 // ---------------------------------------------------------------------------
 // GBFS (General Bikeshare Feed Specification) proxy constants
@@ -1565,10 +1577,10 @@ function celestrakProxy() {
     return { at: Date.now(), body };
   }
 
-  return {
+  return httpProvider({
     name: 'celestrak-proxy',
-    configureServer(server) {
-      server.middlewares.use('/api/celestrak', async (req, res) => {
+    install(middlewares, httpServer) {
+      middlewares.use('/api/celestrak', async (req, res) => {
         const group = String(req.url || '').replace(/^\//, '').split('?')[0];
         if (!/^[a-z0-9-]+$/i.test(group)) {
           res.writeHead(400, { 'Content-Type': 'text/plain' });
@@ -1621,7 +1633,7 @@ function celestrakProxy() {
         }
       });
     },
-  };
+  });
 }
 
 export const LL2_CACHE_TTL_MS = 15 * 60_000;
@@ -1737,15 +1749,13 @@ function rocketLaunchesProxy() {
     });
   }
 
-  return {
+  return httpProvider({
     name: 'rocket-launches-proxy',
-    configureServer(server) {
-      install(server.middlewares);
+    install(middlewares, httpServer) {
+      install(middlewares);
     },
-    configurePreviewServer(server) {
-      install(server.middlewares);
-    },
-  };
+    preview: true,
+  });
 }
 
 /**
@@ -1869,10 +1879,10 @@ function tomtomProxy() {
     return buf;
   }
 
-  return {
+  return httpProvider({
     name: 'tomtom-proxy',
-    configureServer(server) {
-      server.middlewares.use('/api/tomtom', async (req, res) => {
+    install(middlewares, httpServer) {
+      middlewares.use('/api/tomtom', async (req, res) => {
         // Sanitized responses only (proxy/security baseline): no upstream
         // error details, and never echo the key or the upstream URL.
         const sendJson = (status, obj, extraHeaders = {}) => {
@@ -1975,7 +1985,7 @@ function tomtomProxy() {
         }
       });
     },
-  };
+  });
 }
 
 /**
@@ -2123,10 +2133,10 @@ function firmsProxy() {
     return statusInflight;
   }
 
-  return {
+  return httpProvider({
     name: 'firms-proxy',
-    configureServer(server) {
-      server.middlewares.use('/api/firms', async (req, res) => {
+    install(middlewares, httpServer) {
+      middlewares.use('/api/firms', async (req, res) => {
         const sendJson = (status, obj) => {
           if (res.headersSent) return;
           res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -2195,7 +2205,7 @@ function firmsProxy() {
         }
       });
     },
-  };
+  });
 }
 
 /**
@@ -2221,6 +2231,7 @@ function terrainHeightsProxy() {
   const inflight = new Map();
   let diskLoaded = false;
   let diskDirty = false;
+  let flushTimer = null;
 
   /** Load the on-disk cache into memory once, lazily (first request only). */
   async function loadDiskOnce() {
@@ -2256,7 +2267,7 @@ function terrainHeightsProxy() {
     } catch { /* no disk cache yet */ }
     // Periodic flush, same shape as adsbdbProxy: coalesce writes instead of
     // hitting disk on every request.
-    setInterval(async () => {
+    flushTimer = setInterval(async () => {
       if (!diskDirty) return;
       diskDirty = false;
       try {
@@ -2267,7 +2278,8 @@ function terrainHeightsProxy() {
         diskDirty = true; // retry next tick
         console.warn('[terrain-heights-proxy] cache write failed:', err?.message || err);
       }
-    }, 15_000).unref?.();
+    }, 15_000);
+    flushTimer.unref?.();
   }
 
   /**
@@ -2304,10 +2316,10 @@ function terrainHeightsProxy() {
     return inflight.get(key);
   }
 
-  return {
+  return httpProvider({
     name: 'terrain-heights-proxy',
-    configureServer(server) {
-      server.middlewares.use('/api/terrain/heights', async (req, res) => {
+    install(middlewares, httpServer) {
+      middlewares.use('/api/terrain/heights', async (req, res) => {
         const send = (status, bodyObj) => {
           if (res.headersSent) return;
           res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -2346,7 +2358,11 @@ function terrainHeightsProxy() {
         }
       });
     },
-  };
+    closeBundle() {
+      clearInterval(flushTimer);
+      flushTimer = null;
+    },
+  });
 }
 
 /**
@@ -2363,6 +2379,7 @@ function adsbdbProxy() {
   let dirty = false;
   let loaded = false;
   const inflight = new Map();
+  let flushTimer = null;
 
   async function loadOnce() {
     if (loaded) return;
@@ -2371,14 +2388,15 @@ function adsbdbProxy() {
       const parsed = JSON.parse(await fsp.readFile(CACHE_PATH, 'utf8'));
       cache = { routes: parsed.routes ?? {}, aircraft: parsed.aircraft ?? {} };
     } catch { /* first run */ }
-    setInterval(async () => {
+    flushTimer = setInterval(async () => {
       if (!dirty) return;
       dirty = false;
       try {
         await fsp.mkdir(path.dirname(CACHE_PATH), { recursive: true });
         await fsp.writeFile(CACHE_PATH, JSON.stringify(cache), 'utf8');
       } catch { dirty = true; } // retry next tick
-    }, 15_000).unref?.();
+    }, 15_000);
+    flushTimer.unref?.();
   }
 
   const fresh = (e) => e && Date.now() - e.at < TTL_MS;
@@ -2438,10 +2456,10 @@ function adsbdbProxy() {
     return inflight.get(ik);
   }
 
-  return {
+  return httpProvider({
     name: 'adsbdb-proxy',
-    configureServer(server) {
-      server.middlewares.use('/api/adsbdb', async (req, res) => {
+    install(middlewares, httpServer) {
+      middlewares.use('/api/adsbdb', async (req, res) => {
         await loadOnce();
         const send = (status, obj) => {
           res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -2467,7 +2485,11 @@ function adsbdbProxy() {
         }
       });
     },
-  };
+    closeBundle() {
+      clearInterval(flushTimer);
+      flushTimer = null;
+    },
+  });
 }
 
 /**
@@ -2611,10 +2633,10 @@ async function fetchOverpassPayload(body, maxResponseBytes = OVERPASS_MAX_RESPON
  * @returns {import('vite').Plugin}
  */
 function overpassProxy() {
-  return {
+  return httpProvider({
     name: 'overpass-proxy',
-    configureServer(server) {
-      server.middlewares.use('/api/overpass', async (req, res) => {
+    install(middlewares, httpServer) {
+      middlewares.use('/api/overpass', async (req, res) => {
         // Hoisted out of the try so the catch's serve-stale lookup can see it
         // (a body-read failure would otherwise hit an out-of-scope reference).
         let cacheKey = null;
@@ -2731,7 +2753,7 @@ function overpassProxy() {
 
       // Real OSM routing via the public FOSSGIS OSRM servers (foot/car/bike).
       // GET /api/route?profile=foot|car|bike&coords=lon,lat;lon,lat[;...]
-      server.middlewares.use('/api/route', async (req, res) => {
+      middlewares.use('/api/route', async (req, res) => {
         const fail = (msg) => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: msg }));
@@ -2821,7 +2843,7 @@ function overpassProxy() {
         }
       });
     },
-  };
+  });
 }
 
 export function adsbLolFallbackAnchor(req) {
@@ -2936,10 +2958,10 @@ function openSkySourceIsStale(sourceEpochMs, now = Date.now()) {
  * @returns {import('vite').Plugin}
  */
 function openSkyProxy() {
-  return {
+  return httpProvider({
     name: 'opensky-proxy',
-    configureServer(server) {
-      server.middlewares.use('/api/opensky', async (req, res) => {
+    install(middlewares, httpServer) {
+      middlewares.use('/api/opensky', async (req, res) => {
         try {
           const requestedMode = normalizeOpenSkyAuthMode(process.env.OPENSKY_AUTH_MODE);
           const now = Date.now();
@@ -3216,7 +3238,7 @@ function openSkyProxy() {
         }
       });
     },
-  };
+  });
 }
 
 /**
@@ -3271,10 +3293,10 @@ function gbfsCacheControl(pathname) {
  * @returns {import('vite').Plugin}
  */
 function gbfsProxy() {
-  return {
+  return httpProvider({
     name: 'gbfs-proxy',
-    configureServer(server) {
-      server.middlewares.use('/api/gbfs', async (req, res) => {
+    install(middlewares, httpServer) {
+      middlewares.use('/api/gbfs', async (req, res) => {
         try {
           if (req.method !== 'GET') {
             res.writeHead(405, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -3376,7 +3398,7 @@ function gbfsProxy() {
         }
       });
     },
-  };
+  });
 }
 
 /**
@@ -4516,10 +4538,10 @@ function cctvProxy() {
     }
   };
 
-  return {
+  return httpProvider({
     name: 'cctv-proxy',
-    configureServer(server) {
-      server.middlewares.use('/api/cctv', async (req, res) => {
+    install(middlewares, httpServer) {
+      middlewares.use('/api/cctv', async (req, res) => {
         try {
           const sources = await getCctvSources();
           const sourceById = new Map(sources.map((source) => [source.id, source]));
@@ -4722,7 +4744,7 @@ function cctvProxy() {
         }
       });
     },
-  };
+  });
 }
 
 /**
@@ -4740,10 +4762,10 @@ function adsbLolProxy() {
   let _cacheAt = 0;
   /** Response cache TTL (ms). */
   const CACHE_MS = 12000;
-  return {
+  return httpProvider({
     name: 'adsblol-proxy',
-    configureServer(server) {
-      server.middlewares.use('/api/adsblol/mil', async (req, res) => {
+    install(middlewares, httpServer) {
+      middlewares.use('/api/adsblol/mil', async (req, res) => {
         try {
           const now = Date.now();
           if (_cache && now - _cacheAt < CACHE_MS) {
@@ -4773,7 +4795,7 @@ function adsbLolProxy() {
         }
       });
     },
-  };
+  });
 }
 
 /**
@@ -4844,26 +4866,22 @@ function aisLiveProxy() {
     });
   }
 
-  return {
+  return httpProvider({
     name: 'ais-live-proxy',
-    configureServer(server) {
-      install(server.middlewares);
+    install(middlewares, httpServer) {
+      install(middlewares);
       startAisStreamWatchdogTick();
       // Vite restarts the server in-process on a config change while this
       // module's state survives; without teardown each reload stacks another
       // interval and another socket.
-      server.httpServer?.on('close', disposeAisStream);
+      httpServer?.on('close', disposeAisStream);
     },
-    configurePreviewServer(server) {
-      install(server.middlewares);
-      startAisStreamWatchdogTick();
-      server.httpServer?.on('close', disposeAisStream);
-    },
+    preview: true,
     // Middleware-mode backstop: there is no httpServer to hang 'close' on.
     closeBundle() {
       disposeAisStream();
     },
-  };
+  });
 }
 
 /**
@@ -4968,15 +4986,13 @@ function trackBackfillProxies() {
     });
   }
 
-  return {
+  return httpProvider({
     name: 'track-backfill-proxies',
-    configureServer(server) {
-      install(server.middlewares);
+    install(middlewares, httpServer) {
+      install(middlewares);
     },
-    configurePreviewServer(server) {
-      install(server.middlewares);
-    },
-  };
+    preview: true,
+  });
 }
 
 /**
@@ -5241,15 +5257,13 @@ function openAiRealtimeProxy() {
     });
   }
 
-  return {
+  return httpProvider({
     name: 'openai-realtime-proxy',
-    configureServer(server) {
-      install(server.middlewares);
+    install(middlewares, httpServer) {
+      install(middlewares);
     },
-    configurePreviewServer(server) {
-      install(server.middlewares);
-    },
-  };
+    preview: true,
+  });
 }
 
 function extractOpenAiResponseText(data) {
@@ -5528,15 +5542,13 @@ function googlePlacesContextProxy() {
     });
   }
 
-  return {
+  return httpProvider({
     name: 'google-places-context-proxy',
-    configureServer(server) {
-      install(server.middlewares);
+    install(middlewares, httpServer) {
+      install(middlewares);
     },
-    configurePreviewServer(server) {
-      install(server.middlewares);
-    },
-  };
+    preview: true,
+  });
 }
 
 function placeContextPriority(types) {
@@ -6911,15 +6923,13 @@ function militaryInstallationsProxy() {
     });
   }
 
-  return {
+  return httpProvider({
     name: 'military-installations-proxy',
-    configureServer(server) {
-      install(server.middlewares);
+    install(middlewares, httpServer) {
+      install(middlewares);
     },
-    configurePreviewServer(server) {
-      install(server.middlewares);
-    },
-  };
+    preview: true,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -7206,15 +7216,13 @@ function regionalBriefProxy() {
     });
   }
 
-  return {
+  return httpProvider({
     name: 'regional-brief-proxy',
-    configureServer(server) {
-      install(server.middlewares);
+    install(middlewares, httpServer) {
+      install(middlewares);
     },
-    configurePreviewServer(server) {
-      install(server.middlewares);
-    },
-  };
+    preview: true,
+  });
 }
 
 function weatherEffectsProxy() {
@@ -7288,15 +7296,13 @@ function weatherEffectsProxy() {
     });
   }
 
-  return {
+  return httpProvider({
     name: 'weather-effects-proxy',
-    configureServer(server) {
-      install(server.middlewares);
+    install(middlewares, httpServer) {
+      install(middlewares);
     },
-    configurePreviewServer(server) {
-      install(server.middlewares);
-    },
-  };
+    preview: true,
+  });
 }
 
 function parseJsonEnv(key, fallback) {
@@ -7351,6 +7357,31 @@ function normalizeAisTimestamp(value) {
   return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
 }
 
+/** Create each provider once so its HTTP routes retain their existing caches. */
+export function createWorldViewHttpProviders() {
+  return [
+    openSkyProxy(),
+    celestrakProxy(),
+    tomtomProxy(),
+    firmsProxy(),
+    rocketLaunchesProxy(),
+    terrainHeightsProxy(),
+    adsbdbProxy(),
+    overpassProxy(),
+    militaryInstallationsProxy(),
+    regionalBriefProxy(),
+    weatherEffectsProxy(),
+    cctvProxy(),
+    radioBrowserProxy(),
+    gbfsProxy(),
+    adsbLolProxy(),
+    aisLiveProxy(),
+    trackBackfillProxies(),
+    openAiRealtimeProxy(),
+    googlePlacesContextProxy(),
+  ];
+}
+
 /**
  * Main Vite configuration factory.
  *
@@ -7372,25 +7403,7 @@ export default defineConfig(({ mode }) => {
         server.middlewares.use(worldViewBrowserAccess);
       } },
       cesium(),
-      openSkyProxy(),
-      celestrakProxy(),
-      tomtomProxy(),
-      firmsProxy(),
-      rocketLaunchesProxy(),
-      terrainHeightsProxy(),
-      adsbdbProxy(),
-      overpassProxy(),
-      militaryInstallationsProxy(),
-      regionalBriefProxy(),
-      weatherEffectsProxy(),
-      cctvProxy(),
-      radioBrowserProxy(),
-      gbfsProxy(),
-      adsbLolProxy(),
-      aisLiveProxy(),
-      trackBackfillProxies(),
-      openAiRealtimeProxy(),
-      googlePlacesContextProxy(),
+      ...createWorldViewHttpProviders(),
     ],
     server: {
       cors: { origin: WORLDVIEW_BROWSER_ORIGINS, methods: ['GET', 'HEAD', 'POST'],

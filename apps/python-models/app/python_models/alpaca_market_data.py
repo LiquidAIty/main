@@ -13,7 +13,7 @@ credentials are absent the providers return the honest ``provider_unconfigured``
 provider/HTTP failures return ``provider_error``. Nothing is ever fabricated.
 """
 # Entity: Market Data
-# Relationship: This file performs bounded read-only Alpaca snapshot, historical-bar, and paper-account readiness requests and returns typed availability without order authority.
+# Relationship: This file performs bounded read-only Alpaca requests and reports raw bar provenance, coverage limits, and chronological price-performance summaries without order authority.
 # Entity: Credentials
 # Relationship: This file consumes validated paper-provider credentials without returning, logging, or forwarding their secret values.
 
@@ -157,9 +157,45 @@ class HistoricalBars:
     end: Optional[str] = None
     bars: list[MarketBar] = field(default_factory=list)
     diagnostics: Optional[str] = None
+    truncated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {**asdict(self), "bars": [asdict(b) for b in self.bars]}
+        # Keep the bounded summary ahead of the long raw series in model tool output.
+        return {"barCount": len(self.bars), "adjustment": "raw", "assetClass": "us_equity",
+                "timestampMeaning": "Bar-start/session labels, not trade execution or market-close timestamps.",
+                "summary": _historical_summary(self), **asdict(self)}
+
+
+def _historical_summary(history: HistoricalBars) -> dict[str, Any]:
+    """Exact observed close-series arithmetic, never a forecast or calendar-completeness claim."""
+    summary: dict[str, Any] = {
+        "status": "unavailable", "basis": "raw close-to-close price performance; dividends excluded",
+        "calendarCompletenessVerified": False, "truncated": history.truncated,
+    }
+    if history.status != STATUS_AVAILABLE or history.diagnostics or len(history.bars) < 2:
+        return {**summary, "reason": history.diagnostics or "at_least_two_valid_bars_required"}
+    try:
+        rows = sorted(history.bars, key=lambda b: datetime.fromisoformat(b.timestamp.replace("Z", "+00:00")))
+        times = [datetime.fromisoformat(b.timestamp.replace("Z", "+00:00")) for b in rows]
+        if len(set(times)) != len(rows) or any(t.tzinfo is None for t in times):
+            return {**summary, "reason": "duplicate_or_invalid_bar_timestamps"}
+        if any(not all(math.isfinite(v) and v > 0 for v in (b.open, b.high, b.low, b.close))
+               or b.high < max(b.open, b.close, b.low) or b.low > min(b.open, b.close)
+               for b in rows):
+            return {**summary, "reason": "invalid_observed_prices"}
+    except (TypeError, ValueError):
+        return {**summary, "reason": "invalid_observed_bars"}
+    peak, drawdown, peak_at, trough_at = rows[0], 0.0, None, None
+    for bar in rows:
+        if bar.close > peak.close:
+            peak = bar
+        decline = bar.close / peak.close - 1
+        if decline < drawdown:
+            drawdown, peak_at, trough_at = decline, peak.timestamp, bar.timestamp
+    return {**summary, "status": "available", "firstBarAt": rows[0].timestamp,
+            "lastBarAt": rows[-1].timestamp, "firstClose": rows[0].close, "lastClose": rows[-1].close,
+            "priceReturnPercent": 100 * (rows[-1].close / rows[0].close - 1),
+            "maxDrawdownPercent": 100 * drawdown, "drawdownPeakAt": peak_at, "drawdownTroughAt": trough_at}
 
 
 @dataclass(frozen=True)
@@ -323,6 +359,7 @@ def get_historical_bars(
     end: Optional[str] = None,
     limit: int = 100,
     feed: str = "iex",
+    sort: str = "asc",
     transport: Optional[Transport] = None,
     credentials: Optional[AlpacaCredentials] = None,
     env: Mapping[str, str] | None = None,
@@ -337,6 +374,8 @@ def get_historical_bars(
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > MAX_BARS_LIMIT:
         raise ValueError(f"alpaca_bars_limit_out_of_range_1_{MAX_BARS_LIMIT}")
     feed = _validated_feed(feed)
+    if sort not in {"asc", "desc"}:
+        raise ValueError("alpaca_sort_invalid")
     start = _validated_timestamp(start, "start")
     end = _validated_timestamp(end, "end")
     if start and end:
@@ -358,6 +397,8 @@ def get_historical_bars(
         ("timeframe", timeframe),
         ("limit", str(limit)),
         ("feed", feed),
+        ("sort", sort),
+        ("adjustment", "raw"),
     ]
     if start:
         params.append(("start", start))
@@ -369,8 +410,29 @@ def get_historical_bars(
         f"{urllib.parse.urlencode(params)}"
     )
     send = transport or _default_get
+    truncated = False
     try:
         payload = send(url, _auth_headers(creds))
+        # A page may contain fewer than limit bars even when more are available.
+        # Bound pagination and report incompleteness instead of inventing history.
+        if isinstance(payload, dict) and isinstance(payload.get("bars"), list):
+            payload = dict(payload)
+            collected = list(payload["bars"])
+            seen_tokens: set[str] = set()
+            while payload.get("next_page_token") and len(collected) < limit and len(seen_tokens) < 10:
+                token = str(payload["next_page_token"])
+                if token in seen_tokens:
+                    raise ValueError("alpaca_repeated_page_token")
+                seen_tokens.add(token)
+                page = send(url + "&" + urllib.parse.urlencode({"page_token": token}), _auth_headers(creds))
+                if not isinstance(page, dict) or not isinstance(page.get("bars"), list):
+                    raise ValueError("alpaca_invalid_bars_page")
+                collected.extend(page["bars"])
+                payload["next_page_token"] = page.get("next_page_token")
+            if payload.get("next_page_token") and len(collected) < limit:
+                raise ValueError("alpaca_pagination_limit")
+            truncated = bool(payload.get("next_page_token")) or len(collected) > limit
+            payload["bars"] = collected[:limit]
     except (urllib.error.HTTPError, urllib.error.URLError) as exc:
         return HistoricalBars(provider=PROVIDER, feed=feed, symbol=symbol, timeframe=timeframe,
                               status=STATUS_ERROR, fetchedAt=fetched, start=start, end=end,
@@ -414,7 +476,7 @@ def get_historical_bars(
                               else STATUS_INVALID if malformed_count
                               else STATUS_EMPTY
                           ),
-                          fetchedAt=fetched, start=start, end=end, bars=bars,
+                          fetchedAt=fetched, start=start, end=end, bars=bars, truncated=truncated,
                           diagnostics=(
                               f"alpaca_malformed_bars_omitted:{malformed_count}"
                               if malformed_count else None

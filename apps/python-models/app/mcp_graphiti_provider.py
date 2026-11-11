@@ -272,7 +272,9 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
                               structuredContent={"result": payload})
     if name in {"add_know", "update_know", "remove_know", "delete_entity_edge"}:
         from app import mcp_auth
-        from graphiti_core.knows import KnowCitation, KnowDirection
+        from graphiti_core.knows import KnowCitation, KnowDirection, KnowRelationship
+        from pydantic import ValidationError
+        from app.application_tool_error import ApplicationToolError
         from graphiti_core.utils.datetime_utils import utc_now
 
         context = mcp_auth.authenticated_project_context() or {}
@@ -292,6 +294,18 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
             args["citation"] = KnowCitation.model_validate(args["citation"])
         if args.get("direction"):
             args["direction"] = KnowDirection.model_validate(args["direction"])
+        if name == "add_know" and args.get("relationships") is not None:
+            if not isinstance(args["relationships"], list):
+                raise ApplicationToolError("relationships must be a list of named targets and relationship prose")
+            try:
+                args["relationships"] = [KnowRelationship.model_validate(item) for item in args["relationships"]]
+            except ValidationError:
+                # Explain the actual argument contract without leaking submitted
+                # evidence or collapsing a correctable request into internal_failure.
+                raise ApplicationToolError(
+                    "Each relationship requires target_entity_name and fact. "
+                    "Use an Entity name for the target, not target_entity_uuid."
+                ) from None
         if name != "add_know":
             if name == "update_know":
                 know = await graphiti_module_ref.graphiti_client.update_know(**args)

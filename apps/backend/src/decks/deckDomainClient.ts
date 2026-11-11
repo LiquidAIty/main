@@ -79,7 +79,7 @@ export async function saveDeckDocument(
   projectId: string,
   deckId: string,
   document: DeckDocument,
-  options?: { expectedRevision?: string | null },
+  options?: { expectedRevision?: string | null; removeCardId?: string },
 ): Promise<{
   deck: DeckDocument;
   meta: { deckRevision: string | null; deckSavedAt: string | null };
@@ -92,6 +92,7 @@ export async function saveDeckDocument(
       body: JSON.stringify({
         document,
         expectedRevision: options?.expectedRevision || null,
+        ...(options?.removeCardId === undefined ? {} : { removeCardId: options.removeCardId }),
       }),
     },
   );

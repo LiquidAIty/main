@@ -572,7 +572,7 @@ def test_duplicate_relationship_submission_retries_incomplete_settlement(monkeyp
     monkeypatch.setattr(mcp_graphiti_provider, "_settle_research_relationships", settle)
     result = asyncio.run(mcp_graphiti_provider.call_graphiti_tool("add_know", {
         "group_id": "liquidaity-project-1",
-        "relationships": [{"target_entity_uuid": "product", "fact": "Study uses product"}],
+        "relationships": [{"target_entity_name": "Product", "fact": "Study uses product"}],
     })).model_dump(by_alias=True)
     assert settled == [("project-1", "same-know")]
     assert result["isError"] is False
@@ -720,6 +720,27 @@ def test_entity_know_dispatch_preserves_grounded_citation_and_typed_fields(
     assert "reference_time" not in arguments
     assert "episode_body" not in arguments
     assert "source_description" not in arguments
+
+
+@pytest.mark.parametrize("relationships", [
+    {"target_entity_name": "Target", "fact": "Owner uses target"},
+    [{"target_entity_uuid": "old-id", "fact": "Owner uses target"}],
+    [{"target_entity_name": "Target"}],
+])
+def test_named_relationship_argument_error_is_actionable_before_any_write(monkeypatch, relationships):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.application_tool_error import ApplicationToolError
+    write = AsyncMock()
+    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE",
+                        SimpleNamespace(graphiti_client=SimpleNamespace(add_know=write)))
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: {"projectId": "project-one"})
+    with pytest.raises(ApplicationToolError, match="relationships must|target_entity_name and fact"):
+        asyncio.run(mcp_graphiti_provider.call_graphiti_tool("add_know", {
+            "group_id": "liquidaity-project-one", "relationships": relationships,
+        }))
+    write.assert_not_awaited()
 
 
 def test_knowgraph_add_know_finishes_extraction_jev_and_exact_read_before_return(

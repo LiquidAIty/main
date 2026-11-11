@@ -95,6 +95,60 @@ afterEach(() => {
 });
 
 describe('Agent Builder deck persistence coordinator', () => {
+  it('sends an explicit Card removal, keeps it visible until readback, and retains newer edits without resurrecting it', async () => {
+    vi.useFakeTimers();
+    const initial = deck('Initial', 0);
+    initial.nodes.push({ ...initial.nodes[0], id: 'card_worldsignals_agent', title: 'WorldSignals',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldsignals' } });
+    initial.edges.push({ id: 'world-wire', source: 'card_main', target: 'card_worldsignals_agent', edgeType: 'flow' });
+    const pending = deferred<Response>();
+    const fetchMock = vi.fn().mockImplementationOnce(() => pending.promise)
+      .mockImplementation(async (_url, init) => response(JSON.parse(String(init.body)).document, 'revision-2'));
+    vi.stubGlobal('fetch', fetchMock);
+    const properties = args(initial);
+    properties.lastPersistedBoardFingerprintRef.current = JSON.stringify({ nodes: initial.nodes, edges: initial.edges });
+    const { result, rerender } = renderHook((input: ReturnType<typeof args>) => useAgentBuilderAutosave(input),
+      { initialProps: properties });
+    let removal!: Promise<void>;
+    act(() => { removal = result.current.handleDeleteCard('card_worldsignals_agent'); });
+    const sent = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(sent.removeCardId).toBe('card_worldsignals_agent');
+    expect(sent.expectedRevision).toBe('revision-0');
+    expect(sent.document.nodes.map((node: { id: string }) => node.id)).toEqual(['card_main']);
+    expect(sent.document.edges).toEqual([]);
+    expect(properties.setDeck).not.toHaveBeenCalled();
+
+    const newer = structuredClone(initial);
+    newer.nodes[0].title = 'Newer local edit';
+    rerender({ ...properties, deck: newer });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    await act(async () => { pending.resolve(response(sent.document, 'revision-1')); });
+    await removal;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const updated = properties.setDeck.mock.calls.at(-1)![0](newer) as DeckDocument;
+    expect(updated.nodes.map(node => node.id)).toEqual(['card_main']);
+    expect(updated.nodes[0].title).toBe('Newer local edit');
+    expect(updated.edges).toEqual([]);
+    rerender({ ...properties, deck: updated, deckRevision: 'revision-1' });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    const savedAfterRemoval = JSON.parse(String(fetchMock.mock.calls[1][1].body));
+    expect(savedAfterRemoval.document.nodes.map((node: { id: string }) => node.id)).toEqual(['card_main']);
+    expect(savedAfterRemoval.expectedRevision).toBe('revision-1');
+  });
+
+  it('does not hide a Card when its explicit removal fails', async () => {
+    const initial = deck('Initial', 0);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: 'system_card_removal_forbidden' }), { status: 409 },
+    )));
+    const properties = args(initial);
+    const { result } = renderHook(() => useAgentBuilderAutosave(properties));
+    await act(async () => {
+      await expect(result.current.handleDeleteCard('card_main')).rejects.toThrow('system_card_removal_forbidden');
+    });
+    expect(properties.setDeck).not.toHaveBeenCalled();
+  });
+
   it('serializes rapid edits and dispatches the latest pending board with the returned revision', async () => {
     vi.useFakeTimers();
     const first = deferred<Response>();

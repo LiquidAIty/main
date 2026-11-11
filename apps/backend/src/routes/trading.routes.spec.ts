@@ -13,6 +13,7 @@ vi.mock('./projectAccess', () => ({
 
 import { createTradingRouter } from './trading.routes';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
+import { requireOwnedProject } from './projectAccess';
 
 const closers: Array<() => Promise<void>> = [];
 
@@ -43,6 +44,32 @@ async function serve(
 }
 
 describe('authenticated Trading presentation transport', () => {
+  it('reads chart history for the exact forecast Card and rejects another Project before fetching data', async () => {
+    const { base, requestRails } = await serve();
+    const path = '/forecast/history?projectId=project-1&deckId=deck_builder&cardId=quant&symbol=SPY&timeframe=1Hour';
+    expect((await fetch(base + path)).status).toBe(200);
+    expect(requestRails).toHaveBeenCalledExactlyOnceWith('/trading' + path, { method: 'GET' });
+    vi.mocked(requireOwnedProject).mockImplementationOnce(async (_req, res) => { res.status(403).json({ error: 'forbidden' }); return null; });
+    expect((await fetch(base + path.replace('project-1', 'foreign'))).status).toBe(403);
+    expect(requestRails).toHaveBeenCalledTimes(1);
+  });
+  it('does not generate forecasts for an unowned Project', async () => {
+    vi.mocked(requireOwnedProject).mockImplementationOnce(async (_req, res) => { res.status(403).json({ error: 'forbidden' }); return null; });
+    const { base, requestRails } = await serve();
+    const response = await fetch(base + '/forecast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'foreign', symbol: 'SPY' }) });
+    expect(response.status).toBe(403);
+    expect(requestRails).not.toHaveBeenCalled();
+  });
+
+  it('forwards one explicit forecast and scopes later reads to the same Project and Card', async () => {
+    const { base, requestRails } = await serve();
+    const payload = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'trader', symbol: 'SPY', timeframe: '1Day',
+      temperature: .6, top_p: .95, top_k: 0, seed: 444, sample_count: 16 };
+    expect((await fetch(base + '/forecast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })).status).toBe(200);
+    expect(JSON.parse(String(requestRails.mock.calls[0][1]?.body))).toEqual(payload);
+    await fetch(base + '/forecasts?projectId=project-1&deckId=deck_builder&cardId=trader&forecastId=f-1&compare=true');
+    expect(requestRails.mock.calls[1][0]).toBe('/trading/forecasts?projectId=project-1&deckId=deck_builder&cardId=trader&forecastId=f-1&compare=true');
+  });
   it('passes only exact saved Card state selectors to Python rails', async () => {
     const { base, requestRails } = await serve();
     const response = await fetch(

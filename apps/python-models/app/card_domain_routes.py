@@ -182,6 +182,7 @@ def domain_deck_write(project_id: str, deck_id: str, payload: dict[str, Any]):
             deck_id,
             document,
             str(payload.get("expectedRevision") or "").strip() or None,
+            remove_card_id=payload.get("removeCardId"),
         )}
     except CardDomainError as err:
         status = 409 if str(err) == "deck_conflict" else 400

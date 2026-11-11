@@ -1,0 +1,266 @@
+# Overlay only: docker compose -f docker-compose.yml -f deploy/oci/compose.docker.yml ...
+# The root Compose file remains the sole database service definition.
+x-app-build: &app-build
+  context: .
+  dockerfile: deploy/oci/Dockerfile
+  args:
+    HERMES_BASE_IMAGE: ${HERMES_BASE_IMAGE:-local/hermes-controlled:oracle-prep}
+    CESIUM_ION_TOKEN: ${CESIUM_ION_TOKEN:-}
+    GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+
+x-python-environment: &python-environment
+  DATABASE_URL: ${DATABASE_URL:?Retained database URL is required}
+  LIQUIDAITY_INTERNAL_MCP_SECRET: ${LIQUIDAITY_INTERNAL_MCP_SECRET:?Retained MCP signing secret is required}
+  MAIN_BACKEND_URL: http://127.0.0.1:4000
+  PYTHON_RAILS_URL: http://127.0.0.1:8003
+  KNOWGRAPH_URL: http://127.0.0.1:8001
+  NEO4J_URI: bolt://127.0.0.1:7687
+  NEO4J_USER: ${NEO4J_USER:-neo4j}
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Retained Neo4j password is required}
+  NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+  OPENROUTER_OPENAI_BASE_URL: ${OPENROUTER_OPENAI_BASE_URL:-}
+  OPENROUTER_DEFAULT_KG_MODEL_KEY: ${OPENROUTER_DEFAULT_KG_MODEL_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+  SEC_API_KEY: ${SEC_API_KEY:-}
+  ALPACA_API_KEY_ID: ${ALPACA_API_KEY_ID:-}
+  ALPACA_API_SECRET_KEY: ${ALPACA_API_SECRET_KEY:-}
+  ALPACA_PAPER: "true"
+  KNOWGRAPH_PROVIDER: ${KNOWGRAPH_PROVIDER:-openrouter}
+  KNOWGRAPH_MODEL: ${KNOWGRAPH_MODEL:-}
+  KNOWGRAPH_EMBEDDING_MODEL: ${KNOWGRAPH_EMBEDDING_MODEL:-}
+  KNOWGRAPH_EMBEDDING_DIM: ${KNOWGRAPH_EMBEDDING_DIM:-}
+  KNOWGRAPH_OPENROUTER_EMBEDDING_MODEL: ${KNOWGRAPH_OPENROUTER_EMBEDDING_MODEL:-}
+  KNOWGRAPH_OPENAI_EMBEDDING_MODEL: ${KNOWGRAPH_OPENAI_EMBEDDING_MODEL:-}
+  AUTH_BOOTSTRAP_TOKEN: ${AUTH_BOOTSTRAP_TOKEN:-}
+  HF_HOME: /var/cache/models
+  OMP_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+
+x-python-volumes: &python-volumes
+  - type: bind
+    source: ${HERMES_STATE_DIR:?Restored Hermes directory is required}
+    target: /opt/data
+    bind: {create_host_path: false}
+  - type: bind
+    source: ${THINKGRAPH_STATE_DIR:?Restored db/users directory is required}
+    target: /opt/liquidaity/db/users
+    bind: {create_host_path: false}
+  - type: bind
+    source: ${WORKSPACE_STATE_DIR:?Workspace directory is required}
+    target: /var/lib/liquidaity
+    bind: {create_host_path: false}
+  - type: bind
+    source: ${MODEL_CACHE_DIR:?Model cache directory is required}
+    target: /var/cache/models
+    bind: {create_host_path: false}
+
+services:
+  backend:
+    image: local/product-api:${IMAGE_TAG:-oracle-prep}
+    platform: linux/amd64
+    build: {<<: *app-build, target: backend}
+    network_mode: host
+    user: "${HERMES_UID:-10000}:${HERMES_GID:-10000}"
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Retained database URL is required}
+      LIQUIDAITY_INTERNAL_MCP_SECRET: ${LIQUIDAITY_INTERNAL_MCP_SECRET:?Retained MCP signing secret is required}
+      AUTH_BOOTSTRAP_TOKEN: ${AUTH_BOOTSTRAP_TOKEN:-}
+      CORS_ALLOWED_ORIGINS: https://${LIQUIDAITY_DOMAIN:?Public domain is required}
+      LIQUIDAITY_PUBLIC_BASE_URL: https://${LIQUIDAITY_DOMAIN}
+      MAIN_BACKEND_URL: http://127.0.0.1:4000
+      PYTHON_RAILS_URL: http://127.0.0.1:8003
+      KNOWGRAPH_URL: http://127.0.0.1:8001
+      WORLDVIEW_GLOBE_URL: http://127.0.0.1:4174
+      BUILDER_PROJECT_CODE_ROOT: /var/lib/liquidaity/project-code
+      LIQUIDAITY_PRODUCT_CHAT_CWD: /var/lib/liquidaity/workspaces/main
+    volumes:
+      - type: bind
+        source: ${WORKSPACE_STATE_DIR}
+        target: /var/lib/liquidaity
+        bind: {create_host_path: false}
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 12
+
+  python-rails:
+    image: local/python-rails:${IMAGE_TAG:-oracle-prep}
+    platform: linux/amd64
+    build: {<<: *app-build, target: application-python}
+    network_mode: host
+    user: "${HERMES_UID:-10000}:${HERMES_GID:-10000}"
+    restart: unless-stopped
+    environment: *python-environment
+    volumes: *python-volumes
+    depends_on:
+      postgres: {condition: service_healthy}
+      neo4j: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, /opt/liquidaity/apps/python-models/.venv/bin/python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health',timeout=4)"]
+      interval: 20s
+      timeout: 5s
+      start_period: 120s
+      retries: 12
+
+  mcp:
+    image: local/python-rails:${IMAGE_TAG:-oracle-prep}
+    platform: linux/amd64
+    network_mode: host
+    user: "${HERMES_UID:-10000}:${HERMES_GID:-10000}"
+    restart: unless-stopped
+    command: [/opt/liquidaity/apps/python-models/.venv/bin/python, -X, utf8, /opt/liquidaity/apps/python-models/app/mcp_host.py]
+    environment:
+      <<: *python-environment
+      MCP_TRANSPORT: streamable-http
+      MCP_HTTP_PORT: "8765"
+      MCP_PUBLIC_RESOURCE_URL: https://${LIQUIDAITY_DOMAIN}/mcp
+      MCP_CBM_BINARY: ${MCP_CBM_BINARY:-codebase-memory-mcp}
+    volumes: *python-volumes
+    depends_on:
+      backend: {condition: service_healthy}
+      python-rails: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, /opt/liquidaity/apps/python-models/.venv/bin/python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health/ready',timeout=4)"]
+      interval: 20s
+      timeout: 5s
+      start_period: 180s
+      retries: 12
+
+  knowgraph:
+    image: local/knowgraph:${IMAGE_TAG:-oracle-prep}
+    platform: linux/amd64
+    build: {context: ., dockerfile: services/knowgraph/Dockerfile}
+    network_mode: host
+    user: "${HERMES_UID:-10000}:${HERMES_GID:-10000}"
+    restart: unless-stopped
+    environment: *python-environment
+    volumes:
+      - type: bind
+        source: ${KNOWGRAPH_UPLOAD_DIR:?Restored uploads directory is required}
+        target: /opt/liquidaity/services/knowgraph/uploads
+        bind: {create_host_path: false}
+    depends_on:
+      neo4j: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health',timeout=4)"]
+      interval: 20s
+      timeout: 5s
+      start_period: 60s
+      retries: 8
+
+  hermes:
+    image: local/hermes-ui:${IMAGE_TAG:-oracle-prep}
+    platform: linux/amd64
+    build: {<<: *app-build, target: hermes-ui}
+    network_mode: host
+    restart: unless-stopped
+    # Do not set user, init, pid:host or entrypoint: upstream s6 owns PID 1.
+    command: [gateway, run]
+    environment:
+      HERMES_HOME: /opt/data
+      HERMES_UID: ${HERMES_UID:-10000}
+      HERMES_GID: ${HERMES_GID:-10000}
+      HERMES_WEBAPP_DIST: /opt/liquidaity/client/dist
+      # Keep the separate optional Dashboard private if an operator enables it.
+      HERMES_DASHBOARD_HOST: 127.0.0.1
+      # Runtime credentials reach the actual model/tool owner, not only rails.
+      # Explicit saved profile providers/models remain authoritative.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-}
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      FIRECRAWL_API_URL: ${FIRECRAWL_API_URL:-}
+    volumes:
+      - type: bind
+        source: ${HERMES_STATE_DIR}
+        target: /opt/data
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${WORKSPACE_STATE_DIR}
+        target: /var/lib/liquidaity
+        bind: {create_host_path: false}
+    depends_on:
+      mcp: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, /opt/hermes/.venv/bin/python, -c, "import json,urllib.request; r=json.load(urllib.request.urlopen('http://127.0.0.1:9120/api/health',timeout=4)); assert r.get('ok') is True and r.get('auth_required') is True"]
+      interval: 20s
+      timeout: 5s
+      start_period: 180s
+      retries: 12
+
+  worldview:
+    image: local/worldview:${IMAGE_TAG:-oracle-prep}
+    platform: linux/amd64
+    build: {<<: *app-build, target: worldview}
+    network_mode: host
+    user: "${HERMES_UID:-10000}:${HERMES_GID:-10000}"
+    restart: unless-stopped
+    environment:
+      WORLDVIEW_PORT: "4174"
+      LL2_API_TOKEN: ${LL2_API_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      OPENSKY_CLIENT_ID: ${OPENSKY_CLIENT_ID:-}
+      OPENSKY_CLIENT_SECRET: ${OPENSKY_CLIENT_SECRET:-}
+      OPENSKY_USERNAME: ${OPENSKY_USERNAME:-}
+      OPENSKY_PASSWORD: ${OPENSKY_PASSWORD:-}
+      AISSTREAM_API_KEY: ${AISSTREAM_API_KEY:-}
+      FIRMS_MAP_KEY: ${FIRMS_MAP_KEY:-}
+      TFL_APP_KEY: ${TFL_APP_KEY:-}
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+    volumes:
+      - type: bind
+        source: ${WORLDVIEW_CACHE_DIR:?Provider cache directory is required}
+        target: /opt/liquidaity/agent-products/gods-eye-view/.gev-cache
+        bind: {create_host_path: false}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4174/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+
+  caddy:
+    image: caddy:2
+    platform: linux/amd64
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      LIQUIDAITY_DOMAIN: ${LIQUIDAITY_DOMAIN}
+    volumes:
+      - ./deploy/oci/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      hermes: {condition: service_healthy}
+      backend: {condition: service_healthy}
+      worldview: {condition: service_healthy}
+
+volumes:
+  # Require the audited existing names. Never silently initialize a new authority.
+  postgres_data:
+    external: true
+    name: ${POSTGRES_DATA_VOLUME:?Existing PostgreSQL volume name is required}
+  neo4j_data:
+    external: true
+    name: ${NEO4J_DATA_VOLUME:?Existing Neo4j data volume name is required}
+  neo4j_logs:
+    external: true
+    name: ${NEO4J_LOGS_VOLUME:?Existing Neo4j logs volume name is required}
+  caddy_data:
+  caddy_config:

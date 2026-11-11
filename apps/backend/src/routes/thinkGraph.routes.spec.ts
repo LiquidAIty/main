@@ -37,7 +37,7 @@ vi.mock('../services/pythonRailsClient', () => ({
   requestPythonRailsJson: mocks.requestPythonRailsJson,
 }));
 
-import thinkGraphRoutes, { notifyThinkGraphChanged } from './thinkGraph.routes';
+import thinkGraphRoutes, { notifyThinkGraphChanged, requestWorldViewAction } from './thinkGraph.routes';
 
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
@@ -66,6 +66,44 @@ afterEach(() => {
 });
 
 describe('ThinkGraph Engraphis read transport', () => {
+  it('routes globe control to exactly one mounted view and rejects foreign or duplicate results', async () => {
+    const { server, baseUrl } = await createApiServer();
+    const controller = new AbortController();
+    try {
+      expect(await requestWorldViewAction('p', 'globe', 'zoom_to_globe', {}))
+        .toMatchObject({ dispatched: false, error: 'worldview_view_unavailable' });
+      const first = await fetch(`${baseUrl}/events?projectId=p&worldViewCardId=globe`, { signal: controller.signal });
+      const reader = first.body!.getReader();
+      const decoder = new TextDecoder();
+      const read = async () => JSON.parse(decoder.decode((await reader.read()).value).split('data: ')[1]);
+      const ready = await read();
+      const pending = requestWorldViewAction('p', 'globe', 'zoom_to_globe', {});
+      const command = await read();
+      expect(command).toMatchObject({ projectId: 'p', cardId: 'globe', connectionId: ready.connectionId,
+        action: 'zoom_to_globe', arguments: {} });
+      const post = (body: object) => fetch(`${baseUrl}/worldview-action-result`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const ack = { projectId: 'p', cardId: 'globe', connectionId: ready.connectionId,
+        requestId: command.requestId, result: { ok: true, height: 1000 } };
+      expect((await post({ ...ack, projectId: 'foreign' })).status).toBe(409);
+      expect((await post({ ...ack, connectionId: 'other-view' })).status).toBe(409);
+      expect(await requestWorldViewAction('p', 'globe', 'zoom_to_globe', {}))
+        .toMatchObject({ dispatched: false, error: 'worldview_view_busy' });
+      expect((await post(ack)).status).toBe(200);
+      expect(await pending).toMatchObject({ confirmed: true, result: { ok: true, height: 1000 } });
+      expect((await post(ack)).status).toBe(409);
+      const second = await fetch(`${baseUrl}/events?projectId=p&worldViewCardId=globe`, { signal: controller.signal });
+      const secondReader = second.body!.getReader();
+      await secondReader.read();
+      expect(await requestWorldViewAction('p', 'globe', 'zoom_to_globe', {}))
+        .toMatchObject({ dispatched: false, error: 'worldview_view_ambiguous' });
+      await secondReader.cancel();
+      await reader.cancel();
+    } finally {
+      controller.abort(); server.closeAllConnections(); await closeServer(server);
+    }
+  });
   it('publishes the displayed map and open node through the existing Project-owned endpoint', async () => {
     mocks.requestPythonRailsJson.mockResolvedValue({ ok: true });
     const { server, baseUrl } = await createApiServer();

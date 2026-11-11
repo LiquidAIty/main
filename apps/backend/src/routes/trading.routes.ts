@@ -1,10 +1,10 @@
 /**
  * Entity: Trading
- * Relationship: Authenticates Project-scoped Trading state, readiness, and bounded pause or resume interventions while Python rails retains domain authority.
+ * Relationship: Authenticates Project-scoped Trading state, forecasts and comparisons, readiness, and bounded interventions while Python rails retains domain authority.
  */
 import { Router } from 'express';
 
-import { requestPythonRailsJson } from '../services/pythonRailsClient';
+import { PythonRailsHttpError, requestPythonRailsJson } from '../services/pythonRailsClient';
 import { requireOwnedProject } from './projectAccess';
 
 type Dependencies = {
@@ -51,6 +51,54 @@ export function createTradingRouter(deps: Dependencies = {
   requestRails: requestPythonRailsJson,
 }) {
   const router = Router();
+
+  router.post('/forecast', async (req, res) => {
+    try {
+      const projectId = requiredText(req.body?.projectId, 'project_id_required');
+      if (!await requireOwnedProject(req, res, projectId)) return undefined;
+      return res.json(await deps.requestRails('/trading/forecast', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...req.body, projectId }),
+      }));
+    } catch (error) {
+      return res.status(error instanceof PythonRailsHttpError ? error.status : inputStatus(error))
+        .json({ ok: false, error: error instanceof Error ? error.message : 'trading_forecast_failed' });
+    }
+  });
+
+  router.get('/forecasts', async (req, res) => {
+    try {
+      const projectId = requiredText(req.query.projectId, 'project_id_required');
+      if (!await requireOwnedProject(req, res, projectId)) return undefined;
+      const params = new URLSearchParams({ projectId,
+        deckId: requiredText(req.query.deckId, 'deck_id_required'),
+        cardId: requiredText(req.query.cardId, 'card_id_required'),
+      });
+      if (req.query.forecastId) params.set('forecastId', String(req.query.forecastId));
+      if (req.query.compare === 'true') params.set('compare', 'true');
+      return res.json(await deps.requestRails('/trading/forecasts?' + params, { method: 'GET' }));
+    } catch (error) {
+      return res.status(error instanceof PythonRailsHttpError ? error.status : inputStatus(error))
+        .json({ ok: false, error: error instanceof Error ? error.message : 'trading_forecast_read_failed' });
+    }
+  });
+
+  router.get('/forecast/history', async (req, res) => {
+    try {
+      const projectId = requiredText(req.query.projectId, 'project_id_required');
+      if (!await requireOwnedProject(req, res, projectId)) return undefined;
+      const params = new URLSearchParams({ projectId,
+        deckId: requiredText(req.query.deckId, 'deck_id_required'),
+        cardId: requiredText(req.query.cardId, 'card_id_required'),
+        symbol: requiredText(req.query.symbol, 'symbol_required'),
+        timeframe: requiredText(req.query.timeframe, 'timeframe_required'),
+      });
+      return res.json(await deps.requestRails('/trading/forecast/history?' + params, { method: 'GET' }));
+    } catch (error) {
+      return res.status(error instanceof PythonRailsHttpError ? error.status : inputStatus(error))
+        .json({ ok: false, error: error instanceof Error ? error.message : 'forecast_history_failed' });
+    }
+  });
 
   router.get('/readiness', async (_req, res) => {
     try {

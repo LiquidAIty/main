@@ -1,0 +1,53 @@
+{
+  "upstreamVersion": "4.6.48",
+  "version": "4.6.48+mcp2.1",
+  "upstreamCommit": "d4a3ebb2494fee16013b1b928a426a55d01b51db",
+  "wheelSha256": "e37f805b03c3b706d987020051545ce25e0c7677eab8b84cf91705e7cececd27",
+  "edits": [
+    {
+      "file": "lumibot/components/agents/runtime.py",
+      "before": "ClientSession = None\nStdioServerParameters = None\nstdio_client = None\nstreamablehttp_client = None\nstreamablehttp_client_uses_http_client = False\n\n\ndef _ensure_mcp_client_imports():\n    global ClientSession, StdioServerParameters, stdio_client\n    global streamablehttp_client, streamablehttp_client_uses_http_client\n    if ClientSession is None or StdioServerParameters is None:\n        from mcp import ClientSession as _ClientSession\n        from mcp import StdioServerParameters as _StdioServerParameters\n\n        ClientSession = _ClientSession\n        StdioServerParameters = _StdioServerParameters\n    if stdio_client is None:\n        from mcp.client.stdio import stdio_client as _stdio_client\n\n        stdio_client = _stdio_client\n    if streamablehttp_client is None:\n        try:\n            from mcp.client.streamable_http import streamable_http_client as _streamablehttp_client\n\n            streamablehttp_client_uses_http_client = True\n        except ImportError:\n            from mcp.client.streamable_http import streamablehttp_client as _streamablehttp_client\n\n        streamablehttp_client = _streamablehttp_client",
+      "after": "MCPClient = None\nStdioServerParameters = None\nstdio_client = None\nstreamablehttp_client = None\n\n\ndef _ensure_mcp_client_imports():\n    global MCPClient, StdioServerParameters, stdio_client, streamablehttp_client\n    if MCPClient is None:\n        from mcp import Client, StdioServerParameters as _StdioServerParameters\n        from mcp.client.stdio import stdio_client as _stdio_client\n        from mcp.client.streamable_http import streamable_http_client\n\n        MCPClient = Client\n        StdioServerParameters = _StdioServerParameters\n        stdio_client = _stdio_client\n        streamablehttp_client = streamable_http_client"
+    },
+    {
+      "file": "lumibot/components/agents/runtime.py",
+      "before": "        with _mcp_errlog_stream() as errlog:\n            async with stdio_client(parameters, errlog=errlog) as (read_stream, write_stream):\n                async with ClientSession(read_stream, write_stream) as session:\n                    await session.initialize()\n                    return await callback(session)\n\n    headers = _mcp_headers(server)\n    timeout = server.timeout_seconds\n    sse_timeout = server.sse_read_timeout_seconds\n    if streamablehttp_client_uses_http_client:\n        import httpx\n        from mcp.shared._httpx_utils import create_mcp_http_client\n\n        http_timeout = httpx.Timeout(timeout, read=sse_timeout)\n        async with create_mcp_http_client(headers=headers, timeout=http_timeout) as http_client:\n            async with streamablehttp_client(\n                str(server.url),\n                http_client=http_client,\n                terminate_on_close=server.terminate_on_close,\n            ) as (read_stream, write_stream, _get_session_id):\n                async with ClientSession(read_stream, write_stream) as session:\n                    await session.initialize()\n                    return await callback(session)\n    else:\n        async with streamablehttp_client(\n            str(server.url),\n            headers=headers,\n            timeout=timeout,\n            sse_read_timeout=sse_timeout,\n            terminate_on_close=server.terminate_on_close,\n        ) as (read_stream, write_stream, _get_session_id):\n            async with ClientSession(read_stream, write_stream) as session:\n                await session.initialize()\n                return await callback(session)",
+      "after": "        with _mcp_errlog_stream() as errlog:\n            async with MCPClient(\n                stdio_client(parameters, errlog=errlog),\n                mode=\"auto\",\n                read_timeout_seconds=server.timeout_seconds,\n            ) as session:\n                return await callback(session)\n\n    import httpx2\n\n    headers = _mcp_headers(server)\n    timeout = server.timeout_seconds\n    http_timeout = httpx2.Timeout(timeout, read=server.sse_read_timeout_seconds)\n    async with httpx2.AsyncClient(headers=headers, timeout=http_timeout) as http_client:\n        async with MCPClient(\n            streamablehttp_client(\n                str(server.url),\n                http_client=http_client,\n                terminate_on_close=server.terminate_on_close,\n            ),\n            mode=\"auto\",\n            read_timeout_seconds=timeout,\n        ) as session:\n            return await callback(session)"
+    },
+    {
+      "file": "lumibot/components/agents/runtime.py",
+      "before": "async def callback(session: ClientSession) -> list[dict[str, Any]]:",
+      "after": "async def callback(session) -> list[dict[str, Any]]:"
+    },
+    {
+      "file": "lumibot/components/agents/runtime.py",
+      "before": "            dumped = _jsonable(tool)\n",
+      "after": "            dumped = tool.model_dump(mode=\"json\", by_alias=True, exclude_none=True)\n"
+    },
+    {
+      "file": "lumibot/components/agents/runtime.py",
+      "before": "async def callback(session: ClientSession) -> dict[str, Any]:",
+      "after": "async def callback(session) -> dict[str, Any]:"
+    },
+    {
+      "file": "lumibot/components/agents/runtime.py",
+      "before": "        dumped = _jsonable(result)\n",
+      "after": "        dumped = result.model_dump(mode=\"json\", by_alias=True, exclude_none=True)\n"
+    },
+    {
+      "file": "lumibot-4.6.48.dist-info/METADATA",
+      "before": "Version: 4.6.48\n",
+      "after": "Version: 4.6.48+mcp2.1\n"
+    },
+    {
+      "file": "lumibot-4.6.48.dist-info/METADATA",
+      "before": "Requires-Dist: mcp<2,>=1.26.0\n",
+      "after": "Requires-Dist: mcp<3,>=2\nRequires-Dist: httpx2<3,>=2.10\n"
+    },
+    {
+      "file": "lumibot-4.6.48.dist-info/METADATA",
+      "before": "Requires-Dist: google-adk[extensions]<3.0.0,>=2.9.1\n",
+      "after": "Requires-Dist: google-adk<3.0.0,>=2.9.1\n"
+    }
+  ]
+}

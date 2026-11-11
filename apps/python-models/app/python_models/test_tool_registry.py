@@ -207,7 +207,8 @@ def test_forecast_market_bars_has_one_literal_trading_definition():
         "app.python_models.trading_forecast.forecast_market_bars"
     )
     assert definition.publishers == frozenset({"internal-plugin"})
-    assert definition.access == "read"
+    assert definition.access == "write"
+    assert definition.dispatcher_context_arguments == frozenset({"projectId", "deckId", "_callerCardId"})
     assert definition.grant_eligible is True
     assert definition.server_injected_arguments == frozenset()
     assert definition.parameters_schema == {
@@ -216,7 +217,7 @@ def test_forecast_market_bars_has_one_literal_trading_definition():
             "symbol": {"type": "string", "minLength": 1},
             "timeframe": {
                 "type": "string",
-                "pattern": r"^[1-9][0-9]*(Min|Hour|Day|Week|Month)$",
+                "enum": ["1Min", "5Min", "15Min", "1Hour", "1Day"],
             },
             "start": {"type": ["string", "null"]},
             "end": {"type": ["string", "null"]},
@@ -228,12 +229,20 @@ def test_forecast_market_bars_has_one_literal_trading_definition():
                 "type": "integer", "minimum": 1, "maximum": 20,
                 "default": 5,
             },
+            "model_variant": {"type": "string", "enum": ["mini", "small", "base"], "default": "mini"},
+            "sample_count": {"type": "integer", "minimum": 1, "maximum": 64, "default": 4,
+                             "description": "CPU capacity: up to 64 paths for mini, 16 for small or base."},
+            "seed": {"type": "integer", "minimum": 0, "maximum": 2147483647, "default": 443},
+            "temperature": {"type": "number", "exclusiveMinimum": 0, "default": 1.0},
+            "top_p": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 0.9},
+            "top_k": {"type": "integer", "minimum": 0, "default": 0,
+                      "description": "0 uses top-p; positive top-k replaces top-p. 1 is greedy and collapses repeated paths."},
         },
         "required": ["symbol", "timeframe"],
         "additionalProperties": False,
     }
     assert definition.annotations == {
-        "readOnlyHint": True,
+        "readOnlyHint": False,
         "destructiveHint": False,
         "idempotentHint": False,
         "openWorldHint": True,

@@ -514,7 +514,7 @@ export async function loadWorldViewNative(
   // Hermes serves the built UI, not Vite's provider proxies. The existing
   // loopback WorldView service owns those APIs and assets in local Webapp mode.
   const runtimeBaseUrl = isHermesWebappHosted()
-    ? new URL('/', WORLDVIEW_NATIVE_MOUNT_MODULE_URL).href
+    ? String(import.meta.env.VITE_WORLDVIEW_RUNTIME_BASE_URL || new URL('/', WORLDVIEW_NATIVE_MOUNT_MODULE_URL).href)
     : '/worldview-native/';
   const mounted = await mountWorldView(root, {
     ...config,

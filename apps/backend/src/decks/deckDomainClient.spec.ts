@@ -24,6 +24,14 @@ const deck = {
 };
 
 describe('thin Deck transport boundary', () => {
+  it('carries one explicit removal target alongside the revision without rewriting the document', async () => {
+    requestPythonRailsJson.mockResolvedValue({ ok: true, deck, meta: { deckRevision: 'next' } });
+    await saveDeckDocument('project-one', deck.id, deck,
+      { expectedRevision: 'before', removeCardId: 'card_worldsignals_agent' });
+    expect(JSON.parse(requestPythonRailsJson.mock.calls[0][1].body)).toEqual({
+      document: deck, expectedRevision: 'before', removeCardId: 'card_worldsignals_agent',
+    });
+  });
   beforeEach(() => {
     requestPythonRailsJson.mockReset();
   });

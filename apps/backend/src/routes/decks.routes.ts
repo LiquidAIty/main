@@ -36,9 +36,12 @@ router.get('/:projectId/decks/:deckId', async (req, res) => {
 });
 
 router.put('/:projectId/decks/:deckId', async (req, res) => {
-  const { document, expectedRevision } = req.body || {};
+  const { document, expectedRevision, removeCardId } = req.body || {};
   if (!document || typeof document !== 'object') {
     return res.status(400).json({ ok: false, error: 'document_required' });
+  }
+  if (removeCardId !== undefined && (typeof removeCardId !== 'string' || !removeCardId.trim())) {
+    return res.status(400).json({ ok: false, error: 'remove_card_id_invalid' });
   }
 
   try {
@@ -50,6 +53,7 @@ router.put('/:projectId/decks/:deckId', async (req, res) => {
       document as DeckDocument,
       {
         expectedRevision: typeof expectedRevision === 'string' ? expectedRevision : null,
+        ...(removeCardId === undefined ? {} : { removeCardId }),
       },
     );
     return res.json({
@@ -67,7 +71,9 @@ router.put('/:projectId/decks/:deckId', async (req, res) => {
           || message === 'card_revision_stale'
           || message === 'card_runtime_profile_immutable'
           ? 409
-          : message.startsWith('deck_integrity_')
+          : message.startsWith('deck_integrity_') || message.startsWith('card_removal_')
+            || message === 'card_deletion_requires_explicit_operation'
+            || message === 'system_card_removal_forbidden'
             ? 409
           : 500;
     return res.status(status).json({ ok: false, error: message });

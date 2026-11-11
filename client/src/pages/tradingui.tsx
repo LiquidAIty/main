@@ -1,12 +1,13 @@
 /**
  * Entity: Trading
- * Relationship: Presents read-only market charts, paper portfolio state, plan and journal evidence, and bounded pause or resume interventions for the selected Trading Card.
+ * Relationship: Presents market and forecast candles, retained model outputs, paper portfolio state, plan and journal evidence, and bounded interventions for the selected Trading Card.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './tradingui.css';
 import type { AgentCardInstance } from '../types/agentgraph';
 import { applicationFetch } from '../lib/applicationApi';
 import { resolveInstrument } from '../features/trading/instrument';
+import KronosForecastPanel from '../features/trading/KronosForecastPanel';
 import {
   readTradingConfiguration, reconcileTradingState,
   type TradeJob, type TradingInterventionAction, type TradingState, type TradingSettings,
@@ -17,28 +18,49 @@ const GREEN = '#34d399';
 const RED = '#fb7185';
 const MUTED = '#94a3b8';
 const CHART_INTERVALS = { '1Min': '1', '5Min': '5', '15Min': '15', '1Hour': '60', '1Day': 'D' } as const;
-function TVChart({ symbol, timeframe, compact = false }: { symbol: string; timeframe: TradingSettings['defaultTimeframe']; compact?: boolean }) {
-  const [failed, setFailed] = useState(false);
+function TVChart({ symbol, timeframe, compact = false, locked = false }: { symbol: string; timeframe: TradingSettings['defaultTimeframe']; compact?: boolean; locked?: boolean }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [navigation, setNavigation] = useState<'loading' | 'navigated' | 'failed'>('loading');
+  const [attempt, setAttempt] = useState({ key: 0, retries: 0 });
   // This is the same hosted chart that tv.js creates. Mount it directly so
   // Trading does not require third-party script execution in the app document.
   const url = new URL('https://www.tradingview.com/widgetembed/');
   url.searchParams.set('hideideas', '1');
   url.searchParams.set('overrides', '{}');
   url.searchParams.set('enabled_features', '[]');
-  url.searchParams.set('disabled_features', '[]');
+  url.searchParams.set('disabled_features', JSON.stringify(locked ? ['header_resolutions', 'show_interval_dialog_on_key_press'] : []));
   url.hash = encodeURIComponent(JSON.stringify({
     symbol, interval: CHART_INTERVALS[timeframe], style: '1',
     timezone: 'Etc/UTC', theme: 'dark',
     hide_top_toolbar: compact ? '1' : '0', hide_legend: compact ? '1' : '0',
-    allow_symbol_change: compact ? '0' : '1',
+    allow_symbol_change: compact || locked ? '0' : '1',
   }));
   const src = url.href;
-  useEffect(() => setFailed(false), [src]);
-  return <div style={{ height: '100%', width: '100%', position: 'relative' }}>
-    <iframe key={src} title={`${symbol} chart`} src={src} data-testid="trading-candles"
-      style={{ height: '100%', width: '100%', border: 0 }} allowFullScreen
-      onError={() => setFailed(true)} />
-    {failed ? <span role="alert" style={{ position: 'absolute', top: 12, left: 12, color: RED }}>Chart unavailable</span> : null}
+  const stillBlank = () => {
+    try { return !frame.current?.contentWindow || frame.current.contentWindow.location.href === 'about:blank'; }
+    catch (error) {
+      // Leaving our inherited about:blank document makes location cross-origin.
+      // This proves navigation only, not that TradingView painted market data.
+      return !(error instanceof DOMException && error.name === 'SecurityError');
+    }
+  };
+  useEffect(() => {
+    setNavigation('loading');
+    const timer = window.setTimeout(() => {
+      if (!stillBlank()) { setNavigation('navigated'); return; }
+      if (attempt.retries === 0) setAttempt(value => ({ key: value.key + 1, retries: 1 }));
+      else setNavigation('failed');
+    }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [src, attempt.key, attempt.retries]);
+  return <div className="trading-tv-chart">
+    <div className="trading-chart-status">
+      <span role={navigation === 'failed' ? 'alert' : 'status'}>{navigation === 'failed' ? 'TradingView did not open. Reload the chart to try again.' : navigation === 'loading' ? (attempt.retries ? 'Retrying blank chart…' : 'Opening TradingView…') : 'TradingView · market data'}</span>
+      <button type="button" onClick={() => setAttempt(value => ({ key: value.key + 1, retries: 0 }))}>Reload chart</button>
+    </div>
+    <iframe ref={frame} key={`${src}:${attempt.key}`} title={`${symbol} chart`} src={src} data-testid="trading-candles"
+      allowFullScreen onLoad={() => { if (!stillBlank()) setNavigation('navigated'); }}
+      onError={() => setNavigation('failed')} />
   </div>;
 }
 
@@ -117,10 +139,11 @@ function EquityChart({ points }: { points: TradingState['portfolio']['equityCurv
 type TradingUIProps = {
   symbol?: string; projectId?: string | null; deckId?: string;
   card?: AgentCardInstance | null;
+  forecastCard?: AgentCardInstance | null;
 };
 
-export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', card }: TradingUIProps) {
-  const [view, setView] = useState<'ticker' | 'portfolio' | 'journal'>('ticker');
+export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', card, forecastCard }: TradingUIProps) {
+  const [view, setView] = useState<'ticker' | 'portfolio' | 'journal' | 'forecast'>('ticker');
   const [chartOpen, setChartOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -133,6 +156,10 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
   const cardId = card?.id || 'card_trading_workbench';
   const settings = readTradingConfiguration(card?.runtimeOptions?.configuration).trading;
   const timeframe = settings.defaultTimeframe;
+  const initialSymbol = (symbol || new URLSearchParams(window.location.search).get('symbol') || '').trim().toUpperCase();
+  const [market, setMarket] = useState({ symbol: initialSymbol, timeframe });
+  const [symbolDraft, setSymbolDraft] = useState(initialSymbol);
+  useEffect(() => { setMarket({ symbol: initialSymbol, timeframe }); setSymbolDraft(initialSymbol); }, [initialSymbol, timeframe, projectId, deckId, cardId]);
   const showingChart = view === 'ticker' || (view === 'portfolio' && chartOpen);
   const query = useMemo(() => {
     if (!projectId) return null;
@@ -160,8 +187,13 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
 
   const jobs = state?.jobs || [];
   const selectedJob = jobs.find(job => job.jobId === selectedJobId) || null;
-  const instrument = resolveInstrument(symbol || new URLSearchParams(window.location.search).get('symbol'));
-  const chartSymbol = selectedJob?.symbol || instrument?.tradingViewSymbol;
+  const chartSymbol = selectedJob?.symbol || resolveInstrument(market.symbol)?.tradingViewSymbol || market.symbol;
+  const chartTimeframe = selectedJob ? timeframe : market.timeframe;
+  const openForecastMarket = (selected: { symbol: string; timeframe: string }) => {
+    if (!Object.hasOwn(CHART_INTERVALS, selected.timeframe)) return;
+    setMarket({ symbol: selected.symbol, timeframe: selected.timeframe as TradingSettings['defaultTimeframe'] });
+    setSymbolDraft(selected.symbol);
+  };
   const visibleJobs = jobs.filter(job => ['completed', 'fail_safe'].includes(job.state) === history);
   const availableAction = selectedJob?.state === 'monitoring' ? 'PAUSE' : selectedJob?.state === 'paused' ? 'RESUME' : null;
   const border = { borderColor: DARK.edge, background: DARK.panel };
@@ -192,21 +224,33 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
         <button type="button" role="tab" aria-selected={view === 'ticker'} onClick={() => { setView('ticker'); setSelectedJobId(null); }}>Add trade</button>
         <button type="button" role="tab" aria-selected={view === 'portfolio'} onClick={showPortfolio}>Portfolio</button>
         <button type="button" role="tab" aria-selected={view === 'journal'} onClick={() => setView('journal')}>Journal</button>
+        <button type="button" role="tab" aria-selected={view === 'forecast'} onClick={() => setView('forecast')}>Forecast</button>
       </nav>
       <div className="trading-toolbar-actions">
         {showingChart ? <button type="button" style={button} aria-label={fullscreen ? 'Exit Fullscreen' : 'Fullscreen'} onClick={() => setFullscreen(value => !value)}>&#9974;</button> : null}
       </div>
     </header>
-    <div className="flex shrink-0 items-center gap-2 border-b px-2 py-1" style={border}>
+    {view !== 'forecast' && <div className="flex shrink-0 items-center gap-2 border-b px-2 py-1" style={border}>
       <button type="button" disabled style={{ ...button, color: GREEN, opacity: .6, fontSize: 13 }}>Enter trade</button>
       <button type="button" disabled style={{ ...button, color: RED, opacity: .6, fontSize: 13 }}>Exit trade</button>
       {showingChart && view === 'portfolio' ? <button type="button" style={button} onClick={showPortfolio}>Back</button> : null}
       {showingChart && selectedJob ? <span>{selectedJob.symbol}</span> : null}
       {stateError ? <span role="alert" style={{ color: RED, fontSize: 12 }}>Connection unavailable</span> : null}
-    </div>
-    <main className={'trading-layout min-h-0 flex-1' + (showingChart ? ' trading-layout-chart' : '')}>
-      <section aria-label={showingChart ? 'Market chart' : view === 'portfolio' ? 'Portfolio' : 'Journal'} className="trading-content relative min-h-0 flex-1 overflow-auto">
-        {showingChart && chartSymbol ? <TVChart symbol={chartSymbol} timeframe={timeframe} /> : view === 'portfolio' ? <div className="grid gap-3 p-3" data-testid="trading-portfolio">
+    </div>}
+    {view === 'forecast' || (view === 'ticker' && !chartSymbol) ? <form className="trading-market-controls" onSubmit={event => { event.preventDefault(); if (symbolDraft.trim()) setMarket(value => ({ ...value, symbol: symbolDraft.trim().toUpperCase() })); }}>
+      <label>Ticker<input aria-label="Trading ticker" required maxLength={32} value={symbolDraft} onChange={event => setSymbolDraft(event.target.value.toUpperCase())} /></label>
+      <button type="submit">Load ticker</button>
+      <label>Timeframe<select aria-label="Trading timeframe" value={market.timeframe} onChange={event => setMarket(value => ({ ...value, timeframe: event.target.value as TradingSettings['defaultTimeframe'] }))}>{Object.keys(CHART_INTERVALS).map(value => <option key={value}>{value}</option>)}</select></label>
+    </form> : null}
+    <main className={'trading-layout min-h-0 flex-1' + (showingChart ? ' trading-layout-chart' : '') + (view === 'forecast' ? ' trading-layout-forecast' : '')}>
+      <section aria-label={showingChart ? 'Market chart' : view === 'portfolio' ? 'Portfolio' : view === 'forecast' ? 'Forecast' : 'Journal'} className={'trading-content relative min-h-0 flex-1 ' + (view === 'forecast' ? 'trading-forecast-content' : 'overflow-auto')}>
+        <div hidden={!showingChart} className="trading-main-chart">
+          {chartSymbol ? <TVChart key={`${chartSymbol}:${chartTimeframe}`} symbol={chartSymbol} timeframe={chartTimeframe} locked={!!selectedJob} /> : <p>Choose a ticker to open its chart.</p>}
+        </div>
+        {view === 'forecast' && <div className="trading-forecast-section">
+          {projectId && forecastCard ? <KronosForecastPanel key={`${projectId}:${deckId}:${forecastCard.id}`} projectId={projectId} deckId={deckId} cardId={forecastCard.id} symbol={market.symbol} timeframe={market.timeframe} onOpenForecast={openForecastMarket} /> : <p>Select a Project with one enabled forecast Card.</p>}
+        </div>}
+        {!showingChart && view === 'portfolio' ? <div className="grid gap-3 p-3" data-testid="trading-portfolio">
           <div className="flex gap-2">
             <button type="button" style={button} aria-pressed={!history} onClick={() => setHistory(false)}>Open</button>
             <button type="button" style={button} aria-pressed={history} onClick={() => setHistory(true)}>Closed</button>
@@ -236,7 +280,7 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
             <div><dt>Budget</dt><dd>{money(settings.paperBudgetUsd)}</dd></div>
             <div><dt>Risk/reward</dt><dd>{settings.minimumRiskReward}</dd></div>
           </dl> : null}
-        </div> : <div className="grid gap-3 p-3" data-testid="trading-journal">
+        </div> : view === 'journal' ? <div className="grid gap-3 p-3" data-testid="trading-journal">
           {(selectedJob ? [selectedJob] : jobs).map(job => <article key={job.jobId} className="trading-plan">
             <button type="button" style={button} onClick={() => openJob(job)}>{job.symbol}</button>
             <PlanTerms job={job} />
@@ -246,7 +290,7 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
             </div>)}
             {job.fills.map(fill => <div key={fill.fillId} className="py-2">{fill.side} {fill.quantity} @ {money(fill.price)}</div>)}
           </article>)}
-        </div>}
+        </div> : null}
       </section>
       {!fullscreen && showingChart && selectedJob ? <aside aria-label="Trading controls" className="trading-controls min-h-0 overflow-y-auto border-t p-2" style={border}>
         <div data-testid="selected-trade-job" className="grid gap-2">

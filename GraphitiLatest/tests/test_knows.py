@@ -14,6 +14,7 @@ from graphiti_core.knows import (
     KnowCitation,
     KnowDirection,
     KnowNode,
+    KnowRelationship,
     know_content_hash,
     know_episode_content,
     resolve_know_entity,
@@ -326,6 +327,181 @@ def test_know_content_identity_excludes_retrieval_time():
         citation=second,
         **arguments,
     )
+
+
+def test_named_relationship_requires_explicit_name_and_rejects_the_replaced_uuid_input():
+    assert KnowRelationship(target_entity_name=' SpaceX ', fact='Supplier supplies components').target_entity_name == 'SpaceX'
+    schema = KnowRelationship.model_json_schema()
+    assert 'target_entity_name' in schema['required']
+    assert 'target_entity_uuid' not in schema['properties']
+    for target in ({}, {'target_entity_name': ' '}, {'target_entity_uuid': 'existing-target'},
+                   {'target_entity_name': 'SpaceX', 'target_entity_uuid': 'existing-target'}):
+        with pytest.raises(ValueError):
+            KnowRelationship(fact='Supplier supplies components', **target)
+
+
+@pytest.mark.asyncio
+async def test_named_relationship_prepares_only_declared_targets_for_the_same_know_transaction(monkeypatch):
+    now = datetime(2026, 11, 10, tzinfo=timezone.utc)
+    owner = EntityNode(uuid='owner', name='Supplier', group_id='g1', created_at=now)
+    target = EntityNode(uuid='target', name='SpaceX', group_id='g1', created_at=now)
+    driver = SimpleNamespace(provider=GraphProvider.NEO4J)
+    clients = SimpleNamespace(driver=driver, embedder=object())
+    graphiti = Graphiti.__new__(Graphiti)
+    graphiti._resolve_request_scope = lambda _group: ('g1', driver, clients)
+    resolver = AsyncMock(side_effect=[(owner, True), (target, True)])
+    monkeypatch.setattr(graphiti_module, 'resolve_know_entity', resolver)
+    monkeypatch.setattr(EntityEdge, 'generate_embedding', AsyncMock())
+    calls = []
+
+    async def save(know, passed_driver, **kwargs):
+        calls.append((know, passed_driver, kwargs))
+        return know, owner, True, True, kwargs['relationships']
+
+    monkeypatch.setattr(KnowNode, 'save_know', save)
+    result = await graphiti.add_know(
+        name='Supplier relationship', entity_name='Supplier',
+        observation='Supplier provides components to SpaceX.', interpretation='Revenue size is unknown.',
+        citation=_citation(), group_id='g1', reference_time=now,
+        relationships=[{'target_entity_name': 'SpaceX', 'fact': 'Supplier provides components to SpaceX.'},
+                       {'target_entity_name': 'spacex', 'fact': 'Supplier co-designs those components with SpaceX.'}],
+    )
+    assert resolver.await_count == 2
+    assert resolver.await_args_list[1].kwargs == {
+        'group_id': 'g1', 'entity_name': 'SpaceX', 'entity_uuid': None,
+    }
+    assert len(calls) == 1 and calls[0][1] is driver
+    assert calls[0][2]['relationship_targets'] == [target]
+    assert result.know.entity_uuid == owner.uuid
+    assert [(edge.source_node_uuid, edge.target_node_uuid) for edge in result.relationships] == [('owner', 'target'), ('owner', 'target')]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('existing', [[], [{'uuid': 'existing'}], [{'uuid': 'a'}, {'uuid': 'b'}]])
+async def test_named_relationship_target_uses_project_name_identity_and_rejects_ambiguity(existing):
+    from graphiti_core.knows import _save_named_relationship_target, normalize_entity_name
+    import hashlib
+    now = datetime(2026, 11, 10, tzinfo=timezone.utc)
+    target = EntityNode(uuid='prepared', name='SpaceX', group_id='g1', created_at=now)
+    tx = SimpleNamespace(run=AsyncMock(side_effect=[
+        SimpleNamespace(data=AsyncMock(return_value=existing)),
+        SimpleNamespace(data=AsyncMock(return_value=[{'uuid': 'concurrent-canonical'}])),
+    ]))
+    if len(existing) > 1:
+        with pytest.raises(ValueError, match='ambiguous'):
+            await _save_named_relationship_target(tx, target)
+        assert tx.run.await_count == 1
+    else:
+        result = await _save_named_relationship_target(tx, target)
+        assert result == ('existing' if existing else 'concurrent-canonical')
+        query = tx.run.await_args_list[0]
+        assert 'n.group_id=$group' in query.args[0]
+        assert query.kwargs == {'group': 'g1', 'name': 'SpaceX'}
+        if not existing:
+            created = tx.run.await_args_list[1]
+            assert created.kwargs['identity'] == hashlib.sha256(f'g1\0name:{normalize_entity_name("SpaceX")}'.encode()).hexdigest()
+            assert 'Know' not in created.args[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('resolved_id', ['canonical-target', 'owner'])
+async def test_named_relationship_save_remaps_concurrent_identity_and_rolls_back_self_link(monkeypatch, resolved_id):
+    from contextlib import asynccontextmanager
+    import graphiti_core.knows as knows_module
+    now = datetime(2026, 11, 10, tzinfo=timezone.utc)
+    owner = EntityNode(uuid='owner', name='Supplier', group_id='g1', created_at=now)
+    target = EntityNode(uuid='prepared-target', name='Target', group_id='g1', created_at=now)
+    know = KnowNode(uuid='existing-know', name='Finding', group_id='g1', created_at=now,
+        valid_at=now, source_description='Primary source', content='Evidence', entity_uuid='owner',
+        observation='Supplier provides components.', interpretation='Limited evidence.', citation=_citation(), content_hash='a' * 64)
+    edge = EntityEdge(source_node_uuid='owner', target_node_uuid=target.uuid, name='RELATED_TO',
+        fact='Supplier provides components to target.', group_id='g1', created_at=now)
+    run = AsyncMock(side_effect=[
+        SimpleNamespace(data=AsyncMock(return_value=[{'properties': know._properties()}])),
+        SimpleNamespace(data=AsyncMock(return_value=[{}])),
+        SimpleNamespace(data=AsyncMock(return_value=[])),
+        SimpleNamespace(data=AsyncMock(return_value=[{'uuid': resolved_id}])),
+        SimpleNamespace(data=AsyncMock(return_value=[{'uuid': value} for value in {'owner', resolved_id}])),
+        SimpleNamespace(data=AsyncMock(return_value=[])),
+        SimpleNamespace(),
+    ])
+    outcomes = []
+    @asynccontextmanager
+    async def transaction():
+        try:
+            yield SimpleNamespace(run=run)
+            outcomes.append('committed')
+        except Exception:
+            outcomes.append('rolled_back')
+            raise
+    save_edge = AsyncMock()
+    driver = SimpleNamespace(provider=GraphProvider.NEO4J, transaction=transaction,
+                             entity_edge_ops=SimpleNamespace(save=save_edge))
+    monkeypatch.setattr(knows_module, 'entity_node_from_record', lambda _row: owner)
+    if resolved_id == 'owner':
+        with pytest.raises(ValueError, match='distinct Entities'):
+            await know.save_know(driver, entity=owner, relationships=[edge], relationship_targets=[target])
+        assert outcomes == ['rolled_back']
+        save_edge.assert_not_awaited()
+    else:
+        result = await know.save_know(driver, entity=owner, relationships=[edge], relationship_targets=[target])
+        assert result[0].uuid == 'existing-know' and result[0].content_hash == 'a' * 64
+        assert result[1].uuid == 'owner'
+        assert edge.target_node_uuid == 'canonical-target'
+        assert edge.attributes['supporting_know_uuids'] == ['existing-know']
+        assert outcomes == ['committed']
+        save_edge.assert_awaited_once()
+    assert 'MERGE (n:Entity' in run.await_args_list[3].args[0]
+    assert set(run.await_args_list[4].kwargs['ids']) == {'owner', resolved_id}
+    assert not any('MERGE (know:Know' in call.args[0] for call in run.await_args_list)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('endpoints', [[{'uuid': 'owner'}, {'uuid': 'target'}], [], [{'uuid': 'owner'}]])
+async def test_relationship_endpoint_needs_entity_not_an_extra_know_and_keeps_evidence(monkeypatch, endpoints):
+    from contextlib import asynccontextmanager
+    import graphiti_core.knows as knows_module
+    now = datetime(2026, 11, 10, tzinfo=timezone.utc)
+    owner = EntityNode(uuid='owner', name='Supplier', group_id='g1', created_at=now)
+    know = KnowNode(uuid='existing-know', name='Finding', group_id='g1', created_at=now,
+        valid_at=now, source_description='Primary source', content='Evidence', entity_uuid='owner',
+        observation='Supplier provides components.', interpretation='Limited evidence.', citation=_citation(), content_hash='a' * 64)
+    edge = EntityEdge(source_node_uuid='owner', target_node_uuid='target', name='RELATED_TO',
+        fact='Supplier provides components to target.', group_id='g1', created_at=now)
+    run = AsyncMock(side_effect=[
+        SimpleNamespace(data=AsyncMock(return_value=[{'properties': know._properties()}])),
+        SimpleNamespace(data=AsyncMock(return_value=[{}])),
+        SimpleNamespace(data=AsyncMock(return_value=endpoints)),
+        SimpleNamespace(data=AsyncMock(return_value=[])),
+        SimpleNamespace(),
+    ])
+    outcomes = []
+    @asynccontextmanager
+    async def transaction():
+        try:
+            yield SimpleNamespace(run=run)
+            outcomes.append('committed')
+        except Exception:
+            outcomes.append('rolled_back')
+            raise
+    save_edge = AsyncMock()
+    driver = SimpleNamespace(provider=GraphProvider.NEO4J, transaction=transaction,
+                             entity_edge_ops=SimpleNamespace(save=save_edge))
+    monkeypatch.setattr(knows_module, 'entity_node_from_record', lambda _row: owner)
+    if len(endpoints) == 2:
+        result = await know.save_know(driver, entity=owner, relationships=[edge])
+        assert result[0].uuid == 'existing-know'
+        assert edge.attributes['supporting_know_uuids'] == ['existing-know']
+        assert outcomes == ['committed']
+        save_edge.assert_awaited_once()
+    else:
+        with pytest.raises(ValueError, match='distinct Entities in this Project'):
+            await know.save_know(driver, entity=owner, relationships=[edge])
+        assert outcomes == ['rolled_back']
+        save_edge.assert_not_awaited()
+    endpoint_query = run.await_args_list[2]
+    assert 'n.group_id=$group' in endpoint_query.args[0]
+    assert 'support:Know' not in endpoint_query.args[0]
 
 
 def test_research_origin_roundtrips_without_changing_know_content_identity():

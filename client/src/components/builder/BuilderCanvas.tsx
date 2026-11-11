@@ -807,22 +807,6 @@ export default function BuilderCanvas({
       tabIndex={0}
       onKeyDown={(event) => {
         if (event.key === 'Backspace' || event.key === 'Delete') {
-          if (selectedCardId) {
-            event.preventDefault();
-            onPersistGraphMutation?.('canvas:delete-node', { cardId: selectedCardId });
-            setDocument((prev) => ({
-              ...prev,
-              version: prev.version + 1,
-              nodes: prev.nodes.filter((node) => node.id !== selectedCardId),
-              edges: prev.edges.filter(
-                (edge) => edge.source !== selectedCardId && edge.target !== selectedCardId,
-              ),
-            }));
-            onSelectCard(null);
-            onSelectEdge(null);
-            setHoveredCardId(null);
-            return;
-          }
           if (selectedEdgeId) {
             event.preventDefault();
             if (onDeleteSelectedEdge) {

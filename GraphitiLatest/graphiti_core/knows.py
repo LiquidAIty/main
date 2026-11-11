@@ -69,8 +69,9 @@ class KnowRelationship(BaseModel):
         default=None, min_length=1,
         description='Omit to use the Entity owning this Know as the source.',
     )
-    target_entity_uuid: str = Field(
-        min_length=1, description='Exact Graphiti UUID of the target Entity that owns a Know in this Project.',
+    target_entity_name: str = Field(
+        min_length=1, max_length=1000,
+        description='Explicit target named by the supported relationship. Reuses or creates that Entity in this Project in the Know transaction; no separate target Know is required.',
     )
     fact: str = Field(
         min_length=1,
@@ -81,7 +82,6 @@ class KnowRelationship(BaseModel):
     )
 
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
-
 
 class KnowNode(Node):
     """A durable, searchable, cited observation attached to one Entity."""
@@ -178,6 +178,7 @@ class KnowNode(Node):
         self, driver: GraphDriver, *, entity: EntityNode | None = None,
         owner_by_name: bool = False, mentions: list[str] | None = None,
         relationships: list[EntityEdge] | None = None,
+        relationship_targets: list[EntityNode] | None = None,
     ) -> tuple['KnowNode', EntityNode, bool, bool, list[EntityEdge]]:
         """Commit one Know and owner atomically, without episode ingestion."""
         if driver.provider != GraphProvider.NEO4J:
@@ -283,7 +284,8 @@ class KnowNode(Node):
                 )
                 stored = _know_from_record((await result.data())[0]['properties'])
 
-            # Names do nothing. Only explicitly supplied IDs can become references.
+            # Incidental names in prose do nothing. Only explicit relationship
+            # targets may create Entities; textual mentions keep their own rules.
             for target in dict.fromkeys(mentions or []):
                 if target == owner.uuid:
                     continue
@@ -295,20 +297,27 @@ class KnowNode(Node):
                     know=stored.uuid, group=self.group_id, target=target, created=self.created_at,
                     uuid=str(uuid5(KNOW_UUID_NAMESPACE, f'mention\0{stored.uuid}\0{target}')),
                 )
+            resolved_targets = {}
+            target_ids = {edge.target_node_uuid for edge in relationships or []}
+            for target in relationship_targets or []:
+                if target.group_id != self.group_id or target.uuid not in target_ids:
+                    raise ValueError('Named target must belong to an explicit relationship in this Project')
+                resolved_targets[target.uuid] = await _save_named_relationship_target(tx, target)
             for edge in relationships or []:
                 # A concurrently resolved owner may replace the prepared new Entity.
                 if edge.source_node_uuid == entity.uuid:
                     edge.source_node_uuid = owner.uuid
                 if edge.target_node_uuid == entity.uuid:
                     edge.target_node_uuid = owner.uuid
+                edge.source_node_uuid = resolved_targets.get(edge.source_node_uuid, edge.source_node_uuid)
+                edge.target_node_uuid = resolved_targets.get(edge.target_node_uuid, edge.target_node_uuid)
                 endpoints = {edge.source_node_uuid, edge.target_node_uuid}
                 result = await tx.run(
                     'MATCH (n:Entity) WHERE n.uuid IN $ids AND n.group_id=$group '
-                    'AND EXISTS { MATCH (support:Know {group_id:$group}) WHERE support.entity_uuid=n.uuid } '
                     'RETURN n.uuid AS uuid', ids=list(endpoints), group=self.group_id,
                 )
                 if len(endpoints) != 2 or {r['uuid'] for r in await result.data()} != endpoints:
-                    raise ValueError('Relationship endpoints must own Knows in this Project')
+                    raise ValueError('Relationship endpoints must be distinct Entities in this Project')
                 edge.uuid = str(uuid5(KNOW_UUID_NAMESPACE,
                     f'relationship\0{stored.uuid}\0{edge.source_node_uuid}\0{edge.target_node_uuid}\0{edge.fact}'))
                 edge.attributes['supporting_know_uuids'] = [stored.uuid]
@@ -622,6 +631,34 @@ def know_episode_content(
             )
         )
     return '\n\n'.join(parts)
+
+
+async def _save_named_relationship_target(tx, entity: EntityNode) -> str:
+    """Resolve an explicitly declared target inside its supporting Know transaction."""
+    result = await tx.run(
+        'MATCH (n:Entity) WHERE n.group_id=$group '
+        'AND toLower(trim(n.name))=toLower(trim($name)) '
+        'RETURN n.uuid AS uuid LIMIT 2', group=entity.group_id, name=entity.name,
+    )
+    rows = await result.data()
+    if len(rows) > 1:
+        raise ValueError('entity_name is ambiguous; provide entity_uuid')
+    if rows:
+        return str(rows[0]['uuid'])
+    # Share the name-resolved Know owner identity so that path and a named
+    # relationship target converge when they create the same name concurrently.
+    identity = hashlib.sha256(
+        f'{entity.group_id}\0name:{normalize_entity_name(entity.name)}'.encode()
+    ).hexdigest()
+    result = await tx.run(
+        'MERGE (n:Entity {know_owner_key:$identity}) '
+        'ON CREATE SET n.uuid=$uuid,n.name=$name,n.group_id=$group,'
+        'n.created_at=$created,n.summary=$summary,n.name_embedding=$embedding '
+        'RETURN n.uuid AS uuid',
+        identity=identity, uuid=entity.uuid, name=entity.name, group=entity.group_id,
+        created=entity.created_at, summary=entity.summary, embedding=entity.name_embedding,
+    )
+    return str((await result.data())[0]['uuid'])
 
 
 async def resolve_know_entity(

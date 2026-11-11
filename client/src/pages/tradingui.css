@@ -59,6 +59,48 @@
 }
 
 .trading-content { min-width: 0; }
+.trading-market-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 6px 10px; border-bottom: 1px solid #1f2937; }
+.trading-market-controls label { display: flex; align-items: center; gap: 6px; color: #a7b5c4; font-size: 12px; }
+.trading-market-controls input { width: 88px; }
+.trading-market-controls button, .trading-market-controls input, .trading-market-controls select, .trading-chart-status button { background: #101b27; color: #e5e7eb; border: 1px solid #344658; border-radius: 5px; padding: 5px 8px; }
+.trading-main-chart { height: 100%; min-height: 320px; }
+.trading-tv-chart { display: flex; flex-direction: column; height: 100%; width: 100%; }
+.trading-tv-chart iframe { flex: 1; width: 100%; min-height: 0; border: 0; }
+.trading-chart-status { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 8px; color: #a7b5c4; font-size: 11px; }
+.trading-chart-status [role=alert] { color: #fb7185; }
+.trading-workspace [hidden] { display: none; }
+.trading-layout-forecast { padding: 0; gap: 0; }
+.trading-forecast-content, .trading-forecast-section { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.kronos-panel { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: #0b111a; }
+.kronos-panel input, .kronos-panel select, .kronos-panel button { background: #101b27; color: #dce5ee; border: 1px solid #2a394a; border-radius: 4px; padding: 5px 8px; font: inherit; max-width: 100%; }
+.kronos-panel button { cursor: pointer; }
+.kronos-panel button:disabled { opacity: .45; cursor: default; }
+.kronos-panel button[aria-pressed=true], .kronos-panel button[aria-expanded=true] { border-color: #72d7c7; color: #72d7c7; }
+.forecast-actions { display: flex; flex-shrink: 0; align-items: center; flex-wrap: wrap; gap: 6px; padding: 5px 10px; border-bottom: 1px solid #1f2937; font-size: 12px; }
+.forecast-actions select { width: clamp(130px, 20cqw, 220px); min-width: 0; }
+.forecast-actions .forecast-run { color: #72d7c7; border-color: #315f62; }
+.forecast-actions .forecast-warning { color: #efb666; }
+.forecast-window { color: #a7b5c4; font-size: 11px; white-space: nowrap; }
+.forecast-action-spacer { flex: 1; }
+.forecast-price-view { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.kronos-chart-toolbar { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 10px; min-height: 32px; font-size: 12px; font-variant-numeric: tabular-nums; color: #c1cbd6; }
+.kronos-chart-toolbar > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kronos-chart-toolbar > div { display: flex; flex-shrink: 0; gap: 5px; }
+.kronos-candles { flex: 1; min-height: 0; width: 100%; }
+.forecast-attribution { display: flex; flex-shrink: 0; justify-content: space-between; gap: 8px; padding: 2px 10px; color: #8795a6; font-size: 10px; }
+.forecast-attribution a { color: inherit; }
+.forecast-error { color: #ffb79d; padding: 4px 10px; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.forecast-detail { position: absolute; z-index: 3; top: 44px; right: 8px; width: min(440px, calc(100% - 16px)); max-height: calc(100% - 66px); overflow: auto; background: #101a27; border: 1px solid #344658; border-radius: 6px; padding: 12px; box-shadow: 0 12px 30px #0008; font-size: 12px; }
+.forecast-detail header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.forecast-detail dl { display: grid; grid-template-columns: 115px minmax(0, 1fr); gap: 8px; }
+.forecast-detail dt { color: #a7b5c4; }
+.forecast-detail dd { margin: 0; overflow-wrap: anywhere; }
+.forecast-detail [role=alert] { color: #ffb79d; }
+.forecast-detail details { margin-top: 12px; }
+.forecast-detail pre { overflow: auto; max-height: 320px; font-size: 11px; }
+.forecast-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.forecast-settings label { display: grid; gap: 4px; }
+.forecast-settings label:last-child { grid-column: 1 / -1; }
 .trading-chart-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));

@@ -91,6 +91,18 @@ describe('deck route identity contract', () => {
     );
   });
 
+  it('forwards an explicit deletion only under the authorized Project identity', async () => {
+    const document = { id: 'deck_builder', name: 'Builder', nodes: [], edges: [], promptTemplates: [] };
+    mocks.saveDeckDocument.mockResolvedValue({ deck: document, meta: { deckRevision: 'next' } });
+    const response = await request('/api/projects/project-alias/decks/deck_builder', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ document, expectedRevision: 'before', removeCardId: 'card_worldsignals_agent' }),
+    });
+    expect(response.status).toBe(200);
+    expect(mocks.saveDeckDocument).toHaveBeenCalledWith('project-canonical', 'deck_builder', document,
+      { expectedRevision: 'before', removeCardId: 'card_worldsignals_agent' });
+  });
+
   it('returns the same canonical identity with a successful compare-and-swap save', async () => {
     mocks.saveDeckDocument.mockResolvedValue({
       deck: {

@@ -267,57 +267,13 @@ def test_pause_resume_fails_closed_until_a_real_trader_lifecycle_exists() -> Non
         )
 
 
-def test_kronos_package_load_is_namespaced_without_mutating_import_paths(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    package_root = tmp_path / "kronos" / "model"
-    package_root.mkdir(parents=True)
-    (package_root / "__init__.py").write_text(
-        "from .implementation import Kronos, KronosPredictor, KronosTokenizer\n",
-        encoding="utf-8",
-    )
-    (package_root / "implementation.py").write_text(
-        """
-class Kronos:
-    @classmethod
-    def from_pretrained(cls, model_ref):
-        return ("model", model_ref)
-
-class KronosTokenizer:
-    @classmethod
-    def from_pretrained(cls, model_ref):
-        return ("tokenizer", model_ref)
-
-class KronosPredictor:
-    def __init__(self, model, tokenizer, **options):
-        self.model = model
-        self.tokenizer = tokenizer
-        self.options = options
-""".strip(),
-        encoding="utf-8",
-    )
-    module_prefix = trading_forecast._KRONOS_PACKAGE_NAME
+def test_kronos_package_load_is_namespaced_without_mutating_import_paths() -> None:
+    # Exercise the actual vendor package, not substitute classes whose imports differ.
     before_path = list(sys.path)
     prior_model_module = sys.modules.get("model")
-    monkeypatch.setattr(trading_forecast, "_KRONOS_ROOT", tmp_path / "kronos")
-    trading_forecast._kronos_predictor.cache_clear()
-    for name in list(sys.modules):
-        if name == module_prefix or name.startswith(f"{module_prefix}."):
-            sys.modules.pop(name, None)
-
-    try:
-        predictor = trading_forecast._kronos_predictor()
-
-        assert sys.path == before_path
-        assert sys.modules.get("model") is prior_model_module
-        assert predictor.model == ("model", trading_forecast.KRONOS_MODEL_REF)
-        assert predictor.tokenizer == (
-            "tokenizer", trading_forecast.KRONOS_TOKENIZER_REF,
-        )
-        assert predictor.options == {"device": "cpu", "max_context": 512}
-    finally:
-        trading_forecast._kronos_predictor.cache_clear()
-        for name in list(sys.modules):
-            if name == module_prefix or name.startswith(f"{module_prefix}."):
-                sys.modules.pop(name, None)
+    module = trading_forecast._kronos_module()
+    assert sys.path == before_path
+    assert sys.modules.get("model") is prior_model_module
+    assert module.Kronos.__module__ == trading_forecast._KRONOS_PACKAGE_NAME + ".kronos"
+    assert callable(module.KronosTokenizer.from_pretrained)
+    assert callable(module.KronosPredictor.predict_batch)

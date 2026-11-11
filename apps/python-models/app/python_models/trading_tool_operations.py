@@ -1,6 +1,6 @@
 """Trading state and decision Python tool handlers and definitions."""
 # Entity: Trading
-# Relationship: Publishes the explicitly grantable Trade Job, decision-journal, and bounded Kronos forecast operations without adding live order execution.
+# Relationship: Publishes explicitly grantable Trade Job, decision-journal, LumiBot simulation, and bounded forecast operations without adding broker order execution.
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any
 
 from app.python_models.operation_definition import OperationDefinition
 from app.python_models.trading_forecast import forecast_market_bars
+from app.python_models.trading_backtest import trading_list_bots, trading_backtest
 
 async def trading_get_state_tool(
     *, projectId: str, deckId: str, _callerCardId: str,
@@ -93,6 +94,32 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
         read_only=False, destructive=False, idempotent=True, open_world=False,
     )
     return [
+        OperationDefinition(
+            canonical_id="trading.list_bots", title="Read available LumiBot strategies",
+            description="Inspect the installed, supported LumiBot strategy examples and their exact rules and limits. Does not run a bot or submit orders.",
+            parameters_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            output_schema={"type": "object"}, handler=trading_list_bots, available=True, publishers=internal,
+            access="read", namespace="trading", grant_eligible=True, external_source_id="python_runtime", annotations=read_closed,
+        ),
+        OperationDefinition(
+            canonical_id="trading.backtest", title="Backtest a LumiBot strategy",
+            description="Run one installed LumiBot example on validated historical US stock/ETF daily Alpaca IEX bars. "
+                        "Historical simulation only: no broker connection or orders. Explicit 7-366 day dates, end exclusive. "
+                        "Returns native metrics, equity and actual data/cost assumptions; not proof of profitable execution. "
+                        "Inspect trading.list_bots before choosing a bot. No background queue or arbitrary code.",
+            parameters_schema={"type": "object", "properties": {
+                "bot": {"type": "string", "enum": ["buy_and_hold", "momentum_rotation"]},
+                "symbols": {"type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": True,
+                            "items": {"type": "string", "minLength": 1}},
+                "start": {"type": "string", "format": "date"}, "end": {"type": "string", "format": "date"},
+                "capital": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000000},
+                "fee_bps": {"type": "number", "minimum": 0, "maximum": 1000, "default": 0},
+                "slippage_per_share": {"type": "number", "minimum": 0, "maximum": 100, "default": 0},
+            }, "required": ["bot", "symbols", "start", "end", "capital"], "additionalProperties": False},
+            output_schema={"type": "object"}, handler=trading_backtest, available=True, publishers=internal,
+            access="read", namespace="trading", grant_eligible=True, external_source_id="python_runtime",
+            annotations=_annotations(read_only=True, destructive=False, idempotent=False, open_world=True),
+        ),
         OperationDefinition(
             canonical_id="trading.get_state",
             title="Read paper trading state",
@@ -183,17 +210,29 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
             title="Forecast market bars",
             description=(
                 "Fetch one bounded real Alpaca paper-data history window and use Kronos "
-                "to forecast the next OHLCV bars without creating a trade or order."
+                "to forecast and retain the next OHLCV bars without creating a trade or order. "
+                "Omit end for a current forecast: the server uses invocation time. An explicit end "
+                "is a historical information cutoff (timezone required) and must not be in the future. "
+                "Daily bars are accepted only "
+                "after 20:00 New York time. Invalid model candles remain flagged, not repaired."
             ),
             parameters_schema={
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string", "minLength": 1},
-                    "timeframe": {"type": "string", "pattern": r"^[1-9][0-9]*(Min|Hour|Day|Week|Month)$"},
+                    "timeframe": {"type": "string", "enum": ["1Min", "5Min", "15Min", "1Hour", "1Day"]},
                     "start": {"type": ["string", "null"]},
                     "end": {"type": ["string", "null"]},
                     "history_limit": {"type": "integer", "minimum": 16, "maximum": 400, "default": 128},
                     "horizon": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    "model_variant": {"type": "string", "enum": ["mini", "small", "base"], "default": "mini"},
+                    "sample_count": {"type": "integer", "minimum": 1, "maximum": 64, "default": 4,
+                                     "description": "CPU capacity: up to 64 paths for mini, 16 for small or base."},
+                    "seed": {"type": "integer", "minimum": 0, "maximum": 2147483647, "default": 443},
+                    "temperature": {"type": "number", "exclusiveMinimum": 0, "default": 1.0},
+                    "top_p": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 0.9},
+                    "top_k": {"type": "integer", "minimum": 0, "default": 0,
+                              "description": "0 uses top-p; positive top-k replaces top-p. 1 is greedy and collapses repeated paths."},
                 },
                 "required": ["symbol", "timeframe"],
                 "additionalProperties": False,
@@ -202,12 +241,13 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
             handler=forecast_market_bars,
             available=True,
             publishers=internal,
-            access="read",
+            access="write",
             namespace="trading",
             grant_eligible=True,
             external_source_id="python_runtime",
+            dispatcher_context_arguments=frozenset({"projectId", "deckId", "_callerCardId"}),
             annotations={
-                "readOnlyHint": True,
+                "readOnlyHint": False,
                 "destructiveHint": False,
                 "idempotentHint": False,
                 "openWorldHint": True,

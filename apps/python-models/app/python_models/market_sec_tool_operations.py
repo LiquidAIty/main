@@ -191,8 +191,11 @@ def market_sec_tool_operation_definitions() -> list[OperationDefinition]:
             title="Get historical market bars",
             description=(
                 "Read-only Alpaca bounded historical bars for an EXPLICITLY supplied symbol and "
-                "timeframe (paper data feed). Returns provider/feed identity, the bars, and "
-                "status. Use only when the selected task explicitly needs historical bars. It "
+                "timeframe (paper data feed). Returns raw adjustment provenance, barCount, bounded "
+                "coverage/truncation, and a chronological close-series return/drawdown summary alongside "
+                "the unchanged bars. Summary metrics cover only returned observations, not total return "
+                "or verified calendar completeness. Use explicit dates and a sufficient limit "
+                "(up to 1000; default 100) for a one-year comparison. It "
                 "places no order, mutates nothing, does no streaming, and never calls a live "
                 "endpoint. Returns provider_unconfigured when paper credentials are not configured."
             ),
@@ -216,6 +219,10 @@ def market_sec_tool_operation_definitions() -> list[OperationDefinition]:
                     "symbol": {"type": "string"},
                     "timeframe": {"type": "string"},
                     "status": {"type": "string"},
+                    "barCount": {"type": "integer"},
+                    "adjustment": {"const": "raw"},
+                    "truncated": {"type": "boolean"},
+                    "summary": {"type": "object"},
                     "bars": {"type": "array"},
                 },
             },

@@ -10,7 +10,7 @@
  * Entity: Builder Card
  * Relationship: This file mounts the saved Builder Card's own terminal as the permanent lower work surface beneath Main.
  * Entity: Saved Cards
- * Relationship: This file composes exact deck hydration, optimistic persistence, existing-Card attachment, new-Card authoring, and Card configuration editing.
+ * Relationship: Composes exact deck hydration, persistence, Card attachment/authoring/editing, and explicit first-panel Card removal from the Project.
  * Entity: Card Topology
  * Relationship: This file owns the visible saved Card canvas composition, Card and edge selection, edge deletion, Hermes-sourced activity projection, and camera focus requests.
  * Entity: Card Terminals
@@ -328,6 +328,8 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     createInitialDeck: buildProjectlessDeckDocument,
   });
   const [stateLoaded, setStateLoaded] = useState(false);
+  const [deletingCardId, setDeletingCardId] = useState<string | null>(null);
+  const [deleteCardError, setDeleteCardError] = useState<string | null>(null);
   const [savedCardChooserOpen, setSavedCardChooserOpen] = useState(false);
   const [savedCardChoices, setSavedCardChoices] = useState<SavedCardChoice[]>([]);
   const [savedCardChooserBusy, setSavedCardChooserBusy] = useState(false);
@@ -458,11 +460,17 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
     [deck.nodes],
   );
+  const forecastCard = useMemo(() => {
+    const owners = deck.nodes.filter(card => card.enabled !== false && card.runtimeOptions?.tools?.includes('forecast_market_bars'));
+    return owners.length === 1 ? owners[0] : null;
+  }, [deck.nodes]);
   const conversationId = canvasProjectId;
   const knowledgeGraphs = useAgentBuilderKnowledgeGraphs({
     projectId: activeProject,
     deckId: BUILDER_DECK_ID,
     conversationId,
+    worldView: workspaceView === 'worldview' && worldViewCard?.enabled !== false && worldViewCard && worldViewBridge
+      ? { cardId: worldViewCard.id, bridge: worldViewBridge } : null,
   });
   const canonicalEntityMatcher = useMemo(
     () => createCanonicalEntityMatcher({
@@ -663,6 +671,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
   }, [canvasProjectId]);
   const {
     handleSaveDeck,
+    handleDeleteCard,
     persistenceFrozen,
     reloadCanonical,
     reloadToken,
@@ -745,6 +754,23 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
   const selectedWiredConnections = useMemo(() => {
     return selectedCard ? wiredBotTargets(deck, selectedCard.id) : [];
   }, [deck.edges, deck.nodes, selectedCard]);
+  useEffect(() => { setDeleteCardError(null); }, [selectedCardId]);
+  const deleteSelectedCard = async () => {
+    if (!selectedCard || deletingCardId || deckSaveBusy || activeCardIds.includes(selectedCard.id)) return;
+    const { id, title } = selectedCard;
+    if (!window.confirm(`Delete ${title} from this Project? Its wires will be removed. Its saved profile and session history will be kept.`)) return;
+    setDeletingCardId(id);
+    setDeleteCardError(null);
+    try {
+      await handleDeleteCard(id);
+      handleCardPersisted(id);
+      setSelectedCardId(current => current === id ? null : current);
+    } catch (error) {
+      setDeleteCardError(error instanceof Error ? error.message : 'Card deletion failed.');
+    } finally {
+      setDeletingCardId(null);
+    }
+  };
   const builderTabs = useMemo(() => {
     if (selectedCard) return [
       ...BUILDER_NODE_TABS,
@@ -1077,6 +1103,20 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
         if (BUILDER_NODE_TABS.some((entry) => entry === tab)) {
           return (
             <>
+              {tab === 'Prompt' && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', paddingBottom: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => { void deleteSelectedCard(); }}
+                    disabled={Boolean(deletingCardId) || deckSaveBusy || activeCardIds.includes(selectedCard.id)}
+                    title="Remove this Card and its wires from this Project"
+                    style={graphDrawerButtonStyle({ color: '#D9A5A5', fontSize: 12, padding: '5px 9px' })}
+                  >
+                    {deletingCardId === selectedCard.id ? 'Deleting…' : 'Delete Card'}
+                  </button>
+                </div>
+              )}
+              {deleteCardError && <div role="alert" style={{ color: '#D9A5A5', fontSize: 12 }}>{deleteCardError}</div>}
               <CardEditorErrorBoundary
                 key={`card-editor-boundary:${selectedCard.id}`}
                 cardTitle={String(selectedCard.title || 'Selected card')}
@@ -1508,6 +1548,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
           projectId={canvasProjectId || null}
           deckId={BUILDER_DECK_ID}
           card={tradingCard}
+          forecastCard={forecastCard}
         />
       }
       worldviewSurface={

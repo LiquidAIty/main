@@ -9,9 +9,12 @@
  * Relationship: This file requires ownership of the exact Project before forwarding any ThinkGraph read or retirement operation.
  * Entity: Project Knowledge Graph
  * Relationship: Supplies provider-owned projections and notifications plus shared active-view Code category selection over the existing Project-scoped stream.
+ * Entity: WorldView
+ * Relationship: Correlates one bounded globe command and its exact mounted-view result over the existing authenticated Project stream, without retaining or replaying commands.
  */
 
 import { Router, type Response } from 'express';
+import { randomUUID } from 'node:crypto';
 
 import {
   fetchThinkGraphNeighborhood,
@@ -21,12 +24,42 @@ import {
 import { requireOwnedProject } from './projectAccess';
 
 const thinkGraphRoutes = Router();
-const graphStreams = new Map<Response, string>();
+type ProjectStream = {
+  projectId: string; connectionId: string; worldViewCardId: string;
+  pending?: { requestId: string; finish: (result: Record<string, unknown>) => void };
+};
+const graphStreams = new Map<Response, ProjectStream>();
+
+export async function requestWorldViewAction(projectId: string, cardId: string,
+  action: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const matches = [...graphStreams].filter(([response, scope]) => scope.projectId === projectId
+    && scope.worldViewCardId === cardId && !response.destroyed && !response.writableEnded);
+  if (matches.length !== 1) return { ok: false, dispatched: false,
+    error: matches.length ? 'worldview_view_ambiguous' : 'worldview_view_unavailable' };
+  const [response, scope] = matches[0];
+  if (scope.pending) return { ok: false, dispatched: false, error: 'worldview_view_busy' };
+  return new Promise((resolve) => {
+    const requestId = randomUUID();
+    const timer = setTimeout(() => {
+      response.write(`event: worldview-cancel\ndata: ${JSON.stringify({ requestId })}\n\n`);
+      finish({ ok: false, dispatched: true, confirmed: false, error: 'worldview_result_unconfirmed' });
+    }, 20_000);
+    const finish = (result: Record<string, unknown>) => {
+      if (scope.pending?.requestId !== requestId) return;
+      clearTimeout(timer);
+      scope.pending = undefined;
+      resolve({ projectId, cardId, requestId, ...result });
+    };
+    scope.pending = { requestId, finish };
+    response.write(`event: worldview-action\ndata: ${JSON.stringify({ projectId, cardId,
+      connectionId: scope.connectionId, requestId, action, arguments: args })}\n\n`);
+  });
+}
 type CodeCategorySelection = { id: string; label: string; memberFilePaths?: string[] };
 export async function configureCodeCategories(projectId: string, input: {
   enable?: string[]; disable?: string[]; visible?: boolean; selectionId?: string; categories?: CodeCategorySelection[];
 } = {}) {
-  const streams = [...graphStreams].filter(([response, project]) => project === projectId
+  const streams = [...graphStreams].filter(([response, scope]) => scope.projectId === projectId
     && !response.destroyed && !response.writableEnded);
   if (!streams.length) return { ok: true, active: false, changed: false, reason: 'no_active_view', categories: [], selectedIds: [] };
   const result = await requestPythonRailsJson('/project/entity-map/code-selection', {
@@ -110,8 +143,8 @@ thinkGraphRoutes.get('/source-search', async (req, res) => {
 });
 
 export function notifyThinkGraphChanged(projectId: string, authority: 'thinkgraph' | 'knowgraph' = 'thinkgraph'): void {
-  for (const [response, project] of graphStreams) {
-    if (project !== projectId || response.destroyed || response.writableEnded) continue;
+  for (const [response, scope] of graphStreams) {
+    if (scope.projectId !== projectId || response.destroyed || response.writableEnded) continue;
     if (!response.write(`event: ${authority === 'knowgraph' ? 'knowgraph-changed' : 'changed'}\ndata: ${JSON.stringify({ projectId })}\n\n`)) response.end();
   }
 }
@@ -126,20 +159,41 @@ thinkGraphRoutes.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
-    graphStreams.set(res, scope.projectId);
+    const worldViewCardId = typeof req.query.worldViewCardId === 'string' ? req.query.worldViewCardId : '';
+    const connection = { projectId: scope.projectId, connectionId: randomUUID(), worldViewCardId };
+    graphStreams.set(res, connection);
     const heartbeat = setInterval(() => {
       if (!res.write(': keepalive\n\n')) res.end();
     }, 25_000);
     res.on('close', () => {
-      clearInterval(heartbeat); graphStreams.delete(res);
+      clearInterval(heartbeat);
+      graphStreams.get(res)?.pending?.finish({ ok: false, dispatched: true, confirmed: false,
+        error: 'worldview_view_disconnected' });
+      graphStreams.delete(res);
     });
     // Re-read on every connection, including reconnects, so missed changes need no replay queue.
-    res.write(`event: ready\ndata: ${JSON.stringify({ projectId: scope.projectId })}\n\n`);
+    res.write(`event: ready\ndata: ${JSON.stringify({ projectId: scope.projectId,
+      ...(worldViewCardId ? { connectionId: connection.connectionId, worldViewCardId } : {}) })}\n\n`);
   } catch (error: any) {
     if (!res.headersSent) res.status(502).json({ error: String(error?.message || 'thinkgraph_stream_unavailable') });
     else res.end();
   }
   return undefined;
+});
+
+thinkGraphRoutes.post('/worldview-action-result', async (req, res) => {
+  const { projectId, cardId, connectionId, requestId, result } = req.body || {};
+  if (![projectId, cardId, connectionId, requestId].every(value => typeof value === 'string' && value)
+    || !result || typeof result !== 'object' || Array.isArray(result)
+    || JSON.stringify(result).length > 65_536) return res.status(400).json({ error: 'worldview_result_invalid' });
+  const access = await requireOwnedProject(req, res, projectId);
+  if (!access) return undefined;
+  const scope = [...graphStreams.values()].find(value => value.projectId === access.projectId
+    && value.worldViewCardId === cardId && value.connectionId === connectionId
+    && value.pending?.requestId === requestId);
+  if (!scope?.pending) return res.status(409).json({ error: 'worldview_result_not_pending' });
+  scope.pending.finish({ ok: result.ok !== false, dispatched: true, confirmed: true, result });
+  return res.json({ ok: true });
 });
 
 thinkGraphRoutes.post('/retire', async (req, res) => {

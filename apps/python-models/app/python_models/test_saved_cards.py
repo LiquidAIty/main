@@ -45,6 +45,69 @@ def _agent(card_id: str, **overrides):
 def _main_bot(card_id: str, **overrides):
     return _agent(card_id, **overrides)
 
+
+@pytest.mark.parametrize("target,revision,error", [
+    (None, "before", "card_deletion_requires_explicit_operation"),
+    ("other", "before", "card_deletion_requires_explicit_operation"),
+    ("worldsignals", None, "card_removal_requires_revision"),
+    ("worldsignals", "stale", "deck_conflict"),
+    ("worldsignals", "before", None),
+])
+def test_explicit_removal_keeps_saved_definition_and_removes_only_scoped_membership(
+    monkeypatch, target, revision, error,
+):
+    statements = []
+    retired_edges = []
+
+    class Cursor:
+        def execute(self, query, params=None):
+            statements.append((str(query), params))
+
+    kept = _agent("kept")
+    kept["_cardRevisionId"] = "kept-revision"
+    removed = _agent("worldsignals")
+    edge = {"id": "wire", "source": "kept", "target": "worldsignals", "edgeType": "flow"}
+    monkeypatch.setattr(saved_cards, "load_saved_deck_with_cursor", lambda *_args, **_kwargs: {
+        "deck": {"nodes": [kept, removed], "edges": [edge]}, "meta": {"deckRevision": "before"},
+    })
+    monkeypatch.setattr(agentgraph_topology, "ensure_card_vertex", lambda *_args: None)
+    monkeypatch.setattr(agentgraph_topology, "delete_card_relationship",
+                        lambda _cursor, project, deck, value: retired_edges.append((project, deck, value)))
+
+    def remove():
+        saved_cards._update_existing_deck_with_cursor(
+            Cursor(), project_ref="project", project_id="project", deck_id="deck",
+            document={"name": "Project", "version": 2}, project_code_folder=None,
+            expected_revision=revision, incoming_nodes=[kept], incoming_edges=[],
+            incoming_templates=[], remove_card_id=target,
+        )
+
+    if error:
+        with pytest.raises(saved_card_contract.CardDomainError, match=error):
+            remove()
+        assert statements == []
+        assert retired_edges == []
+    else:
+        remove()
+        membership_deletes = [(q, p) for q, p in statements if q.startswith("DELETE FROM ag_catalog.deck_card_memberships")]
+        assert len(membership_deletes) == 1
+        assert membership_deletes[0][1] == ("project", "deck", "worldsignals")
+        assert retired_edges == [("project", "deck", edge)]
+        assert not any(q.startswith("DELETE FROM ag_catalog.agent_card") for q, _ in statements)
+        assert not any("INSERT INTO ag_catalog.agent_card_revisions" in q for q, _ in statements)
+
+
+def test_explicit_removal_cannot_remove_a_core_card(monkeypatch):
+    monkeypatch.setattr(saved_cards, "load_saved_deck_with_cursor", lambda *_args, **_kwargs: {
+        "deck": {"nodes": [_agent("card_knowgraph")], "edges": []}, "meta": {"deckRevision": "before"},
+    })
+    with pytest.raises(saved_card_contract.CardDomainError, match="system_card_removal_forbidden"):
+        saved_cards._update_existing_deck_with_cursor(
+            None, project_ref="project", project_id="project", deck_id="deck",
+            document={}, project_code_folder=None, expected_revision="before",
+            incoming_nodes=[], incoming_edges=[], incoming_templates=[], remove_card_id="card_knowgraph",
+        )
+
 def test_global_profile_binding_locks_sorted_before_collision_read() -> None:
     calls: list[tuple[str, object]] = []
 

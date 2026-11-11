@@ -13,6 +13,8 @@
  * Relationship: This file loads CodeGraph on demand, validates and accumulates File connections, and opens repository File text only by explicit action.
  * Entity: Jev Decisions
  * Relationship: This file applies validated Jev relationship physics locally to the KnowGraph presentation without modifying provider data.
+ * Entity: WorldView
+ * Relationship: Delivers scoped globe commands from the existing Project stream to its mounted view and returns the actual result without replaying commands.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -27,6 +29,7 @@ import {
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 import { applicationApiUrl, applicationFetch } from '../../../lib/applicationApi';
 import type { KnowledgeGraphKind } from '../../../types/agentgraph';
+import type { GodsEyeBridge } from '../../../components/worldsignal/GodsEyeSurface';
 
 type KnowledgeGraphState = {
   projections: Record<KnowledgeGraphKind, GraphProjectionV1>;
@@ -149,11 +152,15 @@ export default function useAgentBuilderKnowledgeGraphs({
   projectId,
   deckId,
   conversationId,
+  worldView,
 }: {
   projectId: string;
   deckId: string;
   conversationId: string;
+  worldView?: { cardId: string; bridge: Pick<GodsEyeBridge, 'executeAction'> } | null;
 }): KnowledgeGraphState {
+  const worldViewRef = useRef(worldView);
+  worldViewRef.current = worldView;
   const [projections, setProjections] = useState(() => emptyGraphs(projectId));
   const [errors, setErrors] = useState<Partial<Record<KnowledgeGraphKind, string>>>({});
   const [statuses, setStatuses] = useState<KnowledgeGraphState['statuses']>({
@@ -314,7 +321,12 @@ export default function useAgentBuilderKnowledgeGraphs({
   useEffect(() => {
     if (!projectId.trim()) return undefined;
     const query = new URLSearchParams({ projectId });
+    const mountedWorldView = worldView;
+    if (mountedWorldView) query.set('worldViewCardId', mountedWorldView.cardId);
     const stream = new EventSource(applicationApiUrl(`/api/thinkgraph/events?${query}`), { withCredentials: true });
+    let connectionId = '';
+    let disposed = false;
+    const actions = new Map<string, AbortController>();
     const refresh = () => { void refreshThinkGraph(); };
     const refreshKnow = () => {
       void refreshKnowGraph();
@@ -329,20 +341,57 @@ export default function useAgentBuilderKnowledgeGraphs({
       const value = JSON.parse(event.data);
       if (value.projectId === projectId) applyCodeSelection(value);
     };
-    stream.addEventListener('ready', refreshKnow);
+    const ready = (event: MessageEvent) => {
+      if (mountedWorldView) connectionId = JSON.parse(event.data).connectionId || '';
+      refreshKnow();
+    };
+    const cancelAction = (event: MessageEvent) => {
+      actions.get(JSON.parse(event.data).requestId)?.abort();
+    };
+    const runWorldViewAction = async (event: Event) => {
+      const command = JSON.parse((event as MessageEvent).data);
+      if (!mountedWorldView || disposed || command.projectId !== projectId
+        || command.cardId !== mountedWorldView.cardId || command.connectionId !== connectionId
+        || worldViewRef.current?.bridge !== mountedWorldView.bridge || actions.has(command.requestId)) return;
+      const controller = new AbortController();
+      actions.set(command.requestId, controller);
+      let result: unknown;
+      try {
+        result = await mountedWorldView.bridge.executeAction(command.action, command.arguments,
+          { signal: controller.signal });
+      } catch (error) {
+        result = { ok: false, error: error instanceof Error ? error.message : 'worldview_action_failed' };
+      } finally { actions.delete(command.requestId); }
+      if (disposed || controller.signal.aborted) return;
+      // A failed acknowledgement is not retried: the camera may already have moved.
+      try {
+        await applicationFetch('/api/thinkgraph/worldview-action-result', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId, cardId: command.cardId, connectionId,
+            requestId: command.requestId, result: isRecord(result) ? result : { value: result } }),
+        });
+      } catch { /* The original tool reports an unconfirmed result on timeout. */ }
+    };
+    stream.addEventListener('ready', ready as EventListener);
     stream.addEventListener('changed', refresh);
     stream.addEventListener('knowgraph-changed', refreshKnow);
     stream.addEventListener('code-categories', categoriesChanged as EventListener);
     stream.addEventListener('error', disconnected);
+    stream.addEventListener('worldview-action', runWorldViewAction as EventListener);
+    stream.addEventListener('worldview-cancel', cancelAction as EventListener);
     return () => {
-      stream.removeEventListener('ready', refreshKnow);
+      disposed = true;
+      for (const controller of actions.values()) controller.abort();
+      stream.removeEventListener('ready', ready as EventListener);
       stream.removeEventListener('changed', refresh);
       stream.removeEventListener('knowgraph-changed', refreshKnow);
       stream.removeEventListener('code-categories', categoriesChanged as EventListener);
       stream.removeEventListener('error', disconnected);
+      stream.removeEventListener('worldview-action', runWorldViewAction as EventListener);
+      stream.removeEventListener('worldview-cancel', cancelAction as EventListener);
       stream.close();
     };
-  }, [projectId, refreshKnowGraph, refreshThinkGraph, applyCodeSelection]);
+  }, [projectId, refreshKnowGraph, refreshThinkGraph, applyCodeSelection, worldView?.cardId, worldView?.bridge]);
 
   const loadCodeGraph = useCallback(async (): Promise<GraphProjectionV1 | null> => {
     const requestId = ++codeProjectionRequestRef.current;
