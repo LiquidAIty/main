@@ -1,5 +1,5 @@
 // Entity: Saved Cards
-// Relationship: This file renders one saved Card's compact identity, subtitle, selection state, and truthful active-Run count.
+// Relationship: Renders a saved Card's compact identity, associated-UI watermark, subtitle, selection state, and truthful active-Run count.
 // Entity: Card Topology
 // Relationship: This file renders separate blue Magnetic handles and an orange connection handle only when the saved Card has orchestration authority.
 
@@ -8,6 +8,9 @@ import type { AgentCardInstance } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
 import { hasAgentOrchestratorAuthority } from '../../../features/agentbuilder/deck/deckPrimitives';
+import { cardWorkspace } from '../../../features/agentbuilder/rail/railVisibility';
+import { WorkspaceIcon } from '../../../features/agentbuilder/core/AgentBuilderRail';
+import { BuilderRailMoonOrb, synodicPhaseFromDate } from '../../../features/agentbuilder/core/BuilderRailMoonOrb';
 
 type AgentCardNodeData = AgentCardInstance & {
   busX?: number;
@@ -41,6 +44,7 @@ export default function AgentCardNode({
     ? Number(data.activeAgentCount)
     : 0;
   const name = String(data?.title || '').trim() || 'Agent';
+  const workspace = cardWorkspace(data);
   const subtext = String(data?.subtitle || '').replace(/\s+/g, ' ').trim() || 'Operational agent';
   const compactSubtext =
     subtext.length > 88 ? `${subtext.slice(0, 88).trimEnd()}…` : subtext;
@@ -197,6 +201,16 @@ export default function AgentCardNode({
           {compactSubtext}
         </div>
       </div>
+      {workspace && <div
+        aria-hidden="true"
+        data-card-ui-icon={workspace}
+        style={{ position: 'absolute', right: 9, bottom: 7, width: 28, height: 28,
+          opacity: 0.18, pointerEvents: 'none', color: GRAPH_THEME.surface.text }}
+      >
+        {workspace === 'worldview'
+          ? <BuilderRailMoonOrb phase01={synodicPhaseFromDate(new Date())} />
+          : <WorkspaceIcon workspace={workspace} size={28} />}
+      </div>}
     </div>
   );
 }

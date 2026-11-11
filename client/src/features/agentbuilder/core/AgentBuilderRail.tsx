@@ -1,6 +1,6 @@
 /**
  * Entity: Agent Builder
- * Relationship: This file renders the persistent product rail and routes each visible destination to its existing Agent Builder workspace owner.
+ * Relationship: Renders the persistent product rail, shares its workspace glyphs with Card identity marks, and routes destinations to existing workspace owners.
  */
 
 import type { ReactNode } from 'react';
@@ -51,6 +51,12 @@ function Icon({ d, size = 22 }: { d: string; size?: number }) {
       <path d={d} />
     </svg>
   );
+}
+
+export function WorkspaceIcon({ workspace, size = 22 }: { workspace: 'knowledge' | 'trading'; size?: number }) {
+  return <Icon size={size} d={workspace === 'knowledge'
+    ? 'M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z'
+    : 'M4 18h16M6 15l3-3 3 2 4-6 2 2'} />;
 }
 
 function HexPlusIcon({ size = 32 }: { size?: number }) {
@@ -151,7 +157,7 @@ export default function AgentBuilderRail({
             color: workspaceView === 'knowledge' ? colors.primary : colors.text,
           }}
         >
-          <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
+          <WorkspaceIcon workspace="knowledge" />
         </button>
       ) : null}
       {visibleRailItems.showTrading ? (
@@ -168,7 +174,7 @@ export default function AgentBuilderRail({
                 : colors.text,
           }}
         >
-          <Icon d="M4 18h16M6 15l3-3 3 2 4-6 2 2" />
+          <WorkspaceIcon workspace="trading" />
         </button>
       ) : null}
       <div className="flex-1" />

@@ -1,6 +1,6 @@
 /**
  * Entity: Agent Builder
- * Relationship: Derives optional rail visibility from enabled saved Card identities and their enabled wires without changing execution authority.
+ * Relationship: Identifies saved Cards' associated workspaces and derives optional rail visibility from enabled identities and wires without changing execution authority.
  * Entity: Saved Cards
  * Relationship: Requires a live saved connection for optional surfaces; ThinkGraph alone controls the combined Graphs icon.
  */
@@ -18,6 +18,13 @@ export function isWorldViewCard(
   card: AgentCardInstance | null | undefined,
 ): boolean {
   return card?.runtime.kind === 'hermes' && card.runtime.profile === 'worldview';
+}
+
+export function cardWorkspace(card: AgentCardInstance): 'worldview' | 'trading' | 'knowledge' | null {
+  if (isWorldViewCard(card)) return 'worldview';
+  if (isTradingAgentCard(card)) return 'trading';
+  if (card.runtime.kind === 'hermes' && ['thinkgraph', 'knowgraph'].includes(card.runtime.profile)) return 'knowledge';
+  return null;
 }
 
 type ProgressiveRailVisibility = {

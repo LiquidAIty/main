@@ -61,6 +61,7 @@
 **/.env.*
 **/*.env
 apps/backend/env
+apps/backend/.data
 **/.hermes
 **/.ssh
 **/id_rsa

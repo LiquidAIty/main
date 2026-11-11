@@ -41,6 +41,31 @@ const baseCard = {
 };
 
 describe('AgentCardNode shared Card geometry', () => {
+  it.each([
+    ['worldview-card', 'worldview', 'worldview'],
+    ['card_trading_workbench', 'trading', 'trading'],
+    ['think-card', 'thinkgraph', 'knowledge'],
+    ['know-card', 'knowgraph', 'knowledge'],
+  ])('adds only a decorative workspace mark to %s', (id, profile, workspace) => {
+    const { container } = render(<AgentCardNode data={{ ...baseCard, id,
+      title: 'Renamed Card', runtime: { kind: 'hermes', mode: 'delegate', profile } }} />);
+    const mark = container.querySelector('[data-card-ui-icon]') as HTMLElement;
+    expect(mark.dataset.cardUiIcon).toBe(workspace);
+    expect(mark.getAttribute('aria-hidden')).toBe('true');
+    expect(mark.style.pointerEvents).toBe('none');
+    expect(mark.style.opacity).toBe('0.18');
+    expect(mark.querySelector('svg')).not.toBeNull();
+    expect(screen.getByText('Renamed Card')).toBeTruthy();
+    expect((container.firstElementChild as HTMLElement).style.width).toBe('124px');
+  });
+
+  it('does not infer an agent UI from a title or add interaction to its mark', () => {
+    const { container } = render(<AgentCardNode data={{ ...baseCard, title: 'Trader WorldView',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'ordinary' } }} />);
+    expect(container.querySelector('[data-card-ui-icon]')).toBeNull();
+    expect(container.querySelector('button')).toBeNull();
+  });
+
   it('shows one orange connector only on saved orchestrators and keeps ordinary Card inputs on the normal port', () => {
     const card = { ...baseCard, runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'receiver' } };
     const { rerender } = render(<AgentCardNode data={card} />);

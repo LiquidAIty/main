@@ -40,7 +40,8 @@ class DeploymentInputs(unittest.TestCase):
     def test_source_context_excludes_private_runtime_state(self):
         ignored = (ROOT / '.dockerignore').read_text(encoding='utf-8').splitlines()
         for rule in ('**/.env', '**/.hermes', '**/.ssh', '**/*.db', '**/*.sqlite',
-                     '**/uploads', '**/.gev-cache', '**/workspace.local.json', 'apps/backend/env'):
+                     '**/uploads', '**/.gev-cache', '**/workspace.local.json', 'apps/backend/env',
+                     'apps/backend/.data'):
             self.assertIn(rule, ignored)
         self.assertNotIn('!agent-products/**', ignored)
 
