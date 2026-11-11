@@ -38,6 +38,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { tradingForecastCard } from '../features/trading/tradingState';
 
 import MainProjectChat from '../components/main/MainProjectChat';
 import {
@@ -460,10 +461,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
     () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
     [deck.nodes],
   );
-  const forecastCard = useMemo(() => {
-    const owners = deck.nodes.filter(card => card.enabled !== false && card.runtimeOptions?.tools?.includes('forecast_market_bars'));
-    return owners.length === 1 ? owners[0] : null;
-  }, [deck.nodes]);
+  const forecastCard = tradingForecastCard(tradingCard);
   const conversationId = canvasProjectId;
   const knowledgeGraphs = useAgentBuilderKnowledgeGraphs({
     projectId: activeProject,

@@ -7,9 +7,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from app.application_tool_error import ApplicationToolError
 from app.python_models.operation_definition import OperationDefinition
+from app.python_models.trading_contract import TradingBoundaryError
 from app.python_models.trading_forecast import forecast_market_bars
-from app.python_models.trading_backtest import trading_list_bots, trading_backtest
+from app.python_models.trading_backtest import trading_list_bots, trading_backtest, trading_get_backtest
 
 async def trading_get_state_tool(
     *, projectId: str, deckId: str, _callerCardId: str,
@@ -31,51 +33,47 @@ async def trading_accept_assignment_tool(
     projectId: str,
     deckId: str,
     _callerCardId: str,
-    _sourceRunId: str,
+    _sourceExecution: dict[str, Any],
 ) -> dict[str, Any]:
     from app.python_models.trading_jobs import accept_trade_assignment
 
-    return await asyncio.to_thread(
-        accept_trade_assignment,
-        project_id=projectId,
-        deck_id=deckId,
-        card_id=_callerCardId,
-        source_run_id=_sourceRunId,
-        plan=plan,
-        idempotency_key=idempotencyKey,
-    )
+    try:
+        return await asyncio.to_thread(
+            accept_trade_assignment, project_id=projectId, deck_id=deckId,
+            card_id=_callerCardId, source_execution=_sourceExecution,
+            plan=plan, idempotency_key=idempotencyKey,
+        )
+    except TradingBoundaryError as error:
+        raise ApplicationToolError(str(error)) from None
 
 
 async def trading_record_decision_tool(
-    jobId: str,
     action: str,
     rationale: str,
     confidence: float,
     evidence: list[dict[str, Any]],
     missingTerms: list[str],
     idempotencyKey: str,
+    jobId: str | None = None,
+    subject: str | None = None,
     *,
     projectId: str,
     deckId: str,
     _callerCardId: str,
-    _sourceRunId: str,
+    _sourceExecution: dict[str, Any],
 ) -> dict[str, Any]:
     from app.python_models.trading_jobs import record_trade_decision
 
-    return await asyncio.to_thread(
-        record_trade_decision,
-        project_id=projectId,
-        deck_id=deckId,
-        card_id=_callerCardId,
-        source_run_id=_sourceRunId,
-        job_id=jobId,
-        action=action,
-        rationale=rationale,
-        confidence=confidence,
-        evidence=evidence,
-        missing_terms=missingTerms,
-        idempotency_key=idempotencyKey,
-    )
+    try:
+        return await asyncio.to_thread(
+            record_trade_decision, project_id=projectId, deck_id=deckId,
+            card_id=_callerCardId, source_execution=_sourceExecution,
+            job_id=jobId, subject=subject, action=action, rationale=rationale,
+            confidence=confidence, evidence=evidence, missing_terms=missingTerms,
+            idempotency_key=idempotencyKey,
+        )
+    except TradingBoundaryError as error:
+        raise ApplicationToolError(str(error)) from None
 def _annotations(
     *, read_only: bool, destructive: bool, idempotent: bool, open_world: bool,
 ) -> dict[str, bool]:
@@ -105,7 +103,8 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
             canonical_id="trading.backtest", title="Backtest a LumiBot strategy",
             description="Run one installed LumiBot example on validated historical US stock/ETF daily Alpaca IEX bars. "
                         "Historical simulation only: no broker connection or orders. Explicit 7-366 day dates, end exclusive. "
-                        "Returns native metrics, equity and actual data/cost assumptions; not proof of profitable execution. "
+                        "Persists the completed result and input snapshot in Trading with actual producing Card/Hermes references. "
+                        "Returns a backtestId, native metrics, equity and actual data/cost assumptions; not proof of profitable execution. "
                         "Inspect trading.list_bots before choosing a bot. No background queue or arbitrary code.",
             parameters_schema={"type": "object", "properties": {
                 "bot": {"type": "string", "enum": ["buy_and_hold", "momentum_rotation"]},
@@ -117,8 +116,20 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
                 "slippage_per_share": {"type": "number", "minimum": 0, "maximum": 100, "default": 0},
             }, "required": ["bot", "symbols", "start", "end", "capital"], "additionalProperties": False},
             output_schema={"type": "object"}, handler=trading_backtest, available=True, publishers=internal,
-            access="read", namespace="trading", grant_eligible=True, external_source_id="python_runtime",
-            annotations=_annotations(read_only=True, destructive=False, idempotent=False, open_world=True),
+            access="write", namespace="trading", grant_eligible=True, external_source_id="python_runtime",
+            dispatcher_context_arguments=frozenset({"projectId", "deckId", "_callerCardId", "_sourceExecution"}),
+            annotations=_annotations(read_only=False, destructive=False, idempotent=False, open_world=True),
+        ),
+        OperationDefinition(
+            canonical_id="trading.get_backtest", title="Read a saved backtest",
+            description="Read one exact completed Trading backtest in this Project/deck, preserving its producing Card, native execution references, data cutoff, costs, assumptions and actual results. This does not rerun a strategy or submit an order.",
+            parameters_schema={"type": "object", "properties": {
+                "backtestId": {"type": "string", "format": "uuid"},
+            }, "required": ["backtestId"], "additionalProperties": False},
+            output_schema={"type": "object"}, handler=trading_get_backtest,
+            available=True, publishers=internal, access="read", namespace="trading", grant_eligible=True,
+            external_source_id="python_runtime", annotations=read_closed,
+            dispatcher_context_arguments=frozenset({"projectId", "deckId"}),
         ),
         OperationDefinition(
             canonical_id="trading.get_state",
@@ -167,7 +178,7 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
             external_source_id="python_runtime",
             annotations=write_closed,
             dispatcher_context_arguments=frozenset({
-                "projectId", "deckId", "_callerCardId", "_sourceRunId",
+                "projectId", "deckId", "_callerCardId", "_sourceExecution",
             }),
         ),
         OperationDefinition(
@@ -175,13 +186,16 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
             title="Record a paper trading decision",
             description=(
                 "Journal one WAIT, ENTER, HOLD, REDUCE, EXIT, PAUSE, or FAIL_SAFE outcome "
-                "against a durable Trade Job with evidence. A decision is not an order and "
-                "executionRequested is always false."
+                "with evidence. Specify an owned jobId OR a research subject without inventing a funded job. "
+                "Use evidence entries with backtestId for exact saved simulation references. "
+                "Reuse an idempotencyKey only for the exact same decision. A decision is not an order; executionRequested is always false."
             ),
             parameters_schema={
                 "type": "object",
                 "properties": {
                     "jobId": {"type": "string", "format": "uuid"},
+                    "subject": {"type": "string", "minLength": 1, "maxLength": 500,
+                                "description": "Research idea or instrument being assessed; use instead of jobId for an unfunded decision."},
                     "action": {"type": "string", "enum": ["WAIT", "ENTER", "HOLD", "REDUCE", "EXIT", "PAUSE", "FAIL_SAFE"]},
                     "rationale": {"type": "string", "minLength": 1, "maxLength": 8000},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -189,7 +203,7 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
                     "missingTerms": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1}},
                     "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 160},
                 },
-                "required": ["jobId", "action", "rationale", "confidence", "evidence", "missingTerms", "idempotencyKey"],
+                "required": ["action", "rationale", "confidence", "evidence", "missingTerms", "idempotencyKey"],
                 "additionalProperties": False,
             },
             output_schema={"type": "object"},
@@ -202,7 +216,7 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
             external_source_id="python_runtime",
             annotations=write_closed,
             dispatcher_context_arguments=frozenset({
-                "projectId", "deckId", "_callerCardId", "_sourceRunId",
+                "projectId", "deckId", "_callerCardId", "_sourceExecution",
             }),
         ),
         OperationDefinition(

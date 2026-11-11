@@ -466,11 +466,13 @@ fix also cannot repair a `message_agent` call that failed before delivery.
 
 ### Saved Card memory and learning
 
-Saved Card profiles use the existing catalog `holographic` memory provider. They disable the built-in
-`MEMORY.md`/`USER.md` stores and the automatic background review that creates or edits skills. Do not restore
-the removed Hermes Learning Graph controls in the Card editor, another Markdown-memory manager, or automatic
-skill-making UI. Engraphis/ThinkGraph and Graphiti/KnowGraph remain separate MCP-backed graph authorities;
-they are not folded into Holographic and Holographic is not rendered as either graph.
+New Card profiles default to the existing catalog `holographic` provider with built-in
+`MEMORY.md`/`USER.md` and automatic background review disabled. Preserve explicit native memory and
+learning choices on later Card saves; the owner's Trader-only native-learning selection supersedes
+the old blanket disable policy. Do not restore the removed Hermes Learning Graph controls in the Card
+editor, another Markdown-memory manager, or automatic skill-making UI. A learning view or session
+transcript is not an intentional Trading journal. Engraphis/ThinkGraph and Graphiti/KnowGraph remain
+separate MCP-backed graph authorities; they are not folded into profile memory.
 
 ### Project cleanup is not runtime repair
 

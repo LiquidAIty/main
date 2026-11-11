@@ -33,12 +33,12 @@ describe('Hermes profile skill binding', () => {
       mcp_servers: { liquidaity: { headers: { Authorization: 'Bearer ${MCP_LIQUIDAITY_API_KEY}' } } },
       skills: { auto_load: ['research'] },
       memory: {
-        provider: '',
-        memory_enabled: true,
-        user_profile_enabled: true,
+        provider: 'holographic',
+        memory_enabled: false,
+        user_profile_enabled: false,
       },
       auxiliary: { background_review: { enabled: true } },
-      curator: { enabled: true },
+      curator: { enabled: false },
       web: { search_backend: 'native' },
       kanban: { task_mode: '' },
       plugins: {
@@ -85,6 +85,12 @@ describe('Hermes profile skill binding', () => {
         }
         if (Array.isArray(params.bot_mode_roster)) {
           described.bot_mode_roster = [...params.bot_mode_roster];
+        }
+        if (Array.isArray(params.enabled_mcp_servers)) {
+          servers = servers.map((server) => ({
+            ...server,
+            enabled: params.enabled_mcp_servers.includes(server.name),
+          }));
         }
         if (params.delegation && typeof params.delegation === 'object') {
           described.delegation = structuredClone(params.delegation);
@@ -147,9 +153,14 @@ describe('Hermes profile skill binding', () => {
           };
         }
         if (Array.isArray(include)) {
-          servers = servers.map((server) => server.name === 'liquidaity'
-            ? { ...server, tools: { include } }
-            : server);
+          const existing = servers.find((server) => server.name === 'liquidaity');
+          if (existing) existing.tools = { include };
+          else servers.push({ name: 'liquidaity', enabled: true, tools: { include } });
+          config.mcp_servers = {
+            ...config.mcp_servers,
+            liquidaity: { ...config.mcp_servers?.liquidaity,
+              ...body.mcp_servers.liquidaity, tools: { include } },
+          };
         }
         return { ok: true };
       }
@@ -161,6 +172,8 @@ describe('Hermes profile skill binding', () => {
   });
 
   it('reads profile-scoped skill auto-load from Hermes config', async () => {
+    config.memory = { provider: '', memory_enabled: true, user_profile_enabled: true };
+    config.curator.enabled = true;
     const profile = await loadHermesProfile('trading');
     expect(profile.autoLoadSkills).toEqual(['research']);
     expect(profile.skills).toEqual([
@@ -252,15 +265,8 @@ describe('Hermes profile skill binding', () => {
         method: 'PUT',
         body: JSON.stringify({
           config: {
-            memory: {
-              provider: 'holographic',
-              memory_enabled: false,
-              user_profile_enabled: false,
-            },
-            auxiliary: { background_review: { enabled: false } },
-            curator: { enabled: false },
             mcp_servers: {
-              liquidaity: { tools: { include: ['graphiti.search_nodes'] } },
+              liquidaity: { include_execution_context: true, tools: { include: ['graphiti.search_nodes'] } },
             },
             skills: { auto_load: ['trading'] },
             plugins: {
@@ -286,10 +292,37 @@ describe('Hermes profile skill binding', () => {
       provider: 'holographic',
       memoryEnabled: false,
       userProfileEnabled: false,
-      backgroundReviewEnabled: false,
+      backgroundReviewEnabled: true,
       curatorEnabled: false,
     });
     expect(profile.skills.find((skill) => skill.name === 'trading')?.enabled).toBe(true);
+  });
+
+  it.each([true, false])('preserves native background review %s through an ordinary Card save', async (enabled) => {
+    config.auxiliary.background_review = {
+      enabled, max_input_tokens: 48000, provider: 'auto', model: 'auto',
+    };
+    const before = structuredClone(config.auxiliary);
+    const profile = await configureHermesProfile({ profile: 'trading', soul: 'Updated role.' });
+    expect(config.auxiliary).toEqual(before);
+    expect(profile.memory.backgroundReviewEnabled).toBe(enabled);
+    const write = host.fetchJSON.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(JSON.parse(String(write?.[1]?.body)).config).not.toHaveProperty('auxiliary');
+    expect(profile.memory.provider).toBe('holographic');
+    expect(profile.memory.memoryEnabled).toBe(false);
+    expect(profile.memory.curatorEnabled).toBe(false);
+  });
+
+  it('preserves Trader built-in learning without reactivating external memory on a tool edit', async () => {
+    config.memory = { provider: '', memory_enabled: true, user_profile_enabled: false, nudge_interval: 1 };
+    config.auxiliary.background_review = { enabled: true, max_input_tokens: 48000 };
+    const before = structuredClone(config.memory);
+    const profile = await configureHermesProfile({ profile: 'trading', applicationTools: ['trading.get_state'] });
+    expect(config.memory).toEqual(before);
+    expect(profile.memory).toEqual({ provider: '', memoryEnabled: true, userProfileEnabled: false,
+      backgroundReviewEnabled: true, curatorEnabled: false });
+    const write = host.fetchJSON.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(JSON.parse(String(write?.[1]?.body)).config).not.toHaveProperty('memory');
   });
 
   it('pins KnowGraph search and extraction to Hermes Firecrawl with readback', async () => {
@@ -350,6 +383,34 @@ describe('Hermes profile skill binding', () => {
       }),
     );
     expect(profile.toolsets.filter((toolset) => toolset.enabled)).toEqual([]);
+  });
+
+  it('saves a new research-only Card without manufacturing an MCP connection', async () => {
+    servers = [];
+    delete config.mcp_servers;
+    const profile = await configureHermesProfile({
+      profile: 'predictor', applicationTools: [], enabledMcpServers: [],
+      enabledToolsets: ['web'], subagentType: 'none',
+    });
+    expect(profile.enabledMcpServers).toEqual([]);
+    expect(profile.applicationTools).toEqual([]);
+    expect(config.mcp_servers).toBeUndefined();
+    expect(profile.toolsets.filter((toolset) => toolset.enabled).map((toolset) => toolset.name))
+      .toEqual(['web']);
+  });
+
+  it('clears an existing connection selection without removing its credentials or re-enabling it', async () => {
+    config.mcp_servers.liquidaity.url = 'http://127.0.0.1:8765/mcp';
+    const profile = await configureHermesProfile({
+      profile: 'trading', applicationTools: [], enabledMcpServers: [],
+    });
+    expect(profile.enabledMcpServers).toEqual([]);
+    expect(profile.applicationTools).toEqual([]);
+    expect(config.mcp_servers.liquidaity).toMatchObject({
+      url: 'http://127.0.0.1:8765/mcp',
+      headers: { Authorization: 'Bearer ${MCP_LIQUIDAITY_API_KEY}' },
+      tools: { include: [] },
+    });
   });
 
   it('materializes structural Team mode and the saved parent model without a UI controller', async () => {
@@ -440,6 +501,16 @@ describe('Hermes profile skill binding', () => {
     expect(profile.model).toEqual({
       provider: 'openai-codex',
       default: 'gpt-5.6-luna',
+    });
+    expect(profile.memory.backgroundReviewEnabled).toBe(false);
+    expect(host.fetchJSON).toHaveBeenCalledWith('/api/config?profile=new-specialist', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: {
+        memory: { provider: 'holographic', memory_enabled: false, user_profile_enabled: false },
+        auxiliary: { background_review: { enabled: false } },
+        curator: { enabled: false },
+      } }),
     });
   });
 });

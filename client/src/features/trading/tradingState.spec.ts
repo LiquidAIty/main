@@ -9,9 +9,20 @@ import {
   DEFAULT_TRADING_CONFIGURATION,
   readTradingConfiguration,
   TRADE_ACTIONS,
+  tradingForecastCard,
 } from './tradingState';
+import type { AgentCardInstance } from '../../types/agentgraph';
 
 describe('Trading Card state contracts', () => {
+  it('binds the manual chart to its surface Card independently of other specialists grants', () => {
+    const trader = { id: 'trader', enabled: true, runtimeOptions: { tools: ['forecast_market_bars'] } } as AgentCardInstance;
+    const quant = { ...trader, id: 'quant' };
+    expect(tradingForecastCard(trader)).toBe(trader);
+    expect(tradingForecastCard(quant)).toBe(quant);
+    expect(tradingForecastCard({ ...trader, enabled: false })).toBeNull();
+    expect(tradingForecastCard({ ...trader, runtimeOptions: { tools: [] } })).toBeNull();
+    expect(tradingForecastCard(null)).toBeNull();
+  });
   it('exposes only the seven typed decision outcomes', () => {
     expect(TRADE_ACTIONS).toEqual([
       'WAIT', 'ENTER', 'HOLD', 'REDUCE', 'EXIT', 'PAUSE', 'FAIL_SAFE',

@@ -1,7 +1,7 @@
 """PostgreSQL Trade Job, decision, and readback ownership."""
 
 # Entity: Trading
-# Relationship: Owns Project-scoped paper Trade Jobs and model decisions, joins them to read-only broker evidence and Run artifacts, and keeps unapproved execution interventions unavailable.
+# Relationship: Owns Project-scoped paper Trade Jobs and research decisions with actual Hermes provenance, joins retained simulation evidence and broker observations, and keeps unapproved execution unavailable.
 
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ from app.python_models.trading_contract import (
     deterministic_client_order_id,
     normalize_trade_plan,
     normalize_trading_configuration,
-    optional_iso_text,
     required_trade_text,
     utc_now_text,
     validate_plan_against_configuration,
@@ -68,16 +67,26 @@ def require_trading_card(
 
 
 def accept_trade_assignment(
-    *, project_id: str, deck_id: str, card_id: str, source_run_id: str,
+    *, project_id: str, deck_id: str, card_id: str, source_execution: dict[str, Any],
     plan: Any, idempotency_key: str,
 ) -> dict[str, Any]:
     normalized = normalize_trade_plan(plan)
     key = required_trade_text(idempotency_key, "idempotency_key", 160)
-    source_run = required_trade_text(source_run_id, "source_run_id", 160)
     job_id = str(uuid4())
     with connect_postgres(autocommit=False) as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
             card = require_trading_card(cursor, project_id, deck_id, card_id)
+            execution = _execution_reference(source_execution, card["runtime_profile"])
+            _lock_card(cursor, project_id, deck_id, card_id)
+            cursor.execute(
+                "SELECT * FROM ag_catalog.trading_jobs WHERE project_id=%s AND deck_id=%s AND card_id=%s AND idempotency_key=%s",
+                (project_id, deck_id, card_id, key),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                if existing["plan"] != normalized:
+                    raise TradingBoundaryError("trading_assignment_idempotency_conflict")
+                return _public_job(dict(existing))
             cursor.execute(
                 """
                 SELECT COUNT(*) AS active_job_count
@@ -95,19 +104,17 @@ def accept_trade_assignment(
                 """
                 INSERT INTO ag_catalog.trading_jobs (
                   job_id, project_id, deck_id, card_id, card_revision_id,
-                  source_run_id, idempotency_key, symbol, asset_class, plan,
+                  source_execution, idempotency_key, symbol, asset_class, plan,
                   state, current_action, execution_state, budget_ceiling_usd, max_loss_usd
                 ) VALUES (
-                  %s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,
+                  %s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s::jsonb,
                   'monitoring','WAIT','blocked_pending_separate_approval',%s,%s
                 )
-                ON CONFLICT (project_id, deck_id, card_id, idempotency_key)
-                DO UPDATE SET updated_at=ag_catalog.trading_jobs.updated_at
                 RETURNING *
                 """,
                 (
                     job_id, project_id, deck_id, card_id, card["current_revision_id"],
-                    source_run, key, normalized["instrument"]["symbol"],
+                    json.dumps(execution), key, normalized["instrument"]["symbol"],
                     normalized["assetClass"], json.dumps(normalized),
                     normalized["budgetCeilingUsd"], normalized["maxLossUsd"],
                 ),
@@ -118,9 +125,10 @@ def accept_trade_assignment(
 
 
 def record_trade_decision(
-    *, project_id: str, deck_id: str, card_id: str, source_run_id: str,
-    job_id: str, action: str, rationale: str, confidence: Any,
+    *, project_id: str, deck_id: str, card_id: str, source_execution: dict[str, Any],
+    action: str, rationale: str, confidence: Any,
     evidence: Any, missing_terms: Any, idempotency_key: str,
+    job_id: str | None = None, subject: str | None = None,
 ) -> dict[str, Any]:
     normalized_action = str(action or "").strip().upper()
     if normalized_action not in TRADE_ACTIONS:
@@ -135,7 +143,19 @@ def record_trade_decision(
         raise TradingBoundaryError("trading_decision_missing_terms_invalid")
     if normalized_action in {"ENTER", "HOLD", "REDUCE", "EXIT"} and missing_terms:
         raise TradingBoundaryError("trading_decision_missing_terms_fail_closed")
-    normalized_job_id = str(UUID(required_trade_text(job_id, "job_id", 64)))
+    if job_id is not None and subject is not None:
+        raise TradingBoundaryError("trading_decision_choose_job_or_research_subject")
+    try:
+        normalized_job_id = str(UUID(required_trade_text(job_id, "job_id", 64))) if job_id is not None else None
+    except ValueError:
+        raise TradingBoundaryError("trading_job_id_invalid") from None
+    normalized_subject = required_trade_text(subject, "research_subject", 500) if not normalized_job_id else None
+    normalized_rationale = required_trade_text(rationale, "rationale", 8_000)
+    normalized_missing = [item.strip() for item in missing_terms]
+    try:
+        evidence_json = json.dumps(evidence, allow_nan=False)
+    except (TypeError, ValueError):
+        raise TradingBoundaryError("trading_decision_evidence_invalid") from None
     decision_id = str(uuid4())
     key = required_trade_text(idempotency_key, "idempotency_key", 160)
     state = {
@@ -143,48 +163,89 @@ def record_trade_decision(
     }.get(normalized_action, "monitoring")
     with connect_postgres(autocommit=False) as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
-            require_trading_card(cursor, project_id, deck_id, card_id)
+            card = require_trading_card(cursor, project_id, deck_id, card_id)
+            execution = _execution_reference(source_execution, card["runtime_profile"])
+            _lock_card(cursor, project_id, deck_id, card_id)
+            job = None
+            if normalized_job_id:
+                cursor.execute(
+                    """SELECT * FROM ag_catalog.trading_jobs
+                       WHERE job_id=%s AND project_id=%s AND deck_id=%s AND card_id=%s FOR UPDATE""",
+                    (normalized_job_id, project_id, deck_id, card_id),
+                )
+                job = cursor.fetchone()
+                if job is None:
+                    raise TradingBoundaryError("trading_job_not_found")
+                normalized_subject = job["symbol"]
             cursor.execute(
-                """
-                SELECT job_id FROM ag_catalog.trading_jobs
-                WHERE job_id=%s AND project_id=%s AND deck_id=%s AND card_id=%s
-                FOR UPDATE
-                """,
-                (normalized_job_id, project_id, deck_id, card_id),
+                """SELECT * FROM ag_catalog.trading_decisions
+                   WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                     AND job_id IS NOT DISTINCT FROM %s::uuid AND idempotency_key=%s""",
+                (project_id, deck_id, card_id, normalized_job_id, key),
             )
-            if cursor.fetchone() is None:
-                raise TradingBoundaryError("trading_job_not_found")
+            existing = cursor.fetchone()
+            if existing:
+                expected = {"action": normalized_action, "rationale": normalized_rationale,
+                            "confidence": float(confidence), "evidence": evidence,
+                            "missing_terms": normalized_missing, "subject": normalized_subject}
+                if any(existing[field] != value for field, value in expected.items()):
+                    raise TradingBoundaryError("trading_decision_idempotency_conflict")
+                return {"job": _public_job(dict(job)) if job else None,
+                        "decision": _public_decision(dict(existing))}
+            for item in evidence:
+                if item.get("backtestId"):
+                    try:
+                        backtest_id = str(UUID(str(item["backtestId"])))
+                    except ValueError:
+                        raise TradingBoundaryError("trading_backtest_reference_invalid") from None
+                    cursor.execute(
+                        """SELECT lifecycle_run_id FROM ag_catalog.trading_lifecycle_runs
+                           WHERE lifecycle_run_id=%s AND project_id=%s AND deck_id=%s AND status='completed'""",
+                        (backtest_id, project_id, deck_id),
+                    )
+                    if cursor.fetchone() is None:
+                        raise TradingBoundaryError("trading_backtest_reference_not_found")
             cursor.execute(
                 """
                 INSERT INTO ag_catalog.trading_decisions (
-                  decision_id, job_id, source_run_id, idempotency_key, action,
+                  decision_id, job_id, project_id, deck_id, card_id, card_revision_id,
+                  source_execution, idempotency_key, action, subject,
                   rationale, confidence, evidence, missing_terms, execution_requested
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,FALSE)
-                ON CONFLICT (job_id, idempotency_key)
-                DO UPDATE SET idempotency_key=ag_catalog.trading_decisions.idempotency_key
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,FALSE)
                 RETURNING *
                 """,
                 (
-                    decision_id, normalized_job_id,
-                    required_trade_text(source_run_id, "source_run_id", 160),
-                    key, normalized_action, required_trade_text(rationale, "rationale", 8_000),
-                    float(confidence), json.dumps(evidence),
-                    json.dumps([item.strip() for item in missing_terms]),
+                    decision_id, normalized_job_id, project_id, deck_id, card_id, card["current_revision_id"],
+                    json.dumps(execution), key, normalized_action, normalized_subject,
+                    normalized_rationale, float(confidence), evidence_json, json.dumps(normalized_missing),
                 ),
             )
             decision = dict(cursor.fetchone())
-            cursor.execute(
-                """
-                UPDATE ag_catalog.trading_jobs
-                SET state=%s, current_action=%s, updated_at=NOW()
-                WHERE job_id=%s
-                RETURNING *
-                """,
-                (state, normalized_action, normalized_job_id),
-            )
-            job = dict(cursor.fetchone())
+            if job is not None:
+                cursor.execute(
+                    """UPDATE ag_catalog.trading_jobs SET state=%s, current_action=%s, updated_at=NOW()
+                       WHERE job_id=%s RETURNING *""",
+                    (state, normalized_action, normalized_job_id),
+                )
+                job = dict(cursor.fetchone())
         connection.commit()
-    return {"job": _public_job(job), "decision": _public_decision(decision)}
+    return {"job": _public_job(job) if job else None, "decision": _public_decision(decision)}
+
+
+def _lock_card(cursor: Any, project_id: str, deck_id: str, card_id: str) -> None:
+    # Serialize admissions and retries for this Card before checking its remaining capacity.
+    cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                   (json.dumps([project_id, deck_id, card_id]),))
+
+
+def _execution_reference(value: Any, profile: str) -> dict[str, str]:
+    fields = {"runtime", "profile", "sessionId", "turnId", "toolCallId"}
+    if (not isinstance(value, dict) or set(value) != fields or value.get("runtime") != "hermes"
+            or value.get("profile") != profile or any(not isinstance(value.get(key), str)
+                or not value[key].strip() or value[key] != value[key].strip()
+                or len(value[key]) > 256 or any(ord(char) < 32 for char in value[key]) for key in fields)):
+        raise TradingBoundaryError("trading_hermes_execution_reference_invalid")
+    return dict(value)
 
 
 def intervene_trade_job(
@@ -201,9 +262,10 @@ def _read_trading_history(
     project_id: str, deck_id: str, card_id: str,
 ) -> tuple[
     list[dict[str, Any]], dict[str, list[dict[str, Any]]],
-    dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]],
-    dict[str, dict[str, Any]],
+    dict[str, list[dict[str, Any]]], list[dict[str, Any]], list[dict[str, Any]],
 ]:
+    from app.python_models.trading_backtest import _public_backtest
+
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         require_trading_card(cursor, project_id, deck_id, card_id)
         cursor.execute(
@@ -220,8 +282,13 @@ def _read_trading_history(
         interventions: dict[str, list[dict[str, Any]]] = {
             str(row["job_id"]): [] for row in jobs
         }
-        artifacts: dict[str, list[dict[str, Any]]] = {}
-        source_runs: dict[str, dict[str, Any]] = {}
+        cursor.execute(
+            """SELECT * FROM ag_catalog.trading_decisions
+               WHERE project_id=%s AND deck_id=%s AND card_id=%s AND job_id IS NULL
+               ORDER BY created_at DESC LIMIT 100""",
+            (project_id, deck_id, card_id),
+        )
+        research = [_public_decision(dict(row)) for row in cursor.fetchall()]
         if jobs:
             job_ids = [str(row["job_id"]) for row in jobs]
             cursor.execute(
@@ -244,43 +311,27 @@ def _read_trading_history(
             )
             for row in cursor.fetchall():
                 interventions[str(row["job_id"])].append(_public_intervention(dict(row)))
-            run_ids = list(dict.fromkeys(
-                str(row.get("source_run_id") or "") for row in jobs
-                if str(row.get("source_run_id") or "")
-            ))
-            if run_ids:
-                cursor.execute(
-                    """
-                    SELECT artifact_id, producing_run_id, artifact_kind, locator,
-                           media_type, content_sha256, provenance_ref, size_bytes, created_at
-                    FROM ag_catalog.run_artifacts
-                    WHERE producing_run_id = ANY(%s::text[])
-                    ORDER BY created_at DESC
-                    """,
-                    (run_ids,),
-                )
-                for row in cursor.fetchall():
-                    run_id = str(row["producing_run_id"])
-                    artifacts.setdefault(run_id, []).append(_public_artifact(dict(row)))
-                cursor.execute(
-                    """
-                    SELECT run_id, state, started_at, finished_at, error_code, error_summary
-                    FROM ag_catalog.agent_runs
-                    WHERE run_id = ANY(%s::text[])
-                    """,
-                    (run_ids,),
-                )
-                source_runs = {str(row["run_id"]): dict(row) for row in cursor.fetchall()}
-
-    return jobs, decisions, interventions, artifacts, source_runs
+        # Resolve only evidence actually cited by this Card's journal; keep the
+        # original producing Card and execution reference on each receipt.
+        cited = {str(item['backtestId']) for decision in
+                 research + [entry for entries in decisions.values() for entry in entries]
+                 for item in decision['evidence'] if item.get('backtestId')}
+        backtests = []
+        if cited:
+            cursor.execute(
+                """SELECT * FROM ag_catalog.trading_lifecycle_runs
+                   WHERE project_id=%s AND deck_id=%s AND status='completed'
+                     AND lifecycle_run_id=ANY(%s::uuid[]) ORDER BY created_at DESC""",
+                (project_id, deck_id, list(cited)),
+            )
+            backtests = [_public_backtest(row) for row in cursor.fetchall()]
+    return jobs, decisions, interventions, research, backtests
 
 
 def _project_public_trading_jobs(
     jobs: list[dict[str, Any]],
     decisions: dict[str, list[dict[str, Any]]],
     interventions: dict[str, list[dict[str, Any]]],
-    artifacts: dict[str, list[dict[str, Any]]],
-    source_runs: dict[str, dict[str, Any]],
     broker_state: dict[str, Any],
     market_by_symbol: dict[str, dict[str, Any]],
     timeframe: str,
@@ -337,19 +388,6 @@ def _project_public_trading_jobs(
             }
             for item in interventions.get(job_id, [])
         ]
-        source_run = source_runs.get(str(row.get("source_run_id") or ""))
-        if source_run is not None:
-            job_events.append({
-                "eventId": f"run:{source_run['run_id']}:{source_run['state']}",
-                "kind": "card_run",
-                "source": "card",
-                "action": source_run["state"],
-                "summary": source_run.get("error_summary") or source_run.get("error_code")
-                or f"Card Run {source_run['state']}",
-                "createdAt": optional_iso_text(
-                    source_run.get("finished_at") or source_run.get("started_at")
-                ),
-            })
         job_events.sort(key=lambda item: str(item.get("createdAt") or ""), reverse=True)
         symbol = str(row.get("symbol") or "").upper()
         market = market_by_symbol.get(symbol, {
@@ -373,7 +411,6 @@ def _project_public_trading_jobs(
             "orders": linked_orders,
             "fills": fills,
             "events": job_events,
-            "artifacts": artifacts.get(str(row.get("source_run_id") or ""), []),
             "lifecycle": {
                 "status": "broker_observed" if linked_orders else "not_attached",
                 "diagnostics": None if linked_orders else (
@@ -388,13 +425,13 @@ def read_trading_state(
     *, project_id: str, deck_id: str, card_id: str,
     timeframe: str = "5Min", selected_job_id: str | None = None,
 ) -> dict[str, Any]:
-    jobs, decisions, interventions, artifacts, source_runs = (
+    jobs, decisions, interventions, research, backtests = (
         _read_trading_history(project_id, deck_id, card_id)
     )
     broker_state = read_lumibot_paper_snapshot()
     market_by_symbol = market_observations(jobs, timeframe, selected_job_id)
     public_jobs = _project_public_trading_jobs(
-        jobs, decisions, interventions, artifacts, source_runs,
+        jobs, decisions, interventions,
         broker_state, market_by_symbol, timeframe,
     )
     realized = [
@@ -409,6 +446,8 @@ def read_trading_state(
         "executionApproved": False,
         "timeframe": timeframe,
         "jobs": public_jobs,
+        "researchDecisions": research,
+        "backtests": backtests,
         "portfolio": {
             **broker_state["account"],
             "realizedPnlUsd": recorded_realized,
@@ -455,7 +494,7 @@ def _public_job(row: dict[str, Any]) -> dict[str, Any]:
             float(row["realized_pnl_usd"]) if row.get("realized_pnl_usd") is not None else None
         ),
         "plan": plan,
-        "sourceRunId": str(row.get("source_run_id") or ""),
+        "sourceExecution": row["source_execution"],
         "createdAt": str(row.get("created_at") or ""),
         "updatedAt": str(row.get("updated_at") or ""),
     }
@@ -464,13 +503,18 @@ def _public_job(row: dict[str, Any]) -> dict[str, Any]:
 def _public_decision(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "decisionId": str(row.get("decision_id") or ""),
+        "jobId": str(row["job_id"]) if row.get("job_id") else None,
+        "kind": "trade_job" if row.get("job_id") else "research",
+        "subject": str(row.get("subject") or ""),
+        "producerCardId": str(row.get("card_id") or ""),
+        "cardRevisionId": str(row.get("card_revision_id") or ""),
         "action": str(row.get("action") or ""),
         "rationale": str(row.get("rationale") or ""),
         "confidence": float(row.get("confidence") or 0),
         "evidence": row.get("evidence") or [],
         "missingTerms": row.get("missing_terms") or [],
         "executionRequested": row.get("execution_requested") is True,
-        "sourceRunId": str(row.get("source_run_id") or ""),
+        "sourceExecution": row["source_execution"],
         "createdAt": str(row.get("created_at") or ""),
     }
 
@@ -481,18 +525,5 @@ def _public_intervention(row: dict[str, Any]) -> dict[str, Any]:
         "action": str(row.get("action") or ""),
         "reason": str(row.get("reason") or ""),
         "actor": str(row.get("actor") or ""),
-        "createdAt": str(row.get("created_at") or ""),
-    }
-
-
-def _public_artifact(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "artifactId": str(row.get("artifact_id") or ""),
-        "kind": str(row.get("artifact_kind") or ""),
-        "locator": str(row.get("locator") or ""),
-        "mediaType": row.get("media_type"),
-        "contentSha256": row.get("content_sha256"),
-        "provenanceRef": row.get("provenance_ref"),
-        "sizeBytes": row.get("size_bytes"),
         "createdAt": str(row.get("created_at") or ""),
     }

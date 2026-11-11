@@ -119,7 +119,7 @@ SERVER_OWNED_ARGUMENTS = {
     "originatingRunId",
     "_callerCardId",
     "_sourceCardId",
-    "_sourceRunId",
+    "_sourceExecution",
     "_mainContext",
     "_catalogDiagnostics",
     "_authenticatedProjectId",
@@ -127,6 +127,7 @@ SERVER_OWNED_ARGUMENTS = {
 async def dispatch_tool(
     name: str,
     arguments: dict[str, Any],
+    *, metadata: dict[str, Any] | None = None,
 ) -> Any:
     context = mcp_auth.authenticated_project_context()
     principal = mcp_auth.internal_mcp_principal()
@@ -173,6 +174,27 @@ async def dispatch_tool(
             failure_code="caller_identity_rejected",
             category="INVALID_ARGUMENT",
         )
+    if "_sourceExecution" in dispatcher_context:
+        execution = (metadata or {}).get("hermes.execution")
+        fields = {"profile", "sessionId", "turnId", "toolCallId"}
+        if (
+            context is None or not principal or principal.get("kind") != "card-runtime"
+            or not isinstance(execution, dict) or set(execution) != fields
+            or any(not isinstance(execution.get(field), str)
+                   or not execution[field].strip() or execution[field] != execution[field].strip()
+                   or len(execution[field]) > 256
+                   or any(ord(char) < 32 for char in execution[field]) for field in fields)
+        ):
+            return _tool_error_result(
+                "hermes_execution_reference_required", failure_code="hermes_execution_reference_required",
+                category="INVALID_ARGUMENT", dependency="tool-runtime",
+            )
+        if execution["profile"] != principal.get("profile"):
+            return _tool_error_result(
+                "hermes_execution_profile_mismatch", failure_code="hermes_execution_profile_mismatch",
+                category="AUTHORIZATION", dependency="tool-runtime",
+            )
+        args["_sourceExecution"] = {"runtime": "hermes", **execution}
     if context is not None:
         try:
             for field in ("projectId", "deckId", "conversationId"):
@@ -276,6 +298,7 @@ async def execute_tool_request(
     arguments: dict[str, Any],
     *,
     transport: str,
+    metadata: dict[str, Any] | None = None,
 ) -> Any:
     tool_name = str(name or "").strip()
     trace_fields = {
@@ -286,7 +309,7 @@ async def execute_tool_request(
     mcp_observability.trace("tool_call_started", **trace_fields)
     try:
         result = await asyncio.wait_for(
-            dispatch_tool(tool_name, arguments),
+            dispatch_tool(tool_name, arguments, **({"metadata": metadata} if metadata else {})),
             timeout=mcp_tool_timeout_seconds(tool_name),
         )
         result_category = mcp_observability.tool_result_category(result)
@@ -333,9 +356,10 @@ async def execute_tool_request(
         return result
 
 
-async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
+async def call_tool(name: str, arguments: dict[str, Any], *, metadata: dict[str, Any] | None = None) -> Any:
     return await execute_tool_request(
         name,
         arguments,
         transport="mcp",
+        metadata=metadata,
     )

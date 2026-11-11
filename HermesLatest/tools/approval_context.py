@@ -140,6 +140,12 @@ def reset_current_observability_context(tokens: _Tokens) -> None:
     _approval_turn_id.reset(turn_token)
 
 
+def get_current_observability_context() -> dict[str, str]:
+    """Read actual tool correlation IDs in the calling context, without env fallback."""
+    return {"session_id": _approval_session_id.get(), "turn_id": _approval_turn_id.get(),
+            "tool_call_id": _approval_tool_call_id.get()}
+
+
 def get_current_session_key(default: str = "default") -> str:
     """Return the active session key: approval contextvar → session_context → os.environ."""
     if session_key := _approval_session_key.get():

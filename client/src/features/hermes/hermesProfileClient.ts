@@ -1,6 +1,6 @@
 /**
  * Entity: Card Profiles
- * Relationship: Reads and configures one Hermes profile through profiles.describe/configure and authenticated Hermes Webapp APIs, including parent reasoning, native delegation depth, profile-scoped skills, Holographic policy, and exact tool-selection readback.
+ * Relationship: Reads and configures one Hermes profile through profiles.describe/configure and authenticated Hermes Webapp APIs, initializing new-Card memory defaults and preserving each existing profile's memory and learning choices alongside model, skills, and exact tool-selection readback.
  */
 
 import type {
@@ -14,7 +14,7 @@ const KNOWGRAPH_PROFILE = 'knowgraph';
 const KNOWGRAPH_WEB_SEARCH_BACKEND = 'firecrawl';
 // Hermes agent.skill_utils.ESSENTIAL_SKILLS cannot be disabled by profiles.configure.
 const HERMES_REQUIRED_SKILLS = new Set(['hermes-agent']);
-const CARD_MEMORY_POLICY = {
+const NEW_CARD_MEMORY_DEFAULTS = {
   provider: 'holographic',
   memoryEnabled: false,
   userProfileEnabled: false,
@@ -265,7 +265,25 @@ export async function createHermesProfile(input: {
   if (created.ok !== true || created.name !== input.profile) {
     throw new Error('Hermes profile creation failed.');
   }
-  return loadHermesProfile(input.profile);
+  // Initialize defaults only at creation; ordinary edits preserve native choices.
+  const fetchJSON = hermesWebappHost().fetchJSON;
+  if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
+  await fetchJSON(`/api/config?profile=${encodeURIComponent(input.profile)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: {
+      memory: { provider: NEW_CARD_MEMORY_DEFAULTS.provider,
+        memory_enabled: NEW_CARD_MEMORY_DEFAULTS.memoryEnabled,
+        user_profile_enabled: NEW_CARD_MEMORY_DEFAULTS.userProfileEnabled },
+      auxiliary: { background_review: { enabled: NEW_CARD_MEMORY_DEFAULTS.backgroundReviewEnabled } },
+      curator: { enabled: NEW_CARD_MEMORY_DEFAULTS.curatorEnabled },
+    } }),
+  });
+  const after = await loadHermesProfile(input.profile);
+  if (canonicalJson(after.memory) !== canonicalJson(NEW_CARD_MEMORY_DEFAULTS)) {
+    throw new Error('Hermes new-Card memory-default readback mismatch.');
+  }
+  return after;
 }
 
 export async function configureHermesProfile(input: {
@@ -291,6 +309,13 @@ export async function configureHermesProfile(input: {
   } | null;
 }): Promise<HermesProfileView> {
   const before = await loadHermesProfile(input.profile);
+  // An empty selection on a new Card must not create a transportless server:
+  // Hermes treats a newly configured MCP entry without enabled:false as enabled.
+  const updateApplicationTools = input.applicationTools !== undefined && (
+    strings(input.applicationTools).length > 0
+    || before.applicationTools.length > 0
+    || before.enabledMcpServers.includes(APPLICATION_MCP_SERVER)
+  );
   const enabledSkills = input.enabledSkills === undefined
     ? before.skills.filter((skill) => skill.enabled).map((skill) => skill.name)
     : strings(input.enabledSkills);
@@ -343,15 +368,6 @@ export async function configureHermesProfile(input: {
         ...(input.reasoningEffort === undefined ? {} : {
           agent: { reasoning_effort: input.reasoningEffort || null },
         }),
-        memory: {
-          provider: CARD_MEMORY_POLICY.provider,
-          memory_enabled: CARD_MEMORY_POLICY.memoryEnabled,
-          user_profile_enabled: CARD_MEMORY_POLICY.userProfileEnabled,
-        },
-        auxiliary: {
-          background_review: { enabled: CARD_MEMORY_POLICY.backgroundReviewEnabled },
-        },
-        curator: { enabled: CARD_MEMORY_POLICY.curatorEnabled },
         ...(input.profile === KNOWGRAPH_PROFILE ? {
           web: {
             search_backend: KNOWGRAPH_WEB_SEARCH_BACKEND,
@@ -362,9 +378,10 @@ export async function configureHermesProfile(input: {
           kanban: { task_mode: input.taskMode },
         }),
         ...(Object.keys(delegation).length ? { delegation } : {}),
-        ...(input.applicationTools === undefined ? {} : {
+        ...(!updateApplicationTools ? {} : {
           mcp_servers: {
             [APPLICATION_MCP_SERVER]: {
+              include_execution_context: true,
               tools: { include: strings(input.applicationTools) },
             },
           },
@@ -458,8 +475,8 @@ export async function configureHermesProfile(input: {
   ) !== canonicalJson(input.cardScript || {})) {
     throw new Error('Hermes Card Script readback mismatch.');
   }
-  if (canonicalJson(after.memory) !== canonicalJson(CARD_MEMORY_POLICY)) {
-    throw new Error('Hermes Card memory-policy readback mismatch.');
+  if (canonicalJson(after.memory) !== canonicalJson(before.memory)) {
+    throw new Error('Hermes Card memory settings changed during save.');
   }
   if (!after.enabledPlugins.includes('liquidaity')) {
     throw new Error('Hermes LiquidAIty plugin enablement readback mismatch.');

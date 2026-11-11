@@ -10,7 +10,7 @@ import { resolveInstrument } from '../features/trading/instrument';
 import KronosForecastPanel from '../features/trading/KronosForecastPanel';
 import {
   readTradingConfiguration, reconcileTradingState,
-  type TradeJob, type TradingInterventionAction, type TradingState, type TradingSettings,
+  type TradeJob, type TradeDecision, type TradingBacktest, type TradingInterventionAction, type TradingState, type TradingSettings,
 } from '../features/trading/tradingState';
 
 const DARK = { bg: '#0a0f1a', panel: '#111827', edge: '#1f2937', ink: '#e5e7eb' };
@@ -94,6 +94,32 @@ function PlanTerms({ job }: { job: TradeJob }) {
   </dl>;
 }
 
+function JournalDecision({ decision, backtests }: { decision: TradeDecision; backtests: TradingBacktest[] }) {
+  return <article className="border-t py-2 mt-2" style={{ borderColor: DARK.edge }}>
+    <time style={{ color: MUTED, fontSize: 11 }}>{new Date(decision.createdAt).toLocaleString()}</time>
+    <div><strong>{decision.action}</strong> · {decision.subject}{decision.kind === 'research' ? ' · Research decision' : ''}</div>
+    <p>{decision.rationale}</p>
+    {decision.missingTerms.length > 0 && <p>Unresolved: {decision.missingTerms.join(' · ')}</p>}
+    {decision.evidence.filter(item => typeof item.backtestId === 'string').map((item, index) => {
+      const receipt = backtests.find(result => result.backtestId === item.backtestId);
+      return receipt ? <details key={`${item.backtestId}:${index}`}>
+        <summary>{receipt.bot} · {receipt.symbols.join(', ')} · {receipt.sourceExecution.profile}</summary>
+        <p>Historical simulation · {receipt.start} to {receipt.endExclusive} (exclusive) · No broker orders</p>
+        <p>{money(receipt.initialCapital)} → {money(receipt.endingPortfolioValue)}</p>
+        <p>Costs per side: {receipt.costs.feeBpsPerSide} bps + {money(receipt.costs.slippagePerSharePerSide)}/share</p>
+        <p>Data cutoff: {receipt.dataCutoffExclusive}</p>
+        <pre className="whitespace-pre-wrap break-all">{JSON.stringify(receipt, null, 2)}</pre>
+      </details> : <p key={`${item.backtestId}:${index}`}>Referenced backtest unavailable: {String(item.backtestId)}</p>;
+    })}
+    <details><summary>Evidence and provenance</summary>
+      <p>Reported confidence: {(decision.confidence * 100).toFixed(0)}% · {decision.sourceExecution.profile}</p>
+      <pre className="whitespace-pre-wrap break-all">{JSON.stringify({ evidence: decision.evidence,
+        producerCardId: decision.producerCardId, cardRevisionId: decision.cardRevisionId,
+        execution: decision.sourceExecution }, null, 2)}</pre>
+    </details>
+  </article>;
+}
+
 function EquityChart({ points }: { points: TradingState['portfolio']['equityCurve'] }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -150,6 +176,7 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
   const [history, setHistory] = useState(false);
   const [state, setState] = useState<TradingState | null>(null);
   const [stateError, setStateError] = useState(false);
+  const [readRevision, setReadRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [interventionError, setInterventionError] = useState(false);
   const [reason, setReason] = useState('');
@@ -183,7 +210,7 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
         if (!controller.signal.aborted) acceptSnapshot(body as TradingState);
       }).catch(() => { if (!controller.signal.aborted) setStateError(true); });
     return () => controller.abort();
-  }, [acceptSnapshot, query]);
+  }, [acceptSnapshot, query, readRevision]);
 
   const jobs = state?.jobs || [];
   const selectedJob = jobs.find(job => job.jobId === selectedJobId) || null;
@@ -223,10 +250,11 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
       <nav aria-label="Trading" role="tablist" className="trading-tabs">
         <button type="button" role="tab" aria-selected={view === 'ticker'} onClick={() => { setView('ticker'); setSelectedJobId(null); }}>Add trade</button>
         <button type="button" role="tab" aria-selected={view === 'portfolio'} onClick={showPortfolio}>Portfolio</button>
-        <button type="button" role="tab" aria-selected={view === 'journal'} onClick={() => setView('journal')}>Journal</button>
+        <button type="button" role="tab" aria-selected={view === 'journal'} onClick={() => { setView('journal'); setReadRevision(value => value + 1); }}>Journal</button>
         <button type="button" role="tab" aria-selected={view === 'forecast'} onClick={() => setView('forecast')}>Forecast</button>
       </nav>
       <div className="trading-toolbar-actions">
+        {view === 'journal' && <button type="button" style={button} onClick={() => setReadRevision(value => value + 1)}>Refresh journal</button>}
         {showingChart ? <button type="button" style={button} aria-label={fullscreen ? 'Exit Fullscreen' : 'Fullscreen'} onClick={() => setFullscreen(value => !value)}>&#9974;</button> : null}
       </div>
     </header>
@@ -281,10 +309,13 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
             <div><dt>Risk/reward</dt><dd>{settings.minimumRiskReward}</dd></div>
           </dl> : null}
         </div> : view === 'journal' ? <div className="grid gap-3 p-3" data-testid="trading-journal">
+          {!selectedJob && state?.researchDecisions.map(decision =>
+            <JournalDecision key={decision.decisionId} decision={decision} backtests={state.backtests} />)}
           {(selectedJob ? [selectedJob] : jobs).map(job => <article key={job.jobId} className="trading-plan">
             <button type="button" style={button} onClick={() => openJob(job)}>{job.symbol}</button>
             <PlanTerms job={job} />
-            {job.events.map(event => <div key={event.eventId} className="border-t py-2 mt-2" style={{ borderColor: DARK.edge }}>
+            {job.decisions.map(decision => <JournalDecision key={decision.decisionId} decision={decision} backtests={state?.backtests || []} />)}
+            {job.events.filter(event => event.kind !== 'decision').map(event => <div key={event.eventId} className="border-t py-2 mt-2" style={{ borderColor: DARK.edge }}>
               <time style={{ color: MUTED, fontSize: 11 }}>{event.createdAt ? new Date(event.createdAt).toLocaleString() : ''}</time>
               <div>{event.action}</div><p>{event.summary}</p>
             </div>)}

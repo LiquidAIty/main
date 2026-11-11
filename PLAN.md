@@ -179,9 +179,12 @@ chat copy, Main route coupling, or duplicated transcript owner.
 
 ### Memory
 
-Every retained Card profile selects Holographic. Built-in Markdown memory, user-profile Markdown,
-background review, curator work, and automatic skill creation are disabled. ThinkGraph and KnowGraph
-remain Project authorities rather than Hermes profile memory.
+New Cards default to Holographic with built-in Markdown memory, user-profile Markdown, background
+review and curator work disabled. Ordinary Card edits preserve the profile's explicitly selected
+memory and learning configuration. Trader now selects native Hermes memory/skill review without an
+external memory provider; Quant retains Holographic without background review. Existing provider data
+is preserved. ThinkGraph and KnowGraph remain separate Project authorities. Native learning settings
+do not implement a durable post-trade review or broker-confirmed outcome trigger; those remain unproven.
 
 ### Removed paths
 

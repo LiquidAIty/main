@@ -51,7 +51,7 @@ never proves a higher one.
 | Direct delegation | Hermes `message_agent` | Exact profile roster; no application delivery or reply waiting. |
 | Team/Magnetic execution | Hermes SQLite task/dependency runtime | One plugin admission tool; no copied scheduler or task store. |
 | Application operations | LiquidAIty MCP host | One catalog and saved per-profile grants. |
-| Per-profile memory | Holographic provider | Selected/configured for every retained Card profile. |
+| Per-profile memory | Selected Hermes memory owner | New Cards default to Holographic; explicit native learning choices survive Card edits. |
 | ThinkGraph | Engraphis | Project reasoning reader/writer and completed-pair settlement. |
 | KnowGraph | Graphiti/Neo4j | Sourced Know reader/writer and provenance. |
 | CodeGraph | Codebase Memory | Repository structure provider. |
@@ -263,9 +263,13 @@ or launches another indexer.
 
 ## Memory
 
-Every retained Card profile selects Holographic. Built-in Markdown memory, user-profile Markdown,
-background review, curator behavior, and automatic skill creation are disabled. LiquidAIty does not
-render a Hermes Learning Graph.
+New Card creation initializes Holographic with built-in Markdown memory, user-profile Markdown,
+background review and curator behavior disabled. Ordinary Card saves preserve the existing native
+profile settings rather than reapplying those defaults. Trader explicitly selects native Hermes
+memory/skill review and no external provider; Quant retains Holographic with background review off.
+LiquidAIty does not render a Hermes Learning Graph. Its native Hermes Journey is a view of learned
+memory/skills, not the Trading journal or a broker outcome detector. Automatic post-trade review is
+not established by enabling background review.
 
 Holographic stays per profile. Engraphis and Graphiti stay Project authorities. No memory system
 absorbs another.
@@ -324,8 +328,9 @@ ShadowBroker/WorldSignals is no longer an application workspace, published tool 
 dependency. Its separate source history and private data are not replacements for WorldView.
 These source paths do not establish loaded-service or product acceptance.
 
-The current Hermes divergence has two bounded families: the existing profile-scoped ordered Bot roster
-and the Team/Magnetic policy over Hermes's own SQLite task/dependency runtime. Direct Bot delivery,
+The current Hermes divergence includes the existing profile-scoped ordered Bot roster,
+the Team/Magnetic policy over Hermes's own SQLite task/dependency runtime, and the opt-in MCP
+execution-reference projection described below. Direct Bot delivery,
 recipient execution, queues, retries, receipts, PTY, MCP, and ordinary task behavior remain Hermes-owned.
 The application projects enabled wires into the profile roster and never maintains target sessions,
 delivery queues, task rows, workers, or a scheduler.
@@ -340,6 +345,8 @@ completion rules.
 | `NousResearch/hermes-agent` release `v0.23.0` ([official release](https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.0)); plugin compatibility floor remains `0.22.7` | Roster: `tools/bot_mode_probe.py::configured_bot_roster,resolve_bot_roster`, `tools/bot_mode_dm.py`, profile configure/readback and generated contracts. Taskgraph: `hermes_cli/{kanban_team.py,kanban_magnetic.py,kanban_db.py,kanban_db_connect.py,kanban_db_dispatch.py,kanban_db_graph.py,kanban_decompose.py,config_defaults.py}`; `gateway/{session_kanban.py,kanban_watchers_dispatcher.py}`; `tools/{kanban_tools.py,delegate_tool.py}`; existing tests. Retained integration repairs: concurrent MCP discovery in `gateway/run.py` and original tool arguments in `hermes_cli/middleware.py`. | **PURPOSE:** retain wire-controlled profile rosters and Team/Magnetic policy over Hermes's task owner. **EXTERNAL ALTERNATIVE CHECK:** upstream public `kanban_create` still lacks the marked Team/Magnetic root and mission-scoped assignee ceiling; an app implementation would duplicate authority. **CONTRACTS:** public profile configuration/readback and plugin tool dispatch. **UPSTREAM BEHAVIOR PRESERVED:** 0.23.0 Bot delivery and single final reply, task storage/dependencies/attempts/retries, workers, PTY, MCP and session ownership. The local protocol epoch advances once so existing Bot Chats adopt the new upstream instructions. Null task ceilings remain unrestricted. | The pre-refresh 76 task tests and 10 plugin tests are historical, not refreshed runtime acceptance. Source and loaded proof are separate. **FORK COST:** bounded roster and task-policy overlays plus the listed existing integration repairs. **ROLLBACK:** remove each policy family together with its app publication/admission only when its behavior is deliberately retired or an equivalent upstream API replaces it; retain saved data. Never substitute another delivery runtime or scheduler. Exact hunks are catalogued in `HermesLatest/LIQUIDAITY_PATCHES.md`. |
 | Same `v0.23.0` baseline | `pm/workspace.py::_copy_core_inputs` | **PURPOSE:** complete the real Windows dependency update when managed snapshot paths exceed MAX_PATH. **EXTERNAL ALTERNATIVE CHECK:** reuse Hermes's existing `pm.filesystem.long_root` in the one failing `copytree` call, without registry changes, file omissions, profile relocation or plugin eviction. **CONTRACTS / PRESERVED:** source-copy inputs and ignore rules, ordinary workspace identities, the existing package manager and transactional publication; non-Windows paths unchanged. | **TEST:** real managed update completed; its interpreter reports 0.23.0 and a current dependency environment. Contract regeneration and application/spec typechecks pass. Live agent behavior is a separate proof tier. **FORK COST:** one import and one call. **ROLLBACK:** remove when upstream handles the same copy path. No data migration. |
 | Same `v0.23.0` baseline | `tools/bot_live_delivery.py::_bot_chat_tip`; `tests/gateway/test_session_bot_target_lifecycle.py` | **PURPOSE:** discover the active Bot Chat transcript after a native reset, rather than pinning its titled but retired creation row. **EXTERNAL ALTERNATIVE CHECK:** profile configuration cannot repair the internal lookup; reuse Hermes's existing `handoff_head` receipt/compression reader instead of adding an application session map. **CONTRACTS / PRESERVED:** exact physical-target admission, immutable delivery intent, duplicate-delivery identity, authorization, ordinary compression, and missing-chat creation remain unchanged. | **TESTS:** native resets in isolated temporary authorities reproduce the old failure; one and two resets now discover the current child, admit once, and still reject stale targets and changed payloads. Existing delivery/refusal coverage remains separate from live proof. **FORK COST:** one reader substitution and focused tests. **ROLLBACK:** remove this hunk and its tests when upstream provides equivalent reset-aware discovery; no saved-data migration is required. |
+| Same `v0.23.0` baseline | `tools/approval_context.py::get_current_observability_context`; `tools/mcp_tool_handlers.py::_make_tool_handler,_call_tool_racing_stdio_death` | **PURPOSE:** carry actual Hermes profile/session/turn/tool-call references to an explicitly opted-in MCP connection as `hermes.execution` request metadata, so Trading need not fabricate an application Run. **EXTERNAL ALTERNATIVE CHECK:** the public plugin `call_mcp` accepts arguments and timeout, not execution metadata; caller arguments must not author server-owned provenance. Reuse existing context variables and the SDK's `meta` parameter. **CONTRACTS / PRESERVED:** `include_execution_context: true` is per-connection opt-in, defaults off, and is captured before the MCP thread hop; missing IDs are not synthesized. Ordinary connections, tool arguments, approvals, retries, progress, and result handling remain unchanged. | **TESTS:** context/transport contracts and real saved-Card persistence proof are required; implementation alone is not a pass. **FORK COST:** one read-only context getter and bounded MCP metadata projection, no new tool or runtime. **ROLLBACK:** remove these hunks and their opt-in publication together when upstream supplies equivalent metadata; retain all stored provenance. |
+| Same `v0.23.0` baseline | `gateway/session_ancillary.py::reload_mcp`; `tools/mcp_tool_discovery.py::restart_mcp_servers_with_new_inputs`; `tools/mcp_tool_health.py::_refresh_tools` | **PURPOSE:** explicit confirmed reload must refresh an already-connected profile-owned server's catalog/filter/config, not only notice newly added server names. **EXTERNAL ALTERNATIVE CHECK:** the public reload returned unchanged while a fresh authenticated probe listed the missing saved tools; the existing name-only reconciliation and transport-input comparison cannot refresh that registration. Reuse the existing notification refresh and its RPC lock to update an unchanged connection in place. **PRESERVED:** no new runtime, application reload loop or housekeeping change; no forced teardown of in-flight calls or borrowed connections; session-policy/busy fences remain. | **TESTS:** real stdio discovery, widening/narrowing filters, current opt-in configuration, retained connection identity, no-op ordinary reconciliation, and gateway reload contracts; saved-Card execution remains a separate gate. **FORK COST:** optional refresh/config arguments and one explicit caller, no new service/tool. **ROLLBACK:** remove these bounded additions together when upstream explicit reload provides equivalent behavior; histories and saved configuration remain intact. |
 
 The owner-approved KnowGraph reply correction changes only
 `HermesLatest/gateway/run_notifications.py::GatewayNotificationsMixin._build_process_completion_event`.
@@ -461,6 +468,18 @@ not the external TradingView iframe. These paths do not submit orders or impleme
 Basic Perfect strategy. For deployment, install the declared Python inference dependencies, use
 a CPU Torch wheel where appropriate, and retain a writable service-owned `HF_HUB_CACHE` across
 releases. Ordinary application startup does not load or download Kronos weights.
+
+The Trading journal uses the existing `trading_jobs`, `trading_decisions`, and
+`trading_lifecycle_runs` PostgreSQL owners. Jobless research decisions retain a subject,
+not an invented allocation. The MCP sender supplies actual Hermes profile/session/turn/tool-call
+metadata; authenticated Card scope must match before a write. The obsolete application Run-ID
+columns and joins are removed, with no legacy conversion or alternate reader. Exact retries return
+the original decision without replaying a job-state transition; conflicting payloads fail.
+Completed LumiBot backtests retain parameters, costs, exact input bars/hash, data cutoff, source
+coverage, metrics, and the producing Card/revision. Trader may cite a same-Project/deck receipt
+without taking credit for Quant's execution. The existing Journal renders research and exact cited
+receipts; these are simulations and recorded decisions, never broker orders. Migration 063 fails
+atomically on preexisting obsolete journal rows rather than inventing execution provenance.
 
 The vendored Graphiti fork has this bounded additive divergence:
 

@@ -323,8 +323,11 @@ async def reload_mcp(connection, ref, params):
 
     def reconcile():
         with suppress_interactive_oauth():
-            return (discovery.reconcile_mcp_servers_with_config(), discovery.mcp_servers_not_connected(),
-                    discovery.mcp_servers_ready())
+            refreshed = discovery.restart_mcp_servers_with_new_inputs(
+                set(discovery.mcp_servers_ready()), refresh=True)
+            changes = discovery.reconcile_mcp_servers_with_config()
+            changes['added'] = sorted(set(changes['added']) | set(refreshed))
+            return changes, discovery.mcp_servers_not_connected(), discovery.mcp_servers_ready()
     result, failed, ready = await asyncio.to_thread(reconcile)
     # ``added`` is what reconcile attempted: only those now registered (live or lazy) changed anything.
     result = {**result, 'added': [name for name in result.get('added', []) if name not in failed]}

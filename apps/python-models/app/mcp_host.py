@@ -53,7 +53,9 @@ async def _server_list_tools(_context: Any, _params: PaginatedRequestParams | No
     return ListToolsResult(tools=await mcp_catalog_runtime.list_tools())
 
 async def _server_call_tool(_context: Any, params: CallToolRequestParams) -> CallToolResult:
-    result = await mcp_request_dispatch.call_tool(params.name, dict(params.arguments or {}))
+    result = await mcp_request_dispatch.call_tool(
+        params.name, dict(params.arguments or {}), metadata=params.meta,
+    )
     if isinstance(result, CallToolResult):
         return result
     if isinstance(result, list):

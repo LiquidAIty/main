@@ -45,6 +45,7 @@ const REQUIRED_MIGRATIONS = [
   '060_align_main_research_sequence_and_know_identity.sql',
   '061_add_connected_card_introductions.sql',
   '062_trading_forecasts.sql',
+  '063_trading_hermes_evidence.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;

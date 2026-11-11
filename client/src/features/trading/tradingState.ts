@@ -2,6 +2,13 @@
  * Entity: Trading
  * Relationship: Defines the paper-only Trading configuration and read-model contracts, then reconciles full broker and job snapshots by provider-owned identities.
  */
+import type { AgentCardInstance } from '../../types/agentgraph';
+
+/** The manual chart belongs to its displayed Card; another specialist's grant is not UI routing. */
+export function tradingForecastCard(card: AgentCardInstance | null): AgentCardInstance | null {
+  return card?.enabled !== false && card?.runtimeOptions?.tools?.includes('forecast_market_bars') ? card : null;
+}
+
 export const TRADE_ACTIONS = [
   'WAIT',
   'ENTER',
@@ -47,14 +54,53 @@ export type TradingConfiguration = {
 
 export type TradeDecision = {
   decisionId: string;
+  jobId: string | null;
+  kind: 'trade_job' | 'research';
+  subject: string;
+  producerCardId: string;
+  cardRevisionId: string;
   action: TradeAction;
   rationale: string;
   confidence: number;
   evidence: Array<Record<string, unknown>>;
   missingTerms: string[];
   executionRequested: false;
-  sourceRunId: string;
+  sourceExecution: HermesExecution;
   createdAt: string;
+};
+
+export type HermesExecution = {
+  runtime: 'hermes';
+  profile: string;
+  sessionId: string;
+  turnId: string;
+  toolCallId: string;
+};
+
+export type TradingBacktest = {
+  backtestId: string;
+  producerCardId: string;
+  cardRevisionId: string;
+  sourceExecution: HermesExecution;
+  savedAt: string;
+  engine: 'LumiBot';
+  version: string;
+  mode: 'historical_simulation_only';
+  bot: string;
+  symbols: string[];
+  start: string;
+  endExclusive: string;
+  dataCutoffExclusive: string;
+  initialCapital: number;
+  endingPortfolioValue: number;
+  costs: { feeBpsPerSide: number; slippagePerSharePerSide: number };
+  parameters: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  sources: Array<Record<string, unknown>>;
+  equity: Array<Record<string, unknown>>;
+  inputSnapshotSha256: string;
+  limitations: string[];
+  brokerOrdersSubmitted: false;
 };
 
 export type TradePlan = {
@@ -145,17 +191,6 @@ export type TradeEvent = {
   createdAt: string | null;
 };
 
-export type TradeArtifact = {
-  artifactId: string;
-  kind: string;
-  locator: string;
-  mediaType: string | null;
-  contentSha256: string | null;
-  provenanceRef: string | null;
-  sizeBytes: number | null;
-  createdAt: string;
-};
-
 export type TradeIntervention = {
   interventionId: string;
   action: TradingInterventionAction | 'EXIT' | 'FAIL_SAFE';
@@ -175,7 +210,7 @@ export type TradeJob = {
   maxLossUsd: number;
   realizedPnlUsd: number | null;
   plan: TradePlan;
-  sourceRunId: string;
+  sourceExecution: HermesExecution;
   createdAt: string;
   updatedAt: string;
   decisions: TradeDecision[];
@@ -185,7 +220,6 @@ export type TradeJob = {
   orders: PaperOrder[];
   fills: TradeFill[];
   events: TradeEvent[];
-  artifacts: TradeArtifact[];
   lifecycle: { status: string; diagnostics: string | null };
 };
 
@@ -212,56 +246,14 @@ export type EquityPoint = {
   drawdownPercent: number;
 };
 
-export type TradingLifecycleProof = {
-  lifecycleRunId: string;
-  cardId: string;
-  mode: 'local_backtest';
-  status: 'running' | 'completed' | 'failed';
-  paperOnly: boolean;
-  liveOrders: boolean;
-  modelProviderCalls: boolean;
-  symbol: string;
-  dataProvenance: {
-    kind?: string;
-    source?: string;
-    barCount?: number;
-    start?: string;
-    end?: string;
-    actor?: string;
-  };
-  bars?: MarketBar[];
-  portfolio?: {
-    initialValueUsd: number;
-    portfolioValueUsd: number | null;
-    cashUsd: number | null;
-    profitLossUsd: number | null;
-    maxDrawdownUsd: number;
-    maxDrawdownPercent: number;
-    equityCurve: EquityPoint[];
-  };
-  positions?: PaperPosition[];
-  orders?: Array<{
-    orderId: string;
-    symbol: string;
-    side: string | null;
-    quantity: number | null;
-    filledQuantity: number | null;
-    type: string | null;
-    status: string | null;
-  }>;
-  events: TradeEvent[];
-  artifacts: TradeArtifact[];
-  errorCode?: string | null;
-  startedAt: string | null;
-  finishedAt: string | null;
-};
-
 export type TradingState = {
   cardId: string;
   paperOnly: true;
   executionApproved: false;
   timeframe: string;
   jobs: TradeJob[];
+  researchDecisions: TradeDecision[];
+  backtests: TradingBacktest[];
   portfolio: {
     portfolioValueUsd: number | null;
     cashUsd: number | null;
@@ -294,7 +286,6 @@ export type TradingState = {
     cancel: { available: boolean; reason: string | null };
   };
   engine: TradingEngineReadiness;
-  lifecycleProof: TradingLifecycleProof | null;
   observedAt: string;
 };
 
@@ -414,7 +405,6 @@ function reconcileJob(job: TradeJob): TradeJob {
     orders: uniqueBy(job.orders || [], (item) => item.orderId),
     fills: uniqueBy(job.fills || [], (item) => item.fillId),
     events: uniqueBy(job.events || [], (item) => item.eventId),
-    artifacts: uniqueBy(job.artifacts || [], (item) => item.artifactId),
     market: {
       ...job.market,
       bars: uniqueBy(job.market?.bars || [], (item) => item.timestamp),
@@ -437,6 +427,8 @@ export function reconcileTradingState(
   return {
     ...incoming,
     jobs: uniqueBy(incoming.jobs || [], (job) => job.jobId).map(reconcileJob),
+    researchDecisions: uniqueBy(incoming.researchDecisions, item => item.decisionId),
+    backtests: uniqueBy(incoming.backtests, item => item.backtestId),
     positions: uniqueBy(
       incoming.positions || [],
       (position) => `${position.symbol}:${position.side || ''}:${position.strategy || ''}`,

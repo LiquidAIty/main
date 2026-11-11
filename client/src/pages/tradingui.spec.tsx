@@ -13,6 +13,7 @@ import type { TradingState } from '../features/trading/tradingState';
 import TradingUI from './tradingui';
 import type { AgentCardInstance } from '../types/agentgraph';
 const trader: AgentCardInstance = { id: 'card_trading_workbench', title: 'Trader', templateId: 'trader', runtime: { kind: 'hermes', mode: 'delegate', profile: 'trading' }, position: { x: 0, y: 0 } };
+const execution = { runtime: 'hermes' as const, profile: 'trading', sessionId: 'session-one', turnId: 'turn-one', toolCallId: 'call-one' };
 
 const snapshot: TradingState = {
   cardId: 'card_trading_workbench',
@@ -31,7 +32,7 @@ const snapshot: TradingState = {
       invalidationConditions: ['Evidence is invalidated.'],
       dataRequirements: ['Fresh paper market data.'],
     },
-    sourceRunId: 'run-one', createdAt: '2026-09-03T00:00:00Z',
+    sourceExecution: execution, createdAt: '2026-09-03T00:00:00Z',
     updatedAt: '2026-09-03T00:01:00Z', decisions: [], interventions: [],
     market: {
       status: 'available', provider: 'alpaca', feed: 'iex', timeframe: '5Min',
@@ -40,7 +41,7 @@ const snapshot: TradingState = {
       bars: [{ timestamp: '2026-09-03T00:00:00Z', open: 10, high: 12, low: 9, close: 11, volume: 100 }],
       diagnostics: null,
     },
-    position: null, orders: [], fills: [], events: [], artifacts: [],
+    position: null, orders: [], fills: [], events: [],
     lifecycle: { status: 'observed', diagnostics: null },
   }],
   portfolio: {
@@ -65,7 +66,7 @@ const snapshot: TradingState = {
     cancel: { available: false, reason: 'order_submission_blocked' },
   },
   engine: { status: 'available', paperOnly: true },
-  lifecycleProof: null,
+  researchDecisions: [], backtests: [],
   observedAt: '2026-09-03T00:01:00Z',
 };
 
@@ -202,6 +203,49 @@ describe('Trading agent UI', () => {
     expect(screen.queryByRole('alert')).toBeNull();
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('shows unfunded research and only its exact cited backtest, with a bounded refresh', async () => {
+    const result: TradingState['backtests'][number] = {
+      backtestId: 'quant-receipt', producerCardId: 'quant-card', cardRevisionId: 'quant-revision',
+      sourceExecution: { ...execution, profile: 'quant-analyst', toolCallId: 'quant-call' },
+      savedAt: snapshot.observedAt, engine: 'LumiBot', version: '4.6.48+mcp2.1',
+      mode: 'historical_simulation_only', bot: 'buy_and_hold', symbols: ['RDW'],
+      start: '2026-08-01', endExclusive: '2026-09-01', dataCutoffExclusive: '2026-09-01T00:00:00-04:00',
+      initialCapital: 10000, endingPortfolioValue: 10120,
+      costs: { feeBpsPerSide: 1, slippagePerSharePerSide: .01 }, parameters: { buy_symbol: 'RDW' },
+      metrics: { total_return: .012 }, sources: [{ provider: 'alpaca', feed: 'iex' }], equity: [],
+      inputSnapshotSha256: 'fixture-input-hash', limitations: ['Daily-bar fill assumptions'], brokerOrdersSubmitted: false,
+    };
+    let body: TradingState = { ...snapshot, jobs: [], researchDecisions: [], backtests: [] };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }));
+    vi.stubGlobal('fetch', fetcher);
+    render(<TradingUI symbol="RDW" projectId="project-one" forecastCard={trader} />);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    body = { ...body, researchDecisions: [{
+      decisionId: 'research-one', jobId: null, kind: 'research', subject: 'RDW investment thesis',
+      producerCardId: trader.id, cardRevisionId: 'trader-revision', action: 'WAIT',
+      rationale: 'Wait for the next filing before considering a position.', confidence: .5,
+      evidence: [{ backtestId: 'quant-receipt' }, { backtestId: 'missing-receipt' }],
+      missingTerms: ['Current filing'], executionRequested: false, sourceExecution: execution,
+      createdAt: snapshot.observedAt,
+    }], backtests: [result, { ...result, backtestId: 'uncited', bot: 'uncited_same_symbol' }] };
+    fireEvent.click(screen.getByRole('tab', { name: 'Journal' }));
+    await screen.findByText('Wait for the next filing before considering a position.');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/buy_and_hold · RDW · quant-analyst/)).toBeTruthy();
+    expect(screen.getByText(/Costs per side: 1 bps/)).toBeTruthy();
+    expect(screen.getByText(/Data cutoff: 2026-09-01/)).toBeTruthy();
+    expect(screen.getByText('Referenced backtest unavailable: missing-receipt')).toBeTruthy();
+    expect(screen.queryByText(/uncited_same_symbol/)).toBeNull();
+    expect(screen.queryByText('Maximum loss')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Enter trade' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh journal' }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    expect(fetcher.mock.calls.every((call: unknown[]) => !((call[1] as RequestInit)?.method))).toBe(true);
+    fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
+    expect(screen.queryByTestId('trade-job-research-one')).toBeNull();
+    expect(screen.getByText('$100,000.00')).toBeTruthy();
   });
 
   it('does not reload a frame that has navigated cross-origin, and clears old timers on ticker change', () => {
