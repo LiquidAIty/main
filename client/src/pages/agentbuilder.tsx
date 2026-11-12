@@ -54,6 +54,7 @@ import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBounda
 import type { GodsEyeBridge } from '../components/worldsignal/GodsEyeSurface';
 import WorldViewSurface from '../features/worldview/WorldViewSurface';
 import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
+import CardDeleteAction from '../features/agentbuilder/canvas/CardDeleteAction';
 import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
@@ -755,8 +756,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
   useEffect(() => { setDeleteCardError(null); }, [selectedCardId]);
   const deleteSelectedCard = async () => {
     if (!selectedCard || deletingCardId || deckSaveBusy || activeCardIds.includes(selectedCard.id)) return;
-    const { id, title } = selectedCard;
-    if (!window.confirm(`Delete ${title} from this Project? Its wires will be removed. Its saved profile and session history will be kept.`)) return;
+    const { id } = selectedCard;
     setDeletingCardId(id);
     setDeleteCardError(null);
     try {
@@ -1102,17 +1102,10 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
           return (
             <>
               {tab === 'Prompt' && (
-                <div style={{ display: 'flex', justifyContent: 'flex-end', paddingBottom: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => { void deleteSelectedCard(); }}
-                    disabled={Boolean(deletingCardId) || deckSaveBusy || activeCardIds.includes(selectedCard.id)}
-                    title="Remove this Card and its wires from this Project"
-                    style={graphDrawerButtonStyle({ color: '#D9A5A5', fontSize: 12, padding: '5px 9px' })}
-                  >
-                    {deletingCardId === selectedCard.id ? 'Deleting…' : 'Delete Card'}
-                  </button>
-                </div>
+                <CardDeleteAction key={selectedCard.id} title={selectedCard.title}
+                  disabled={Boolean(deletingCardId) || deckSaveBusy || activeCardIds.includes(selectedCard.id)}
+                  busy={deletingCardId === selectedCard.id} onConfirm={deleteSelectedCard}
+                  buttonStyle={graphDrawerButtonStyle({ color: '#D9A5A5', fontSize: 12, padding: '5px 9px' })} />
               )}
               {deleteCardError && <div role="alert" style={{ color: '#D9A5A5', fontSize: 12 }}>{deleteCardError}</div>}
               <CardEditorErrorBoundary
