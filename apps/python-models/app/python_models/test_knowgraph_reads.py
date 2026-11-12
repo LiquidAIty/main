@@ -126,7 +126,7 @@ def _attached_know_rows() -> list[dict]:
     return [{
         "entity_id": "entity-a",
         "episode_id": f"know-{index}",
-        "episode_labels": ["Episodic", "Know"],
+        "episode_labels": ["Know"],
         "episode_props": {
             "name": f"Know {index}",
             "content": f"Observation: Compact finding {index}.",
@@ -367,7 +367,7 @@ def test_knowgraph_projection_attaches_only_two_property_owned_knows_to_entity(
     assert "evidence" not in nodes["entity-b"]["properties"]
     know_queries = [
         query for query, _params in driver.calls
-        if "episode:Episodic:Know" in query
+        if "episode:Know" in query
     ]
     assert len(know_queries) == 1
     assert "episode.entity_uuid" in know_queries[0]
@@ -472,7 +472,7 @@ def test_exact_entity_know_read_returns_citation_and_direction(
         "validFrom": "2026-10-19T00:00:00Z",
         "ingestedAt": "2026-10-20T08:00:00Z",
     }]
-    assert "episode:Episodic:Know" in driver.calls[0][0]
+    assert "episode:Know" in driver.calls[0][0]
 
 
 def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance(
@@ -545,7 +545,8 @@ def test_knowgraph_exact_episode_hydration_uses_requested_ids_and_project_scope(
     assert episodes[0]["content_preview"] == "source body"
     assert "content_embedding" not in episodes[0]
     query, params = driver.calls[0]
-    assert "MATCH (episode:Episodic)" in query
+    assert "MATCH (episode)" in query
+    assert "(episode:Know OR episode:Episodic)" in query
     assert params["episodeIds"] == ["episode-1", "episode-2"]
     assert params["scopeIds"] == ["liquidaity-project-1"]
     assert driver.closed is True

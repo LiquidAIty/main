@@ -3,7 +3,8 @@
 // Entity: Card Topology
 // Relationship: This file renders separate blue Magnetic handles and an orange connection handle only when the saved Card has orchestration authority.
 
-import { Handle, Position } from '@xyflow/react';
+import { useLayoutEffect } from 'react';
+import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
@@ -39,6 +40,12 @@ export default function AgentCardNode({
   const orangePosition = busOnRight ? Position.Left : Position.Right;
   const blueSide = busOnRight ? { right: -7, left: 'auto' } : { left: -7, right: 'auto' };
   const orangeSide = busOnRight ? { left: -7, right: 'auto' } : { right: -7, left: 'auto' };
+  const updateNodeInternals = useUpdateNodeInternals();
+  useLayoutEffect(() => {
+    // Moving a handle without resizing the Card does not invalidate ReactFlow's
+    // cached bounds. Refresh both the wire endpoint and its connection hit area.
+    updateNodeInternals(data.id);
+  }, [data.id, bluePosition, orchestratorConnector, updateNodeInternals]);
   const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
   const activeAgentCount = Number.isSafeInteger(data?.activeAgentCount) && Number(data.activeAgentCount) > 0
     ? Number(data.activeAgentCount)

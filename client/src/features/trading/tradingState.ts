@@ -45,6 +45,51 @@ export type TradingSettings = {
   brokerConnectionRef: string;
   marketSession: 'regular' | 'extended';
   strategyParameters: Record<string, string | number | boolean>;
+  allocationPolicy?: AllocationPolicy;
+};
+
+export type AllocationCategory = {
+  id: string;
+  targetPercent: number;
+  minimumPercent: number;
+  maximumPercent: number;
+  maximumRiskPercent: number | null;
+};
+
+export type AllocationPolicy = {
+  schemaVersion: 'portfolio.policy.v1';
+  preset: 'High Options' | 'Custom';
+  categories: AllocationCategory[];
+  positionCategories: Record<string, string>;
+  permittedInstrumentTypes: string[];
+  minimumLiquidReservePercent: number;
+  maximumPositionLossPercent: number | null;
+  maximumPositionWeightPercent: number | null;
+};
+
+export type PortfolioAllocation = {
+  policy: AllocationPolicy;
+  policySaved: boolean;
+  policyHash: string;
+  categories: Array<AllocationCategory & {
+    name: string; currentValueUsd: number | null; currentPercent: number | null;
+    targetValueUsd: number | null; maximumHeadroomUsd: number | null; targetHeadroomUsd: number | null;
+  }>;
+  portfolioValueUsd: number | null;
+  reportedCashUsd: number | null;
+  settledCashUsd: number | null;
+  brokerBuyingPowerUsd: number | null;
+  reservedCapitalUsd: number;
+  expectedExitProceedsUsd: number | null;
+  minimumLiquidReserveUsd: number | null;
+  availableUnreservedCashUsd: number | null;
+  unassignedValueUsd: number | null;
+  unassignedPositions: string[];
+  positionsWithMissingValue: string[];
+  shortPositions: string[];
+  allocationComplete: boolean;
+  executionAuthorized: false;
+  limitations: string[];
 };
 
 export type TradingConfiguration = {
@@ -164,6 +209,8 @@ export type TradeMarketObservation = {
 
 export type PaperPosition = {
   symbol: string;
+  instrumentId?: string;
+  assetClass?: string | null;
   side: string | null;
   quantity: number | null;
   averageEntryPrice: number | null;
@@ -271,11 +318,13 @@ export type TradingState = {
   jobs: TradeJob[];
   researchDecisions: TradeDecision[];
   backtests: TradingBacktest[];
+  allocation?: PortfolioAllocation;
   portfolio: {
     portfolioValueUsd: number | null;
     cashUsd: number | null;
     buyingPowerUsd: number | null;
     dailyPnlUsd: number | null;
+    dailyEquityChangeUsd?: number | null;
     totalUnrealizedPnlUsd: number | null;
     maxDrawdownUsd: number | null;
     maxDrawdownPercent: number | null;
@@ -400,6 +449,9 @@ export function readTradingConfiguration(value: unknown): TradingConfiguration {
         && !Array.isArray(trading.strategyParameters)
         ? trading.strategyParameters as TradingSettings['strategyParameters']
         : {},
+      ...(trading.allocationPolicy && typeof trading.allocationPolicy === 'object'
+        && !Array.isArray(trading.allocationPolicy)
+        ? { allocationPolicy: trading.allocationPolicy as AllocationPolicy } : {}),
     },
   };
 }

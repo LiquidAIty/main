@@ -3,17 +3,18 @@
 # Entity: MCP Host
 # Relationship: This file exercises the real local Streamable HTTP host with official clients to verify stateless requests, transport security, protocol compatibility, readiness, and provider lifecycle.
 # Entity: Authentication
-# Relationship: This file verifies OAuth-protected MCP clients receive only the exact Project and Card context established by their verified bearer token.
+# Relationship: Exercises real signed-credential verification, exact saved Project/profile grants, request isolation and key rotation without restoring OAuth or timed expiry.
 # Entity: Tool Catalog
 # Relationship: This file verifies each authenticated client sees the exact unique subset of the canonical catalog granted to its saved Card context.
 # Entity: CodeGraph
-# Relationship: This file verifies separate authenticated clients can call the granted CBM search operation through one host-owned CodeGraph provider connection.
+# Relationship: Verifies host-owned provider reuse with a bounded CBM test double; this HTTP contract suite never launches another CBM frontend or claims live CodeGraph proof.
 
 import json
 import os
 import socket
 import sys
 import time
+import jwt
 
 import pytest
 
@@ -32,6 +33,7 @@ from app import (
     mcp_catalog_projection,
     mcp_catalog_runtime,
     mcp_cbm_provider,
+    mcp_graphiti_provider,
     mcp_provider_operations,
 )
 from app.python_models.test_mcp_contract_support import (
@@ -40,25 +42,34 @@ from app.python_models.test_mcp_contract_support import (
 )
 
 
-def test_public_streamable_http_resource_requires_oauth(monkeypatch):
-    monkeypatch.setattr(
-        mcp_auth,
-        "PUBLIC_MCP_RESOURCE_URL",
-        "https://public.example/mcp",
-    )
-    monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", False)
-
-    with pytest.raises(RuntimeError, match="public_mcp_resource_requires_oauth"):
-        mcp_auth.oauth_config()
+TEST_SECRET = "http-contract-only-not-a-product-secret" * 2
 
 
-def test_unauthenticated_transport_has_no_external_resource_allowlist(monkeypatch):
-    monkeypatch.setattr(mcp_auth, "PUBLIC_MCP_RESOURCE_URL", "")
-    monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", False)
+def signed(profile="main", **changes):
+    claims = {"iss": mcp_auth.INTERNAL_MCP_ISSUER, "aud": mcp_auth.INTERNAL_MCP_AUDIENCE,
+        "sub": f"card:{profile}", "iat": int(time.time()), "principal": {"kind": "card-runtime",
+            "ownerUserId": "owner", "projectId": "project-1", "deckId": "deck_builder", "profile": profile}}
+    claims.update(changes)
+    return jwt.encode(claims, TEST_SECRET, algorithm="HS256")
 
-    config = mcp_auth.oauth_config()
 
-    assert config.resource_url == ""
+def test_missing_signing_secret_or_malformed_bearer_never_becomes_anonymous_access(monkeypatch):
+    monkeypatch.setattr(mcp_auth, "INTERNAL_MCP_SECRET", "")
+    assert mcp_auth.McpTokenVerifier()._verify_sync(signed()) is None
+    monkeypatch.setattr(mcp_auth, "INTERNAL_MCP_SECRET", TEST_SECRET)
+    assert all(mcp_auth.McpTokenVerifier()._verify_sync(token) is None for token in ("", "not-a-jwt", "a.b.c"))
+
+
+def test_profile_context_is_reset_even_when_a_request_fails():
+    import asyncio
+    async def rejected(_scope, _receive, _send):
+        assert mcp_auth.requested_card_profile() == "card-one"
+        raise RuntimeError("request failed")
+    with pytest.raises(RuntimeError, match="request failed"):
+        asyncio.run(mcp_transport._CardProfileContextMiddleware(rejected)(
+            {"type": "http", "headers": [(b"x-liquidaity-hermes-profile", b"card-one")]}, None, None))
+    assert mcp_auth.requested_card_profile() == ""
+    assert mcp_auth.requested_project_id() == ""
 
 
 @pytest.mark.parametrize("value", ("0", "65536", "-1", "not-a-port", ""))
@@ -80,7 +91,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
     import mcp_host
     from mcp import Client
     from mcp.client.streamable_http import streamable_http_client
-    from mcp.server.auth.provider import AccessToken
+    from mcp.types import Tool, CallToolResult, TextContent
 
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -94,15 +105,15 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
         "mainEntryAuthorized": True,
     }
     project_contexts = {
-        "external-main-token": main_context,
-        "external-card-one": {
+        "main": main_context,
+        "card-one": {
             "projectId": "project-1",
             "deckId": "deck_builder",
             "conversationId": "card-session-one",
             "callerCardId": "card-one",
             "grantedTools": ["cbm.search_graph"],
         },
-        "external-card-two": {
+        "card-two": {
             "projectId": "project-1",
             "deckId": "deck_builder",
             "conversationId": "card-session-two",
@@ -111,33 +122,28 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
         },
     }
 
-    class VerifiedToken:
-        async def verify_token(self, token):
-            project_context = project_contexts.get(token)
-            if project_context is None:
-                return None
-            return AccessToken(
-                token=token,
-                client_id="chatgpt-client",
-                scopes=["liquidaity.main"],
-                expires_at=4102444800,
-                subject=f"auth0|{project_context['callerCardId']}",
-                claims={"project": project_context},
-            )
+    provider_calls = {"open": 0, "close": 0}
+    class TestProvider:
+        async def call_tool(self, name, arguments, **_kwargs):
+            assert name == "search_graph" and arguments["limit"] == 1
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"testProvider": True, "nodes": []}))])
+        async def __aexit__(self, *_):
+            provider_calls["close"] += 1
+    async def open_provider(*_args, **_kwargs):
+        provider_calls["open"] += 1
+        return TestProvider(), (Tool(name="search_graph", description="Test-owned provider seam",
+            inputSchema={"type": "object", "properties": {"project": {"type": "string"},
+                "name_pattern": {"type": "string"}, "limit": {"type": "integer"}, "format": {"type": "string"}},
+                "additionalProperties": False}),)
+    async def no_graphiti():
+        return []
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_transport, "HTTP_MCP_PORT", port)
-    monkeypatch.setattr(
-        mcp_auth,
-        "PUBLIC_MCP_RESOURCE_URL",
-        "https://example.test/mcp",
-    )
-    monkeypatch.setattr(mcp_auth, "AUTH0_ISSUER_URL", "https://tenant.example/")
-    monkeypatch.setattr(mcp_auth, "AUTH0_AUDIENCE", "https://example.test/mcp")
-    monkeypatch.setattr(mcp_auth, "AUTH0_CLIENT_ID", "chatgpt-client")
-    monkeypatch.setattr(mcp_auth, "AUTH0_REQUIRED_SCOPE", "liquidaity.main")
-    monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", True)
-    monkeypatch.setattr(mcp_auth, "Auth0TokenVerifier", lambda _config: VerifiedToken())
+    monkeypatch.setattr(mcp_auth, "INTERNAL_MCP_SECRET", TEST_SECRET)
+    monkeypatch.setattr(mcp_auth, "_resolve_internal_card_context_sync", lambda principal: project_contexts.get(principal['profile']))
+    monkeypatch.setattr(mcp_cbm_provider, "_open_cbm_client", open_provider)
+    monkeypatch.setattr(mcp_graphiti_provider, "graphiti_tools", no_graphiti)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", None)
@@ -171,34 +177,28 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                 else:
                     raise RuntimeError("http_mcp_catalog_not_ready")
 
-            async with httpx.AsyncClient(
-                headers={"Authorization": "Bearer external-main-token"},
-                timeout=2,
-            ) as security_client:
-                invalid_host = await security_client.post(
-                    f"http://127.0.0.1:{port}/mcp",
-                    headers={"host": "untrusted.example"},
-                    json={},
-                )
-                assert invalid_host.status_code == 421
-                assert invalid_host.text == "Invalid Host header"
+            async with httpx.AsyncClient(timeout=2) as security_client:
+                for headers in ({}, {"Authorization": "Bearer invalid"},
+                    {"Authorization": f"Bearer {signed()}", "X-LiquidAIty-Hermes-Profile": "wrong"}):
+                    denied = await security_client.post(f"http://127.0.0.1:{port}/mcp", headers=headers, json={})
+                    assert denied.status_code == 403
+                    assert "www-authenticate" not in denied.headers
+                for extra in ({"host": "untrusted.example"}, {"origin": "https://untrusted.example"}):
+                    accepted = await security_client.post(f"http://127.0.0.1:{port}/mcp",
+                        headers={"Authorization": f"Bearer {signed()}", "X-LiquidAIty-Hermes-Profile": "main",
+                                 "Accept": "application/json, text/event-stream", **extra},
+                        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                            "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "contract-test", "version": "1"}}})
+                    assert accepted.status_code == 200
 
-                invalid_origin = await security_client.post(
-                    f"http://127.0.0.1:{port}/mcp",
-                    headers={"origin": "https://untrusted.example"},
-                    json={},
-                )
-                assert invalid_origin.status_code == 403
-                assert invalid_origin.text == "Invalid Origin header"
-
-            async def fresh_client(token, *, mode="auto", inspect_main=False):
+            async def fresh_client(profile, *, mode="auto", inspect_main=False):
                 response_session_ids = []
 
                 async def observe(response):
                     response_session_ids.append(response.headers.get("mcp-session-id"))
 
                 async with httpx2.AsyncClient(
-                    headers={"Authorization": f"Bearer {token}"},
+                    headers={"Authorization": f"Bearer {signed(profile)}", "X-LiquidAIty-Hermes-Profile": profile},
                     event_hooks={"response": [observe]},
                     timeout=60,
                 ) as http_client:
@@ -227,7 +227,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                         )
                         cbm_result = await session.call_tool("cbm.search_graph", {
                             "project": cbm_project,
-                            "query": "MCP session lifecycle",
+                            "name_pattern": ".*lifecycle.*",
                             "limit": 1,
                             "format": "json",
                         })
@@ -242,6 +242,8 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                             assert json.loads(calculator_result.content[0].text) == "14.0"
                             result = await session.call_tool("main.context", {})
                             visible_context = json.loads(result.content[0].text)["context"]
+                            forged = await session.call_tool("main.context", {"projectId": "other-project"})
+                            assert forged.is_error is True
                             invalid = await session.call_tool("not_a_real_tool", {})
                         else:
                             calculator_denied = await session.call_tool(
@@ -271,12 +273,11 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             # Project contexts. All four requests remain stateless at the outer
             # HTTP boundary and use the same host-owned CBM child.
             first = await fresh_client(
-                "external-main-token", mode="auto", inspect_main=True,
+                "main", mode="auto", inspect_main=True,
             )
-            card_one = await fresh_client("external-card-one")
-            card_two = await fresh_client("external-card-two")
+            card_one, card_two = await asyncio.gather(fresh_client("card-one"), fresh_client("card-two"))
             second = await fresh_client(
-                "external-main-token", mode="legacy", inspect_main=True,
+                "main", mode="legacy", inspect_main=True,
             )
             first_catalog, first_context, first_identity, first_cbm_client, first_protocol = first
             second_catalog, second_context, second_identity, second_cbm_client, second_protocol = second
@@ -308,6 +309,21 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             assert readiness.json()["toolCount"] == base_identity[0]
             assert readiness.json()["uniqueToolCount"] == base_identity[0]
             assert readiness.json()["catalogHash"] == base_identity[1]
+            # Saved grant changes are re-read for each HTTP request, not frozen
+            # into a connection or shared with another profile's concurrent call.
+            async with httpx2.AsyncClient(headers={"Authorization": f"Bearer {signed()}",
+                "X-LiquidAIty-Hermes-Profile": "main"}) as http_client:
+                async with Client(streamable_http_client(f"http://127.0.0.1:{port}/mcp", http_client=http_client)) as session:
+                    assert len((await session.list_tools(cache_mode="refresh")).tools) == 3
+                    main_context["grantedTools"] = ["main.context"]
+                    assert [tool.name for tool in (await session.list_tools(cache_mode="refresh")).tools] == ["main.context"]
+                    assert (await session.call_tool("calculator", {"expression": "1 + 1"})).is_error is True
+            async with httpx2.AsyncClient(headers={"Authorization": f"Bearer {signed(principal={'kind': 'catalog-reader'})}"}) as http_client:
+                async with Client(streamable_http_client(f"http://127.0.0.1:{port}/mcp", http_client=http_client)) as session:
+                    assert len((await session.list_tools(cache_mode="refresh")).tools) == base_identity[0]
+                    denied = await session.call_tool("calculator", {"expression": "1 + 1"})
+                    assert denied.is_error is True
+                    assert "tool_not_granted" in tool_result_wire_text(denied)
         finally:
             server_task.cancel()
             try:
@@ -316,79 +332,39 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                 pass
 
     asyncio.run(check())
+    assert provider_calls == {"open": 1, "close": 1}
 
-def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_principal(monkeypatch):
-    import jwt
-    import mcp_host
-    from cryptography.hazmat.primitives.asymmetric import rsa
-
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-    class StaticJwkClient:
-        def get_signing_key_from_jwt(self, _token):
-            return type("SigningKey", (), {"key": private_key.public_key()})()
-
-    config = mcp_auth.OAuthConfig(
-        resource_url="https://exemption-unstable-wolverine.ngrok-free.dev/mcp",
-        issuer_url="https://tenant.auth0.com/",
-        audience="https://exemption-unstable-wolverine.ngrok-free.dev/mcp",
-        client_id="chatgpt-client",
-        required_scope="main",
-    )
-    verifier = mcp_auth.Auth0TokenVerifier(config, StaticJwkClient())
-    monkeypatch.setattr(
-        mcp_auth,
-        "_resolve_external_project_context_sync",
-        lambda issuer, subject: {
-            "projectId": "project-1",
-            "deckId": "deck_builder",
-            "conversationId": "project-1",
-            "callerCardId": "card_main_chat",
-            "grantedTools": ["cbm.search_graph", "main.context"],
-        } if issuer == config.issuer_url and subject == "auth0|jeremiah" else None,
-    )
-    now = int(time.time())
-    base = {
-        "iss": config.issuer_url,
-        "sub": "auth0|jeremiah",
-        "aud": config.audience,
-        "iat": now,
-        "exp": now + 300,
-        "azp": config.client_id,
-        "scope": "openid main",
-    }
-
-    def encoded(claims, key=private_key):
-        return jwt.encode(claims, key, algorithm="RS256", headers={"kid": "test-key"})
-
-    verified = verifier._verify_sync(encoded(base))
-    assert verified is not None
-    assert verified.subject == "auth0|jeremiah"
-    assert verified.claims["project"]["projectId"] == "project-1"
-    assert verified.claims["project"]["callerCardId"] == "card_main_chat"
-    within_clock_skew = verifier._verify_sync(encoded({**base, "iat": now + 2}))
-    assert within_clock_skew is not None
-    monkeypatch.setattr(
-        mcp_auth,
-        "_resolve_external_project_context_sync",
-        lambda _issuer, _subject: None,
-    )
-    verified_without_project = verifier._verify_sync(encoded(base))
-    assert verified_without_project is not None
-    assert verified_without_project.subject == "auth0|jeremiah"
-    assert "project" not in verified_without_project.claims
-    invalid_claims = [
-        {**base, "iss": "https://wrong.auth0.com/"},
-        {**base, "aud": "https://wrong.example/mcp"},
-        {**base, "exp": now - mcp_auth.AUTH0_CLOCK_SKEW_SECONDS - 1},
-            {
-                **base,
-                "iat": now + mcp_auth.AUTH0_CLOCK_SKEW_SECONDS + 60,
-            },
-        {**base, "nbf": now + 300},
-        {**base, "azp": "wrong-client"},
-        {**base, "scope": "openid profile"},
-    ]
-    assert verifier._verify_sync(encoded(base, other_key)) is None
-    assert all(verifier._verify_sync(encoded(claims)) is None for claims in invalid_claims)
+def test_signed_token_verifier_enforces_identity_grants_clock_and_rotation(monkeypatch):
+    monkeypatch.setattr(mcp_auth, "INTERNAL_MCP_SECRET", TEST_SECRET)
+    context = {"projectId": "project-1", "deckId": "deck_builder", "conversationId": "project-1",
+               "callerCardId": "card_main_chat", "grantedTools": ["main.context"]}
+    monkeypatch.setattr(mcp_auth, "_resolve_internal_card_context_sync", lambda _: context)
+    verifier = mcp_auth.McpTokenVerifier()
+    assert verifier._verify_sync(signed()) is None  # A profile-owned connection must name its profile.
+    profile_token = mcp_auth.set_requested_card_profile("main")
+    try:
+        verified = verifier._verify_sync(signed())
+        assert verified is not None and verified.claims['project'] == context
+        assert verified.expires_at is None
+        assert verifier._verify_sync(signed(exp=1)) is not None  # Explicit current non-expiring contract.
+        assert verifier._verify_sync(signed(iss="wrong")) is None
+        assert verifier._verify_sync(signed(aud="wrong")) is None
+        assert verifier._verify_sync(signed(iat=int(time.time())+300)) is None
+        assert verifier._verify_sync(signed(nbf=int(time.time())+300)) is None
+        assert verifier._verify_sync(signed("other-profile")) is None
+        assert verifier._verify_sync(signed(principal={"kind": "unknown"})) is None
+        unsupported = jwt.decode(signed(), TEST_SECRET, algorithms=["HS256"], audience=mcp_auth.INTERNAL_MCP_AUDIENCE)
+        assert verifier._verify_sync(jwt.encode(unsupported, TEST_SECRET, algorithm="HS384")) is None
+        for grants in (["main.context", "main.context"], [" main.context"], [None], "main.context"):
+            assert verifier._verify_sync(signed(principal={"kind": "graph-read", "projectId": "project-1",
+                "deckId": "deck_builder", "callerCardId": "main", "grantedTools": grants})) is None
+        for field in ("ownerUserId", "projectId", "deckId", "profile"):
+            claims = jwt.decode(signed(), TEST_SECRET, algorithms=["HS256"], audience=mcp_auth.INTERNAL_MCP_AUDIENCE)
+            claims['principal'].pop(field)
+            assert verifier._verify_sync(jwt.encode(claims, TEST_SECRET, algorithm="HS256")) is None
+        monkeypatch.setattr(mcp_auth, "_resolve_internal_card_context_sync", lambda _: None)
+        assert verifier._verify_sync(signed()) is None
+        monkeypatch.setattr(mcp_auth, "INTERNAL_MCP_SECRET", "rotated-secret" * 4)
+        assert verifier._verify_sync(signed()) is None
+    finally:
+        mcp_auth.reset_requested_card_profile(profile_token)

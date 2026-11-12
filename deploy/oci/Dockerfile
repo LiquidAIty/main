@@ -92,6 +92,9 @@ CMD ["/opt/liquidaity/apps/python-models/.venv/bin/python", "-X", "utf8", "-m", 
 FROM ${HERMES_BASE_IMAGE} AS hermes-ui
 COPY --from=app-build /opt/liquidaity/client/dist/ /opt/liquidaity/client/dist/
 COPY apps/hermes-liquidaity-plugin/ /opt/hermes/plugins/liquidaity/
+COPY deploy/oci/normalize_hermes_scripts.py /opt/liquidaity/deploy/oci/normalize_hermes_scripts.py
+RUN /opt/hermes/.venv/bin/python /opt/liquidaity/deploy/oci/normalize_hermes_scripts.py \
+ && /command/s6-rc-compile /tmp/hermes-service-check /package/admin/s6-overlay/etc/s6-rc/sources /etc/s6-overlay/s6-rc.d
 ENV HERMES_WEBAPP_DIST=/opt/liquidaity/client/dist
 # Inherit s6 entrypoint and package/runtime authority unchanged.
 CMD ["gateway", "run"]

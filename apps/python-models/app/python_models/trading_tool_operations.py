@@ -14,6 +14,7 @@ from app.python_models.trading_forecast import forecast_market_bars
 from app.python_models.trading_backtest import trading_list_bots, trading_backtest, trading_get_backtest
 from app.python_models import trading_evidence, trading_journal
 from app.python_models.trading_proposals import TradeProposal
+from app.python_models.trading_lumibot_tools import research_definitions
 
 
 async def _evidence_call(function, arguments):
@@ -217,6 +218,7 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
     )
     return [
         *_evidence_definitions(),
+        *research_definitions(),
         OperationDefinition(
             canonical_id="trading.list_bots", title="Read available LumiBot strategies",
             description="Inspect the installed, supported LumiBot strategy examples and their exact rules and limits. Does not run a bot or submit orders.",

@@ -139,11 +139,11 @@ async function mcpServers(profile: string): Promise<McpServerDetails[]> {
   return Array.isArray(result?.servers) ? result.servers : [];
 }
 
-async function profileConfig(profile: string): Promise<ProfileConfig> {
+async function profileConfig(profile: string, includeDefaults = true): Promise<ProfileConfig> {
   const fetchJSON = hermesWebappHost().fetchJSON;
   if (!fetchJSON) throw new Error('Hermes Webapp fetchJSON is unavailable.');
   return fetchJSON<ProfileConfig>(
-    `/api/config?profile=${encodeURIComponent(profile)}`,
+    `/api/config?profile=${encodeURIComponent(profile)}${includeDefaults ? '' : '&include_defaults=false'}`,
   );
 }
 
@@ -579,7 +579,9 @@ export async function connectHermesApplicationTools(input: {
     // claim atomic setup or expose an error body containing credential input.
     throw new Error('Hermes app-tool setup did not finish. The credential may be saved; retry this explicit action.');
   }
-  const config = await profileConfig(input.profile);
+  // Effective config expands ${ENV} references. Verify the saved reference through
+  // Hermes's public raw-values option, then prove the resolved credential by probing.
+  const config = await profileConfig(input.profile, false);
   const actual = config.mcp_servers?.[APPLICATION_MCP_SERVER];
   if (actual?.url !== setup.url || actual.include_execution_context !== true
     || Object.entries(headers).some(([key, value]) => actual.headers?.[key] !== value)

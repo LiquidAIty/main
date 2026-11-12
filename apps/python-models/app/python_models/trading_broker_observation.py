@@ -8,7 +8,9 @@ from __future__ import annotations
 import atexit
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from datetime import datetime, timezone
 from importlib import metadata
+import math
 from threading import Lock
 from time import monotonic
 from typing import Any
@@ -87,7 +89,8 @@ def lumibot_readiness() -> dict[str, Any]:
 
 def _optional_number(value: Any) -> float | None:
     try:
-        return float(value) if value is not None else None
+        result = float(value) if value is not None and not isinstance(value, bool) else None
+        return result if result is not None and math.isfinite(result) else None
     except (TypeError, ValueError):
         return None
 
@@ -203,31 +206,23 @@ def _resolve_paper_observer() -> tuple[Any | None, dict[str, Any] | None]:
 
 
 def _history_points(history: Any) -> list[dict[str, Any]]:
-    day = history.get("day") if isinstance(history, dict) else None
-    if day is None or not hasattr(day, "reset_index"):
-        return []
-    try:
-        records = day.reset_index().to_dict(orient="records")
-    except Exception:  # noqa: BLE001
+    times = getattr(history, "timestamp", None)
+    values = getattr(history, "equity", None)
+    if not isinstance(times, list) or not isinstance(values, list) or len(times) != len(values):
         return []
     points: list[dict[str, Any]] = []
     peak: float | None = None
-    for record in records[-90:]:
-        if not isinstance(record, dict):
-            continue
-        value = _optional_number(record.get("equity"))
-        if value is None:
-            value = _optional_number(record.get("portfolio_value"))
-        timestamp = next((
-            optional_iso_text(record.get(key))
-            for key in ("timestamp", "date", "index")
-            if record.get(key) is not None
-        ), None)
-        if value is not None and timestamp:
+    for timestamp, amount in list(zip(times, values))[-90:]:
+        value = _optional_number(amount)
+        if value is not None and _optional_number(timestamp) is not None:
+            try:
+                label = datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
+            except (TypeError, ValueError, OverflowError, OSError):
+                continue
             peak = value if peak is None else max(peak, value)
             drawdown = value - peak
             points.append({
-                "timestamp": timestamp,
+                "timestamp": label,
                 "valueUsd": value,
                 "drawdownUsd": drawdown,
                 "drawdownPercent": (drawdown / peak * 100) if peak else 0.0,
@@ -236,16 +231,20 @@ def _history_points(history: Any) -> list[dict[str, Any]]:
 
 
 def _public_position(position: Any) -> dict[str, Any]:
-    asset = getattr(position, "asset", None)
+    # Use the configured LumiBot Alpaca client's public Position projection.
+    # The generic Strategy projection drops contract IDs, prices and market value.
+    symbol = str(getattr(position, "symbol", "")).upper()
     return {
-        "symbol": str(getattr(asset, "symbol", "") or getattr(position, "symbol", "")).upper(),
+        "symbol": symbol,
+        "instrumentId": symbol,
+        "assetClass": _enum_text(getattr(position, "asset_class", None)),
         "side": _enum_text(getattr(position, "side", None)),
-        "quantity": _optional_number(getattr(position, "quantity", None)),
-        "averageEntryPrice": _optional_number(getattr(position, "avg_fill_price", None)),
+        "quantity": _optional_number(getattr(position, "qty", None)),
+        "averageEntryPrice": _optional_number(getattr(position, "avg_entry_price", None)),
         "currentPrice": _optional_number(getattr(position, "current_price", None)),
         "marketValueUsd": _optional_number(getattr(position, "market_value", None)),
-        "unrealizedPnlUsd": _optional_number(getattr(position, "pnl", None)),
-        "strategy": _enum_text(getattr(position, "strategy", None)),
+        "unrealizedPnlUsd": _optional_number(getattr(position, "unrealized_pl", None)),
+        "strategy": None,
     }
 
 
@@ -280,7 +279,7 @@ def _public_order(order: Any) -> dict[str, Any]:
 
 
 def read_lumibot_paper_snapshot(*, observer: Any | None = None) -> dict[str, Any]:
-    """Read account, positions, tracked orders and history through public LumiBot APIs."""
+    """Read through the existing LumiBot broker and its public Alpaca SDK client."""
 
     global _paper_broker_snapshot
     supplied_observer = observer is not None
@@ -298,42 +297,65 @@ def read_lumibot_paper_snapshot(*, observer: Any | None = None) -> dict[str, Any
         )
     try:
         with _broker_read_lock:
-            portfolio_value = _optional_number(observer.get_portfolio_value())
-            cash = _optional_number(observer.get_cash())
-            positions = [_public_position(item) for item in observer.get_positions()]
+            account = observer.broker.api.get_account()
+            portfolio_value = _optional_number(account.equity)
+            cash = _optional_number(account.cash)
+            buying_power = _optional_number(account.buying_power)
+            positions = [_public_position(item) for item in observer.broker.api.get_all_positions()]
             orders = [_public_order(item) for item in observer.get_orders()]
-            history = observer.broker.get_historical_account_value()
+            # LumiBot's older convenience method uses REST-v1 kwargs/.df. Its
+            # already-configured SDK client owns the current typed read contract.
+            from alpaca.trading.requests import GetPortfolioHistoryRequest
+            history_diagnostics = None
+            try:
+                history = observer.broker.api.get_portfolio_history(
+                    GetPortfolioHistoryRequest(period="12M", timeframe="1D"))
+            except Exception as error:  # optional history must not erase observed balances
+                history = None
+                history_diagnostics = f"portfolio_history_unavailable:{type(error).__name__}"
         equity_curve = _history_points(history)
-        daily_pnl = None
+        daily_equity_change = None
         if len(equity_curve) >= 2:
-            daily_pnl = equity_curve[-1]["valueUsd"] - equity_curve[-2]["valueUsd"]
+            daily_equity_change = equity_curve[-1]["valueUsd"] - equity_curve[-2]["valueUsd"]
         unrealized_values = [
             item["unrealizedPnlUsd"] for item in positions
             if item["unrealizedPnlUsd"] is not None
         ]
-        unavailable_metrics = ["buyingPowerUsd"]
-        if daily_pnl is None:
-            unavailable_metrics.append("dailyPnlUsd")
+        unrealized = sum(unrealized_values) if len(unrealized_values) == len(positions) else None
+        unavailable_metrics = [key for key, value in (
+            ("portfolioValueUsd", portfolio_value), ("cashUsd", cash),
+            ("buyingPowerUsd", buying_power), ("totalUnrealizedPnlUsd", unrealized),
+        ) if value is None]
+        # Equity changes include cash flows. Without reconciled activities they
+        # cannot be called trading P&L, nor can account drawdown be strategy loss.
+        unavailable_metrics.append("dailyPnlUsd")
+        unavailable_metrics.append("settledCashUsd")
+        if daily_equity_change is None:
+            unavailable_metrics.append("dailyEquityChangeUsd")
+        if not equity_curve:
+            unavailable_metrics.extend(["maxDrawdownUsd", "maxDrawdownPercent"])
         result = {
             "connection": {
                 "provider": "alpaca",
                 "status": "available",
                 "mode": "paper",
-                "accountStatus": None,
+                "accountStatus": _enum_text(getattr(account, "status", None)),
                 "fetchedAt": utc_now_text(),
-                "diagnostics": None,
+                "diagnostics": history_diagnostics,
             },
             "account": {
                 "portfolioValueUsd": portfolio_value,
                 "cashUsd": cash,
-                "buyingPowerUsd": None,
-                "dailyPnlUsd": daily_pnl,
-                "totalUnrealizedPnlUsd": sum(unrealized_values) if unrealized_values else 0.0,
+                "buyingPowerUsd": buying_power,
+                "settledCashUsd": None,
+                "dailyPnlUsd": None,
+                "dailyEquityChangeUsd": daily_equity_change,
+                "totalUnrealizedPnlUsd": unrealized,
                 "maxDrawdownUsd": min(
-                    (point["drawdownUsd"] for point in equity_curve), default=0.0,
+                    (point["drawdownUsd"] for point in equity_curve), default=None,
                 ),
                 "maxDrawdownPercent": min(
-                    (point["drawdownPercent"] for point in equity_curve), default=0.0,
+                    (point["drawdownPercent"] for point in equity_curve), default=None,
                 ),
                 "unavailableMetrics": unavailable_metrics,
             },

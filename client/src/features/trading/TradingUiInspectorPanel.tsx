@@ -21,7 +21,7 @@ const RED = '#ff786e';
 
 type InspectorTab = 'risk' | 'lifecycle' | 'integration';
 type NumericSetting = {
-  [K in keyof TradingSettings]: TradingSettings[K] extends number ? K : never
+  [K in keyof TradingSettings]-?: TradingSettings[K] extends number ? K : never
 }[keyof TradingSettings];
 
 type SliderSpec = {

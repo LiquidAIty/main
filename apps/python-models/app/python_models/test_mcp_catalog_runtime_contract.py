@@ -391,8 +391,12 @@ def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
 def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     import asyncio
     import httpx
+    import httpx2
+    import jwt
+    import time
     from app import mcp_host
     from mcp import Client
+    from mcp.client.streamable_http import streamable_http_client
     from mcp.types import Tool
 
     with socket.socket() as probe:
@@ -429,7 +433,10 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_transport, "HTTP_MCP_PORT", port)
-    monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", False)
+    secret = "catalog-contract-test-secret-not-production" * 2
+    monkeypatch.setattr(mcp_auth, "INTERNAL_MCP_SECRET", secret)
+    bearer = jwt.encode({"iss": mcp_auth.INTERNAL_MCP_ISSUER, "aud": mcp_auth.INTERNAL_MCP_AUDIENCE,
+        "sub": "catalog-test", "iat": int(time.time()), "principal": {"kind": "catalog-reader"}}, secret, algorithm="HS256")
     monkeypatch.setattr(mcp_catalog_runtime, "_materialize_complete_catalog", slow_complete_catalog)
     monkeypatch.setattr(mcp_graphiti_provider, "close_graphiti", closed_graphiti)
     monkeypatch.setattr(mcp_cbm_provider, "start_cbm_client", no_cbm)
@@ -455,6 +462,8 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
                 else:
                     raise RuntimeError("http_health_not_ready")
                 await entered.wait()
+                denied = await client.post("/mcp", json={})
+                assert denied.status_code == 403
                 assert health.json()["catalogState"] == "initializing"
                 catalog_readiness = await client.get("/health/catalog")
                 assert catalog_readiness.status_code == 503
@@ -473,7 +482,8 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
                 assert readiness.status_code == 200
                 assert "codeGraphReady" not in readiness.json()
 
-            async with Client(f"{base_url}/mcp", mode="auto") as session:
+            async with httpx2.AsyncClient(headers={"Authorization": f"Bearer {bearer}"}) as http_client:
+                async with Client(streamable_http_client(f"{base_url}/mcp", http_client=http_client), mode="auto") as session:
                     assert session.protocol_version == "2026-07-28"
                     tools = (await session.list_tools(cache_mode="refresh")).tools
                     assert len(tools) == len({tool.name for tool in tools}) == catalog_size

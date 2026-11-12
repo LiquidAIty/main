@@ -122,8 +122,10 @@ def test_research_wait_needs_no_funding_and_is_inspectable(scope):
     assert saved['job'] is None
     assert saved['decision']['executionRequested'] is False
     assert saved['decision']['sourceExecution'] == execution()
-    rows, _, _, research, receipts = jobs._read_trading_history(**scope[0])
+    rows, _, _, research, receipts, allocation = jobs._read_trading_history(**scope[0])
     assert rows == [] and receipts == []
+    assert allocation["reservedCapitalUsd"] == 0
+    assert allocation["configuration"]["trading"]["paperBudgetUsd"] == 0
     assert research == [saved['decision']]
     assert 'sourceRunId' not in research[0]
     with scope[3]() as connection:
@@ -132,6 +134,39 @@ def test_research_wait_needs_no_funding_and_is_inspectable(scope):
             connection.execute('UPDATE ag_catalog.trading_decisions SET confidence=0')
     with pytest.raises(TradingBoundaryError, match='risk_configuration_incomplete'):
         jobs.accept_trade_assignment(**scope[0], source_execution=execution(), plan=_plan(), idempotency_key='job')
+
+
+def test_policy_and_all_active_reservations_are_read_even_outside_visible_history(scope, monkeypatch):
+    from app.python_models.portfolio_policy import DEFAULT_POLICY
+    from app.python_models.trading_broker_observation import read_lumibot_paper_snapshot
+    from app.python_models.test_trading import _PublicObserver
+    fund(scope)
+    active = jobs.accept_trade_assignment(**scope[0], source_execution=execution(), plan=_plan(), idempotency_key='active')
+    with scope[3]() as connection:
+        connection.execute("UPDATE ag_catalog.trading_jobs SET updated_at=NOW()-INTERVAL '2 years' WHERE job_id=%s", (active['jobId'],))
+        connection.execute('''INSERT INTO ag_catalog.trading_jobs
+          (job_id,project_id,deck_id,card_id,card_revision_id,source_execution,idempotency_key,symbol,asset_class,plan,
+           state,current_action,execution_state,budget_ceiling_usd,max_loss_usd)
+          SELECT gen_random_uuid(),project_id,deck_id,card_id,card_revision_id,source_execution,
+                 'closed-'||series::text,symbol,asset_class,plan,'completed','EXIT',execution_state,budget_ceiling_usd,max_loss_usd
+          FROM ag_catalog.trading_jobs CROSS JOIN generate_series(1,101) series WHERE job_id=%s''', (active['jobId'],))
+    config = _configuration()
+    config['trading']['allocationPolicy'] = deepcopy(DEFAULT_POLICY)
+    config['trading']['allocationPolicy']['positionCategories'] = {'RDW': 'core'}
+    with psycopg.connect(**scope[1], autocommit=True) as owner:
+        owner.execute('UPDATE ag_catalog.agent_card_revisions SET runtime_extension_config=%s::jsonb WHERE revision_id=%s',
+                      (json.dumps({'configuration': config}), scope[2]))
+    monkeypatch.setattr(jobs, 'read_lumibot_paper_snapshot', lambda: read_lumibot_paper_snapshot(observer=_PublicObserver()))
+    monkeypatch.setattr(jobs, 'market_observations', lambda *_: {})
+    monkeypatch.setattr(jobs, 'lumibot_readiness', lambda: {'status': 'not_started'})
+    state = jobs.read_trading_state(**scope[0])
+    assert len(state['jobs']) == 100
+    assert active['jobId'] not in [row['jobId'] for row in state['jobs']]
+    assert state['allocation']['reservedCapitalUsd'] == active['budgetCeilingUsd']
+    assert state['allocation']['policy'] == config['trading']['allocationPolicy']
+    assert state['allocation']['policySaved'] is True
+    assert state['allocation']['executionAuthorized'] is False
+    assert state['portfolio']['closedTrades'] == 0  # EXIT is not a confirmed fill/outcome.
 
 
 def test_retry_is_exact_and_concurrent_retries_write_one_decision(scope):

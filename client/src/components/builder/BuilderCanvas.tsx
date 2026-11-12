@@ -856,11 +856,10 @@ export default function BuilderCanvas({
           filter: drop-shadow(0 0 4px ${GRAPH_THEME.accent.primaryGlow});
         }
         .builder-flow .react-flow__handle {
-          transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+          transition: box-shadow 140ms ease, border-color 140ms ease;
         }
         .builder-flow .react-flow__handle:hover,
         .builder-flow .react-flow__handle.connectionindicator {
-          transform: scale(1.06);
           box-shadow:
             0 0 0 2px ${GRAPH_THEME.accent.primarySoft},
             0 0 0 5px ${GRAPH_THEME.accent.solarSoft};

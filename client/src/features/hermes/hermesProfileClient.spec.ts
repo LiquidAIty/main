@@ -459,6 +459,27 @@ describe('Hermes profile skill binding', () => {
     expect(host.fetchJSON.mock.calls.some(([path]) => path.startsWith('/api/env'))).toBe(false);
   });
 
+  it('verifies saved header references rather than mistaking effective env expansion for a failed save', async () => {
+    mockSetup();
+    const original = host.fetchJSON.getMockImplementation()!;
+    host.fetchJSON.mockImplementation(async (path: string, init?: RequestInit) => {
+      const result = await original(path, init);
+      if (path.startsWith('/api/config') && !init?.method && !path.includes('include_defaults=false')) {
+        const effective = structuredClone(result);
+        if (effective.mcp_servers?.liquidaity?.headers) {
+          effective.mcp_servers.liquidaity.headers.Authorization = 'Bearer resolved-test-credential';
+        }
+        return effective;
+      }
+      return result;
+    });
+    const result = await connectHermesApplicationTools(setupInput);
+    expect(host.fetchJSON).toHaveBeenCalledWith('/api/config?profile=trading&include_defaults=false');
+    expect(host.request).toHaveBeenCalledWith('trading', 'mcp.servers.test', { name: 'liquidaity' });
+    expect(result.applicationConnectionConfigured).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('resolved-test-credential');
+  });
+
   it('does not report a failed native probe as a working connection', async () => {
     mockSetup();
     const original = host.request.getMockImplementation()!;

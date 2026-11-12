@@ -10,7 +10,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import AgentCardNode from './AgentCardNode';
 
+const { updateNodeInternals } = vi.hoisted(() => ({ updateNodeInternals: vi.fn() }));
+
 vi.mock('@xyflow/react', () => ({
+  useUpdateNodeInternals: () => updateNodeInternals,
   Handle: ({
     'aria-label': ariaLabel,
     id,
@@ -29,7 +32,10 @@ vi.mock('@xyflow/react', () => ({
   Position: { Left: 'left', Right: 'right' },
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 const baseCard = {
   id: 'card-test',
@@ -38,9 +44,38 @@ const baseCard = {
   title: 'Test Agent',
   subtitle: 'Runtime-specific card shape',
   position: { x: 0, y: 0 },
+  runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'test-agent' },
 };
 
 describe('AgentCardNode shared Card geometry', () => {
+  it('refreshes connection geometry when a Card crosses the bus, but not for a same-side move', () => {
+    const { rerender } = render(<AgentCardNode data={{ ...baseCard, busX: 140,
+      position: { x: 300, y: 200 } }} />);
+    expect(screen.getByLabelText('Test Agent Magnetic worker output').style.left).toBe('-7px');
+    updateNodeInternals.mockClear();
+
+    rerender(<AgentCardNode data={{ ...baseCard, busX: 140, position: { x: -120, y: 200 } }} />);
+    expect(screen.getByLabelText('Test Agent Magnetic worker output').style.right).toBe('-7px');
+    expect(updateNodeInternals).toHaveBeenCalledExactlyOnceWith(baseCard.id);
+    updateNodeInternals.mockClear();
+
+    rerender(<AgentCardNode data={{ ...baseCard, busX: 140, position: { x: -180, y: 220 } }} />);
+    expect(updateNodeInternals).not.toHaveBeenCalled();
+
+    rerender(<AgentCardNode data={{ ...baseCard, busX: 140, position: { x: 300, y: 220 } }} />);
+    expect(updateNodeInternals).toHaveBeenCalledExactlyOnceWith(baseCard.id);
+  });
+
+  it('remeasures handles when saved orchestration authority adds or removes its connector', () => {
+    const { rerender } = render(<AgentCardNode data={baseCard} />);
+    updateNodeInternals.mockClear();
+    rerender(<AgentCardNode data={{ ...baseCard, runtimeOptions: { orchestrator: true } }} />);
+    expect(updateNodeInternals).toHaveBeenCalledExactlyOnceWith(baseCard.id);
+    updateNodeInternals.mockClear();
+    rerender(<AgentCardNode data={baseCard} />);
+    expect(updateNodeInternals).toHaveBeenCalledExactlyOnceWith(baseCard.id);
+  });
+
   it.each([
     ['worldview-card', 'worldview', 'worldview'],
     ['card_trading_workbench', 'trading', 'trading'],

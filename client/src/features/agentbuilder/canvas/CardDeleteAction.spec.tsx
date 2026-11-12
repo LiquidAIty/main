@@ -26,7 +26,7 @@ describe('on-Card removal', () => {
     const remove = vi.fn(async () => {});
     render(<CardDeleteAction title="Example" disabled={false} busy={false} onConfirm={remove} buttonStyle={{}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Delete Card' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Delete', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
   });
   it('does not carry a confirmation to another selected Card and respects active/busy state', () => {

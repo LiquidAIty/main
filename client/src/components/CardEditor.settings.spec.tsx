@@ -90,6 +90,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe('restored Card settings surfaces', () => {
+  it('lets a new Card author its missing job introduction without rewriting existing prompt blocks', async () => {
+    const save = vi.fn();
+    render(<CardEditor cardId="research" cardName="Research" projectId="project" deckId="deck"
+      activeTab="Prompt" localConfig={config} onSaveLocalConfig={save} />);
+    fireEvent.change(screen.getByLabelText('ORCHESTRATOR SKILL'), {
+      target: { value: 'Research checks documentary evidence and returns exact passages.' },
+    });
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.at(-1)?.[0].prompt_template).toBe(config.prompt_template
+      + '\n\n[ORCHESTRATOR SKILL]\nResearch checks documentary evidence and returns exact passages.');
+    await waitFor(() => expect(hermes.configureProfile).toHaveBeenCalledWith(expect.objectContaining({
+      description: 'Category: specialist. Research.\nResearch checks documentary evidence and returns exact passages.',
+    })));
+  });
   it('forwards saved parent effort and Leaf configuration to the bound profile', async () => {
     const save = vi.fn();
     render(<CardEditor cardId="trader" projectId="project" deckId="deck" activeTab="Prompt" localConfig={{

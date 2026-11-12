@@ -125,10 +125,24 @@ webapp:
   public_url: https://YOUR_VERIFIED_DOMAIN
 ```
 
-An external `public_url` engages Hermes authentication even on loopback. Its existing Nous/OIDC
-registration and callback must match that URL. Do not inject a static session token into Caddy,
-disable authentication, or choose a new identity provider implicitly. Verify authenticated HTTP,
-socket tickets, WebSocket upgrades, sign-out and refresh through the final HTTPS origin.
+An external `public_url` engages Hermes authentication even on loopback. A public IPv4 address
+may be used before a domain is available: set `LIQUIDAITY_DOMAIN` to the verified address and
+`webapp.public_url` to its HTTPS origin. Caddy explicitly uses Let's Encrypt's `shortlived` ACME
+profile for publicly trusted IP certificates and automatically renews them. Its default TLS server
+name selects that certificate for IP clients that omit SNI behind Oracle's address translation.
+TCP 80/443 must reach
+Caddy through both the Oracle network rules and host firewall. Configuration validation does not
+prove certificate issuance or external reachability.
+
+Hermes supports its bundled username/password provider as well as explicitly configured OAuth.
+For a trusted-owner demo, configure `dashboard.basic_auth.username`, a hash made by Hermes's
+`plugins.dashboard_auth.basic.hash_password`, and a random stable `dashboard.basic_auth.secret`
+in the destination Hermes config. Keep credentials outside images and source. This is one shared
+owner login, not isolated visitor accounts; Hermes recommends OAuth for public-internet deployments.
+If OAuth is selected, its effective registration and callback must match the public URL. The
+Nous-oriented Web Access wizard is not required for password login. Do not inject a static session
+token into Caddy, disable authentication, or choose another provider implicitly. Verify authenticated
+HTTP, socket tickets, WebSocket upgrades, sign-out and refresh through the final HTTPS origin.
 
 ## Runtime inputs and preservation
 
@@ -196,6 +210,46 @@ the same two Compose files are the start/update definition. Retire the old host 
 an explicit, exact-target deployment action; do not run both managers on the same ports.
 `install.sh` and `update.sh` now refuse the retired host/systemd path without making changes.
 The old `systemd/` files are retained historical packaging, not installed by this Docker workflow.
+
+## Continued development and releases
+
+Windows remains the development environment. Build a complete, reviewed image set under a unique
+release tag with `build.py --tag RELEASE`, then run `smoke.py --tag RELEASE`. An image timestamp or
+the mutable `oracle-prep` tag is not evidence that the image contains the current working tree.
+Record the source revision and any reviewed uncommitted source, image identities and archive
+checksum for each release. Never include live databases, profiles or credentials in a source save.
+
+Transfer the reviewed images with `docker image save`, SSH/SCP and `docker image load`, or a
+separately selected private registry. Keep image construction on the development machine. Set
+`IMAGE_TAG` to the complete imported release and keep `HERMES_BASE_IMAGE` aligned with that release
+if a later local build uses Compose. `--skip-hermes-base` requires that exact base tag to exist.
+One shared `IMAGE_TAG` means a partial build is not a complete release: unchanged images must
+also be present under the selected tag with their verified content identities.
+
+After the first retained-state migration, the Oracle volumes and mounted home own the demo's
+new runtime data. Ordinary code releases must not recopy Windows databases, profiles or sessions
+over that newer server state. Back up the destination before migration-bearing updates, drain
+active work before replacing its processes, and preserve one stable Compose project name.
+For this deployment, use `-p main`, including when restoring the existing Caddy certificate volumes.
+
+Once the reviewed images, runtime environment and retained state are in place, the deployment
+commands are:
+
+```sh
+docker compose -p main --env-file /etc/liquidaity/liquidaity.env -f docker-compose.yml -f deploy/oci/compose.docker.yml config --quiet
+docker compose -p main --env-file /etc/liquidaity/liquidaity.env -f docker-compose.yml -f deploy/oci/compose.docker.yml up -d --no-build --pull never
+python deploy/oci/health.py --public https://YOUR_VERIFIED_HOST_OR_IP
+```
+
+Python rails and MCP share one image and must be updated together. A controlled Hermes runtime
+change also requires rebuilding its dependent Hermes UI and Python rails images. A profile-installed
+plugin can override the bundled copy; verify the effective plugin before claiming an update loaded.
+
+Keep the previous release images and configuration until acceptance. Reverting image tags does not
+undo database migrations: backend startup commits required migrations individually before listening,
+and the current migration owner has no downgrade path. A data-changing rollback requires its own
+reviewed destination restore, preserving newer data before any rollback. Never use `down -v` as an
+update or rollback operation. These procedures do not automate a release or authorize a live restart.
 
 After an authorized startup, run `python deploy/oci/health.py --public https://YOUR_VERIFIED_DOMAIN`.
 This checks private HTTP readiness and public anonymous denial. It does not prove a model turn.

@@ -4,11 +4,11 @@
 # Entity: MCP Host
 # Relationship: This file verifies hydration uses one official loopback MCP session and rejects nonlocal or alternate transport endpoints.
 # Entity: Authentication
-# Relationship: This file verifies the short-lived graph read principal carries exact Project, deck, Card, conversation, and requested read authority without inventing a Run.
+# Relationship: Verifies the signed graph-read principal retains exact scope and read authority without an expiry cutoff or invented Run.
 # Entity: Credentials
 # Relationship: This file verifies the internal signing secret is required and remains inside the bearer-creation boundary.
 # Entity: Tool Catalog
-# Relationship: This file verifies the authoritative host rejects a requested write even when a caller places that operation name in the short-lived principal.
+# Relationship: Verifies the authoritative host rejects a requested write even when its name appears in the signed read principal.
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def test_preload_rejects_nonlocal_transport_before_constructing_client(monkeypat
         )
 
 
-def test_graph_read_token_has_no_fake_run_and_expires_quickly(monkeypatch):
+def test_graph_read_token_has_exact_scope_no_fake_run_and_is_revoked_by_key_rotation(monkeypatch):
     secret = "0123456789abcdef0123456789abcdef"
     monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", secret)
     token = graph_read_client.create_graph_read_token(
@@ -63,8 +63,12 @@ def test_graph_read_token_has_no_fake_run_and_expires_quickly(monkeypatch):
         "callerCardId": "card-helper",
         "grantedTools": ["cbm.search_graph"],
     }
-    assert claims["exp"] - claims["iat"] == 60
+    assert "exp" not in claims
+    assert isinstance(claims["iat"], int)
     assert "runId" not in claims["principal"]
+    with pytest.raises(jwt.InvalidSignatureError):
+        jwt.decode(token, "rotated-secret" * 4, algorithms=["HS256"],
+                   issuer="liquidaity-runtime", audience="liquidaity-internal-mcp")
 
 
 def test_graph_read_client_reuses_one_official_session_and_rejects_writes(monkeypatch):

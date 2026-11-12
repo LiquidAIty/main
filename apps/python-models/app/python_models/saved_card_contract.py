@@ -377,6 +377,12 @@ def validate_new_card_revision(card: dict[str, Any]) -> None:
     if configuration is not None:
         if not isinstance(configuration, dict):
             raise CardDomainError("card_configuration_invalid")
+        if configuration.get("schemaVersion") == "trading.card.v1":
+            from app.python_models.trading_contract import TradingBoundaryError, normalize_trading_configuration
+            try:
+                normalize_trading_configuration(configuration)
+            except TradingBoundaryError as error:
+                raise CardDomainError(str(error)) from error
         data_control = configuration.get("dataControl")
         if data_control is not None:
             if not isinstance(data_control, dict):

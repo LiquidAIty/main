@@ -8,9 +8,10 @@ import type { AgentCardInstance } from '../types/agentgraph';
 import { applicationFetch } from '../lib/applicationApi';
 import { resolveInstrument } from '../features/trading/instrument';
 import KronosForecastPanel from '../features/trading/KronosForecastPanel';
+import PortfolioAllocationPanel from '../features/trading/PortfolioAllocationPanel';
 import {
   readTradingConfiguration, reconcileTradingState,
-  type TradeJob, type TradeDecision, type TradingBacktest, type TradingInterventionAction, type TradingState, type TradingSettings,
+  type TradeJob, type TradeDecision, type TradingBacktest, type TradingInterventionAction, type TradingState, type TradingSettings, type TradingConfiguration,
 } from '../features/trading/tradingState';
 
 const DARK = { bg: '#0a0f1a', panel: '#111827', edge: '#1f2937', ink: '#e5e7eb' };
@@ -189,9 +190,10 @@ type TradingUIProps = {
   symbol?: string; projectId?: string | null; deckId?: string;
   card?: AgentCardInstance | null;
   forecastCard?: AgentCardInstance | null;
+  onSaveConfiguration?: (configuration: TradingConfiguration) => void;
 };
 
-export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', card, forecastCard }: TradingUIProps) {
+export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', card, forecastCard, onSaveConfiguration }: TradingUIProps) {
   const [view, setView] = useState<'ticker' | 'portfolio' | 'journal' | 'forecast'>('ticker');
   const [chartOpen, setChartOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -233,7 +235,7 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
         if (!controller.signal.aborted) acceptSnapshot(body as TradingState);
       }).catch(() => { if (!controller.signal.aborted) setStateError(true); });
     return () => controller.abort();
-  }, [acceptSnapshot, query, readRevision]);
+  }, [acceptSnapshot, query, readRevision, card?._cardRevisionId]);
 
   const jobs = state?.jobs || [];
   const selectedJob = jobs.find(job => job.jobId === selectedJobId) || null;
@@ -277,6 +279,7 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
         <button type="button" role="tab" aria-selected={view === 'forecast'} onClick={() => setView('forecast')}>Forecast</button>
       </nav>
       <div className="trading-toolbar-actions">
+        {view === 'portfolio' && <button type="button" style={button} onClick={() => setReadRevision(value => value + 1)}>Refresh portfolio</button>}
         {view === 'journal' && <button type="button" style={button} onClick={() => setReadRevision(value => value + 1)}>Refresh journal</button>}
         {showingChart ? <button type="button" style={button} aria-label={fullscreen ? 'Exit Fullscreen' : 'Fullscreen'} onClick={() => setFullscreen(value => !value)}>&#9974;</button> : null}
       </div>
@@ -302,6 +305,10 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
           {projectId && forecastCard ? <KronosForecastPanel key={`${projectId}:${deckId}:${forecastCard.id}`} projectId={projectId} deckId={deckId} cardId={forecastCard.id} symbol={market.symbol} timeframe={market.timeframe} onOpenForecast={openForecastMarket} /> : <p>Select a Project with one enabled forecast Card.</p>}
         </div>}
         {!showingChart && view === 'portfolio' ? <div className="grid gap-3 p-3" data-testid="trading-portfolio">
+          {state?.allocation && <PortfolioAllocationPanel allocation={state.allocation} positions={state.positions}
+            onSave={onSaveConfiguration ? policy => onSaveConfiguration({
+              schemaVersion: 'trading.card.v1', trading: { ...settings, allocationPolicy: policy },
+            }) : undefined} />}
           <div className="flex gap-2">
             <button type="button" style={button} aria-pressed={!history} onClick={() => setHistory(false)}>Open</button>
             <button type="button" style={button} aria-pressed={history} onClick={() => setHistory(true)}>Closed</button>
@@ -322,6 +329,7 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
             {([
               ['Value', state?.portfolio.portfolioValueUsd], ['Cash', state?.portfolio.cashUsd],
               ['Buying power', state?.portfolio.buyingPowerUsd], ['P/L', state?.portfolio.dailyPnlUsd],
+              ['Daily equity change', state?.portfolio.dailyEquityChangeUsd],
               ['Realized', state?.portfolio.recordedRealizedPnlUsd], ['Unrealized', state?.portfolio.totalUnrealizedPnlUsd], ['Drawdown', state?.portfolio.maxDrawdownUsd],
             ] as const).filter(([, value]) => value != null).map(([label, value]) => <div key={label} className="rounded-xl border p-3" style={border}><span style={{ color: MUTED }}>{label}</span><div>{money(value)}</div></div>)}
           </div>

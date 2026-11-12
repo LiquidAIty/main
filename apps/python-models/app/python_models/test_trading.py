@@ -151,36 +151,22 @@ def test_future_paper_order_identity_is_deterministic_but_places_nothing() -> No
     assert len(first) == 30
 
 
-class _HistoryFrame:
-    def reset_index(self):
-        return self
-
-    def to_dict(self, *, orient: str):
-        assert orient == "records"
-        return [
-            {"timestamp": "2026-09-01T00:00:00Z", "equity": 100_000},
-            {"timestamp": "2026-09-02T00:00:00Z", "equity": 100_250},
-        ]
+def _portfolio_history(history_filter):
+    from alpaca.trading.requests import GetPortfolioHistoryRequest
+    assert isinstance(history_filter, GetPortfolioHistoryRequest)
+    assert history_filter.period == "12M" and history_filter.timeframe == "1D"
+    return SimpleNamespace(timestamp=[1788220800, 1788307200], equity=[100000, 100250])
 
 
 class _PublicObserver:
-    broker = SimpleNamespace(get_historical_account_value=lambda: {"day": _HistoryFrame()})
-
-    @staticmethod
-    def get_portfolio_value():
-        return 100_250
-
-    @staticmethod
-    def get_cash():
-        return 90_000
-
-    @staticmethod
-    def get_positions():
-        return [SimpleNamespace(
-            asset=SimpleNamespace(symbol="RDW"), side="long", quantity=25,
-            avg_fill_price=10, current_price=11, market_value=275, pnl=25,
-            strategy="reference",
-        )]
+    broker = SimpleNamespace(
+        api=SimpleNamespace(
+            get_account=lambda: SimpleNamespace(equity="100250", cash="90000", buying_power="180000", status="ACTIVE"),
+            get_portfolio_history=_portfolio_history,
+            get_all_positions=lambda: [SimpleNamespace(symbol="RDW", asset_class="us_equity", side="long", qty="25",
+                avg_entry_price="10", current_price="11", market_value="275", unrealized_pl="25")],
+        ),
+    )
 
     @staticmethod
     def get_orders():
@@ -198,10 +184,45 @@ def test_snapshot_uses_only_public_lumibot_observer_contract() -> None:
 
     assert snapshot["connection"]["status"] == "available"
     assert snapshot["account"]["portfolioValueUsd"] == 100_250
-    assert snapshot["account"]["dailyPnlUsd"] == 250
+    assert snapshot["account"]["dailyEquityChangeUsd"] == 250
+    assert snapshot["account"]["dailyPnlUsd"] is None  # Cash flows are not reconciled trade P&L.
     assert snapshot["positions"][0]["symbol"] == "RDW"
     assert snapshot["orders"][0]["orderId"] == "paper-order-1"
-    assert snapshot["account"]["buyingPowerUsd"] is None
+    assert snapshot["account"]["buyingPowerUsd"] == 180_000
+    assert snapshot["account"]["settledCashUsd"] is None
+    assert snapshot["positions"][0]["marketValueUsd"] == 275
+    assert snapshot["positions"][0]["instrumentId"] == "RDW"
+
+
+def test_broker_projection_preserves_exact_option_identity_and_unknown_metrics():
+    observer = _PublicObserver()
+    observer.broker = SimpleNamespace(api=SimpleNamespace(
+        get_account=lambda: SimpleNamespace(equity="100000", cash="NaN", buying_power=None, status="ACTIVE"),
+        get_all_positions=lambda: [SimpleNamespace(symbol="RDW270115C00015000", asset_class="us_option", side="long",
+            qty="2", market_value=None, unrealized_pl=None)],
+        get_portfolio_history=lambda _: SimpleNamespace(timestamp=[], equity=[]),
+    ))
+    result = read_lumibot_paper_snapshot(observer=observer)
+    assert result["positions"][0]["instrumentId"] == "RDW270115C00015000"
+    assert result["positions"][0]["assetClass"] == "us_option"
+    assert result["account"]["cashUsd"] is None
+    assert result["account"]["buyingPowerUsd"] is None
+    assert result["account"]["totalUnrealizedPnlUsd"] is None
+    assert result["account"]["maxDrawdownPercent"] is None
+
+
+def test_history_failure_does_not_erase_real_account_and_position_observations(monkeypatch):
+    def unavailable(_):
+        raise TimeoutError('Provider history unavailable')
+    observer = _PublicObserver()
+    monkeypatch.setattr(observer.broker.api, 'get_portfolio_history', unavailable)
+    result = read_lumibot_paper_snapshot(observer=observer)
+    assert result['connection']['status'] == 'available'
+    assert result['connection']['diagnostics'] == 'portfolio_history_unavailable:TimeoutError'
+    assert result['account']['buyingPowerUsd'] == 180000
+    assert result['positions'][0]['marketValueUsd'] == 275
+    assert result['equityCurve'] == []
+    assert result['account']['dailyPnlUsd'] is None
 
 
 class _CardCursor:

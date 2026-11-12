@@ -1,5 +1,12 @@
 {
 	admin off
+	# IP clients omit SNI; Oracle's listener sees a private address behind NAT.
+	default_sni {$LIQUIDAITY_DOMAIN}
+	# Public IP certificates require Let's Encrypt's short-lived profile.
+	cert_issuer acme {
+		dir https://acme-v02.api.letsencrypt.org/directory
+		profile shortlived
+	}
 	servers {
 		# Only TCP 80/443: no HTTP/3 UDP listener.
 		protocols h1 h2

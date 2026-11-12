@@ -262,12 +262,19 @@ def _read_trading_history(
     project_id: str, deck_id: str, card_id: str,
 ) -> tuple[
     list[dict[str, Any]], dict[str, list[dict[str, Any]]],
-    dict[str, list[dict[str, Any]]], list[dict[str, Any]], list[dict[str, Any]],
+    dict[str, list[dict[str, Any]]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any],
 ]:
     from app.python_models.trading_backtest import _public_backtest
 
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        require_trading_card(cursor, project_id, deck_id, card_id)
+        card = require_trading_card(cursor, project_id, deck_id, card_id)
+        cursor.execute(
+            """SELECT COALESCE(SUM(budget_ceiling_usd),0) AS reserved
+               FROM ag_catalog.trading_jobs WHERE project_id=%s AND deck_id=%s AND card_id=%s
+               AND state IN ('monitoring','paused')""", (project_id, deck_id, card_id),
+        )
+        allocation_context = {"configuration": card["configuration"],
+                              "reservedCapitalUsd": float(cursor.fetchone()["reserved"])}
         cursor.execute(
             """
             SELECT * FROM ag_catalog.trading_jobs
@@ -334,7 +341,7 @@ def _read_trading_history(
             if attached:
                 entry["journalEntries"] = sorted(attached, key=lambda item: (item["created_at"], item["entry_id"]))
                 entry["journalWindowComplete"] = len(journal) < 200
-    return jobs, decisions, interventions, research, backtests
+    return jobs, decisions, interventions, research, backtests, allocation_context
 
 
 def _project_public_trading_jobs(
@@ -434,7 +441,7 @@ def read_trading_state(
     *, project_id: str, deck_id: str, card_id: str,
     timeframe: str = "5Min", selected_job_id: str | None = None,
 ) -> dict[str, Any]:
-    jobs, decisions, interventions, research, backtests = (
+    jobs, decisions, interventions, research, backtests, allocation_context = (
         _read_trading_history(project_id, deck_id, card_id)
     )
     broker_state = read_lumibot_paper_snapshot()
@@ -449,6 +456,10 @@ def read_trading_state(
         if row.get("realized_pnl_usd") is not None
     ]
     recorded_realized = sum(realized)
+    from app.python_models.portfolio_policy import allocation_view
+    policy = allocation_context["configuration"]["trading"].get("allocationPolicy")
+    allocation = allocation_view(policy, broker_state, reserved_capital=allocation_context["reservedCapitalUsd"])
+    allocation["policySaved"] = policy is not None
     return {
         "cardId": card_id,
         "paperOnly": True,
@@ -457,6 +468,7 @@ def read_trading_state(
         "jobs": public_jobs,
         "researchDecisions": research,
         "backtests": backtests,
+        "allocation": allocation,
         "portfolio": {
             **broker_state["account"],
             "realizedPnlUsd": recorded_realized,

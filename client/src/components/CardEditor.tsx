@@ -1179,6 +1179,13 @@ export function CardEditor({
 
   const renderSectionBody = (sectionTab: string) => {
     if (sectionTab === 'Prompt') {
+      const additionalPromptFields = promptFieldRanges(stripRetiredConnectedAgentSections(promptText)).filter((block) => (
+        !['role', 'goal', 'constraints', 'ioSchema', 'outputExpectations'].includes(block.key)
+        && (block.start !== block.end || promptPartsTouched[block.key] || block.key === 'orchestratorSkill')
+      ));
+      if (!additionalPromptFields.some(block => block.key === 'orchestratorSkill')) {
+        additionalPromptFields.push({ key: 'orchestratorSkill', label: 'ORCHESTRATOR SKILL', start: 0, end: 0 });
+      }
       const orchestratorOn = runtimeKind === 'hermes'
         && runtimeMode !== 'magentic_one'
         && (runtimeMode === 'main' || orchestratorEnabled);
@@ -1411,10 +1418,7 @@ export function CardEditor({
             />
           </div>
 
-          {promptFieldRanges(stripRetiredConnectedAgentSections(promptText)).filter((block) => (
-            !['role', 'goal', 'constraints', 'ioSchema', 'outputExpectations'].includes(block.key)
-            && (block.start !== block.end || promptPartsTouched[block.key])
-          )).map((block) => (
+          {additionalPromptFields.map((block) => (
             <label key={block.key} style={{ display: 'grid', gap: 6, color: '#E0DED5', fontSize: 12 }}>
               {block.key === 'memoryPolicy' ? 'Memory policy' : block.label}
               <textarea
