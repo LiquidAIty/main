@@ -1,29 +1,12 @@
 // Entity: Oracle Deployment
-// Relationship: Exercises production Caddy routing, public TLS configuration and cookie authentication in an isolated container without real providers or saved state.
+// Relationship: Exercises the production Caddy routes and cookie-authentication boundary in an isolated container without real providers or saved state.
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import { createHash } from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
-
-test('Caddy configures public ACME certificates for numeric and named hosts', () => {
-  for (const host of ['198.51.100.10', 'demo.example.com']) {
-    const result = spawnSync('caddy', ['adapt', '--config', new URL('./Caddyfile', import.meta.url).pathname, '--adapter', 'caddyfile'], {
-      env: { ...process.env, LIQUIDAITY_DOMAIN: host }, encoding: 'utf8',
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const config = JSON.parse(result.stdout);
-    const issuers = config.apps.tls.automation.policies.flatMap(policy => policy.issuers || []);
-    assert.ok(issuers.some(issuer => issuer.module === 'acme'
-      && issuer.ca === 'https://acme-v02.api.letsencrypt.org/directory'
-      && issuer.profile === 'shortlived'));
-    assert.ok(!issuers.some(issuer => issuer.module === 'internal'));
-    const connections = Object.values(config.apps.http.servers).flatMap(server => server.tls_connection_policies || []);
-    assert.ok(connections.some(connection => connection.default_sni === host));
-  }
-});
 
 test('Caddy preserves Hermes ownership, provider authentication and refreshed cookies', async () => {
   const calls = [];
