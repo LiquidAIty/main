@@ -41,6 +41,8 @@ sentence-transformers==5.7.0
 # Kronos inference uses the existing Python owner; no vendor web server.
 torch==2.14.0
 numpy==2.4.6
+# Existing Windows SciPy build, also pinned for the bounded Trading calculations in Docker.
+scipy==1.17.1
 pandas==3.0.5
 einops==0.8.1
 huggingface-hub==1.31.0

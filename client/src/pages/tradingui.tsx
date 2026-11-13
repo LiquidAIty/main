@@ -10,8 +10,8 @@ import { resolveInstrument } from '../features/trading/instrument';
 import KronosForecastPanel from '../features/trading/KronosForecastPanel';
 import PortfolioAllocationPanel from '../features/trading/PortfolioAllocationPanel';
 import {
-  readTradingConfiguration, reconcileTradingState,
-  type TradeJob, type TradeDecision, type TradingBacktest, type TradingInterventionAction, type TradingState, type TradingSettings, type TradingConfiguration,
+  readTradingConfiguration, reconcileTradingState, sameAllocationPolicy,
+  type TradeJob, type TradeDecision, type TradingBacktest, type TradingInterventionAction, type TradingState, type TradingSettings, type TradingConfiguration, type OutcomePerformance,
 } from '../features/trading/tradingState';
 
 const DARK = { bg: '#0a0f1a', panel: '#111827', edge: '#1f2937', ink: '#e5e7eb' };
@@ -144,6 +144,25 @@ function JournalDecision({ decision, backtests }: { decision: TradeDecision; bac
   </article>;
 }
 
+function OutcomePerformanceView({ data }: { data: OutcomePerformance }) {
+  const [group, setGroup] = useState<keyof OutcomePerformance['groups']>('allocationLane');
+  return <details className="portfolio-allocation"><summary>Paper outcome performance</summary>
+    {data.summary.closures ? <>
+      <p>{data.summary.closures} reconciled closures · Gross {money(data.summary.grossPnlUsd)} · Net results known for {data.summary.netKnown}/{data.summary.closures}</p>
+      <p>Closed-outcome gross drawdown: {money(data.summary.closedOutcomeGrossDrawdownUsd)}. This is not portfolio mark-to-market drawdown.</p>
+      <label>Group by <select aria-label="Outcome performance grouping" value={group} onChange={event => setGroup(event.target.value as keyof OutcomePerformance['groups'])}>
+        <option value="allocationLane">Investment Category</option><option value="strategy">Strategy</option><option value="market">Market</option><option value="sector">Declared sector</option>
+      </select></label>
+      <div className="allocation-table-wrap"><table><thead><tr><th>Group</th><th>Closures</th><th>Gross P&amp;L</th><th>Gross + / −</th><th>Net known</th><th>Net P&amp;L</th></tr></thead><tbody>
+        {data.groups[group].map(row => <tr key={row.label}><th>{row.label.replaceAll('_', ' ')}</th><td>{row.closures}</td><td>{money(row.grossPnlUsd)}</td><td>{row.grossPositive} / {row.grossNegative}</td><td>{row.netKnown} / {row.closures}</td><td>{money(row.netPnlUsd)}</td></tr>)}
+      </tbody></table></div>
+      <details><summary>Recorded Card participation</summary><ul>{data.participation.map(row => <li key={row.cardId}>{row.title}: {row.reviewedTrailCount} outcome trails</li>)}</ul><p>Participation is not attribution of profit or predictive accuracy.</p></details>
+    </> : <p>No broker-reconciled closures yet. Backtests and SHADOW observations are not counted as trades.</p>}
+    {!data.windowComplete && <p>Bounded recent-outcome window; not a complete lifetime total.</p>}
+    <details><summary>Basis and limitations</summary>{data.limitations.map(line => <p key={line}>{line}</p>)}</details>
+  </details>;
+}
+
 function EquityChart({ points }: { points: TradingState['portfolio']['equityCurve'] }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -190,7 +209,7 @@ type TradingUIProps = {
   symbol?: string; projectId?: string | null; deckId?: string;
   card?: AgentCardInstance | null;
   forecastCard?: AgentCardInstance | null;
-  onSaveConfiguration?: (configuration: TradingConfiguration) => void;
+  onSaveConfiguration?: (configuration: TradingConfiguration) => void | Promise<void>;
 };
 
 export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', card, forecastCard, onSaveConfiguration }: TradingUIProps) {
@@ -306,9 +325,17 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
         </div>}
         {!showingChart && view === 'portfolio' ? <div className="grid gap-3 p-3" data-testid="trading-portfolio">
           {state?.allocation && <PortfolioAllocationPanel allocation={state.allocation} positions={state.positions}
-            onSave={onSaveConfiguration ? policy => onSaveConfiguration({
-              schemaVersion: 'trading.card.v1', trading: { ...settings, allocationPolicy: policy },
-            }) : undefined} />}
+            onSave={onSaveConfiguration ? async policy => {
+              if (!query) throw new Error('Open the saved Trading Project before changing allocation.');
+              await onSaveConfiguration({ schemaVersion: 'trading.card.v1', trading: { ...settings, allocationPolicy: policy } });
+              const response = await applicationFetch('/api/trading/state?' + query, { credentials: 'include' });
+              if (!response.ok) throw new Error('Allocation save returned, but saved-policy readback is unavailable.');
+              const updated = await response.json() as TradingState;
+              if (!updated.allocation?.policySaved || !sameAllocationPolicy(updated.allocation.policy, policy)) {
+                throw new Error('Saved allocation differs from this submission. Refresh before making another edit.');
+              }
+              acceptSnapshot(updated);
+            } : undefined} />}
           <div className="flex gap-2">
             <button type="button" style={button} aria-pressed={!history} onClick={() => setHistory(false)}>Open</button>
             <button type="button" style={button} aria-pressed={history} onClick={() => setHistory(true)}>Closed</button>
@@ -334,6 +361,7 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
             ] as const).filter(([, value]) => value != null).map(([label, value]) => <div key={label} className="rounded-xl border p-3" style={border}><span style={{ color: MUTED }}>{label}</span><div>{money(value)}</div></div>)}
           </div>
           {state?.portfolio.closedTrades ? <div>Win rate {((state.portfolio.wins / state.portfolio.closedTrades) * 100).toFixed(1)}%</div> : null}
+          {state?.outcomePerformance && <OutcomePerformanceView data={state.outcomePerformance} />}
           {state?.portfolio.equityCurve.length ? <div className="rounded-xl border p-3" style={border}><span>Equity</span><EquityChart points={state.portfolio.equityCurve} /></div> : null}
           {card ? <dl className="trading-plan-terms">
             <div><dt>Budget</dt><dd>{money(settings.paperBudgetUsd)}</dd></div>

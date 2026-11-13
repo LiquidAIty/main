@@ -32,6 +32,7 @@ class ForecastRequest(BaseModel):
     temperature: float = 1.0
     top_p: float = 0.9
     top_k: int = 0
+    include_volatility: bool = False
 
 
 @router.post("/trading/forecast")

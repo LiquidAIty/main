@@ -4,7 +4,7 @@
  * Entity: Projects
  * Relationship: This file binds workspace selection, navigation, canonical deck load, and save scope to the active Project.
  * Entity: Main Chat
- * Relationship: Selects Main or an explicitly addressed saved Bot Chat for the conversation surface; Hermes owns its messages, submission, history, Stop, voice, and Bot Mode state.
+ * Relationship: Binds the conversation surface to the saved Main profile and supplies literal @Card completion while Hermes owns messages, submission, history, Stop, voice, and Bot Mode delivery.
  * Entity: Agent Input
  * Relationship: Maps Hermes approval and clarification requests plus their response callbacks into the Main conversation surface without creating another request owner.
  * Entity: Builder Card
@@ -429,13 +429,12 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
       return title ? [{ cardId: card.id, title, address: title }] : [];
     });
   }, [deck.edges, deck.nodes, mainCardId]);
-  const [chatSelection, setChatSelection] = useState<{ projectId: string; cardId: string } | null>(null);
-  const chatCard = deck.nodes.find((card) => card.id === (
-    chatSelection?.projectId === canvasProjectId ? chatSelection.cardId : mainCardId
-  ));
-  const chatProfile = chatCard?.runtime.kind === 'hermes' ? chatCard.runtime.profile : 'main';
-  const chatTitle = chatCard?.title || 'Main';
-  const mainChat = useHermesMainChat(canvasProjectId, chatProfile, chatTitle);
+  const mainChatCard = deck.nodes.find((card) => card.id === mainCardId);
+  const mainChat = useHermesMainChat(
+    mainChatCard ? canvasProjectId : '',
+    mainChatCard?.runtime.kind === 'hermes' ? mainChatCard.runtime.profile : '',
+    mainChatCard?.title || 'Main',
+  );
   const cardTitlesByProfile = useMemo(() => {
     const titles = new Map<string, string>();
     const ambiguous = new Set<string>();
@@ -1270,13 +1269,6 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
           draft={mainCardId ? transientCardInputs[mainCardId] || '' : ''}
           onDraftChange={(value) => {
             if (!mainCardId) return;
-            const address = /^\s*@([^\s]+)(?:\s|$)/u.exec(value)?.[1].toLowerCase();
-            const targets = mainChatTargets.filter((target) => target.address.toLowerCase() === address);
-            if (targets.length === 1) {
-              setChatSelection({ projectId: canvasProjectId, cardId: targets[0].cardId });
-            } else if (value.trim() && !value.trimStart().startsWith('@')) {
-              setChatSelection(null);
-            }
             setTransientCardInputs((current) => {
               if (!value) {
                 const next = { ...current };
@@ -1540,7 +1532,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
           deckId={BUILDER_DECK_ID}
           card={tradingCard}
           forecastCard={forecastCard}
-          onSaveConfiguration={tradingCard ? configuration => handleSaveCardConfiguration(tradingCard.id, configuration) : undefined}
+          onSaveConfiguration={tradingCard ? configuration => handleSaveCardConfiguration(tradingCard.id, configuration, true) : undefined}
         />
       }
       worldviewSurface={

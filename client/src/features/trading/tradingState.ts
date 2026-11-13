@@ -67,6 +67,19 @@ export type AllocationPolicy = {
   maximumPositionWeightPercent: number | null;
 };
 
+export function sameAllocationPolicy(left: AllocationPolicy, right: AllocationPolicy): boolean {
+  const fields = ['schemaVersion', 'preset', 'minimumLiquidReservePercent', 'maximumPositionLossPercent', 'maximumPositionWeightPercent'] as const;
+  const categoryFields = ['targetPercent', 'minimumPercent', 'maximumPercent', 'maximumRiskPercent'] as const;
+  return fields.every(field => left[field] === right[field])
+    && left.categories.length === right.categories.length
+    && left.categories.every(row => {
+      const other = right.categories.find(item => item.id === row.id);
+      return other && categoryFields.every(field => row[field] === other[field]);
+    })
+    && [...left.permittedInstrumentTypes].sort().join('|') === [...right.permittedInstrumentTypes].sort().join('|')
+    && JSON.stringify(Object.entries(left.positionCategories).sort()) === JSON.stringify(Object.entries(right.positionCategories).sort());
+}
+
 export type PortfolioAllocation = {
   policy: AllocationPolicy;
   policySaved: boolean;
@@ -310,6 +323,19 @@ export type EquityPoint = {
   drawdownPercent: number;
 };
 
+export type OutcomePerformanceSummary = {
+  closures: number; grossPnlUsd: number | null; grossPositive: number; grossNegative: number;
+  grossFlat: number; netKnown: number; netPnlUsd: number | null; netWins: number; netLosses: number;
+  closedOutcomeGrossDrawdownUsd: number | null;
+};
+
+export type OutcomePerformance = {
+  kind: 'PAPER'; summary: OutcomePerformanceSummary;
+  groups: Record<'allocationLane' | 'strategy' | 'market' | 'sector', Array<OutcomePerformanceSummary & { label: string }>>;
+  participation: Array<{ cardId: string; title: string; reviewedTrailCount: number }>;
+  outcomeEntryIds: string[]; windowComplete: boolean; limitations: string[];
+};
+
 export type TradingState = {
   cardId: string;
   paperOnly: true;
@@ -319,6 +345,7 @@ export type TradingState = {
   researchDecisions: TradeDecision[];
   backtests: TradingBacktest[];
   allocation?: PortfolioAllocation;
+  outcomePerformance?: OutcomePerformance;
   portfolio: {
     portfolioValueUsd: number | null;
     cashUsd: number | null;

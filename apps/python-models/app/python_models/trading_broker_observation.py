@@ -372,6 +372,34 @@ def read_lumibot_paper_snapshot(*, observer: Any | None = None) -> dict[str, Any
     return result
 
 
+def read_exact_paper_orders(client_order_ids: list[str]) -> dict[str, Any]:
+    """Uncached read of exact job-owned identities; never accepts or submits an order."""
+    if not client_order_ids or len(client_order_ids) > 64 or len(set(client_order_ids)) != len(client_order_ids):
+        raise TradingBoundaryError("trading_outcome_order_id_set_invalid")
+    observer, unavailable = _resolve_paper_observer()
+    if observer is None:
+        return {"status": "unavailable", "reason": (unavailable or {}).get("connection", {}).get("diagnostics", "Paper broker unavailable.")}
+    try:
+        with _broker_read_lock:
+            account = observer.broker.api.get_account()
+            positions = [_public_position(item) for item in observer.broker.api.get_all_positions()]
+            orders = []
+            for client_id in client_order_ids:
+                raw = observer.broker.api.get_order_by_client_id(client_id)
+                orders.append({**_public_order(raw),
+                    "assetClass": _enum_text(getattr(raw, "asset_class", None)),
+                    "quantityExact": str(getattr(raw, "qty", "")),
+                    "filledQuantityExact": str(getattr(raw, "filled_qty", "")),
+                    "averageFillPriceExact": str(getattr(raw, "filled_avg_price", "")),
+                    "hasLegs": bool(getattr(raw, "legs", None))})
+        return {"status": "available", "provider": "alpaca", "mode": "paper",
+                "accountId": str(account.id), "orders": orders, "positions": positions,
+                "fetchedAt": utc_now_text()}
+    except Exception as error:
+        return {"status": "incomplete", "reason": "An exact broker order or position read was unavailable.",
+                "diagnostics": type(error).__name__}
+
+
 def _read_market_observation(symbol: str, timeframe: str) -> dict[str, Any]:
     key = (symbol, timeframe)
     now_mono = monotonic()

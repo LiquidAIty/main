@@ -61,12 +61,6 @@ function blankCardScript(): SavedCardScript {
   };
 }
 
-function subagentAccessMode(provider: string): SavedSubagentModel['accessMode'] {
-  return provider === 'openrouter' ? 'openrouter-api'
-    : provider === 'openai' ? 'chatgpt-account'
-    : 'openai-api';
-}
-
 function hermesProfileProvider(
   provider: CardEditorConfig['provider'],
   accessMode: CardEditorConfig['access_mode'],
@@ -1070,25 +1064,16 @@ export function CardEditor({
   }, [draftRevision, saveOnCardLeave]);
 
   const availableModels = provider ? modelsByProvider[provider] || [] : [];
-  const subagentCatalogOptions = Object.entries(modelsByProvider).flatMap(([catalogProvider, models]) => (
-    models.map((model) => ({ provider: catalogProvider, ...model }))
-  ));
+  const subagentCatalogOptions = (modelsByProvider[subagentModel.provider] || [])
+    .map((model) => ({ provider: subagentModel.provider, ...model }));
 
   const editorField = (name: string) => cardEditorFields.find((field) => field.name === name);
-  const providerField = editorField('provider');
   const subagentTypeField = editorField('subagentType');
-  const accessModeField = editorField('accessMode');
   const modelKeyField = editorField('modelKey');
   const reasoningEffortField = editorField('reasoningEffort');
-  const providerOptions = (providerField?.options || []).filter(
-    (option) => (modelsByProvider[option.value] || []).length > 0,
-  );
-  const accessModeOptions = accessModeField?.options || [];
   const runtimeDictionaryReady = Boolean(
     runtimeOptionsStatus === 'ready'
-    && providerField
     && subagentTypeField?.control === 'select'
-    && accessModeField
     && modelKeyField
     && reasoningEffortField,
   );
@@ -1534,51 +1519,6 @@ export function CardEditor({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                    Provider
-                  </label>
-                  <select
-                    aria-label="Provider"
-                    disabled={!runtimeDictionaryReady}
-                    value={provider}
-                    onChange={(event) => {
-                      setProvider(event.target.value as typeof provider);
-                      markDraftDirty();
-                    }}
-                  >
-                    <option value="">Unset</option>
-                    {provider && !providerOptions.some((option) => option.value === provider) ? (
-                      <option value={provider}>{provider} (unavailable — saved)</option>
-                    ) : null}
-                    {providerOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                    Access mode
-                  </label>
-                  <select
-                    data-testid="agent-access-mode"
-                    aria-label="Access mode"
-                    disabled={!runtimeDictionaryReady}
-                    value={accessMode}
-                    onChange={(event) => {
-                      setAccessMode(event.target.value as typeof accessMode);
-                      markDraftDirty();
-                    }}
-                  >
-                    <option value="">Select access mode</option>
-                    {accessMode && !accessModeOptions.some((option) => option.value === accessMode) ? (
-                      <option value={accessMode}>{accessMode} (saved)</option>
-                    ) : null}
-                    {accessModeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                     Model
                   </label>
                   <select
@@ -1879,8 +1819,7 @@ export function CardEditor({
                     if (!selected) return;
                     setSubagentTouched(true);
                     setSubagentModel({
-                      provider: selectedProvider,
-                      accessMode: subagentAccessMode(selectedProvider),
+                      ...subagentModel,
                       modelKey: selected.key,
                       providerModelId: selected.providerModelId,
                     });
@@ -1895,7 +1834,7 @@ export function CardEditor({
                   ) : null}
                   {subagentCatalogOptions.map((option) => (
                     <option key={`${option.provider}:${option.key}`} value={`${option.provider}\u0000${option.key}`}>
-                      {option.provider} · {option.label}
+                      {option.label}
                     </option>
                   ))}
                 </select>

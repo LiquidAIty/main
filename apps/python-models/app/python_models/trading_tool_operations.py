@@ -41,15 +41,21 @@ async def trading_record_assessment_tool(candidateId, kind, proposalIds, content
         proposal_ids=proposalIds, content=content, idempotency_key=idempotencyKey))
 
 
-async def trading_read_evidence_tool(proposalId=None, decisionId=None, limit=50, offset=0,
+async def trading_read_evidence_tool(proposalId=None, decisionId=None, assessmentId=None, jobId=None,
+                                     journalEntryId=None, outcomeEntryId=None, candidateId=None, underlying=None,
+                                     assetClass=None, limit=50, offset=0,
                                      *, projectId, deckId, _callerCardId):
     return await _evidence_call(trading_evidence.read_evidence, dict(project_id=projectId, deck_id=deckId,
-        card_id=_callerCardId, proposal_id=proposalId, decision_id=decisionId, limit=limit, offset=offset))
+        card_id=_callerCardId, proposal_id=proposalId, decision_id=decisionId, assessment_id=assessmentId,
+        job_id=jobId, journal_entry_id=journalEntryId, outcome_entry_id=outcomeEntryId, candidate_id=candidateId,
+        underlying=underlying, asset_class=assetClass, limit=limit, offset=offset))
 
 
-async def trading_compare_proposals_tool(originalId, opposingId, underlyingPrices, *, projectId, deckId, _callerCardId):
+async def trading_compare_proposals_tool(originalId, opposingId, underlyingPrices, portfolioCardId=None,
+                                         allocationLane=None, *, projectId, deckId, _callerCardId):
     return await _evidence_call(trading_evidence.compare_scenarios, dict(project_id=projectId, deck_id=deckId,
-        card_id=_callerCardId, original_id=originalId, opposing_id=opposingId, underlying_prices=underlyingPrices))
+        card_id=_callerCardId, original_id=originalId, opposing_id=opposingId, underlying_prices=underlyingPrices,
+        portfolio_card_id=portfolioCardId, allocation_lane=allocationLane))
 
 
 async def trading_observe_proposals_tool(originalId, opposingId, idempotencyKey, *, projectId, deckId, _callerCardId, _sourceExecution):
@@ -66,12 +72,31 @@ async def trading_append_journal_tool(decisionId, phase, markdown, proposalIds, 
         idempotency_key=idempotencyKey))
 
 
-async def trading_record_review_tool(decisionId, markdown, proposalIds, assessmentIds, evidence,
-                                     review, idempotencyKey, *, projectId, deckId, _callerCardId, _sourceExecution):
+async def trading_record_review_tool(markdown, proposalIds, assessmentIds, evidence,
+                                     review, idempotencyKey, decisionId=None, outcomeEntryId=None, jobId=None,
+                                     reviewEntryId=None,
+                                     *, projectId, deckId, _callerCardId, _sourceExecution):
     return await _evidence_call(trading_journal.append_journal, dict(project_id=projectId, deck_id=deckId,
         card_id=_callerCardId, source_execution=_sourceExecution, decision_id=decisionId, phase="REVIEW",
         markdown=markdown, proposal_ids=proposalIds, assessment_ids=assessmentIds, evidence=evidence,
-        review=review, idempotency_key=idempotencyKey))
+        review=review, idempotency_key=idempotencyKey, outcome_entry_id=outcomeEntryId, job_id=jobId,
+        review_entry_id=reviewEntryId))
+
+
+async def trading_record_outcome_tool(decisionId, *, projectId, deckId, _callerCardId, _sourceExecution):
+    from app.python_models.trading_outcomes import record_outcome
+    return await _evidence_call(record_outcome, dict(project_id=projectId, deck_id=deckId,
+        card_id=_callerCardId, source_execution=_sourceExecution, decision_id=decisionId))
+
+
+async def portfolio_optimize_tool(portfolioCardId, symbols, allocationLanes, start, end,
+                                  maximumTurnoverPercent, costBps, idempotencyKey,
+                                  *, projectId, deckId, _callerCardId, _sourceExecution):
+    from app.python_models.trading_statistics import optimize_portfolio
+    return await _evidence_call(optimize_portfolio, dict(project_id=projectId, deck_id=deckId,
+        card_id=_callerCardId, source_execution=_sourceExecution, portfolio_card_id=portfolioCardId,
+        symbols=symbols, allocation_lanes=allocationLanes, start=start, end=end,
+        maximum_turnover_percent=maximumTurnoverPercent, cost_bps=costBps, idempotency_key=idempotencyKey))
 
 
 def _evidence_definitions():
@@ -92,6 +117,8 @@ def _evidence_definitions():
         "required": ["contributing_cards", "observed_outcomes", "supported_findings", "contradictions",
                      "decision_quality", "repeated_patterns", "proposed_job_specific_lessons", "evidence_references", "uncertainty"]}
     review["properties"]["contributing_cards"]["items"] = {"type": "string", "minLength": 1, "maxLength": 160}
+    review["properties"]["supersedes_review_id"] = {**uuid,
+        "description": "Only for an explicit dated correction to this Learner's latest review of the same outcome; the original remains unchanged."}
     review["properties"]["proposed_job_specific_lessons"]["items"] = {
         "type": "object", "properties": {"card_id": key, "lesson": {**text, "maxLength": 4000},
             "evidence_references": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "object"}},
@@ -112,22 +139,36 @@ def _evidence_definitions():
               "required": ["summary", "uncertainty", "recommendation", "evidence_references"], "additionalProperties": False},
           "idempotencyKey": key}, ["candidateId", "kind", "proposalIds", "content", "idempotencyKey"]),
         ("read_evidence", trading_read_evidence_tool, True,
-         "Read a bounded Project/deck decision trail by exact proposalId OR decisionId. Preserves every historical producer, references and dated journal entries, including retired producers. Use next_offset for more. Does not read arbitrary Hermes profile databases or infer broker outcomes.",
-         {"proposalId": uuid, "decisionId": uuid, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+         "Read bounded Project/deck evidence by exactly one proposalId, decisionId, jobId, journalEntryId, outcomeEntryId or assessmentId. Job reads return the accepted plan and decision references; follow those exact trails for team assessments, journals and calculations. Open, rejected, WAIT, historical and SHADOW cases do not require closure. Alternatively search reusable research and attributed prior reviews by candidateId and/or underlying, optionally assetClass=option. Retained sources, quote age and expiry are not refreshed. Use next_offset for more. No private Hermes history or inferred broker outcomes.",
+         {"proposalId": uuid, "decisionId": uuid, "assessmentId": uuid, "jobId": uuid,
+          "journalEntryId": uuid, "outcomeEntryId": uuid, "candidateId": key,
+          "underlying": {"type": "string", "minLength": 1, "maxLength": 80},
+          "assetClass": {"type": "string", "enum": ["equity", "option", "future", "forex", "crypto", "prediction_market"]},
+          "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
           "offset": {"type": "integer", "minimum": 0, "maximum": 10000, "default": 0}}, []),
         ("compare_proposals", trading_compare_proposals_tool, True,
-         "Calculate independent SHADOW payoff scenarios for a retained original/opposing pair at supplied hypothetical underlying prices. Not a forecast, backtest, current option valuation, actual outcome or broker profit. Unknown costs remain unknown; no automatic equal-risk sizing. Options are evaluated at expiration only.",
+         "Calculate independent SHADOW payoff scenarios for a retained original/opposing pair. Supply portfolioCardId and allocationLane together to compare against the actual same-Project portfolio, saved allocation policy, cash/reservations and WAIT. Unknown collateral, whole-book risk and costs remain unknown. No capital changes or order permission. Not a forecast, backtest, current option valuation or actual profit. Options are evaluated at expiration only.",
          {"originalId": uuid, "opposingId": uuid, "underlyingPrices": {"type": "array", "minItems": 1, "maxItems": 20,
-             "items": {"type": "number", "minimum": 0, "maximum": 1e12}}}, ["originalId", "opposingId", "underlyingPrices"]),
+             "items": {"type": "number", "minimum": 0, "maximum": 1e12}},
+          "portfolioCardId": key, "allocationLane": {"type": "string", "enum": [
+              "options", "day_trading", "swing_trading", "microcaps", "core", "defensive", "crypto", "prediction_markets"]}},
+         ["originalId", "opposingId", "underlyingPrices"]),
         ("observe_proposals", trading_observe_proposals_tool, False,
          "After a retained pair's horizon, fetch the exact subsequent completed US-equity daily IEX bar and retain a SHADOW comparison with actual provider data and execution provenance. Not actual/paper fills, portfolio earnings or a strategy backtest. Missing observations remain incomplete; options return unavailable rather than inferred profit. Reuse the key for exact retry.",
          {"originalId": uuid, "opposingId": uuid, "idempotencyKey": key}, ["originalId", "opposingId", "idempotencyKey"]),
         ("append_journal", trading_append_journal_tool, False,
-         "Trader appends intentional BEFORE/DURING/AFTER/CORRECTION Markdown to its exact saved decision. BEFORE records original/opposing proposals once; later entries cannot rewrite it. No job state, P&L or order changes. Cite confirmed execution records before describing a fill; simulation and shadow results are not earnings.",
+         "Trader appends intentional BEFORE/DURING/AFTER/CORRECTION Markdown to its exact saved decision. BEFORE records the original/opposing pair once; an unfunded WAIT may record why no proposal was possible without inventing a pair. Later entries cannot rewrite it. No job state, P&L or order changes. Cite an outcomeEntryId for reconciled execution evidence; simulation and shadow results are not earnings.",
          {**journal, "phase": {"type": "string", "enum": ["BEFORE", "DURING", "AFTER", "CORRECTION"]}}, [*journal, "phase"]),
+        ("record_outcome", trading_record_outcome_tool, False,
+         "On request, reconcile an owned paper Trade Job's exact broker order IDs using its original decisionId with an existing BEFORE journal. Fully matched US-stock entry/exit fills create one immutable closing receipt. Return its decisionId, outcomeEntryId and existing review status; this does not trigger a review. Learner can review other available evidence without this operation. Missing orders, partial exits, derivatives or unresolved identities remain incomplete. Gross P&L is not net profit; unavailable costs are not invented. No orders, job-state change, Bot dispatch or scheduler.",
+         {"decisionId": uuid}, ["decisionId"]),
         ("record_review", trading_record_review_tool, False,
-         "Learner appends its own attributed REVIEW and structured job-specific learning proposals to a Trader-owned journal. Review both proposals and WAIT, distinguish decision quality from luck, and state incomplete outcomes. Does not edit other Cards' memory or overwrite Trader's BEFORE. Lessons require their own evidence references.",
-         {**journal, "review": review}, [*journal, "review"]),
+         "Learner writes an intentional Markdown REVIEW on demand in the existing Trading journal. Supply decisionId when one exists; otherwise supply existing proposalIds or an exact jobId without inventing a Trader decision. Review retained whole-team evidence for open/completed trades, rejected ideas, WAIT, historical and SHADOW cases; closure and a BEFORE entry are not prerequisites. Preserve an existing BEFORE and its pair. Reuse an existing review or the same idempotencyKey for a repeated request; alreadyReviewed is not another sample. outcomeEntryId is optional broker-reconciled evidence, never inferred from an EXIT recommendation. Use your own enabled Hermes memory/skills for supported reusable lessons citing this saved review; this tool does not write Hermes learning or other Cards' memory.",
+         {**journal, "review": review, "reviewEntryId": {**uuid,
+             "description": "Existing own REVIEW identity for an exact replay. Read and resend its retained content/references; returns that record, never another copy. Changed content requires a separate dated review, not an overwrite."}, "jobId": {**uuid,
+             "description": "Existing Trade Job to review when no decisionId is supplied."}, "outcomeEntryId": {**uuid,
+             "description": "Optional verified closing-outcome journal entry, supplied with its decisionId. Repeated delivery returns the existing review."}},
+         [field for field in journal if field != "decisionId"] + ["review"]),
     ]
     return [OperationDefinition(canonical_id=f"trading.{name}", title=name.replace("_", " ").capitalize(),
         description=description, parameters_schema={"type": "object", "properties": properties,
@@ -219,6 +260,24 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
     return [
         *_evidence_definitions(),
         *research_definitions(),
+        OperationDefinition(
+            canonical_id="portfolio.optimize", title="Compare classical portfolio allocation",
+            description="Retain a bounded long-only minimum-variance comparison against actual same-Project holdings, WAIT and cash. Uses 1–5 US stocks/ETFs and 90–366 historical days (end exclusive), exact calendar-aligned raw IEX bars, saved category/position limits and explicit assumed costs/turnover. Requires the complete stock portfolio and saved allocation policy; never substitutes option premiums for stock returns or drops unsupported holdings. Produces an attributed assessment receipt, not allocation changes or orders.",
+            parameters_schema={"type": "object", "properties": {
+                "portfolioCardId": {"type": "string", "minLength": 1},
+                "symbols": {"type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": True, "items": {"type": "string", "minLength": 1}},
+                "allocationLanes": {"type": "object", "minProperties": 1, "maxProperties": 5, "additionalProperties": {
+                    "type": "string", "enum": ["day_trading", "swing_trading", "microcaps", "core", "defensive"]}},
+                "start": {"type": "string", "format": "date"}, "end": {"type": "string", "format": "date"},
+                "maximumTurnoverPercent": {"type": "number", "minimum": 0, "maximum": 100},
+                "costBps": {"type": "number", "minimum": 0, "maximum": 1000},
+                "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 120},
+            }, "required": ["portfolioCardId", "symbols", "allocationLanes", "start", "end", "maximumTurnoverPercent", "costBps", "idempotencyKey"], "additionalProperties": False},
+            output_schema={"type": "object"}, handler=portfolio_optimize_tool, available=True,
+            publishers=internal, access="write", namespace="trading", grant_eligible=True,
+            external_source_id="python_runtime", dispatcher_context_arguments=frozenset({"projectId", "deckId", "_callerCardId", "_sourceExecution"}),
+            annotations=_annotations(read_only=False, destructive=False, idempotent=True, open_world=True),
+        ),
         OperationDefinition(
             canonical_id="trading.list_bots", title="Read available LumiBot strategies",
             description="Inspect the installed, supported LumiBot strategy examples and their exact rules and limits. Does not run a bot or submit orders.",
@@ -374,6 +433,8 @@ def trading_tool_operation_definitions() -> list[OperationDefinition]:
                     "top_p": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 0.9},
                     "top_k": {"type": "integer", "minimum": 0, "default": 0,
                               "description": "0 uses top-p; positive top-k replaces top-p. 1 is greedy and collapses repeated paths."},
+                    "include_volatility": {"type": "boolean", "default": False,
+                        "description": "Also fit bounded GARCH(1,1) and a held-out variance comparison on the same retained observations (101+ closes). Volatility only, not direction or implied volatility."},
                 },
                 "required": ["symbol", "timeframe"],
                 "additionalProperties": False,

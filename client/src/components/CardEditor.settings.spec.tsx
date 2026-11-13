@@ -90,6 +90,51 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe('restored Card settings surfaces', () => {
+  it.each([
+    ['openai', 'chatgpt-account'],
+    ['openrouter', 'openrouter-api'],
+  ] as const)('offers model choices without account controls for %s', async (provider, accessMode) => {
+    const save = vi.fn();
+    vi.mocked(fetch).mockImplementation(async () => ({ ok: true, json: async () => ({
+      ok: true, script: null,
+      fields: [
+        { name: 'provider', label: 'Provider', control: 'select', options: [] },
+        { name: 'accessMode', label: 'Access mode', control: 'select', options: [] },
+        { name: 'modelKey', label: 'Model', control: 'catalog-select' },
+        { name: 'subagentType', label: 'Subagents', control: 'select', options: [{ value: 'leaf', label: 'Leaf' }] },
+        { name: 'reasoningEffort', label: 'Reasoning effort', control: 'select', options: [{ value: 'low', label: 'Low' }] },
+      ],
+      catalogs: { 'configured-models': ['openai', 'openrouter'].flatMap(value => [
+        { provider: value, key: 'saved-model', label: 'Saved model', providerModelId: `${value}/saved` },
+        { provider: value, key: 'next-model', label: 'Next model', providerModelId: `${value}/next` },
+      ]) },
+      references: [], selectedKnownReferences: [], unresolvedSelectedIds: [],
+    }) } as Response));
+    render(<CardEditor cardId="trader" projectId="project" deckId="deck" activeTab="Runtime"
+      localConfig={{ ...config, provider, access_mode: accessMode, model_key: 'saved-model',
+        reasoning_effort: 'low', runtime_options: { subagentType: 'leaf', subagentModel: {
+          provider, accessMode, modelKey: 'saved-model', providerModelId: `${provider}/saved`,
+        } } }} onSaveLocalConfig={save} />);
+    const model = screen.getByLabelText('Model') as HTMLSelectElement;
+    await waitFor(() => expect(model.disabled).toBe(false));
+    expect(screen.queryByLabelText('Provider')).toBeNull();
+    expect(screen.queryByLabelText('Access mode')).toBeNull();
+    const child = screen.getByLabelText('Subagent model') as HTMLSelectElement;
+    expect([...child.options].map(option => option.text)).toEqual(['Saved model', 'Next model']);
+    expect(save).not.toHaveBeenCalled();
+    expect(hermes.configureProfile).not.toHaveBeenCalled();
+    fireEvent.change(model, { target: { value: 'next-model' } });
+    fireEvent.change(child, { target: { value: `${provider}\u0000next-model` } });
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.at(-1)?.[0]).toMatchObject({
+      provider, access_mode: accessMode, model_key: 'next-model', reasoning_effort: 'low',
+      tools: config.tools, skills: config.skills, prompt_template: config.prompt_template,
+      runtime_options: { subagentType: 'leaf', providerModelId: `${provider}/next`, subagentModel: {
+        provider, accessMode, modelKey: 'next-model', providerModelId: `${provider}/next`,
+      } },
+    });
+  });
+
   it('lets a new Card author its missing job introduction without rewriting existing prompt blocks', async () => {
     const save = vi.fn();
     render(<CardEditor cardId="research" cardName="Research" projectId="project" deckId="deck"

@@ -4,6 +4,8 @@
 #
 # Entity: Tool Catalog
 # Relationship: This file publishes canonical provider-operation metadata, availability, eligibility, schemas, and profile ceilings into the authenticated catalog.
+# Entity: Document Retrieval
+# Relationship: Checks an explicitly selected same-Project source passage before forwarding a cited Know to the existing Graphiti writer, without automatically promoting retrieved documents.
 
 from __future__ import annotations
 
@@ -166,6 +168,28 @@ async def _entity_know_provider_arguments(
     entity_uuid = str(provider_arguments.get("entity_uuid") or "").strip()
     if not project_id or not (entity_name or entity_uuid) or not isinstance(raw_citation, dict):
         raise ValueError("know_project_and_entity_required")
+    passage_id = provider_arguments.pop("documentPassageId", None)
+    if passage_id is not None:
+        if not isinstance(passage_id, str) or not passage_id.strip() or len(passage_id) > 256:
+            raise ValueError("know_document_passage_id_invalid")
+        from app.python_models.document_tool_operations import read_document_passage
+        passage = await read_document_passage(passageId=passage_id, contextChars=0, projectId=project_id)
+        document = passage["document"]
+        quote = raw_citation.get("evidence")
+        if not isinstance(quote, str) or not quote.strip() or quote not in passage["text"]:
+            raise ValueError("know_evidence_must_be_an_exact_passage_excerpt")
+        source = document.get("source_url") or document["source_reference"]
+        if raw_citation.get("url") != source:
+            raise ValueError("know_document_citation_url_mismatch")
+        locator = (str(raw_citation.get("locator") or "").strip() + "; " if raw_citation.get("locator") else "") + (
+            f"Document {document['document_id']}; version {document['document_version']}; "
+            f"passage {passage['chunk_id']}; page {passage['page_number']}; characters {passage['start']}–{passage['end']}")
+        if len(locator) > 1000:
+            raise ValueError("know_document_locator_too_long")
+        provider_arguments["citation"] = {**raw_citation, "locator": locator,
+            "documentTitle": document["source_name"], "contentFingerprint": document["document_checksum"],
+            "retrievedAt": document["retrieval_date"],
+            **({"publishedAt": document["publication_date"]} if document.get("publication_date") else {})}
     return provider_arguments
 
 
@@ -211,6 +235,11 @@ def namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
         payload["_meta"] = meta
         if provider == "graphiti" and provider_tool_name in {"add_know", "update_know"}:
             _inline_graphiti_know_schema(payload)
+        if provider == "graphiti" and provider_tool_name == "add_know":
+            payload["inputSchema"]["properties"]["documentPassageId"] = {
+                "type": "string", "minLength": 1, "maxLength": 256,
+                "description": "Optional exact chunk_id from this Project's documents.search/get_passage. Citation evidence must be an exact excerpt and citation.url must match the retained source_url (or source_reference for an upload). The existing writer verifies that passage and preserves its document version/page/offset provenance. You still decide whether the observation is supported; retrieval alone does not create a Know.",
+            }
         if provider == "graphiti" and provider_tool_name == "get_episodes":
             schema = copy.deepcopy(payload.get("inputSchema") or {})
             properties = schema.setdefault("properties", {})

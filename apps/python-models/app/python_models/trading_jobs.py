@@ -205,6 +205,10 @@ def record_trade_decision(
                     )
                     if cursor.fetchone() is None:
                         raise TradingBoundaryError("trading_backtest_reference_not_found")
+            from app.python_models.trading_evidence import validate_receipt_references
+            validate_receipt_references(cursor, project_id, deck_id,
+                [item for item in evidence if any(field in item for field in
+                 ("forecastId", "proposalId", "assessmentId", "journalEntryId", "outcomeEntryId"))])
             cursor.execute(
                 """
                 INSERT INTO ag_catalog.trading_decisions (
@@ -258,6 +262,43 @@ def intervene_trade_job(
     raise TradingBoundaryError("trading_intervention_lifecycle_unavailable")
 
 
+def _allocation_context(cursor, project_id: str, deck_id: str, card_id: str) -> dict:
+    card = require_trading_card(cursor, project_id, deck_id, card_id)
+    cursor.execute(
+        """SELECT COALESCE(SUM(budget_ceiling_usd),0) AS reserved
+           FROM ag_catalog.trading_jobs WHERE project_id=%s AND deck_id=%s AND card_id=%s
+           AND state IN ('monitoring','paused')""", (project_id, deck_id, card_id),
+    )
+    return {"configuration": card["configuration"],
+            "cardRevisionId": str(card["current_revision_id"]),
+            "reservedCapitalUsd": float(cursor.fetchone()["reserved"])}
+
+
+def read_portfolio_context(*, project_id: str, deck_id: str, card_id: str) -> dict:
+    """The same saved allocation policy and broker reader, without fetching job charts."""
+    from app.python_models.portfolio_policy import allocation_view
+
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        context = _allocation_context(cursor, project_id, deck_id, card_id)
+        cursor.execute("""SELECT r.enabled FROM ag_catalog.agent_cards c
+            JOIN ag_catalog.agent_card_revisions r ON r.revision_id=c.current_revision_id
+            WHERE c.project_id=%s AND c.deck_id=%s AND c.card_id=%s AND r.revision_id=%s
+              AND EXISTS (SELECT 1 FROM ag_catalog.card_capability_grants g
+                WHERE g.revision_id=r.revision_id AND g.grant_kind='tool' AND g.grant_id='trading.get_state')""",
+            (project_id, deck_id, card_id, context["cardRevisionId"]))
+        enabled_card = cursor.fetchone()
+        if not enabled_card or enabled_card["enabled"] is not True:
+            raise TradingBoundaryError("portfolio_current_enabled_owner_required")
+    broker = read_lumibot_paper_snapshot()
+    policy = context["configuration"]["trading"].get("allocationPolicy")
+    allocation = allocation_view(policy, broker, reserved_capital=context["reservedCapitalUsd"])
+    allocation["policySaved"] = policy is not None
+    return {"cardId": card_id, "cardRevisionId": context["cardRevisionId"],
+            "allocation": allocation, "positions": broker["positions"],
+            "connection": broker["connection"], "observedAt": utc_now_text(),
+            "executionAuthorized": False}
+
+
 def _read_trading_history(
     project_id: str, deck_id: str, card_id: str,
 ) -> tuple[
@@ -267,14 +308,7 @@ def _read_trading_history(
     from app.python_models.trading_backtest import _public_backtest
 
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        card = require_trading_card(cursor, project_id, deck_id, card_id)
-        cursor.execute(
-            """SELECT COALESCE(SUM(budget_ceiling_usd),0) AS reserved
-               FROM ag_catalog.trading_jobs WHERE project_id=%s AND deck_id=%s AND card_id=%s
-               AND state IN ('monitoring','paused')""", (project_id, deck_id, card_id),
-        )
-        allocation_context = {"configuration": card["configuration"],
-                              "reservedCapitalUsd": float(cursor.fetchone()["reserved"])}
+        allocation_context = _allocation_context(cursor, project_id, deck_id, card_id)
         cursor.execute(
             """
             SELECT * FROM ag_catalog.trading_jobs
@@ -332,7 +366,8 @@ def _read_trading_history(
                 (project_id, deck_id, list(cited)),
             )
             backtests = [_public_backtest(row) for row in cursor.fetchall()]
-        from app.python_models.trading_journal import read_journal_entries
+        from app.python_models.trading_journal import read_journal_entries, outcome_performance
+        allocation_context["outcomePerformance"] = outcome_performance(cursor, project_id, deck_id, card_id)
         visible_decisions = research + [entry for entries in decisions.values() for entry in entries]
         journal = read_journal_entries(cursor, project_id, deck_id,
                                        [entry["decisionId"] for entry in visible_decisions])
@@ -469,6 +504,7 @@ def read_trading_state(
         "researchDecisions": research,
         "backtests": backtests,
         "allocation": allocation,
+        "outcomePerformance": allocation_context["outcomePerformance"],
         "portfolio": {
             **broker_state["account"],
             "realizedPnlUsd": recorded_realized,

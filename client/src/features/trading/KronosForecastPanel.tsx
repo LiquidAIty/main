@@ -6,6 +6,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, LineStyle, createChart, type CandlestickData, type IChartApi, type ISeriesApi, type UTCTimestamp, type WhitespaceData } from 'lightweight-charts';
 import { applicationFetch } from '../../lib/applicationApi';
 import { ForecastShadow, type ShadowPoint } from './ForecastShadow';
+import { ChartIndicators, windowVwap, type IndicatorOptions } from './ChartIndicators';
 
 export type ForecastBar = { timestamp: string; availableAfter?: string; open: number | null; high: number | null; low: number | null; close: number | null; volume: number | null; amount?: number | null; valid?: boolean };
 type SampleRange = { timestamp: string; min: number; max: number; p10: number; median: number; p90: number };
@@ -19,6 +20,8 @@ export type Forecast = {
   distribution?: { sampleCount: number; validPathCount: number; invalidPathCount: number; lastObservedClose: number; terminalAbove: number; terminalBelow: number; terminalUnchanged: number; steps: SampleRange[] };
   runtime: { device: string; seconds: number | null };
   observedIndicators?: { lastClose: number; sma20: number | null };
+  volatilityComparison?: { status: string; reason?: string; volatilityPercentPerBar?: number[];
+    heldOut?: { bars: number; varianceMae: number; constantVarianceMae: number } };
 };
 type Summary = Pick<Forecast, 'forecastId' | 'generatedAt' | 'marketData' | 'cutoff' | 'modelRef' | 'status'>;
 type Comparison = { status: string; actual: ForecastBar[]; diagnostics?: string; metrics: null | {
@@ -81,6 +84,9 @@ export function ForecastCandles({ forecast, history: inputHistory = NO_ACTUALS, 
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const pathSeries = useRef<ISeriesApi<'Line'>[]>([]);
+  const indicatorOverlay = useRef<ChartIndicators | null>(null);
+  const vwapSeries = useRef<ISeriesApi<'Line'> | null>(null);
+  const [indicators, setIndicators] = useState<IndicatorOptions>({ profile: false, levels: false, patterns: false, vwap: false });
   const [showPaths, setShowPaths] = useState(false);
   const [chartError, setChartError] = useState('');
   const [hover, setHover] = useState('');
@@ -89,6 +95,10 @@ export function ForecastCandles({ forecast, history: inputHistory = NO_ACTUALS, 
     to: history.length + points.filter(point => chartTime(point.timestamp) > chartTime(history.at(-1)!.timestamp)).length + 4,
   });
   useEffect(() => { pathSeries.current.forEach(series => series.applyOptions({ visible: showPaths })); }, [showPaths]);
+  useEffect(() => {
+    indicatorOverlay.current?.setOptions(indicators);
+    vwapSeries.current?.applyOptions({ visible: indicators.vwap });
+  }, [indicators]);
   useEffect(() => {
     if (!container.current || !history.length) return;
     setChartError('');
@@ -127,6 +137,11 @@ export function ForecastCandles({ forecast, history: inputHistory = NO_ACTUALS, 
       predicted.setData(points.length ? [anchor, ...points.map(point => point.valid === false || point.close == null || !Number.isFinite(point.close)
         ? { time: chartTime(point.timestamp) } : { time: chartTime(point.timestamp), value: point.close })] : []);
       observed.attachPrimitive(new ForecastShadow(forecastShadowPoints(forecast), dataEnd ? chartTime(dataEnd) : null));
+      indicatorOverlay.current = new ChartIndicators(history, indicators);
+      observed.attachPrimitive(indicatorOverlay.current);
+      vwapSeries.current = api.addSeries(LineSeries, { color: '#719bc3', lineWidth: 1,
+        visible: indicators.vwap, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      vwapSeries.current.setData(windowVwap(history));
       const defaultQuote = `O ${last.open?.toFixed(2)}   H ${last.high?.toFixed(2)}   L ${last.low?.toFixed(2)}   C ${last.close?.toFixed(2)}`;
       setHover(defaultQuote);
       api.subscribeCrosshairMove(event => {
@@ -142,11 +157,21 @@ export function ForecastCandles({ forecast, history: inputHistory = NO_ACTUALS, 
         windowListener.current?.(forecastInputWindow(history, range.from, range.to, timeline));
       });
       fitForecast();
-    } catch (error) { pathSeries.current = []; chart.current?.remove(); chart.current = null; setChartError(error instanceof Error ? error.message : 'Chart unavailable'); }
-    return () => { pathSeries.current = []; chart.current?.remove(); chart.current = null; };
+    } catch (error) { pathSeries.current = []; indicatorOverlay.current = null; vwapSeries.current = null; chart.current?.remove(); chart.current = null; setChartError(error instanceof Error ? error.message : 'Chart unavailable'); }
+    return () => { pathSeries.current = []; indicatorOverlay.current = null; vwapSeries.current = null; chart.current?.remove(); chart.current = null; };
   }, [forecast, history, actual]);
   return <div className="forecast-price-view">
     <div className="kronos-chart-toolbar"><span>{hover}</span><div>
+      <details className="forecast-indicators"><summary>Indicators</summary><div>
+        {([
+          ['profile', 'Volume profile', 'Visible-range volume is approximated uniformly across each candle’s high–low range, not tick-by-tick volume at price. POC and a contiguous 70% value area.'],
+          ['levels', 'Price levels', 'Observed day, prior-day and week highs/lows in New York time. These are reference levels, not guaranteed support or resistance.'],
+          ['vwap', 'Window VWAP', 'Loaded-window cumulative volume-weighted typical price (H+L+C)/3; an approximation, not trade-by-trade VWAP.'],
+          ['patterns', 'Candle context', 'Engulfing bodies, rolling 20-bar breaks or possible sweeps, and three-candle price gaps. Observed patterns do not guarantee a reversal or prove liquidity activity.'],
+        ] as const).map(([key, label, explanation]) => <label key={key} title={explanation}>
+          <input type="checkbox" checked={indicators[key]} onChange={event => setIndicators(value => ({ ...value, [key]: event.target.checked }))} />{label}
+        </label>)}
+      </div></details>
       {!!forecast?.samplePaths?.length && <button type="button" aria-pressed={showPaths} onClick={() => setShowPaths(value => !value)}>Paths</button>}
       <button type="button" onClick={fitForecast}>Fit</button>
     </div></div>
@@ -166,6 +191,7 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
   const [topP, setTopP] = useState(.9);
   const [topK, setTopK] = useState(0);
   const [seed, setSeed] = useState(443);
+  const [includeVolatility, setIncludeVolatility] = useState(false);
   const [history, setHistory] = useState<ForecastBar[]>([]);
   const [historyMarket, setHistoryMarket] = useState('');
   const [chartWindow, setChartWindow] = useState<ChartWindow>(null);
@@ -212,7 +238,7 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
     const result = await request('/api/trading/forecast', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId, deckId, cardId, symbol, timeframe, end: cutoff ? new Date(cutoff + 'Z').toISOString() : chartWindow!.end,
         model_variant: 'mini', horizon, history_limit: chartWindow!.count, sample_count: samples, seed,
-        temperature, top_p: topP, top_k: topK }),
+        temperature, top_p: topP, top_k: topK, include_volatility: includeVolatility }),
     });
     if (serial.current !== epoch) return;
     setForecast(result); setComparison(null);
@@ -258,6 +284,9 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
       <header><strong>{panel === 'settings' ? 'Settings' : 'Data'}</strong><button type="button" aria-label="Close forecast details" onClick={() => setPanel(null)}>×</button></header>
       {panel === 'settings' ? <div className="forecast-settings">
         <label>Model<select aria-label="Forecast model" defaultValue="mini"><option value="mini">Kronos-mini</option></select></label>
+        <label title="Optional conditional-volatility comparison using the same history; requires at least 101 closes and does not predict direction.">
+          <input type="checkbox" checked={includeVolatility} onChange={event => setIncludeVolatility(event.target.checked)} />GARCH volatility comparison
+        </label>
         <label>Future bars<input aria-label="Forecast horizon" type="number" min={1} max={20} value={horizon} onChange={event => setHorizon(Number(event.target.value))} /></label>
         <label>Generated paths · up to 64<input aria-label="Forecast samples" type="number" min={1} max={64} value={samples} onChange={event => setSamples(Number(event.target.value))} /></label>
         <label>Temperature<input aria-label="Forecast temperature" type="number" min={0.01} step={0.1} value={temperature} onChange={event => setTemperature(Number(event.target.value))} /></label>
@@ -278,6 +307,15 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
           <dt>Status</dt><dd>{forecast.status}</dd>
           {!!forecast.samplePaths?.length && <><dt>Shadow</dt><dd>Raw sampled closes, including flagged paths. Not a confidence interval.</dd></>}
         </dl>
+        {forecast.volatilityComparison && <details><summary>Conditional volatility · GARCH</summary>
+          {forecast.volatilityComparison.status === 'available' ? <dl>
+            <dt>Next-bar volatility</dt><dd>{forecast.volatilityComparison.volatilityPercentPerBar?.[0]?.toFixed(3)}% of log return</dd>
+            <dt>Held-out bars</dt><dd>{forecast.volatilityComparison.heldOut?.bars}</dd>
+            <dt>Variance MAE</dt><dd>{forecast.volatilityComparison.heldOut?.varianceMae.toFixed(4)}</dd>
+            <dt>Constant-variance benchmark MAE</dt><dd>{forecast.volatilityComparison.heldOut?.constantVarianceMae.toFixed(4)}</dd>
+          </dl> : <p>{forecast.volatilityComparison.reason || forecast.volatilityComparison.status}</p>}
+          <p>Volatility, not direction or options implied volatility. Held-out variance error is not future price accuracy.</p>
+        </details>}
         {(forecast.marketData.symbol !== symbol || forecast.marketData.timeframe !== timeframe) && <p role="status">Saved: {forecast.marketData.symbol} · {forecast.marketData.timeframe}</p>}
         {forecast.diagnostics && <p role="alert">{forecast.diagnostics}</p>}
         {!forecast.samplePaths?.length && <p data-testid="average-only-notice">Average-only record; individual paths were not retained.</p>}

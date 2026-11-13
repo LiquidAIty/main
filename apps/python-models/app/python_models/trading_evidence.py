@@ -1,6 +1,6 @@
 """Append-only proposal and review evidence within the existing Trading database."""
 # Entity: Trading
-# Relationship: Retains authored proposals, deterministic opposing terms and bounded specialist work products with exact saved-Card provenance; reads related evidence without changing capital, jobs or Hermes sessions.
+# Relationship: Retains authored proposals and specialist work products, reads their accepted job and journal evidence, and compares hypothetical payoffs and portfolio effects without changing capital, jobs or Hermes sessions.
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from psycopg.rows import dict_row
 
 from app.python_models.postgres import connect_postgres
 from app.python_models.trading_contract import TradingBoundaryError, required_trade_text
-from app.python_models.trading_jobs import _execution_reference, _lock_card
+from app.python_models.trading_jobs import _execution_reference, _lock_card, _public_job
 from app.python_models.trading_proposals import economics, invert_terms, parse_proposal, payoff
 
 
@@ -52,7 +52,7 @@ def proposal_row(cursor, project_id, deck_id, proposal_id):
 def public_record(row):
     result = dict(row)
     for name in ("proposal_id", "original_proposal_id", "assessment_id", "entry_id", "decision_id",
-                 "project_id", "card_revision_id", "created_at"):
+                 "project_id", "card_revision_id", "created_at", "job_id"):
         if result.get(name) is not None:
             result[name] = str(result[name])
     for name in ("proposal_ids", "assessment_ids"):
@@ -145,6 +145,9 @@ def validate_receipt_references(cursor, project_id, deck_id, references):
             ("forecastId", "trading_forecasts", "forecast_id"),
             ("proposalId", "trading_proposals", "proposal_id"),
             ("assessmentId", "trading_assessments", "assessment_id"),
+            ("journalEntryId", "trading_journal_entries", "entry_id"),
+            ("outcomeEntryId", "trading_journal_entries", "entry_id"),
+            ("jobId", "trading_jobs", "job_id"),
         ):
             if field not in item:
                 continue
@@ -154,17 +157,29 @@ def validate_receipt_references(cursor, project_id, deck_id, references):
             row = cursor.fetchone()
             if not row or (field == "backtestId" and row["status"] != "completed"):
                 raise TradingBoundaryError("trading_evidence_reference_not_found:" + field)
+            if field == "outcomeEntryId" and (row["phase"] != "AFTER" or not any(
+                    item.get("brokerOutcome", {}).get("status") == "closed" for item in row["evidence"])):
+                raise TradingBoundaryError("trading_confirmed_outcome_not_found")
             if field == "backtestId":
                 from app.python_models.trading_backtest import _public_backtest
                 receipts.append({"kind": "BACKTEST", "receipt": _public_backtest(row)})
             elif field == "forecastId":
                 receipts.append({"kind": "FORECAST", "producer_card_id": row["card_id"],
                                  "card_revision_id": str(row["card_revision_id"]), "receipt": row["payload"]})
+            elif field in {"journalEntryId", "outcomeEntryId"}:
+                receipts.append({"kind": "OUTCOME" if field == "outcomeEntryId" else "JOURNAL",
+                                 "receipt": public_record(row)})
+            elif field == "assessmentId":
+                receipts.append({"kind": "ASSESSMENT", "receipt": public_record(row)})
+            elif field == "jobId":
+                receipts.append({"kind": "TRADE_JOB", "receipt": _public_job(row)})
     return receipts
 
 
 def record_assessment(*, project_id, deck_id, card_id, source_execution, candidate_id,
-                      kind, proposal_ids, content, idempotency_key):
+                      kind, proposal_ids, content, idempotency_key, _operation="trading.record_assessment"):
+    if _operation not in {"trading.record_assessment", "portfolio.optimize"} or (_operation == "portfolio.optimize" and kind != "quant_initial"):
+        raise TradingBoundaryError("trading_assessment_operation_invalid")
     if kind not in {"opportunity", "research", "contrarian", "quant_initial", "quant_comparison"}:
         raise TradingBoundaryError("trading_assessment_kind_invalid")
     candidate = required_trade_text(candidate_id, "candidate_id", 160)
@@ -183,7 +198,7 @@ def record_assessment(*, project_id, deck_id, card_id, source_execution, candida
     except (TypeError, ValueError):
         raise TradingBoundaryError("trading_assessment_content_invalid") from None
     with connect_postgres(autocommit=False) as connection, connection.cursor(row_factory=dict_row) as cursor:
-        card = require_evidence_card(cursor, project_id, deck_id, card_id, "trading.record_assessment")
+        card = require_evidence_card(cursor, project_id, deck_id, card_id, _operation)
         execution = _execution_reference(source_execution, card["runtime_profile"])
         _lock_card(cursor, project_id, deck_id, card_id)
         rows = validate_proposal_ids(cursor, project_id, deck_id, proposal_ids, candidate_id=candidate)
@@ -213,13 +228,108 @@ def record_assessment(*, project_id, deck_id, card_id, source_execution, candida
         return result
 
 
-def read_evidence(*, project_id, deck_id, card_id, proposal_id=None, decision_id=None, limit=50, offset=0):
-    if bool(proposal_id) == bool(decision_id):
-        raise TradingBoundaryError("trading_evidence_choose_proposal_or_decision")
+def read_evidence(*, project_id, deck_id, card_id, proposal_id=None, decision_id=None,
+                  assessment_id=None, job_id=None, journal_entry_id=None, outcome_entry_id=None,
+                  candidate_id=None, underlying=None, asset_class=None, limit=50, offset=0):
+    book = bool(candidate_id or underlying)
+    if sum(map(bool, (proposal_id, decision_id, assessment_id, job_id, journal_entry_id, outcome_entry_id, book))) != 1:
+        raise TradingBoundaryError("trading_evidence_choose_exact_trail_or_candidate_search" if book
+                                   else "trading_evidence_choose_proposal_or_decision")
+    if asset_class not in {None, "equity", "option", "future", "forex", "crypto", "prediction_market"}:
+        raise TradingBoundaryError("trading_evidence_asset_class_invalid")
+    if asset_class and not book:
+        raise TradingBoundaryError("trading_evidence_asset_filter_requires_candidate_search")
     if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or not 0 <= offset <= 10000:
         raise TradingBoundaryError("trading_evidence_page_invalid")
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         require_evidence_card(cursor, project_id, deck_id, card_id, "trading.read_evidence")
+        requested_entry = None
+        job = None
+        if journal_entry_id or outcome_entry_id:
+            cursor.execute("""SELECT * FROM ag_catalog.trading_journal_entries
+                WHERE project_id=%s AND deck_id=%s AND entry_id=%s""",
+                (project_id, deck_id, identity(journal_entry_id or outcome_entry_id)))
+            requested_entry = cursor.fetchone()
+            if not requested_entry:
+                raise TradingBoundaryError("trading_journal_entry_not_found")
+            if outcome_entry_id:
+                validate_receipt_references(cursor, project_id, deck_id, [{"outcomeEntryId": outcome_entry_id}])
+            if requested_entry["decision_id"]:
+                decision_id = str(requested_entry["decision_id"])
+            elif requested_entry["proposal_ids"]:
+                proposal_id = str(requested_entry["proposal_ids"][0])
+            else:
+                job_id = next((item["jobId"] for item in requested_entry["evidence"] if "jobId" in item), None)
+                if not job_id:
+                    raise TradingBoundaryError("trading_review_reference_required")
+        if job_id:
+            cursor.execute("SELECT * FROM ag_catalog.trading_jobs WHERE project_id=%s AND deck_id=%s AND job_id=%s",
+                           (project_id, deck_id, identity(job_id)))
+            job_row = cursor.fetchone()
+            if not job_row:
+                raise TradingBoundaryError("trading_job_not_found")
+            job = _public_job(job_row)
+            cursor.execute("""SELECT * FROM ag_catalog.trading_decisions
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s AND job_id=%s
+                ORDER BY created_at,decision_id LIMIT %s OFFSET %s""",
+                (project_id, deck_id, job_row["card_id"], job_row["job_id"], limit + 1, offset))
+            decisions = [public_record(row) for row in cursor.fetchall()]
+            cursor.execute("""SELECT * FROM ag_catalog.trading_journal_entries
+                WHERE project_id=%s AND deck_id=%s AND decision_id IS NULL AND phase='REVIEW'
+                  AND evidence @> %s::jsonb ORDER BY created_at,entry_id LIMIT %s OFFSET %s""",
+                (project_id, deck_id, json.dumps([{"jobId": identity(job_id)}]), limit + 1, offset))
+            reviews = [public_record(row) for row in cursor.fetchall()]
+            more = len(decisions) > limit or len(reviews) > limit
+            return {"job": job, "related_decisions": decisions[:limit], "journal": reviews[:limit],
+                "requested_journal_entry": public_record(requested_entry) if requested_entry else None,
+                "next_offset": offset + limit if more else None, "exhaustive": not more,
+                "note": "Accepted job and dated decisions, not confirmed fills. Read the relevant decisionId trails for proposals, assessments, journals and observations; no closure is required."}
+        if assessment_id:
+            cursor.execute("""SELECT * FROM ag_catalog.trading_assessments
+                WHERE project_id=%s AND deck_id=%s AND assessment_id=%s""",
+                (project_id, deck_id, identity(assessment_id)))
+            row = cursor.fetchone()
+            if not row:
+                raise TradingBoundaryError("trading_assessment_not_found")
+            return {"assessment": public_record(row), "receipts": validate_receipt_references(
+                cursor, project_id, deck_id, row["content"].get("evidence_references", []))}
+        if book:
+            candidate = required_trade_text(candidate_id, "candidate_id", 160) if candidate_id else None
+            symbol = required_trade_text(underlying, "underlying", 80) if underlying else None
+            cursor.execute("""SELECT * FROM ag_catalog.trading_proposals
+                WHERE project_id=%s AND deck_id=%s
+                  AND (%s::text IS NULL OR proposal->>'candidate_id'=%s)
+                  AND (%s::text IS NULL OR UPPER(proposal->>'underlying')=UPPER(%s))
+                  AND (%s::text IS NULL OR proposal->>'asset_class'=%s)
+                ORDER BY created_at DESC,proposal_id DESC LIMIT %s OFFSET %s""",
+                (project_id, deck_id, candidate, candidate, symbol, symbol, asset_class, asset_class, limit + 1, offset))
+            rows = cursor.fetchall()
+            now = datetime.now(timezone.utc)
+            proposals = []
+            for row in rows[:limit]:
+                record = public_record(row)
+                terms = parse_proposal(record["proposal"])
+                record["refresh"] = {"checkedAt": now.isoformat(),
+                    "quoteAgeSeconds": max(0, (now - terms.quote.observed_at).total_seconds()) if terms.quote else None,
+                    "horizonElapsed": terms.horizon_end <= now,
+                    "contractExpired": terms.option.expiration <= now if terms.option else None,
+                    "requiresCurrentQuoteBeforeDecision": True}
+                proposals.append(record)
+            cursor.execute("""SELECT j.* FROM ag_catalog.trading_journal_entries j
+                WHERE j.project_id=%s AND j.deck_id=%s AND j.phase='REVIEW'
+                  AND EXISTS (SELECT 1 FROM ag_catalog.trading_proposals p
+                    WHERE p.project_id=j.project_id AND p.deck_id=j.deck_id AND p.proposal_id=ANY(j.proposal_ids)
+                      AND (%s::text IS NULL OR p.proposal->>'candidate_id'=%s)
+                      AND (%s::text IS NULL OR UPPER(p.proposal->>'underlying')=UPPER(%s))
+                      AND (%s::text IS NULL OR p.proposal->>'asset_class'=%s))
+                ORDER BY j.created_at DESC,j.entry_id DESC LIMIT %s OFFSET %s""",
+                (project_id, deck_id, candidate, candidate, symbol, symbol, asset_class, asset_class, limit + 1, offset))
+            reviews = [public_record(row) for row in cursor.fetchall()]
+            more = len(rows) > limit or len(reviews) > limit
+            return {"proposals": proposals, "reviews": reviews[:limit],
+                    "next_offset": offset + limit if more else None, "exhaustive": not more,
+                    "learningNote": "Shared attributed reviews, not private agent memory. Follow correction links and evidence; the model decides relevance.",
+                    "note": "Reusable research, not orders. candidate_id links a thesis across investigations. Read each exact proposal trail for assessments; retain a new dated proposal when contract/quote terms change, never overwrite the original. A hedge requires separate portfolio evidence."}
         decision = None
         journal_pair = None
         if decision_id:
@@ -235,7 +345,20 @@ def read_evidence(*, project_id, deck_id, card_id, proposal_id=None, decision_id
             if before and before["proposal_ids"]:
                 proposal_id = str(before["proposal_ids"][0])
                 journal_pair = [str(item) for item in before["proposal_ids"]]
-        proposals, assessments, decision_references = [], [], []
+        proposals, assessments, decision_references, related_decisions = [], [], [], []
+        if decision and decision["job_id"]:
+            cursor.execute("""SELECT * FROM ag_catalog.trading_jobs
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s AND job_id=%s""",
+                (project_id, deck_id, decision["card_id"], decision["job_id"]))
+            job_row = cursor.fetchone()
+            if not job_row:
+                raise TradingBoundaryError("trading_job_not_found")
+            job = _public_job(job_row)
+            cursor.execute("""SELECT * FROM ag_catalog.trading_decisions
+                WHERE project_id=%s AND deck_id=%s AND job_id=%s
+                ORDER BY created_at,decision_id LIMIT %s OFFSET %s""",
+                (project_id, deck_id, decision["job_id"], limit + 1, offset))
+            related_decisions = [public_record(row) for row in cursor.fetchall()]
         if proposal_id:
             original = proposal_row(cursor, project_id, deck_id, proposal_id)
             root = str(original["original_proposal_id"] or original["proposal_id"])
@@ -265,7 +388,15 @@ def read_evidence(*, project_id, deck_id, card_id, proposal_id=None, decision_id
                 AND decision_id=%s ORDER BY created_at,entry_id LIMIT %s OFFSET %s""",
                 (project_id, deck_id, identity(decision_id), limit + 1, offset))
             entries = [public_record(row) for row in cursor.fetchall()]
-        more = any(len(items) > limit for items in (proposals, assessments, entries, decision_references))
+        elif proposal_id:
+            cursor.execute("""SELECT * FROM ag_catalog.trading_journal_entries
+                WHERE project_id=%s AND deck_id=%s AND decision_id IS NULL AND phase='REVIEW'
+                  AND proposal_ids && ARRAY(SELECT proposal_id FROM ag_catalog.trading_proposals
+                    WHERE project_id=%s AND deck_id=%s AND (proposal_id=%s OR original_proposal_id=%s))
+                ORDER BY created_at,entry_id LIMIT %s OFFSET %s""",
+                (project_id, deck_id, project_id, deck_id, root, root, limit + 1, offset))
+            entries = [public_record(row) for row in cursor.fetchall()]
+        more = any(len(items) > limit for items in (proposals, assessments, entries, decision_references, related_decisions))
         references = [item for assessment in assessments[:limit] for item in assessment["content"].get("evidence_references", [])]
         references += [item for entry in entries[:limit] for item in entry["evidence"]]
         for entry in entries[:limit]:
@@ -275,20 +406,26 @@ def read_evidence(*, project_id, deck_id, card_id, proposal_id=None, decision_id
                            for item in lesson.get("evidence_references", [])]
         if decision:
             references += decision["evidence"]
+        references += [item for row in related_decisions[:limit] for item in row["evidence"]]
         # Read receipts through bounded exact references, not all results for a ticker.
         references = list({json.dumps(item, sort_keys=True): item for item in references}.values())
         receipts = validate_receipt_references(cursor, project_id, deck_id, references[:64])
-        return {"decision": public_record(decision) if decision else None, "proposals": proposals[:limit],
+        return {"decision": public_record(decision) if decision else None, "job": job, "proposals": proposals[:limit],
+                "requested_journal_entry": public_record(requested_entry) if requested_entry else None,
                 "assessments": assessments[:limit], "journal": entries[:limit],
                 "decision_references": decision_references[:limit],
+                "related_decisions": related_decisions[:limit],
                 "receipts": receipts, "receipt_reference_count": len(references), "receipts_complete": len(references) <= 64,
                 "next_offset": offset + limit if more else None, "exhaustive": not more,
                 "note": "Submitted work products and references, not private profile history or confirmed fills."}
 
 
-def compare_scenarios(*, project_id, deck_id, card_id, original_id, opposing_id, underlying_prices):
+def compare_scenarios(*, project_id, deck_id, card_id, original_id, opposing_id, underlying_prices,
+                      portfolio_card_id=None, allocation_lane=None):
     if not isinstance(underlying_prices, list) or not 1 <= len(underlying_prices) <= 20:
         raise TradingBoundaryError("trading_scenario_count_invalid")
+    if bool(portfolio_card_id) != bool(allocation_lane):
+        raise TradingBoundaryError("trading_comparison_portfolio_and_lane_required_together")
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         require_evidence_card(cursor, project_id, deck_id, card_id, "trading.compare_proposals")
         a, b = validate_proposal_ids(cursor, project_id, deck_id, [original_id, opposing_id])
@@ -297,13 +434,25 @@ def compare_scenarios(*, project_id, deck_id, card_id, original_id, opposing_id,
         original, opposite = parse_proposal(a["proposal"]), parse_proposal(b["proposal"])
         if original.option and opposite.option and original.option.expiration != opposite.option.expiration:
             raise TradingBoundaryError("trading_expiry_comparison_mismatch")
-        return {"kind": "SHADOW", "original_proposal_id": str(a["proposal_id"]),
+        result = {"kind": "SHADOW", "original_proposal_id": str(a["proposal_id"]),
                 "opposing_proposal_id": str(b["proposal_id"]), "information_cutoff": a["proposal"]["information_cutoff"],
                 "horizon_end": a["proposal"]["horizon_end"], "execution_authorized": False,
                 "scenarios": [{"underlying_price": price, "original": payoff(original, price),
                                "opposing": payoff(opposite, price)} for price in underlying_prices],
                 "limitations": ["Hypothetical prices supplied by the caller, not measured outcomes or a strategy backtest.",
                                 "Equal quantities need not imply equal capital at risk. Unbounded risk cannot be normalized to a finite maximum loss."]}
+    if portfolio_card_id:
+        from app.python_models.trading_jobs import read_portfolio_context
+        from app.python_models.portfolio_policy import proposal_portfolio_effect
+        portfolio = read_portfolio_context(project_id=project_id, deck_id=deck_id, card_id=portfolio_card_id)
+        result["portfolio"] = {"snapshot": portfolio,
+            "original": proposal_portfolio_effect(original, economics(original), portfolio, allocation_lane),
+            "opposing": proposal_portfolio_effect(opposite, economics(opposite), portfolio, allocation_lane),
+            "wait": {"action": "WAIT", "incrementalCapitalUsd": 0, "incrementalTradePnlUsd": 0,
+                     "holdingsUnchanged": True, "note": "Existing holdings retain their risks and returns; no cash yield assumed."}}
+    else:
+        result["portfolio"] = {"status": "not_evaluated", "reason": "Supply the saved portfolio Card and explicit Allocation Lane."}
+    return result
 
 
 def _observe_equity_pair(original, opposite):

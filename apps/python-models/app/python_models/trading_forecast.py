@@ -1,6 +1,6 @@
 """Kronos forecasts: model output, never broker orders or sourced Knows."""
 # Entity: Trading
-# Relationship: Fetches completed Alpaca history, runs pinned Kronos models, and retains raw sampled paths, their mean and empirical range through the existing Trading owner.
+# Relationship: Fetches completed Alpaca history and retains pinned Kronos samples plus an optional same-input GARCH variance comparison through the existing Trading owner.
 
 from __future__ import annotations
 
@@ -303,9 +303,11 @@ def _forecast_market_bars(symbol: str, timeframe: str, *, start: str | None = No
 async def forecast_market_bars(symbol: str, timeframe: str, start: str | None = None, end: str | None = None,
                                history_limit: int = 128, horizon: int = 5, model_variant: str = "mini",
                                sample_count: int = 4, seed: int = 443, temperature: float = 1.0,
-                               top_p: float = 0.9, top_k: int = 0, *, projectId: str, deckId: str,
+                               top_p: float = 0.9, top_k: int = 0, include_volatility: bool = False, *, projectId: str, deckId: str,
                                _callerCardId: str) -> dict[str, Any]:
     from app.python_models.trading_forecast_store import require_forecast_card, save_forecast
+    if type(include_volatility) is not bool:
+        raise ApplicationToolError("trading_forecast_include_volatility_invalid")
     card = await asyncio.to_thread(require_forecast_card, projectId, deckId, _callerCardId)
     try:
         result = await asyncio.to_thread(_forecast_market_bars, symbol, timeframe, start=start, end=end,
@@ -317,6 +319,11 @@ async def forecast_market_bars(symbol: str, timeframe: str, start: str | None = 
                     "Do not repeat the same future cutoff for other symbols."
                     if str(error) == "trading_forecast_cutoff_in_future" else "")
         raise ApplicationToolError(str(error) + guidance) from None
+    if include_volatility and result["history"]:
+        from app.python_models.trading_statistics import volatility_comparison
+        result["parameters"]["includeVolatility"] = True
+        result["volatilityComparison"] = await asyncio.to_thread(
+            volatility_comparison, result["history"], horizon, timeframe)
     if result["points"]:
         result["forecastId"] = str(uuid4())
         await asyncio.to_thread(save_forecast, projectId, deckId, _callerCardId, result, str(card["current_revision_id"]))

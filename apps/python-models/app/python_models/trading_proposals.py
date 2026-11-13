@@ -83,6 +83,15 @@ class TradeProposal(Terms):
     borrow: Borrow | None = None
     option: OptionContract | None = None
     source_references: Annotated[list[Text], Field(min_length=1, max_length=32)]
+    allocation_lane: Literal["options", "day_trading", "swing_trading", "microcaps", "core", "defensive", "crypto", "prediction_markets"] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+        description="Explicit assigned Investment Category; never inferred from a ticker. Omit if not assigned.")
+    strategy_id: Annotated[str, Field(min_length=1, max_length=120)] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+        description="Explicit research/strategy identifier for later comparison, not evidence that a bot ran.")
+    sector: Annotated[str, Field(min_length=1, max_length=120)] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+        description="Declared research sector, with its classification source among source_references; omit if unknown.")
 
     @model_validator(mode="after")
     def consistent(self):
