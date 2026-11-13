@@ -72,6 +72,26 @@ def test_trade_plan_requires_every_execution_term_without_defaults() -> None:
         normalize_trade_plan(plan)
 
 
+def test_journal_configuration_remembers_only_an_optional_markdown_path() -> None:
+    config = _configuration()
+    assert "journalPath" not in normalize_trading_configuration(config)["trading"]
+    config["trading"]["journalPath"] = " /workspace/trader-notes.md "
+    normalized = normalize_trading_configuration(config)
+    assert normalized["trading"]["journalPath"] == "/workspace/trader-notes.md"
+    assert normalized["trading"]["paperBudgetUsd"] == 0
+    assert normalized["trading"]["executionApproved"] is False
+    config["trading"]["journalPath"] = ""
+    assert normalize_trading_configuration(config)["trading"]["journalPath"] == ""
+
+
+@pytest.mark.parametrize("path", ["/workspace/state.db", "note.md\x00", 7, "x" * 4097 + ".md"])
+def test_journal_configuration_rejects_non_markdown_or_invalid_paths(path) -> None:
+    config = _configuration()
+    config["trading"]["journalPath"] = path
+    with pytest.raises(TradingBoundaryError, match="journalPath_invalid"):
+        normalize_trading_configuration(config)
+
+
 def test_trade_plan_normalizes_only_explicit_valid_terms() -> None:
     result = normalize_trade_plan(_plan())
 

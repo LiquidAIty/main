@@ -1,6 +1,6 @@
 /**
  * Entity: Trading
- * Relationship: Presents market and forecast candles, retained model outputs, paper portfolio state, plan and journal evidence, and bounded interventions for the selected Trading Card.
+ * Relationship: Presents market and forecast candles, retained paper portfolio and decision evidence, the Trader's selected Markdown journal, and bounded interventions for the selected Trading Card.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './tradingui.css';
@@ -9,9 +9,10 @@ import { applicationFetch } from '../lib/applicationApi';
 import { resolveInstrument } from '../features/trading/instrument';
 import KronosForecastPanel from '../features/trading/KronosForecastPanel';
 import PortfolioAllocationPanel from '../features/trading/PortfolioAllocationPanel';
+import MarkdownJournal from '../features/trading/MarkdownJournal';
 import {
-  readTradingConfiguration, reconcileTradingState, sameAllocationPolicy,
-  type TradeJob, type TradeDecision, type TradingBacktest, type TradingInterventionAction, type TradingState, type TradingSettings, type TradingConfiguration, type OutcomePerformance,
+  readTradingConfiguration, reconcileTradingState,
+  type TradeJob, type TradeDecision, type TradingBacktest, type TradingInterventionAction, type TradingState, type TradingSettings, type TradingConfiguration,
 } from '../features/trading/tradingState';
 
 const DARK = { bg: '#0a0f1a', panel: '#111827', edge: '#1f2937', ink: '#e5e7eb' };
@@ -95,35 +96,12 @@ function PlanTerms({ job }: { job: TradeJob }) {
   </dl>;
 }
 
-function JournalDecision({ decision, backtests }: { decision: TradeDecision; backtests: TradingBacktest[] }) {
-  const downloadJournal = () => {
-    const text = (decision.journalEntries || []).map(entry =>
-      `## ${entry.phase} — ${entry.created_at}\n\nAuthor: ${entry.source_execution.profile}\nEntry: ${entry.entry_id}\nDecision: ${entry.decision_id}\n\n${entry.markdown}`,
-    ).join('\n\n');
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `journal-${decision.decisionId}.md`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
+function DecisionEvidence({ decision, backtests }: { decision: TradeDecision; backtests: TradingBacktest[] }) {
   return <article className="border-t py-2 mt-2" style={{ borderColor: DARK.edge }}>
     <time style={{ color: MUTED, fontSize: 11 }}>{new Date(decision.createdAt).toLocaleString()}</time>
     <div><strong>{decision.action}</strong> · {decision.subject}{decision.kind === 'research' ? ' · Research decision' : ''}</div>
     <p>{decision.rationale}</p>
     {decision.missingTerms.length > 0 && <p>Unresolved: {decision.missingTerms.join(' · ')}</p>}
-    {!!decision.journalEntries?.length && <section aria-label="Dated trade journal">
-      <button type="button" onClick={downloadJournal}>Download journal .md</button>
-      {decision.journalWindowComplete === false && <p>Recent entries shown; the full trail remains available through Trading evidence.</p>}
-      {decision.journalEntries.map(entry => <details key={entry.entry_id} open={entry.phase === 'BEFORE'}>
-        <summary>{entry.phase} · {entry.source_execution.profile} · {new Date(entry.created_at).toLocaleString()}</summary>
-        <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: 'inherit' }}>{entry.markdown}</pre>
-        <details><summary>References</summary><pre className="whitespace-pre-wrap break-all">{JSON.stringify({
-          entryId: entry.entry_id, proposalIds: entry.proposal_ids, assessmentIds: entry.assessment_ids,
-          evidence: entry.evidence, review: entry.review, execution: entry.source_execution,
-        }, null, 2)}</pre></details>
-      </details>)}
-    </section>}
     {decision.evidence.filter(item => typeof item.backtestId === 'string').map((item, index) => {
       const receipt = backtests.find(result => result.backtestId === item.backtestId);
       return receipt ? <details key={`${item.backtestId}:${index}`}>
@@ -142,25 +120,6 @@ function JournalDecision({ decision, backtests }: { decision: TradeDecision; bac
         execution: decision.sourceExecution }, null, 2)}</pre>
     </details>
   </article>;
-}
-
-function OutcomePerformanceView({ data }: { data: OutcomePerformance }) {
-  const [group, setGroup] = useState<keyof OutcomePerformance['groups']>('allocationLane');
-  return <details className="portfolio-allocation"><summary>Paper outcome performance</summary>
-    {data.summary.closures ? <>
-      <p>{data.summary.closures} reconciled closures · Gross {money(data.summary.grossPnlUsd)} · Net results known for {data.summary.netKnown}/{data.summary.closures}</p>
-      <p>Closed-outcome gross drawdown: {money(data.summary.closedOutcomeGrossDrawdownUsd)}. This is not portfolio mark-to-market drawdown.</p>
-      <label>Group by <select aria-label="Outcome performance grouping" value={group} onChange={event => setGroup(event.target.value as keyof OutcomePerformance['groups'])}>
-        <option value="allocationLane">Investment Category</option><option value="strategy">Strategy</option><option value="market">Market</option><option value="sector">Declared sector</option>
-      </select></label>
-      <div className="allocation-table-wrap"><table><thead><tr><th>Group</th><th>Closures</th><th>Gross P&amp;L</th><th>Gross + / −</th><th>Net known</th><th>Net P&amp;L</th></tr></thead><tbody>
-        {data.groups[group].map(row => <tr key={row.label}><th>{row.label.replaceAll('_', ' ')}</th><td>{row.closures}</td><td>{money(row.grossPnlUsd)}</td><td>{row.grossPositive} / {row.grossNegative}</td><td>{row.netKnown} / {row.closures}</td><td>{money(row.netPnlUsd)}</td></tr>)}
-      </tbody></table></div>
-      <details><summary>Recorded Card participation</summary><ul>{data.participation.map(row => <li key={row.cardId}>{row.title}: {row.reviewedTrailCount} outcome trails</li>)}</ul><p>Participation is not attribution of profit or predictive accuracy.</p></details>
-    </> : <p>No broker-reconciled closures yet. Backtests and SHADOW observations are not counted as trades.</p>}
-    {!data.windowComplete && <p>Bounded recent-outcome window; not a complete lifetime total.</p>}
-    <details><summary>Basis and limitations</summary>{data.limitations.map(line => <p key={line}>{line}</p>)}</details>
-  </details>;
 }
 
 function EquityChart({ points }: { points: TradingState['portfolio']['equityCurve'] }) {
@@ -209,7 +168,7 @@ type TradingUIProps = {
   symbol?: string; projectId?: string | null; deckId?: string;
   card?: AgentCardInstance | null;
   forecastCard?: AgentCardInstance | null;
-  onSaveConfiguration?: (configuration: TradingConfiguration) => void | Promise<void>;
+  onSaveConfiguration?: (configuration: TradingConfiguration) => void;
 };
 
 export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', card, forecastCard, onSaveConfiguration }: TradingUIProps) {
@@ -294,12 +253,11 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
       <nav aria-label="Trading" role="tablist" className="trading-tabs">
         <button type="button" role="tab" aria-selected={view === 'ticker'} onClick={() => { setView('ticker'); setSelectedJobId(null); }}>Add trade</button>
         <button type="button" role="tab" aria-selected={view === 'portfolio'} onClick={showPortfolio}>Portfolio</button>
-        <button type="button" role="tab" aria-selected={view === 'journal'} onClick={() => { setView('journal'); setReadRevision(value => value + 1); }}>Journal</button>
+        <button type="button" role="tab" aria-selected={view === 'journal'} onClick={() => setView('journal')}>Journal</button>
         <button type="button" role="tab" aria-selected={view === 'forecast'} onClick={() => setView('forecast')}>Forecast</button>
       </nav>
       <div className="trading-toolbar-actions">
         {view === 'portfolio' && <button type="button" style={button} onClick={() => setReadRevision(value => value + 1)}>Refresh portfolio</button>}
-        {view === 'journal' && <button type="button" style={button} onClick={() => setReadRevision(value => value + 1)}>Refresh journal</button>}
         {showingChart ? <button type="button" style={button} aria-label={fullscreen ? 'Exit Fullscreen' : 'Fullscreen'} onClick={() => setFullscreen(value => !value)}>&#9974;</button> : null}
       </div>
     </header>
@@ -325,17 +283,9 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
         </div>}
         {!showingChart && view === 'portfolio' ? <div className="grid gap-3 p-3" data-testid="trading-portfolio">
           {state?.allocation && <PortfolioAllocationPanel allocation={state.allocation} positions={state.positions}
-            onSave={onSaveConfiguration ? async policy => {
-              if (!query) throw new Error('Open the saved Trading Project before changing allocation.');
-              await onSaveConfiguration({ schemaVersion: 'trading.card.v1', trading: { ...settings, allocationPolicy: policy } });
-              const response = await applicationFetch('/api/trading/state?' + query, { credentials: 'include' });
-              if (!response.ok) throw new Error('Allocation save returned, but saved-policy readback is unavailable.');
-              const updated = await response.json() as TradingState;
-              if (!updated.allocation?.policySaved || !sameAllocationPolicy(updated.allocation.policy, policy)) {
-                throw new Error('Saved allocation differs from this submission. Refresh before making another edit.');
-              }
-              acceptSnapshot(updated);
-            } : undefined} />}
+            onSave={onSaveConfiguration ? policy => onSaveConfiguration({
+              schemaVersion: 'trading.card.v1', trading: { ...settings, allocationPolicy: policy },
+            }) : undefined} />}
           <div className="flex gap-2">
             <button type="button" style={button} aria-pressed={!history} onClick={() => setHistory(false)}>Open</button>
             <button type="button" style={button} aria-pressed={history} onClick={() => setHistory(true)}>Closed</button>
@@ -357,30 +307,34 @@ export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', 
               ['Value', state?.portfolio.portfolioValueUsd], ['Cash', state?.portfolio.cashUsd],
               ['Buying power', state?.portfolio.buyingPowerUsd], ['P/L', state?.portfolio.dailyPnlUsd],
               ['Daily equity change', state?.portfolio.dailyEquityChangeUsd],
-              ['Realized', state?.portfolio.recordedRealizedPnlUsd], ['Unrealized', state?.portfolio.totalUnrealizedPnlUsd], ['Drawdown', state?.portfolio.maxDrawdownUsd],
+              ['Unrealized', state?.portfolio.totalUnrealizedPnlUsd], ['Drawdown', state?.portfolio.maxDrawdownUsd],
             ] as const).filter(([, value]) => value != null).map(([label, value]) => <div key={label} className="rounded-xl border p-3" style={border}><span style={{ color: MUTED }}>{label}</span><div>{money(value)}</div></div>)}
           </div>
-          {state?.portfolio.closedTrades ? <div>Win rate {((state.portfolio.wins / state.portfolio.closedTrades) * 100).toFixed(1)}%</div> : null}
-          {state?.outcomePerformance && <OutcomePerformanceView data={state.outcomePerformance} />}
           {state?.portfolio.equityCurve.length ? <div className="rounded-xl border p-3" style={border}><span>Equity</span><EquityChart points={state.portfolio.equityCurve} /></div> : null}
           {card ? <dl className="trading-plan-terms">
             <div><dt>Budget</dt><dd>{money(settings.paperBudgetUsd)}</dd></div>
             <div><dt>Risk/reward</dt><dd>{settings.minimumRiskReward}</dd></div>
           </dl> : null}
-        </div> : view === 'journal' ? <div className="grid gap-3 p-3" data-testid="trading-journal">
-          {!selectedJob && state?.researchDecisions.map(decision =>
-            <JournalDecision key={decision.decisionId} decision={decision} backtests={state.backtests} />)}
-          {(selectedJob ? [selectedJob] : jobs).map(job => <article key={job.jobId} className="trading-plan">
+          {!!state?.researchDecisions.length && <details><summary>Recorded research decisions</summary>
+            {state.researchDecisions.map(decision => <DecisionEvidence key={decision.decisionId} decision={decision} backtests={state.backtests} />)}
+          </details>}
+          {!!jobs.length && <details><summary>Trade plans and evidence</summary>{jobs.map(job => <article key={job.jobId} className="trading-plan">
             <button type="button" style={button} onClick={() => openJob(job)}>{job.symbol}</button>
             <PlanTerms job={job} />
-            {job.decisions.map(decision => <JournalDecision key={decision.decisionId} decision={decision} backtests={state?.backtests || []} />)}
+            {job.decisions.map(decision => <DecisionEvidence key={decision.decisionId} decision={decision} backtests={state?.backtests || []} />)}
             {job.events.filter(event => event.kind !== 'decision').map(event => <div key={event.eventId} className="border-t py-2 mt-2" style={{ borderColor: DARK.edge }}>
               <time style={{ color: MUTED, fontSize: 11 }}>{event.createdAt ? new Date(event.createdAt).toLocaleString() : ''}</time>
               <div>{event.action}</div><p>{event.summary}</p>
             </div>)}
             {job.fills.map(fill => <div key={fill.fillId} className="py-2">{fill.side} {fill.quantity} @ {money(fill.price)}</div>)}
-          </article>)}
-        </div> : null}
+          </article>)}</details>}
+        </div> : view === 'journal' ? card?.runtime.kind === 'hermes' ? <MarkdownJournal
+          key={`${projectId}:${deckId}:${card.id}:${card.runtime.profile}`}
+          profile={card.runtime.profile} path={settings.journalPath}
+          onSelectPath={onSaveConfiguration ? journalPath => onSaveConfiguration({
+            schemaVersion: 'trading.card.v1', trading: { ...settings, journalPath },
+          }) : undefined}
+        /> : <p>Open a saved Trader Card to read its journal.</p> : null}
       </section>
       {!fullscreen && showingChart && selectedJob ? <aside aria-label="Trading controls" className="trading-controls min-h-0 overflow-y-auto border-t p-2" style={border}>
         <div data-testid="selected-trade-job" className="grid gap-2">

@@ -112,10 +112,10 @@ describe('Trading agent UI', () => {
     expect(screen.getByTestId('active-trade-job-grid')).toBeTruthy();
   });
 
-  it('keeps Portfolio charts and combines plans with their journal', async () => {
+  it('keeps Portfolio plans separate from the agent-owned Markdown journal', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => readResponse(url)));
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
-    render(<TradingUI symbol="RDW" projectId="project-one" forecastCard={trader} />);
+    render(<TradingUI symbol="RDW" projectId="project-one" card={trader} forecastCard={trader} />);
 
     fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
     await waitFor(() => expect(screen.getAllByText('$100,000.00').length).toBeGreaterThan(0));
@@ -144,8 +144,10 @@ describe('Trading agent UI', () => {
     expect(screen.getByTestId('trading-portfolio')).toBeTruthy();
     expect(screen.getByTestId('trading-candles').closest('[hidden]')).toBeTruthy();
     expect(screen.getByText('Cash')).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Journal' }));
     expect(screen.getByText('Stop at the authorized level.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Journal' }));
+    expect(screen.queryByText('Stop at the authorized level.')).toBeNull();
+    expect(screen.getByLabelText('Journal file path')).toBeTruthy();
     expect(screen.getByTestId('trading-journal')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Add trade' }));
@@ -229,31 +231,20 @@ describe('Trading agent UI', () => {
       evidence: [{ backtestId: 'quant-receipt' }, { backtestId: 'missing-receipt' }],
       missingTerms: ['Current filing'], executionRequested: false, sourceExecution: execution,
       createdAt: snapshot.observedAt,
-      journalWindowComplete: true,
-      journalEntries: [{ entry_id: 'before-one', decision_id: 'research-one', card_id: trader.id,
-        card_revision_id: 'trader-revision', phase: 'BEFORE', markdown: '# Original thesis\n\nAwait verified funding.',
-        proposal_ids: ['original', 'opposing'], assessment_ids: ['quant-assessment'], evidence: [], review: null,
-        source_execution: execution, created_at: snapshot.observedAt },
-      { entry_id: 'review-one', decision_id: 'research-one', card_id: 'learner-card',
-        card_revision_id: 'learner-revision', phase: 'REVIEW', markdown: 'Outcome still incomplete.',
-        proposal_ids: ['original', 'opposing'], assessment_ids: [], evidence: [], review: { uncertainty: 'No completed outcome' },
-        source_execution: { ...execution, profile: 'learner' }, created_at: snapshot.observedAt }],
     }], backtests: [result, { ...result, backtestId: 'uncited', bot: 'uncited_same_symbol' }] };
-    fireEvent.click(screen.getByRole('tab', { name: 'Journal' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh portfolio' }));
     await screen.findByText('Wait for the next filing before considering a position.');
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(screen.getByText(/buy_and_hold · RDW · quant-analyst/)).toBeTruthy();
     expect(screen.getByText(/Costs per side: 1 bps/)).toBeTruthy();
     expect(screen.getByText(/Data cutoff: 2026-09-01/)).toBeTruthy();
     expect(screen.getByText('Referenced backtest unavailable: missing-receipt')).toBeTruthy();
-    expect(screen.getByText(/BEFORE · trading/)).toBeTruthy();
-    expect(screen.getByText(/REVIEW · learner/)).toBeTruthy();
-    expect(screen.getByText(/Await verified funding/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Download journal .md' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Download journal .md' })).toBeNull();
     expect(screen.queryByText(/uncited_same_symbol/)).toBeNull();
     expect(screen.queryByText('Maximum loss')).toBeNull();
     expect(screen.getByRole('button', { name: 'Enter trade' }).hasAttribute('disabled')).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh journal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh portfolio' }));
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
     expect(fetcher.mock.calls.every((call: unknown[]) => !((call[1] as RequestInit)?.method))).toBe(true);
     fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));

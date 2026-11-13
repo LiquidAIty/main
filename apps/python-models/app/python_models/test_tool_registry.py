@@ -237,6 +237,8 @@ def test_forecast_market_bars_has_one_literal_trading_definition():
             "top_p": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 0.9},
             "top_k": {"type": "integer", "minimum": 0, "default": 0,
                       "description": "0 uses top-p; positive top-k replaces top-p. 1 is greedy and collapses repeated paths."},
+            "include_volatility": {"type": "boolean", "default": False,
+                "description": "Also fit bounded GARCH(1,1) and a held-out variance comparison on the same retained observations (101+ closes). Volatility only, not direction or implied volatility."},
         },
         "required": ["symbol", "timeframe"],
         "additionalProperties": False,

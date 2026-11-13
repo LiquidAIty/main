@@ -44,7 +44,8 @@ describe('Portfolio allocation controls', () => {
     expect(save).toHaveBeenCalledTimes(1);
     expect(save.mock.calls[0][0].preset).toBe('Custom');
     expect(save.mock.calls[0][0].categories[0].targetPercent).toBe(30);
-    expect(screen.getByRole('status').textContent).toContain('Waiting for saved policy readback');
+    expect(screen.queryByText(/Waiting for saved policy readback/)).toBeNull();
+    expect((screen.getByRole('button', { name: 'Edit allocation' }) as HTMLButtonElement).disabled).toBe(false);
     expect(JSON.stringify(allocation)).toBe(before);
   });
 

@@ -1,7 +1,7 @@
 // Entity: Trading
 // Relationship: Displays observed versus target Investment Category allocations and edits the user's saved Trader policy through the existing Card configuration callback, without submitting orders.
 import { useEffect, useState } from 'react';
-import { sameAllocationPolicy, type AllocationCategory, type AllocationPolicy, type PaperPosition, type PortfolioAllocation } from './tradingState';
+import type { AllocationCategory, AllocationPolicy, PaperPosition, PortfolioAllocation } from './tradingState';
 
 const COLORS = ['#dba65b', '#719bc3', '#62b4b0', '#b98cbd', '#5796ae', '#9da86a', '#ba7d74', '#8a91c9', '#677887'];
 const cash = (value: number | null) => value == null ? '—' : value.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
@@ -25,17 +25,13 @@ function AllocationPie({ label, values }: { label: string; values: number[] | nu
 export default function PortfolioAllocationPanel({ allocation, positions, onSave }: {
   allocation: PortfolioAllocation;
   positions: PaperPosition[];
-  onSave?: (policy: AllocationPolicy) => void | Promise<void>;
+  onSave?: (policy: AllocationPolicy) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(allocation.policy);
-  const [submitted, setSubmitted] = useState<AllocationPolicy | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState('');
   useEffect(() => {
     if (!editing) setDraft(allocation.policy);
-    if (submitted && sameAllocationPolicy(submitted, allocation.policy) && allocation.policySaved) setSubmitted(null);
-  }, [allocation.policyHash, allocation.policySaved, editing, submitted]);
+  }, [allocation.policy, editing]);
   const total = draft.categories.reduce((sum, row) => sum + row.targetPercent, 0);
   const valid = Math.abs(total - 100) < 0.000001 && draft.categories.every(row =>
     Number.isFinite(row.targetPercent) && row.minimumPercent >= 0 && row.minimumPercent <= row.targetPercent
@@ -49,16 +45,14 @@ export default function PortfolioAllocationPanel({ allocation, positions, onSave
     setDraft(current => ({ ...current, preset: 'Custom', categories: current.categories.map(row => row.id === id
       ? { ...row, [field]: field === 'maximumRiskPercent' && value === '' ? null : Number(value) } : row) }));
   const categoryName = (id: string) => allocation.categories.find(row => row.id === id)?.name || id;
-  const save = async () => {
-    if (!valid || !onSave || saving) return;
-    setSaving(true); setSaveError(''); setSubmitted(draft);
-    try { await onSave(draft); setEditing(false); }
-    catch (error) { setSubmitted(null); setSaveError(error instanceof Error ? error.message : 'Allocation save failed.'); }
-    finally { setSaving(false); }
+  const save = () => {
+    if (!valid || !onSave) return;
+    onSave(draft);
+    setEditing(false);
   };
   return <section aria-label="Investment Categories" className="portfolio-allocation">
     <header><strong>Investment Categories</strong>
-      {onSave && <button type="button" disabled={saving} aria-expanded={editing} onClick={() => { setDraft(allocation.policy); setSaveError(''); setEditing(!editing); }}>
+      {onSave && <button type="button" aria-expanded={editing} onClick={() => { setDraft(allocation.policy); setEditing(!editing); }}>
         {editing ? 'Cancel' : 'Edit allocation'}</button>}
     </header>
     <div className="allocation-pies">
@@ -66,19 +60,17 @@ export default function PortfolioAllocationPanel({ allocation, positions, onSave
       <AllocationPie label="Observed" values={allocation.allocationComplete ? allocation.categories.map(row => row.currentPercent!) : null} />
     </div>
     {!allocation.policySaved && <p className="allocation-note">High Options preset · not yet saved. Targets do not authorize investment.</p>}
-    {submitted && <p role="status">Allocation change submitted. Waiting for saved policy readback.</p>}
-    {saveError && <p role="alert">{saveError}</p>}
     <div className="allocation-table-wrap"><table>
       <thead><tr><th>Investment Category</th><th>Target</th><th>Observed</th>{editing && <><th>Min</th><th>Max</th><th>Risk limit</th></>}</tr></thead>
       <tbody>{draft.categories.map((row, index) => {
         const actual = allocation.categories.find(item => item.id === row.id);
         return <tr key={row.id}>
           <th scope="row"><span aria-hidden="true" style={{ color: COLORS[index] }}>● </span>{categoryName(row.id)}</th>
-          <td>{editing ? <input disabled={saving} aria-label={`${categoryName(row.id)} target percent`} type="number" min="0" max="100" step="0.5"
+          <td>{editing ? <input aria-label={`${categoryName(row.id)} target percent`} type="number" min="0" max="100" step="0.5"
             value={row.targetPercent} onChange={event => update(row.id, 'targetPercent', event.target.value)} /> : percent(row.targetPercent)}</td>
           <td title={cash(actual?.currentValueUsd ?? null)}>{percent(actual?.currentPercent ?? null)}</td>
           {editing && (['minimumPercent', 'maximumPercent', 'maximumRiskPercent'] as const).map(field => <td key={field}>
-            <input disabled={saving} aria-label={`${categoryName(row.id)} ${field}`} type="number" min="0" max="100" step="0.5"
+            <input aria-label={`${categoryName(row.id)} ${field}`} type="number" min="0" max="100" step="0.5"
               value={row[field] ?? ''} placeholder={field === 'maximumRiskPercent' ? 'Unset' : ''}
               onChange={event => update(row.id, field, event.target.value)} /></td>)}
         </tr>;
@@ -92,15 +84,15 @@ export default function PortfolioAllocationPanel({ allocation, positions, onSave
       <details><summary>Risk limits and holdings</summary><div className="allocation-fields">
         {([['minimumLiquidReservePercent', 'Minimum liquid reserve %'], ['maximumPositionLossPercent', 'Maximum position loss %'],
           ['maximumPositionWeightPercent', 'Maximum position allocation %']] as const).map(([field, label]) => <label key={field}>{label}
-          <input disabled={saving} type="number" min="0" max="100" step="0.5" aria-label={label} value={draft[field] ?? ''} placeholder="Unset"
+          <input type="number" min="0" max="100" step="0.5" aria-label={label} value={draft[field] ?? ''} placeholder="Unset"
             onChange={event => setDraft(current => ({ ...current, preset: 'Custom', [field]: event.target.value === '' && field !== 'minimumLiquidReservePercent' ? null : Number(event.target.value) }))} /></label>)}
         <fieldset><legend>Permitted instruments</legend>{['equity', 'etf', 'option'].map(instrument => <label key={instrument}>
-          <input disabled={saving} type="checkbox" checked={draft.permittedInstrumentTypes.includes(instrument)} onChange={event => setDraft(current => ({
+          <input type="checkbox" checked={draft.permittedInstrumentTypes.includes(instrument)} onChange={event => setDraft(current => ({
             ...current, preset: 'Custom', permittedInstrumentTypes: event.target.checked
               ? [...current.permittedInstrumentTypes, instrument] : current.permittedInstrumentTypes.filter(item => item !== instrument),
           }))} />{instrument === 'etf' ? 'ETF' : instrument === 'equity' ? 'Equity' : 'Option'}</label>)}</fieldset>
         {positions.map(position => { const id = position.instrumentId || position.symbol;
-          return <label key={id}>{position.symbol}<select disabled={saving} aria-label={`${position.symbol} Investment Category`}
+          return <label key={id}>{position.symbol}<select aria-label={`${position.symbol} Investment Category`}
             value={draft.positionCategories[id] || ''} onChange={event => setDraft(current => {
               const assigned = { ...current.positionCategories };
               if (event.target.value) assigned[id] = event.target.value; else delete assigned[id];
@@ -109,7 +101,7 @@ export default function PortfolioAllocationPanel({ allocation, positions, onSave
               .map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>;
         })}
       </div></details>
-      <button type="submit" disabled={!valid || saving}>{saving ? 'Saving…' : 'Apply allocation'}</button>
+      <button type="submit" disabled={!valid}>Apply allocation</button>
     </form>}
     <details><summary>Capital and allocation headroom</summary>
       <dl className="trading-plan-terms">{([

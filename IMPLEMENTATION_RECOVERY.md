@@ -9,11 +9,12 @@ source, but must not stage, commit or push; notify the user when a checkpoint is
 
 ## Active scope
 
-Finish the existing durable Trading company's approved missing code first. The current
-owner instruction prohibits tests, builds, typechecks, experimental agent turns, restarts,
-Oracle deployment and Git operations during this implementation phase. After source
-completion, run focused checks and the real local trial, then STOP for the owner's Git
-save. Deploy the same application to Oracle only after the owner confirms that save.
+Finish the bounded cleanup of the existing durable Trading team. The latest owner direction
+removes compulsory database journals and review workflows, keeps useful Hermes/LumiBot tools,
+and defers native learning integration and substantial custom work. Prompt Blocks are the
+source of generated SOUL; never edit SOUL directly. Verify tools before new assignments.
+The bounded source/configuration changes are now in local verification. Stop for the owner's
+Git save after acceptance; no Git operations or Oracle deployment are authorized here.
 Use **Investment Category** and **Allocation Lane**, not the old portfolio-group term.
 Retain Hermes, its TaskGraph and permanent blue-wire authority. No new runtime, database,
 Gateway, permanent specialist beyond Research/Learner, broker orders, or state wipes.
@@ -22,8 +23,8 @@ The final specialists are Analyst, Research, Designer, Contrarian, Quant, Trader
 WorldView and Predictor. Keep Main/ThinkGraph/KnowGraph/Builder and one user Card position.
 The rolling portfolio is the anchor. User allocation targets total 100%; the illustrative
 High Options preset targets 25% Options without requiring investment or permitting that loss.
-Finish current Card/tool integration before expanding numerical capabilities. GARCH is the
-only added forecast model; evaluate a small classical optimizer behind `portfolio.optimize`.
+Finish current Card/tool integration before expanding numerical capabilities. Existing
+GARCH/classical-optimizer source is preserved, but further numerical work is deferred.
 No quantum implementation, extra forecast model or autonomous order authority is approved.
 
 ## Current implementation reconciliation — November 13
@@ -34,36 +35,42 @@ tests are not proof of the currently untested changes.
 | Requirement | Existing owner | Status and exact remaining proof |
 | --- | --- | --- |
 | Original team and wires | Saved Cards / Hermes profiles | Retained 15 Cards, 14 wires; Main has 14 targets. Missing specialist Bot metadata was configured through supported Hermes operations without recreating profiles. Full-team live proof remains incomplete. |
-| Learner / Research / Designer tools | Existing on-Card app-tool connections | Connections read back with 10 / 12 / 20 selected tools. Native connection probes completed before the testing pause. Do not redo setup. |
+| Learner / Research / Designer tools | Existing saved Cards and Hermes connections | Learner's 10 Trading-specific app grants were removed; its unused app MCP connection is disabled. Research's 12 and Designer's 20 useful app grants remain. No arbitrary tool-count limit. |
 | WorldView mapping | Saved WorldView Card/profile | Corrected only the stale WorldSignals selections to `worldview.read` and `worldview.action`; no globe rewrite. |
-| Analyst / Contrarian / Quant / Trader evidence grants | Existing saved Card configuration | Added only the existing operations each role needed to retain/read its work and journal. Effective saved includes read back. No order authority. |
+| Analyst / Contrarian / Quant / Trader evidence grants | Existing saved Card configuration | Optional data/calculation operations remain Card-scoped. Trader's database-journal grant was removed and its approved native File Operations enabled. Saved includes match; no order authority. |
 | Main chat / KnowGraph / ThinkGraph | Existing UI and Hermes Bot Mode | The draft-mention profile switch was removed. Before the pause, Main -> KnowGraph returned a real sourced result with Main history intact, and automatic ThinkGraph settled that exchange. No ThinkGraph runtime rewrite. |
-| Full Trading handoffs | Actual saved specialists and retained Hermes execution | PARTIAL. The earlier bounded trial returned a real Trader portfolio read, but the later Magnetic handoff hit the existing message-hop limit. No hop-limit or Builder/Team/Magnetic architecture change was made; the full trial has not passed. |
+| Full Trading handoffs | Actual saved specialists and retained Hermes execution | PARTIAL. Main reached Trader, which read portfolio state, retained decision evidence and its backtest; its following GPT-account model request failed with HTTP 400 before a journal result was verified. Main then reached Learner and received a real bounded review without a database review record. The earlier Magnetic trial hit the existing message-hop limit. No session wipe, model switch, hop-limit or Builder/Team/Magnetic architecture change was made. |
 | Document evidence promotion | Existing document reader and Graphiti add-Know boundary | Source supports an exact retained passage reference, Project scope, matching evidence text/source and canonical provenance. Loaded sourced-Know proof remains unrun. |
-| Designer / Contrarian / Quant comparison | Trading proposal and assessment store | Existing proposal/inversion/independent assessment owners retained. Source adds explicit portfolio effects and reusable evidence/lesson reads. Pairwise live trial remains unrun. |
-| Allocation save/readback | Existing Card save and Trading UI | Source now awaits persistence and exact policy readback before claiming saved. Interactive proof remains unrun. |
-| Markdown journal | Existing Trading journal | Original BEFORE remains immutable; reviews and later entries are separate. WAIT can retain an honest unfunded narrative. No chat transcript substitution. |
-| Learner review | Main `message_agent`, Learner's saved tools, Trading journal | **ON DEMAND for V1.** Main's existing custom skill now requests bounded reviews of open/completed, rejected, WAIT, historical and SHADOW cases. No closure trigger, poller, scheduler, dispatcher or new runtime. Exact retries reuse saved reviews. |
-| Reviews before a Trader decision | Existing Trading journal | Owner approved direct proposal reviews. Source migration `065_trading_on_demand_reviews.sql` allows evidence-linked REVIEW entries without inventing a Trader decision; other journal phases still require one. Migration is prepared and registered, **not applied** in this phase. Exact job/journal/outcome reads extend the existing evidence operation; no new Learner grant. |
-| Learning and later retrieval | Learner's own Hermes memory/skills; shared attributed journal reviews | Learner selects built-in memory/skills for Hermes Learning Graph; inactive Holographic files remain untouched. Other Cards are not reconfigured. Review persistence and actual native learning writes are separate proofs, both still required for this new flow. Quant can retrieve shared reviews without private profile access. |
-| Broker evidence | Existing read-only LumiBot/Alpaca observation and Trading journal | Source can reconcile bounded exact US-stock paper-job orders on request into one retained outcome per job. Missing/partial/unsupported evidence is not confirmation. This is **not** a review trigger, order capability or launch requirement for on-demand review. |
-| Numerical comparisons | Existing forecast/portfolio tools | Bounded GARCH and classical stock-allocation source added. Historical variance is not directional accuracy; unsupported saved loss limits remain explicit. New `portfolio.optimize` / `trading.record_outcome` operations are not yet loaded or selected on Trader; activation waits for the permitted reload/check phase. |
-| Chart / performance | Existing Trading chart and read model | Optional observed-candle VWAP, approximate side volume profile, levels/patterns, volatility detail and reconciled-outcome summaries are source-only additions. No chart move or extra chart. Build/visual proof pending. |
+| Designer / Contrarian / Quant comparison | Optional Trading proposal and assessment data | Existing proposal/inversion/independent assessment owners remain. Corrected saved Prompt Blocks permit useful replies without prerequisite IDs or database writes. Native Bot Mode owns handoffs; pairwise live trial remains unproven. |
+| Allocation save | Existing Card save and Trading UI | Uses the ordinary saved-Card configuration callback. The added TypeScript save/reread/compare path and waiting-state latch are removed by the owner's correction. Python remains the authoritative validator; interactive persistence proof remains unrun. |
+| Markdown journal | Trader's ordinary file; Hermes file API | Trader's saved Prompt Blocks/skill leave content and timing to Trader. The rebuilt Journal tab rendered the labelled native-file qualification artifact through the real file API; that temporary selection was cleared and the empty path read back. This proves file rendering, not Trader authorship. No phases, database-generated journal, transcript substitution or TS save/readback gate. A completed Trader-authored journal remains unverified after its provider error. |
+| Learner review | Main `message_agent` and Learner's own Hermes profile | Real Main-to-Learner review completed on the local GPT account and returned through Main. It separated successful retrieval from failed continuation and unknown file status without retrying Trader or creating a review record. This proves on-demand analysis, not a native learning write or the deferred `/refine` integration. |
+| Rejected journal/review implementation | Removed source paths | `trading_journal.py`, `trading_outcomes.py`, their published operations/callers, and unapplied migration 065 are removed. Historical applied schema/data are not reset. No replacement review store. |
+| Native learning integration | Hermes `/refine` and actual Learning Graph | Explicitly deferred by the owner. No adapter, batch controller or new graph was implemented. Existing per-profile memory/skills remain; SOUL is generated only from Prompt Blocks. |
+| Broker evidence | Existing read-only LumiBot/Alpaca observations | Account, position, order and portfolio observations remain. Removed the unused exact-order helper belonging only to the rejected outcome writer. An EXIT recommendation is not confirmed execution. |
+| Numerical comparisons | Existing forecast/portfolio tools | Existing bounded GARCH and classical comparison source is preserved. Further implementation/activation is deferred; no new numerical framework or order permission. |
+| Chart / performance | Existing Trading chart and read model | Retained observed-candle/forecast/portfolio displays. Removed abandoned database-outcome summaries and the UI's unsupported recorded-result win-rate presentation; genuine broker equity and drawdown remain. |
 | Card model controls | Existing Card editor | Provider/account chooser removed; saved provider/access settings preserved. Local GPT / Oracle server-owned OpenRouter remains the environment rule, not a per-turn rewrite. Focused UI tests ran before the pause; later code is untested. |
 
-Latest narrow saved procedure update: Main uses ordinary Bot Mode to call Learner when
-review is requested or useful. Main's original skill text was preserved; SOUL and model/
-configuration files read back unchanged. No Learner trial was sent. No agent, session,
-graph, credential or wire was recreated. No broker order was sent.
-
-Python rails restart/reload required: **yes**, after the implementation gate permits it.
-The source-only database addition must also pass focused tests before its normal backend
-startup application. No migration, restart or deployment is performed by this record.
+Saved-state readback confirms all 15 Bot registrations, 14 wires, Main's 14 targets and
+Magnetic's 10 blue targets. All SOUL files exactly match their saved prompts. The affected
+specialist Prompt Blocks and Main/Trader skills were corrected through the existing UI.
+No profile, credential, session or graph was recreated, and no broker order was submitted.
+Both builds and application/specification typechecks pass. The full Python-model suite
+passes 615 tests with 21 opt-in skips; those 21 isolated PostgreSQL tests pass separately.
+The full UI suite has 565 passes, 9 failures in untouched default-Project/graph/chat tests,
+and 1 skip; the focused Trading/Card suite passes 54. These are not live-agent proof.
+After removing the rejected TS readback path, its 21 focused checks, all application/spec
+typechecks and the client build pass. Direct Know search failed in Graphiti's existing
+reranker when returned scores did not match passages; an exact-Entity read timed out.
+These tool failures remain visible and are not treated as successful retrieval or repaired
+by another search implementation. Vendored Hermes/Graphiti and provider choices are unchanged.
 
 ## Deferred, preserved ideas
 
-- Automatic post-exit Learner review: deferred until after the basic Oracle demo. Main's
-  on-demand Bot Mode call is the V1 path, not a temporary second runtime.
+- Native `/refine` adapter, Learning Graph integration, automatic post-exit review and
+  substantial custom numerical/team-data work: deferred. Ordinary Main-to-Learner Bot Mode
+  remains the existing review path, not a second learning runtime.
 - Customer accounts, editable user Project copies, populated-example copying/sharing,
   profile cloning and Nous production-provider migration: post-demo; do not revive the
   rejected hosted-authentication/profile-publication implementation.
@@ -238,10 +245,11 @@ deployment document records the Linux binary/index prerequisite.
 
 ## Exact next action
 
-Finish the remaining source-completeness review under the implementation-only instruction.
-Do not redo completed connections or run a test/build early. Then perform focused tests,
-typechecks/builds and real saved-Card local acceptance, including on-demand Learner review,
-native learning readback and later Quant lesson retrieval. No orders are authorized.
+Finish loaded local acceptance of the corrected saved Cards, ordinary handoffs, Markdown
+journal and portfolio persistence. Verification is an operator check, not a TypeScript execution gate. Do not redo completed tool connections or restart in
+loops. Native learning integration and complex additions remain deferred. Keep the wider
+suite's failures visible rather than changing unrelated graph/runtime behavior. No orders
+are authorized.
 Stop for the owner's personal Git checkpoint after acceptance; Oracle comes only afterward.
 Tracked Engraphis SQLite/SHM/WAL files are currently modified by runtime activity; preserve
 them locally and exclude them from the user's source checkpoint.

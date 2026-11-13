@@ -148,6 +148,7 @@ def normalize_trading_configuration(value: Any) -> dict[str, Any]:
         "marketSession": "regular",
         "strategyParameters": {},
         "allocationPolicy": None,
+        "journalPath": "",
     }
     if not required.issubset(settings) or set(settings) - required - set(optional_defaults):
         raise TradingBoundaryError("trading_configuration_fields_invalid")
@@ -203,6 +204,12 @@ def normalize_trading_configuration(value: Any) -> dict[str, Any]:
     ):
         raise TradingBoundaryError("trading_configuration_strategyParameters_invalid")
     normalized["strategyParameters"] = dict(strategy_parameters)
+    if "journalPath" in settings:
+        path = settings["journalPath"]
+        if (not isinstance(path, str) or len(path) > 4096 or "\x00" in path
+                or (path.strip() and not path.strip().lower().endswith((".md", ".markdown")))):
+            raise TradingBoundaryError("trading_configuration_journalPath_invalid")
+        normalized["journalPath"] = path.strip()
     if settings.get("allocationPolicy") is not None:
         from app.python_models.portfolio_policy import normalize_allocation_policy
         normalized["allocationPolicy"] = normalize_allocation_policy(settings["allocationPolicy"])

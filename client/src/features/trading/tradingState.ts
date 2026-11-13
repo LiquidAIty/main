@@ -46,6 +46,7 @@ export type TradingSettings = {
   marketSession: 'regular' | 'extended';
   strategyParameters: Record<string, string | number | boolean>;
   allocationPolicy?: AllocationPolicy;
+  journalPath?: string;
 };
 
 export type AllocationCategory = {
@@ -66,19 +67,6 @@ export type AllocationPolicy = {
   maximumPositionLossPercent: number | null;
   maximumPositionWeightPercent: number | null;
 };
-
-export function sameAllocationPolicy(left: AllocationPolicy, right: AllocationPolicy): boolean {
-  const fields = ['schemaVersion', 'preset', 'minimumLiquidReservePercent', 'maximumPositionLossPercent', 'maximumPositionWeightPercent'] as const;
-  const categoryFields = ['targetPercent', 'minimumPercent', 'maximumPercent', 'maximumRiskPercent'] as const;
-  return fields.every(field => left[field] === right[field])
-    && left.categories.length === right.categories.length
-    && left.categories.every(row => {
-      const other = right.categories.find(item => item.id === row.id);
-      return other && categoryFields.every(field => row[field] === other[field]);
-    })
-    && [...left.permittedInstrumentTypes].sort().join('|') === [...right.permittedInstrumentTypes].sort().join('|')
-    && JSON.stringify(Object.entries(left.positionCategories).sort()) === JSON.stringify(Object.entries(right.positionCategories).sort());
-}
 
 export type PortfolioAllocation = {
   policy: AllocationPolicy;
@@ -125,23 +113,6 @@ export type TradeDecision = {
   executionRequested: false;
   sourceExecution: HermesExecution;
   createdAt: string;
-  journalEntries?: TradingJournalEntry[];
-  journalWindowComplete?: boolean;
-};
-
-export type TradingJournalEntry = {
-  entry_id: string;
-  decision_id: string;
-  card_id: string;
-  card_revision_id: string;
-  source_execution: HermesExecution;
-  phase: 'BEFORE' | 'DURING' | 'AFTER' | 'CORRECTION' | 'REVIEW';
-  markdown: string;
-  proposal_ids: string[];
-  assessment_ids: string[];
-  evidence: Array<Record<string, unknown>>;
-  review: Record<string, unknown> | null;
-  created_at: string;
 };
 
 export type HermesExecution = {
@@ -323,19 +294,6 @@ export type EquityPoint = {
   drawdownPercent: number;
 };
 
-export type OutcomePerformanceSummary = {
-  closures: number; grossPnlUsd: number | null; grossPositive: number; grossNegative: number;
-  grossFlat: number; netKnown: number; netPnlUsd: number | null; netWins: number; netLosses: number;
-  closedOutcomeGrossDrawdownUsd: number | null;
-};
-
-export type OutcomePerformance = {
-  kind: 'PAPER'; summary: OutcomePerformanceSummary;
-  groups: Record<'allocationLane' | 'strategy' | 'market' | 'sector', Array<OutcomePerformanceSummary & { label: string }>>;
-  participation: Array<{ cardId: string; title: string; reviewedTrailCount: number }>;
-  outcomeEntryIds: string[]; windowComplete: boolean; limitations: string[];
-};
-
 export type TradingState = {
   cardId: string;
   paperOnly: true;
@@ -345,7 +303,6 @@ export type TradingState = {
   researchDecisions: TradeDecision[];
   backtests: TradingBacktest[];
   allocation?: PortfolioAllocation;
-  outcomePerformance?: OutcomePerformance;
   portfolio: {
     portfolioValueUsd: number | null;
     cashUsd: number | null;
@@ -479,6 +436,7 @@ export function readTradingConfiguration(value: unknown): TradingConfiguration {
       ...(trading.allocationPolicy && typeof trading.allocationPolicy === 'object'
         && !Array.isArray(trading.allocationPolicy)
         ? { allocationPolicy: trading.allocationPolicy as AllocationPolicy } : {}),
+      ...(typeof trading.journalPath === 'string' ? { journalPath: trading.journalPath } : {}),
     },
   };
 }

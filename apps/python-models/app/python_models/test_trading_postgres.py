@@ -4,7 +4,7 @@ Run with TRADING_POSTGRES_TESTS=1 and the normal development DATABASE_URL.
 No product data is copied; model and broker execution are outside this suite.
 """
 # Entity: Trading
-# Relationship: Exercises journal migrations, least-privilege writes, concurrent retries, scope isolation, and retained backtest references in an isolated real PostgreSQL database.
+# Relationship: Exercises optional Trading-data migrations, least-privilege writes, concurrent retries, scope isolation and retained backtest references in an isolated real PostgreSQL database.
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -62,7 +62,7 @@ def database():
                 owner.execute(sql.SQL('GRANT INSERT, UPDATE ON ag_catalog.{} TO {}').format(
                     sql.Identifier(table), sql.Identifier(role)))
             owner.execute(sql.SQL('GRANT INSERT ON ag_catalog.trading_decisions TO {}').format(sql.Identifier(role)))
-            for table in ['trading_proposals', 'trading_assessments', 'trading_journal_entries']:
+            for table in ['trading_proposals', 'trading_assessments']:
                 owner.execute(sql.SQL('GRANT INSERT ON ag_catalog.{} TO {}').format(sql.Identifier(table), sql.Identifier(role)))
         yield params, role
     finally:

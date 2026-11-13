@@ -208,7 +208,7 @@ def record_trade_decision(
             from app.python_models.trading_evidence import validate_receipt_references
             validate_receipt_references(cursor, project_id, deck_id,
                 [item for item in evidence if any(field in item for field in
-                 ("forecastId", "proposalId", "assessmentId", "journalEntryId", "outcomeEntryId"))])
+                 ("forecastId", "proposalId", "assessmentId"))])
             cursor.execute(
                 """
                 INSERT INTO ag_catalog.trading_decisions (
@@ -352,7 +352,7 @@ def _read_trading_history(
             )
             for row in cursor.fetchall():
                 interventions[str(row["job_id"])].append(_public_intervention(dict(row)))
-        # Resolve only evidence actually cited by this Card's journal; keep the
+        # Resolve only evidence actually cited by this Card's decisions; keep the
         # original producing Card and execution reference on each receipt.
         cited = {str(item['backtestId']) for decision in
                  research + [entry for entries in decisions.values() for entry in entries]
@@ -366,16 +366,6 @@ def _read_trading_history(
                 (project_id, deck_id, list(cited)),
             )
             backtests = [_public_backtest(row) for row in cursor.fetchall()]
-        from app.python_models.trading_journal import read_journal_entries, outcome_performance
-        allocation_context["outcomePerformance"] = outcome_performance(cursor, project_id, deck_id, card_id)
-        visible_decisions = research + [entry for entries in decisions.values() for entry in entries]
-        journal = read_journal_entries(cursor, project_id, deck_id,
-                                       [entry["decisionId"] for entry in visible_decisions])
-        for entry in visible_decisions:
-            attached = [item for item in journal if item["decision_id"] == entry["decisionId"]]
-            if attached:
-                entry["journalEntries"] = sorted(attached, key=lambda item: (item["created_at"], item["entry_id"]))
-                entry["journalWindowComplete"] = len(journal) < 200
     return jobs, decisions, interventions, research, backtests, allocation_context
 
 
@@ -504,7 +494,6 @@ def read_trading_state(
         "researchDecisions": research,
         "backtests": backtests,
         "allocation": allocation,
-        "outcomePerformance": allocation_context["outcomePerformance"],
         "portfolio": {
             **broker_state["account"],
             "realizedPnlUsd": recorded_realized,

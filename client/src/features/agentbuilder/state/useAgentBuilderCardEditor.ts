@@ -187,7 +187,7 @@ export default function useAgentBuilderCardEditor({
   );
 
   const handleSaveCardConfiguration = useCallback(
-    (cardId: string, configuration: Record<string, unknown>, waitForPersistence = false) => {
+    (cardId: string, configuration: Record<string, unknown>) => {
       recordDeckWriteReason('card-subsystem-configuration');
       const update = (currentDeck: DeckDocument): DeckDocument => ({
         ...currentDeck,
@@ -203,12 +203,8 @@ export default function useAgentBuilderCardEditor({
           : node),
       });
       setDeck(update);
-      if (waitForPersistence) {
-        const document = update(deck);
-        return persistDeck(prepareDeckForCardSave ? prepareDeckForCardSave(document, cardId) : document);
-      }
     },
-    [deck, persistDeck, prepareDeckForCardSave, recordDeckWriteReason, setDeck],
+    [recordDeckWriteReason, setDeck],
   );
 
   return {

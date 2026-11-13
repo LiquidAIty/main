@@ -1532,7 +1532,7 @@ export default function AgentBuilder({ embedded = false }: { embedded?: boolean 
           deckId={BUILDER_DECK_ID}
           card={tradingCard}
           forecastCard={forecastCard}
-          onSaveConfiguration={tradingCard ? configuration => handleSaveCardConfiguration(tradingCard.id, configuration, true) : undefined}
+          onSaveConfiguration={tradingCard ? configuration => handleSaveCardConfiguration(tradingCard.id, configuration) : undefined}
         />
       }
       worldviewSurface={
