@@ -159,8 +159,10 @@ def validate_receipt_references(cursor, project_id, deck_id, references):
                 from app.python_models.trading_backtest import _public_backtest
                 receipts.append({"kind": "BACKTEST", "receipt": _public_backtest(row)})
             elif field == "forecastId":
+                from app.python_models.trading_forecast_store import read_comparisons
                 receipts.append({"kind": "FORECAST", "producer_card_id": row["card_id"],
-                                 "card_revision_id": str(row["card_revision_id"]), "receipt": row["payload"]})
+                                 "card_revision_id": str(row["card_revision_id"]), "receipt": row["payload"],
+                                 "comparisonHistory": read_comparisons(project_id, deck_id, row["card_id"], reference)})
             elif field == "assessmentId":
                 receipts.append({"kind": "ASSESSMENT", "receipt": public_record(row)})
             elif field == "jobId":
@@ -221,10 +223,10 @@ def record_assessment(*, project_id, deck_id, card_id, source_execution, candida
 
 
 def read_evidence(*, project_id, deck_id, card_id, proposal_id=None, decision_id=None,
-                  assessment_id=None, job_id=None, candidate_id=None, underlying=None,
+                  assessment_id=None, job_id=None, forecast_id=None, candidate_id=None, underlying=None,
                   asset_class=None, limit=50, offset=0):
     book = bool(candidate_id or underlying)
-    if sum(map(bool, (proposal_id, decision_id, assessment_id, job_id, book))) != 1:
+    if sum(map(bool, (proposal_id, decision_id, assessment_id, job_id, forecast_id, book))) != 1:
         raise TradingBoundaryError("trading_evidence_choose_one_source")
     if asset_class not in {None, "equity", "option", "future", "forex", "crypto", "prediction_market"}:
         raise TradingBoundaryError("trading_evidence_asset_class_invalid")
@@ -234,6 +236,8 @@ def read_evidence(*, project_id, deck_id, card_id, proposal_id=None, decision_id
         raise TradingBoundaryError("trading_evidence_page_invalid")
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         require_evidence_card(cursor, project_id, deck_id, card_id, "trading.read_evidence")
+        if forecast_id:
+            return {"receipts": validate_receipt_references(cursor, project_id, deck_id, [{"forecastId": forecast_id}])}
         if assessment_id:
             cursor.execute("""SELECT * FROM ag_catalog.trading_assessments
                 WHERE project_id=%s AND deck_id=%s AND assessment_id=%s""",

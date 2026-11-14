@@ -44,6 +44,18 @@ async function serve(
 }
 
 describe('authenticated Trading presentation transport', () => {
+  it('retains an explicit comparison only for an owned Project and forwards no supplied result', async () => {
+    const { base, requestRails } = await serve();
+    const body = { projectId: 'project-1', deckId: 'deck', cardId: 'trader', forecastId: 'forecast-1' };
+    const request = { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, metrics: { invented: true } }) };
+    expect((await fetch(base + '/forecasts/compare', request)).status).toBe(200);
+    expect(requestRails).toHaveBeenCalledWith('/trading/forecasts/compare', expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(String(requestRails.mock.calls[0][1]?.body))).toEqual(body);
+    vi.mocked(requireOwnedProject).mockImplementationOnce(async (_req, res) => { res.status(403).json({ error: 'forbidden' }); return null; });
+    expect((await fetch(base + '/forecasts/compare', request)).status).toBe(403);
+    expect(requestRails).toHaveBeenCalledTimes(1);
+  });
   it('reads chart history for the exact forecast Card and rejects another Project before fetching data', async () => {
     const { base, requestRails } = await serve();
     const path = '/forecast/history?projectId=project-1&deckId=deck_builder&cardId=quant&symbol=SPY&timeframe=1Hour';

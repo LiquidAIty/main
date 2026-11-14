@@ -3,7 +3,7 @@
 # Relationship: This file publishes the explicit grantable operation definitions, schemas, access modes, annotations, and injected scope for Card and topology capabilities.
 #
 # Entity: AgentGraph
-# Relationship: This file defines the bounded Project-scoped AgentGraph inspection operation without exposing prompts or model input.
+# Relationship: Composes bounded Project-scoped AgentGraph inspection and optional shared-record operations without exposing prompts or controlling execution.
 #
 # Entity: Saved Cards
 # Relationship: This file defines explicit operations for inspecting, creating, and revision-checking configuration changes to saved Cards without running them.
@@ -32,7 +32,9 @@ from app.saved_card_operation_schema import saved_card_operation_schema
 def agentgraph_operation_definitions(
     external: frozenset[str],
 ) -> list[OperationDefinition]:
+    from app.python_models.agentgraph_record_operations import record_operation_definitions
     return [
+        *record_operation_definitions(),
         OperationDefinition(
             canonical_id="agentgraph.inspect",
             title="Inspect AgentGraph",

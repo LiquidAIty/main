@@ -1,6 +1,6 @@
 /**
  * Entity: Application Startup
- * Relationship: This file verifies that backend startup applies the required schema ledger transactionally, preserves applied migration evidence, and stays closed when migration work fails.
+ * Relationship: Verifies required migration integrity and independent optional-storage failure without making shared records an application startup gate.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -96,6 +96,8 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '062_trading_forecasts.sql', applied: true }),
       expect.objectContaining({ filename: '063_trading_hermes_evidence.sql', applied: true }),
       expect.objectContaining({ filename: '064_trading_proposal_evidence.sql', applied: true }),
+      expect.objectContaining({ filename: '065_optional_agentgraph_records.sql', applied: true }),
+      expect.objectContaining({ filename: '066_optional_forecast_comparisons.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -414,8 +416,10 @@ describe('canonical backend migrations', () => {
       '062_trading_forecasts.sql',
       '063_trading_hermes_evidence.sql',
       '064_trading_proposal_evidence.sql',
+      '065_optional_agentgraph_records.sql',
+      '066_optional_forecast_comparisons.sql',
     ]);
-    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 11);
+    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 13);
   });
 
   it('adds Card Run selection and usage fields without another metrics store', async () => {
@@ -556,6 +560,37 @@ describe('canonical backend migrations', () => {
       'backend_migration_failed:025_async_kanban_card_runs.sql:boom',
     );
     expect(listen).not.toHaveBeenCalled();
+  });
+
+  it('reports an optional shared-record migration failure without blocking ordinary startup', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = fakeClient();
+    const listen = vi.fn(async () => 'listening');
+    let result: Awaited<ReturnType<typeof applyBackendMigrations>> = [];
+    try {
+      const migrate = async () => {
+        result = await applyBackendMigrations({ client: client as any,
+          readMigration: async filename => {
+            if (filename === '065_optional_agentgraph_records.sql') throw new Error('optional file unavailable');
+            return migration;
+          } });
+      };
+      await expect(listenAfterRequiredMigrations(listen, migrate)).resolves.toBe('listening');
+      expect(listen).toHaveBeenCalledOnce();
+      expect(result.find(entry => entry.filename === '065_optional_agentgraph_records.sql'))
+        .toMatchObject({ applied: false, unavailable: true });
+      expect(result.at(-1)).toMatchObject({ filename: '066_optional_forecast_comparisons.sql', applied: true });
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('ordinary application startup continues'));
+    } finally { warning.mockRestore(); }
+  });
+
+  it('keeps optional publications append-only and unrelated to runtime jobs or journals', async () => {
+    const source = await readFile(migrationPath('065_optional_agentgraph_records.sql'), 'utf8');
+    expect(source).toContain('agent_records_immutable');
+    expect(source).toContain('source_execution IS NULL');
+    expect(source).toContain('REFERENCES ag_catalog.agent_records(project_id, deck_id, record_id)');
+    expect(source).not.toMatch(/REFERENCES\s+\S*(agent_runs|trading_jobs|journal)/i);
+    expect(source).not.toMatch(/\bDROP\s+(TABLE|SCHEMA|DATABASE)/i);
   });
 
   it('waits through PostgreSQL crash recovery before opening backend readiness', async () => {

@@ -77,6 +77,14 @@ KnowGraph work. If it does not produce enough useful “Hermes learns” behavio
 evidence. Do not pre-emptively restore Markdown memory, automatic review, curator work, auto-skill
 creation, or a Learning Graph UI.
 
+## Proposal: optional Card encrypted-reasoning support
+
+This is a possible future idea, **not approved for implementation**. Any Card-facing controls would
+depend on demonstrated provider/model support and a separate owner-approved proposal. No controls,
+settings, reasoning-state storage, replay adapters, provider framework, or Jev selection logic may be
+added under the current Trading task. Existing supported Hermes internals remain unchanged except
+for a separately justified compatibility repair; this proposal does not authorize such a change.
+
 ## Delegation depth
 
 Launch permits narrowed sequential descendants within Magnetic and depth-one AutoTeam workers.
@@ -94,6 +102,15 @@ when voice is unavailable. No voice-specific session owner or transport may be i
 A compact truthful tool-call indicator on Card faces may be useful after real multi-agent runs. It must
 come from Hermes events/receipts, not planned tools or prompt mentions, and must not turn the Canvas into
 a second task board.
+
+## One-second code-action objective
+
+The owner's future performance objective is a one-second response for code-driven application
+actions. Measure cold and warm startup, authorization, database retrieval, graph ranking, transport,
+and provider/model time separately before proposing optimizations. The current KnowGraph warm ranked
+read measured 4.52 seconds; this is not acceptance of that latency as the target. Performance changes
+require a separately approved proposal and must not delay the current Trading demo or weaken correct
+ranking, provenance, tool authority, or truthful completion reporting.
 
 ## Development toolchain maintenance
 
@@ -127,6 +144,23 @@ Trading is the retained active saved development Project. Domain-specific market
 ShadowBroker, WorldView, and other controlled imports keep their own provider/runtime contracts. Core
 plugin work must not reset their data, rewrite their UI, or use them as a reason to restore a generic
 parallel runtime.
+
+## Attachment destinations and source navigation — proposal only
+
+The current PDF plus control imports a document into Project passage search; images attach to the
+conversation. A later compact attachment menu could distinguish image attachment, PDF-to-chat, and
+PDF-to-Project-knowledge. A document chip could show indexing status, source/page identity and explicit
+Research or KnowGraph actions. PDF-to-chat must first prove the existing Hermes/provider attachment
+contract; it must never silently import to RAG or pretend extracted text is the original PDF.
+No automatic whole-document Know promotion, OCR/hybrid search, version browser, page-image pipeline,
+new citation store, or new menu/chip is authorized by this proposal.
+
+## On-demand journal reader — proposal only
+
+Main could later receive a narrowly scoped read-only tool for the saved Trader Markdown journal,
+returning requested excerpts rather than loading the whole file into every conversation. Trader still
+owns journal writing and interpretation through ordinary Hermes Bot Mode. No database journal,
+general filesystem grant to Main, automatic publication, or new journal service is implied.
 
 ## Cleanup decisions intentionally deferred
 

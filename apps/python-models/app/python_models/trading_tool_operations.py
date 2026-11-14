@@ -41,13 +41,13 @@ async def trading_record_assessment_tool(candidateId, kind, proposalIds, content
         proposal_ids=proposalIds, content=content, idempotency_key=idempotencyKey))
 
 
-async def trading_read_evidence_tool(proposalId=None, decisionId=None, assessmentId=None, jobId=None,
+async def trading_read_evidence_tool(proposalId=None, decisionId=None, assessmentId=None, jobId=None, forecastId=None,
                                      candidateId=None, underlying=None,
                                      assetClass=None, limit=50, offset=0,
                                      *, projectId, deckId, _callerCardId):
     return await _evidence_call(trading_evidence.read_evidence, dict(project_id=projectId, deck_id=deckId,
         card_id=_callerCardId, proposal_id=proposalId, decision_id=decisionId, assessment_id=assessmentId,
-        job_id=jobId, candidate_id=candidateId,
+        job_id=jobId, forecast_id=forecastId, candidate_id=candidateId,
         underlying=underlying, asset_class=assetClass, limit=limit, offset=offset))
 
 
@@ -96,8 +96,8 @@ def _evidence_definitions():
               "required": ["summary", "uncertainty", "recommendation", "evidence_references"], "additionalProperties": False},
           "idempotencyKey": key}, ["candidateId", "kind", "proposalIds", "content", "idempotencyKey"]),
         ("read_evidence", trading_read_evidence_tool, True,
-         "Read existing Project/deck calculation and proposal evidence by one proposalId, decisionId, jobId or assessmentId, or search retained candidates by candidateId/underlying. No journal, agent memory, private chat or broker execution is created. Use next_offset for bounded results.",
-         {"proposalId": uuid, "decisionId": uuid, "assessmentId": uuid, "jobId": uuid,
+         "Read existing Project/deck calculation and proposal evidence by one proposalId, decisionId, jobId, assessmentId or forecastId, or search retained candidates by candidateId/underlying. A forecast reference needs no intermediary assessment or decision. Producer identity and raw validity flags remain intact. No journal, agent memory, private chat or broker execution is created. Use next_offset for bounded results.",
+         {"proposalId": uuid, "decisionId": uuid, "assessmentId": uuid, "jobId": uuid, "forecastId": uuid,
           "candidateId": key,
           "underlying": {"type": "string", "minLength": 1, "maxLength": 80},
           "assetClass": {"type": "string", "enum": ["equity", "option", "future", "forex", "crypto", "prediction_market"]},

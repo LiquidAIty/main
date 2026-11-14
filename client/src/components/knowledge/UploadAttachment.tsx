@@ -157,8 +157,8 @@ export default function UploadAttachment({
         type="button"
         onClick={openPicker}
         disabled={disabled || uploading}
-        aria-label={uploading ? "Attaching knowledge PDF" : "Attach knowledge PDF"}
-        title={uploading ? "Attaching knowledge PDF" : "Attach knowledge PDF"}
+        aria-label={uploading ? "Indexing Project PDF" : "Import PDF to Project knowledge"}
+        title={uploading ? "Indexing Project PDF" : "Import PDF to Project knowledge"}
         data-no-surface-promote="true"
         style={{
           width: 36,

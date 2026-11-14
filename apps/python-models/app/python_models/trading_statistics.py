@@ -185,6 +185,7 @@ def optimize_portfolio(*, project_id, deck_id, card_id, source_execution, portfo
     import json
     from zoneinfo import ZoneInfo
     import pandas as pd
+    import psycopg
     from psycopg.rows import dict_row
     from app.python_models.alpaca_market_data import AlpacaInstrumentRef, get_historical_bars
     from app.python_models.postgres import connect_postgres
@@ -229,7 +230,10 @@ def optimize_portfolio(*, project_id, deck_id, card_id, source_execution, portfo
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         card = require_evidence_card(cursor, project_id, deck_id, card_id, "portfolio.optimize")
         _execution_reference(source_execution, card["runtime_profile"])
-        previous = retained_comparison(cursor)
+        try:
+            previous = retained_comparison(cursor)
+        except psycopg.Error:
+            previous = None  # Optional retained calculation is not the authority check above.
         if previous:
             return previous
     portfolio = read_portfolio_context(project_id=project_id, deck_id=deck_id, card_id=portfolio_card_id)
@@ -308,6 +312,9 @@ def optimize_portfolio(*, project_id, deck_id, card_id, source_execution, portfo
             content={"summary": "Constrained historical minimum-variance comparison, not an execution decision.",
                      "recommendation": "RESEARCH_ONLY", "uncertainty": "Sample covariance, assumed transaction costs and a fixed cash budget do not establish future returns, liquidity or whole-portfolio maximum loss.",
                      "evidence_references": [{"operation": "portfolio.optimize", "request": request, "calculation": result}]})
+    except psycopg.Error:
+        return {**result, "persistence": {"status": "unconfirmed",
+            "reason": "Calculation completed; optional assessment retention was not confirmed."}}
     except TradingBoundaryError as error:
         if str(error) != "trading_assessment_idempotency_conflict":
             raise

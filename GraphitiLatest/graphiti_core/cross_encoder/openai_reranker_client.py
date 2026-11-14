@@ -28,7 +28,8 @@ from .client import CrossEncoderClient
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = 'gpt-4.1-nano'
+# The default must expose token log-probabilities on the configured compatible endpoint.
+DEFAULT_MODEL = 'gpt-4o-mini'
 
 
 class OpenAIRerankerClient(CrossEncoderClient):
@@ -96,24 +97,19 @@ class OpenAIRerankerClient(CrossEncoderClient):
                 ]
             )
 
-            responses_top_logprobs = [
-                response.choices[0].logprobs.content[0].top_logprobs
-                if response.choices[0].logprobs is not None
-                and response.choices[0].logprobs.content is not None
-                else []
-                for response in responses
-            ]
-            scores: list[float] = []
-            for top_logprobs in responses_top_logprobs:
-                if len(top_logprobs) == 0:
-                    continue
-                norm_logprobs = np.exp(top_logprobs[0].logprob)
-                if top_logprobs[0].token.strip().split(' ')[0].lower() == 'true':
-                    scores.append(norm_logprobs)
-                else:
-                    scores.append(1 - norm_logprobs)
-
-            results = [(passage, score) for passage, score in zip(passages, scores, strict=True)]
+            results: list[tuple[str, float]] = []
+            for index, (passage, response) in enumerate(zip(passages, responses, strict=True)):
+                logprobs = response.choices[0].logprobs if response.choices else None
+                content = logprobs.content if logprobs is not None else None
+                top_logprobs = content[0].top_logprobs if content else []
+                if not top_logprobs:
+                    raise ValueError(f'Reranker returned no token log-probabilities for passage {index}')
+                prediction = top_logprobs[0]
+                token = prediction.token.strip().lower()
+                if token not in {'true', 'false'} or not np.isfinite(prediction.logprob) or prediction.logprob > 0:
+                    raise ValueError(f'Reranker returned an invalid binary score for passage {index}')
+                probability = float(np.exp(prediction.logprob))
+                results.append((passage, probability if token == 'true' else 1 - probability))
             results.sort(reverse=True, key=lambda x: x[1])
             return results
         except openai.RateLimitError as e:

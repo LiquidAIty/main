@@ -528,6 +528,19 @@ Graphiti community-result aggregation repair (2026-10-31): **VENDORED PROJECT:**
 
 Graphiti exact-record maintenance extends that same fork: **PURPOSE / FILES:** `KnowNode.update_know` and `remove_know` in `knows.py`, exposed by `Graphiti` and its MCP tools, support requested correction/removal of one authorized Know. **EXTERNAL ALTERNATIVE CHECK:** `add_know` rejects changed content under an occupied UUID; generic episode ingestion and delete-and-add cannot preserve that identity. **CONTRACTS:** edit preserves UUID, owner, creation time, labels and existing links while updating citation, observation, interpretation, searchable content and duplicate identity in one transaction. Removal uses the former KnowGraph service deletion logic, now shared by Inspector and Card calls. **UPSTREAM BEHAVIOR PRESERVED:** ordinary episode/Saga/triplet operations and unrelated records are unchanged. **TESTS:** focused publication, Inspector and scoped route checks; saved-Card and persistence acceptance are reported separately. **FORK COST:** two bounded Know transaction operations and MCP declarations; both application environments bind the same repository package. **ROLLBACK:** remove only these maintenance operations and their callers on explicit instruction; no data migration or deletion is required.
 
+Graphiti reranking compatibility (2026-11-13): **VENDORED PROJECT:** the same `getzep/graphiti`
+fork above. **PURPOSE / FILES:** `OpenAIRerankerClient.rank` and `DEFAULT_MODEL` in
+`graphiti_core/cross_encoder/openai_reranker_client.py` retain semantic reranking with the
+log-probability-capable `gpt-4o-mini` default. **EXTERNAL ALTERNATIVE CHECK:** the configured
+GPT-4.1-nano endpoint returned no log-probabilities; a bounded call through the existing Graphiti
+ranker verified genuine scores from the replacement default. No new ranker or provider is added.
+**CONTRACTS / UPSTREAM BEHAVIOR PRESERVED:** explicit model overrides, binary scoring, concurrency,
+Know identity, citation content and Project scope remain unchanged. A missing or invalid score fails
+the call without assigning another passage's score or inventing a value. **TESTS:** focused default,
+override, ordering, empty-input, missing-middle-score and invalid-score cases; live MCP retrieval is
+verified separately. **FORK COST / ROLLBACK:** one bounded reranker correction and its tests; revert
+only that correction on owner instruction, without any data migration or graph changes.
+
 Think research provenance extends the same Graphiti fork: **PURPOSE / FILES:** optional
 `research_origin_think_id` and `research_request_version` on `KnowNode` in `knows.py`, forwarded by
 `Graphiti.add_know` and the existing MCP/queue owner. **EXTERNAL ALTERNATIVE CHECK:** extra provenance

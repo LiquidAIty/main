@@ -33,7 +33,7 @@ Keep ThinkGraph and KnowGraph separate. Do not turn prompts, speaker labels, or 
 [IO_SCHEMA]
 Automatic input: the current User/Main exchange, its source reference, and the current Entity-only directory.
 Automatic output: an engraphis_add_thinks tool call containing the Entity-owned Thinks and authored relationship prose, followed by a brief factual completion. No extraction document or rewritten copy of the exchange is required.
-Explicit summary input: one bounded historical question plus the current Entity/Relationship map and any exact references.
+Explicit summary input: one bounded historical question plus the current Entity identity directory and any exact references. Deeper relationships come from the existing graph readers, not this directory.
 Explicit summary output: a concise read-only synthesis grounded in recalled Think IDs, including material tensions and unresolved questions, with no graph write.
 
 [MEMORY_POLICY]

@@ -1,6 +1,6 @@
 /**
  * Entity: Trading
- * Relationship: Presents real candles with an overlapping forecast shadow and completed-data boundary, chart-selected history, and on-demand settings and raw data.
+ * Relationship: Presents real candles with retained forecast paths, reloads their recorded settings, and preserves chart-selected completed history and on-demand raw data.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, LineStyle, createChart, type CandlestickData, type IChartApi, type ISeriesApi, type UTCTimestamp, type WhitespaceData } from 'lightweight-charts';
@@ -12,8 +12,9 @@ export type ForecastBar = { timestamp: string; availableAfter?: string; open: nu
 type SampleRange = { timestamp: string; min: number; max: number; p10: number; median: number; p90: number };
 export type Forecast = {
   forecastId?: string; status: string; generatedAt: string; cutoff: string; lastObservedAt?: string;
+  persistence?: { status: string; reference?: string; reason?: string };
   modelRef: string; modelRevision: string; horizon: number; aggregation: string;
-  parameters: { historyLimit: number; sampleCount: number; seed: number; temperature?: number; topP?: number; topK?: number };
+  parameters: { historyLimit: number; sampleCount: number; seed: number; temperature?: number; topP?: number; topK?: number; includeVolatility?: boolean };
   marketData: { symbol: string; timeframe: string; feed: string; fetchedAt: string };
   history: ForecastBar[]; points: ForecastBar[]; warnings: string[]; diagnostics?: string;
   samplePaths?: { sampleIndex: number; valid: boolean; points: ForecastBar[] }[];
@@ -22,9 +23,11 @@ export type Forecast = {
   observedIndicators?: { lastClose: number; sma20: number | null };
   volatilityComparison?: { status: string; reason?: string; volatilityPercentPerBar?: number[];
     heldOut?: { bars: number; varianceMae: number; constantVarianceMae: number } };
+  comparisonHistory?: { status: string; reason?: string; comparisons: Comparison[] };
 };
 type Summary = Pick<Forecast, 'forecastId' | 'generatedAt' | 'marketData' | 'cutoff' | 'modelRef' | 'status'>;
-type Comparison = { status: string; actual: ForecastBar[]; diagnostics?: string; metrics: null | {
+type Comparison = { status: string; actual: ForecastBar[]; diagnostics?: string; comparisonId?: string; evaluatedAt?: string;
+  persistence?: { status: string; reason?: string }; metrics: null | {
   matchedBars: number; horizon: number; closeMae: number; lastCloseBaselineMae: number;
   highMae: number; lowMae: number; terminalDirectionCorrect: boolean | null; closeInsidePredictedRange: number;
 } };
@@ -61,11 +64,12 @@ export function forecastCandleData(bars: ForecastBar[]): (CandlestickData<UTCTim
 }
 
 type ChartWindow = { count: number; end: string } | null;
-export function forecastInputWindow(history: ForecastBar[], from: number, to: number, timeline?: number[]): ChartWindow {
+export function forecastInputWindow(history: ForecastBar[], from: number, to: number, timeline?: number[], cutoff?: string): ChartWindow {
   const first = Math.max(0, Math.ceil(from));
   if (timeline) {
     const times = new Set(timeline.slice(first, Math.max(first, Math.floor(to) + 1)));
-    const selected = history.filter(bar => times.has(chartTime(bar.timestamp)));
+    const selected = history.filter(bar => times.has(chartTime(bar.timestamp))
+      && (!cutoff || (bar.availableAfter && Date.parse(bar.availableAfter) <= Date.parse(cutoff))));
     const end = selected.at(-1)?.availableAfter;
     return end ? { count: selected.length, end } : null;
   }
@@ -73,8 +77,9 @@ export function forecastInputWindow(history: ForecastBar[], from: number, to: nu
   const end = history[last]?.availableAfter;
   return last >= first && end ? { count: last - first + 1, end } : null;
 }
-export function ForecastCandles({ forecast, history: inputHistory = NO_ACTUALS, actual = NO_ACTUALS, onWindowChange }: {
+export function ForecastCandles({ forecast, history: inputHistory = NO_ACTUALS, actual = NO_ACTUALS, inputCutoff, onWindowChange }: {
   forecast?: Forecast | null; history?: ForecastBar[]; actual?: ForecastBar[]; onWindowChange?: (window: ChartWindow) => void;
+  inputCutoff?: string;
 }) {
   const history = useMemo(() => forecastObservedHistory(forecast?.history || [], inputHistory, actual), [forecast, inputHistory, actual]);
   const points = forecast?.points || NO_ACTUALS;
@@ -91,7 +96,7 @@ export function ForecastCandles({ forecast, history: inputHistory = NO_ACTUALS, 
   const [chartError, setChartError] = useState('');
   const [hover, setHover] = useState('');
   const fitForecast = () => chart.current?.timeScale().setVisibleLogicalRange({
-    from: Math.max(0, history.length - (forecast ? 48 : 128)),
+    from: forecast ? 0 : Math.max(0, history.length - 128),
     to: history.length + points.filter(point => chartTime(point.timestamp) > chartTime(history.at(-1)!.timestamp)).length + 4,
   });
   useEffect(() => { pathSeries.current.forEach(series => series.applyOptions({ visible: showPaths })); }, [showPaths]);
@@ -134,6 +139,11 @@ export function ForecastCandles({ forecast, history: inputHistory = NO_ACTUALS, 
         }
       }
       const predicted = api.addSeries(LineSeries, { color: '#ffb52e', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+      const predictedCandles = api.addSeries(CandlestickSeries, {
+        upColor: 'rgba(255,181,46,0.35)', downColor: 'rgba(255,181,46,0.18)',
+        borderColor: '#ffb52e', wickColor: '#ffb52e', priceLineVisible: false, lastValueVisible: false,
+      });
+      predictedCandles.setData(forecastCandleData(points));
       predicted.setData(points.length ? [anchor, ...points.map(point => point.valid === false || point.close == null || !Number.isFinite(point.close)
         ? { time: chartTime(point.timestamp) } : { time: chartTime(point.timestamp), value: point.close })] : []);
       observed.attachPrimitive(new ForecastShadow(forecastShadowPoints(forecast), dataEnd ? chartTime(dataEnd) : null));
@@ -154,12 +164,12 @@ export function ForecastCandles({ forecast, history: inputHistory = NO_ACTUALS, 
       api.timeScale().subscribeVisibleLogicalRangeChange(range => {
         if (!range) return;
         const timeline = [...new Set([...history, ...points].map(bar => chartTime(bar.timestamp)))].sort((a, b) => a - b);
-        windowListener.current?.(forecastInputWindow(history, range.from, range.to, timeline));
+        windowListener.current?.(forecastInputWindow(history, range.from, range.to, timeline, inputCutoff));
       });
       fitForecast();
     } catch (error) { pathSeries.current = []; indicatorOverlay.current = null; vwapSeries.current = null; chart.current?.remove(); chart.current = null; setChartError(error instanceof Error ? error.message : 'Chart unavailable'); }
     return () => { pathSeries.current = []; indicatorOverlay.current = null; vwapSeries.current = null; chart.current?.remove(); chart.current = null; };
-  }, [forecast, history, actual]);
+  }, [forecast, history, actual, inputCutoff]);
   return <div className="forecast-price-view">
     <div className="kronos-chart-toolbar"><span>{hover}</span><div>
       <details className="forecast-indicators"><summary>Indicators</summary><div>
@@ -203,6 +213,9 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
   const [error, setError] = useState('');
   const [panel, setPanel] = useState<'settings' | 'data' | null>(null);
   const serial = useRef(0);
+  const savedCutoffInput = forecast ? new Date(forecast.cutoff).toISOString().slice(0, -1) : '';
+  // Keep the saved cutoff's original precision until the user changes the control.
+  const effectiveCutoff = cutoff ? (forecast && cutoff === savedCutoffInput ? forecast.cutoff : cutoff + 'Z') : undefined;
   const query = new URLSearchParams({ projectId, deckId, cardId }).toString();
   const request = async (url: string, init?: RequestInit) => {
     const response = await applicationFetch(url, { credentials: 'include', ...init });
@@ -236,23 +249,36 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
   const generate = () => act(async () => {
     const epoch = serial.current;
     const result = await request('/api/trading/forecast', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, deckId, cardId, symbol, timeframe, end: cutoff ? new Date(cutoff + 'Z').toISOString() : chartWindow!.end,
+      body: JSON.stringify({ projectId, deckId, cardId, symbol, timeframe, end: effectiveCutoff || chartWindow!.end,
         model_variant: 'mini', horizon, history_limit: chartWindow!.count, sample_count: samples, seed,
         temperature, top_p: topP, top_k: topK, include_volatility: includeVolatility }),
     });
     if (serial.current !== epoch) return;
     setForecast(result); setComparison(null);
+    if (!result.forecastId) return;
     const list = await request('/api/trading/forecasts?' + query);
     if (serial.current === epoch) setSaved(list.forecasts);
   });
   const open = (id: string) => act(async () => {
     const epoch = serial.current;
     const result = await request('/api/trading/forecasts?' + query + '&forecastId=' + encodeURIComponent(id));
-    if (serial.current === epoch) { setForecast(result); setComparison(null); onOpenForecast?.(result.marketData); }
+    if (serial.current === epoch) {
+      setForecast(result); setComparison(result.comparisonHistory?.comparisons?.[0] || null);
+      setHorizon(result.horizon); setSamples(result.parameters.sampleCount); setSeed(result.parameters.seed);
+      if (result.parameters.temperature != null) setTemperature(result.parameters.temperature);
+      if (result.parameters.topP != null) setTopP(result.parameters.topP);
+      if (result.parameters.topK != null) setTopK(result.parameters.topK);
+      setIncludeVolatility(result.parameters.includeVolatility === true);
+      setCutoff(new Date(result.cutoff).toISOString().slice(0, -1));
+      onOpenForecast?.(result.marketData);
+    }
   });
   const compare = () => act(async () => {
     const epoch = serial.current;
-    const result = await request('/api/trading/forecasts?' + query + '&forecastId=' + encodeURIComponent(forecast!.forecastId!) + '&compare=true');
+    const result = await request('/api/trading/forecasts/compare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, deckId, cardId, forecastId: forecast!.forecastId }),
+    });
     if (serial.current === epoch) setComparison(result);
   });
   return <div className="kronos-panel">
@@ -264,7 +290,7 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
       <span className="forecast-window" title={chartWindow ? `Next forecast: ${chartWindow.count} visible completed candles, ending ${chartWindow.end}` : undefined}>{forecast ? `Input: ${forecast.history.length} · selected: ${chartWindow?.count || 0}` : chartWindow ? chartWindow.count + ' candles' : history.length ? 'Select history' : 'Loading candles…'}</span>
       <select aria-label="Saved forecast" value={forecast?.forecastId || ''} disabled={busy} onChange={event => {
         if (event.target.value) void open(event.target.value);
-        else { setForecast(null); setComparison(null); }
+        else { setForecast(null); setComparison(null); setCutoff(''); }
       }}>
         <option value="">Current candles</option>
         {saved.map(item => <option key={item.forecastId} value={item.forecastId}>{item.marketData.symbol} · {item.marketData.timeframe} · {item.cutoff.slice(0, 10)}</option>)}
@@ -278,7 +304,7 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
       <button type="button" aria-expanded={panel === 'data'} onClick={() => setPanel(value => value === 'data' ? null : 'data')}>Data</button>
     </form>
     {(historyError || error) && <div role="alert" className="forecast-error">{historyError || error}</div>}
-    <ForecastCandles forecast={forecast} history={historyMarket === `${forecast?.marketData.symbol || symbol}:${forecast?.marketData.timeframe || timeframe}` ? history : NO_ACTUALS} actual={comparison?.actual} onWindowChange={setChartWindow} />
+    <ForecastCandles forecast={forecast} history={historyMarket === `${forecast?.marketData.symbol || symbol}:${forecast?.marketData.timeframe || timeframe}` ? history : NO_ACTUALS} actual={comparison?.actual} inputCutoff={effectiveCutoff} onWindowChange={setChartWindow} />
     <footer className="forecast-attribution"><span>IEX · UTC</span><a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">Lightweight Charts™ · © 2025 TradingView, Inc.</a></footer>
     {panel && <aside className="forecast-detail" aria-label={panel === 'settings' ? 'Forecast settings' : 'Forecast data'}>
       <header><strong>{panel === 'settings' ? 'Settings' : 'Data'}</strong><button type="button" aria-label="Close forecast details" onClick={() => setPanel(null)}>×</button></header>
@@ -293,7 +319,7 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
         <label>Top-p{topK > 0 ? ' · inactive with top-k' : ''}<input aria-label="Forecast top-p" type="number" min={0.01} max={1} step={0.05} value={topP} disabled={topK > 0} onChange={event => setTopP(Number(event.target.value))} /></label>
         <label>Top-k · 0 uses top-p<input aria-label="Forecast top-k" type="number" min={0} step={1} value={topK} onChange={event => setTopK(Number(event.target.value))} /></label>
         <label>Seed<input aria-label="Forecast seed" type="number" min={0} max={2147483647} step={1} value={seed} onChange={event => setSeed(Number(event.target.value))} /></label>
-        <label>Cutoff override · UTC<input aria-label="Forecast cutoff UTC" type="datetime-local" value={cutoff} onChange={event => setCutoff(event.target.value)} /></label>
+        <label>Cutoff override · UTC<input aria-label="Forecast cutoff UTC" type="datetime-local" step="any" value={cutoff} onChange={event => setCutoff(event.target.value)} /></label>
       </div> : forecast ? <>
         <dl>
           <dt>Instrument</dt><dd>{forecast.marketData.symbol} · {forecast.marketData.timeframe}</dd>
@@ -303,10 +329,11 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
           <dt>Temperature / top-p / top-k</dt><dd>{forecast.parameters.temperature ?? '—'} / {forecast.parameters.topP ?? '—'} / {forecast.parameters.topK ?? 0}{forecast.parameters.topK ? ' · top-p inactive' : ''}</dd>
           <dt>Seed</dt><dd>{forecast.parameters.seed}</dd>
           <dt>Cutoff</dt><dd>{forecast.cutoff}</dd>
-          <dt>Saved ID</dt><dd>{forecast.forecastId}</dd>
+          <dt>Saved ID</dt><dd>{forecast.forecastId || 'Save not confirmed'}</dd>
           <dt>Status</dt><dd>{forecast.status}</dd>
           {!!forecast.samplePaths?.length && <><dt>Shadow</dt><dd>Raw sampled closes, including flagged paths. Not a confidence interval.</dd></>}
         </dl>
+        {forecast.persistence?.reason && <p role="status">{forecast.persistence.reason}</p>}
         {forecast.volatilityComparison && <details><summary>Conditional volatility · GARCH</summary>
           {forecast.volatilityComparison.status === 'available' ? <dl>
             <dt>Next-bar volatility</dt><dd>{forecast.volatilityComparison.volatilityPercentPerBar?.[0]?.toFixed(3)}% of log return</dd>
@@ -320,7 +347,9 @@ export default function KronosForecastPanel({ projectId, deckId, cardId, symbol,
         {forecast.diagnostics && <p role="alert">{forecast.diagnostics}</p>}
         {!forecast.samplePaths?.length && <p data-testid="average-only-notice">Average-only record; individual paths were not retained.</p>}
         {forecast.forecastId && <button disabled={busy} type="button" onClick={() => void compare()}>Compare later actuals</button>}
-        {comparison && <div><p>{comparison.status}</p>{comparison.metrics && <dl>
+        {forecast.comparisonHistory?.reason && <p role="status">{forecast.comparisonHistory.reason}</p>}
+        {comparison && <div><p>{comparison.status}{comparison.evaluatedAt ? ` · evaluated ${comparison.evaluatedAt}` : ''}</p>
+          {comparison.persistence?.reason && <p role="status">{comparison.persistence.reason}</p>}{comparison.metrics && <dl>
           <dt>Matched bars</dt><dd>{comparison.metrics.matchedBars} / {comparison.metrics.horizon}</dd>
           <dt>Close MAE</dt><dd>{comparison.metrics.closeMae.toFixed(4)}</dd>
           <dt>High MAE</dt><dd>{comparison.metrics.highMae.toFixed(4)}</dd>

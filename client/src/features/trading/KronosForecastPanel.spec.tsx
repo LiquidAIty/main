@@ -74,6 +74,38 @@ describe('Kronos forecast presentation', () => {
     expect(forecastInputWindow([one, two], 1, 1, timeline)).toBeNull();
     expect(forecastInputWindow([one, two], 2, 3, timeline)).toEqual({ count: 1, end: 'last-complete' });
   });
+
+  it('excludes later actuals from the reforecast input when a retained cutoff is selected', () => {
+    const original = { ...forecast.history[0], availableAfter: '2026-11-07T01:00:00Z' };
+    const later = { ...original, timestamp: '2026-11-09T05:00:00Z', availableAfter: '2026-11-10T01:00:00Z' };
+    const timeline = [original, later].map(bar => Date.parse(bar.timestamp) / 1000);
+    expect(forecastInputWindow([original, later], 0, 2, timeline, original.availableAfter))
+      .toEqual({ count: 1, end: original.availableAfter });
+    expect(forecastInputWindow([original, later], 0, 2, timeline))
+      .toEqual({ count: 2, end: later.availableAfter });
+  });
+
+  it('reloads the retained study settings without changing the saved result or generating on open', async () => {
+    const retained = { ...forecast, horizon: 10, parameters: {
+      historyLimit: 48, sampleCount: 16, seed: 444, temperature: .6, topP: .75, topK: 0, includeVolatility: true,
+    } };
+    const before = structuredClone(retained);
+    vi.mocked(applicationFetch).mockImplementation(async url => new Response(JSON.stringify(String(url).includes('forecastId=')
+      ? retained : String(url).includes('/history?') ? { history: [], status: 'available' } : { forecasts: [retained] })));
+    render(<KronosForecastPanel projectId="project-1" deckId="deck_builder" cardId="trader" symbol="SPY" timeframe="1Day" />);
+    await screen.findByRole('option', { name: /SPY/ });
+    fireEvent.change(screen.getByLabelText('Saved forecast'), { target: { value: retained.forecastId } });
+    await waitFor(() => expect((screen.getByLabelText('Saved forecast') as HTMLSelectElement).value).toBe(retained.forecastId));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    for (const [label, value] of [['Forecast horizon', '10'], ['Forecast samples', '16'], ['Forecast seed', '444'],
+      ['Forecast temperature', '0.6'], ['Forecast top-p', '0.75'], ['Forecast top-k', '0']]) {
+      expect((screen.getByLabelText(label) as HTMLInputElement).value).toBe(value);
+    }
+    expect((screen.getByLabelText('GARCH volatility comparison') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Forecast cutoff UTC') as HTMLInputElement).value).toBe('2026-11-06T21:00');
+    expect(retained).toEqual(before);
+    expect(vi.mocked(applicationFetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  });
   it('reads saved results and candles but cannot generate without a valid chart selection', async () => {
     vi.mocked(applicationFetch).mockImplementation(async url => new Response(JSON.stringify(String(url).includes('/history?') ? { history: [], status: 'provider_unconfigured', diagnostics: 'alpaca paper credentials not configured' } : { forecasts: [] })));
     render(<KronosForecastPanel projectId="project-1" deckId="deck_builder" cardId="trader" symbol="SPY" timeframe="1Day" />);

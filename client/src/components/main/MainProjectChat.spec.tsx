@@ -58,9 +58,12 @@ describe('MainProjectChat', () => {
       </VirtuosoMockContext.Provider>,
     );
     scrollVirtualViewportToBottom(3, 96, 600);
-    await waitFor(() => expect(screen.getAllByTestId('main-chat-message-speaker')).toHaveLength(3));
+    await waitFor(() => expect(screen.getAllByTestId('main-chat-message-speaker')).toHaveLength(2));
     expect(screen.getAllByTestId('main-chat-message-speaker').map((node) => node.textContent))
-      .toEqual(['@KnowGraph', '@Main', '@Builder']);
+      .toEqual(['@KnowGraph', '@Builder']);
+    expect(screen.queryByText('@Main', { exact: true })).toBeNull();
+    expect(screen.getByText('Main answer.')).toBeTruthy();
+    expect(screen.getByText('Builder answer.')).toBeTruthy();
     for (const node of screen.getAllByTestId('main-chat-message-speaker')) {
       expect(node.getAttribute('style')).toBeNull();
     }
@@ -546,7 +549,7 @@ describe('MainProjectChat', () => {
   it('previews removable image files and sends the selected records through the existing composer while retaining PDF ingestion', async () => {
     const onSend = vi.fn();
     render(<MainProjectChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
-    expect(screen.getByRole('button', { name: 'Attach knowledge PDF' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Import PDF to Project knowledge' })).not.toBeNull();
     const files = screen.getByLabelText('Image files');
     fireEvent.change(files, { target: { files: [new File(['pixels'], 'scene.png', { type: 'image/png' })] } });
     expect(await screen.findByAltText('scene.png')).not.toBeNull();

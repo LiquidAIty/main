@@ -1,6 +1,6 @@
 """The displayed map is bounded navigation context, never a second graph."""
 # Entity: Project Knowledge Graph
-# Relationship: Tests visible-source filtering, exact provider pointers, complete displayed edges, empty maps, and exclusion of hidden record bodies.
+# Relationship: Tests visible-source filtering, exact provider pointers, empty relationship context, and exclusion of hidden record bodies.
 
 from __future__ import annotations
 
@@ -31,17 +31,16 @@ def view():
             {"id": "electron", "name": "Electron", "providers": [
                 {"authority": "thinkgraph", "id": "think-electron"}]},
         ],
-        "relationships": [{"id": "edge", "source": "rocket", "target": "electron",
-                           "authority": "thinkgraph", "label": "OPERATES", "probability": 0.9}],
+        "relationships": [],
     }
 
 
-def test_map_retains_displayed_identity_and_single_top_relationship_only():
+def test_map_retains_displayed_identity_without_visual_relationship_context():
     snapshot = view()
     maps.publish_project_entity_map("project-one", snapshot)
     result = maps.build_project_entity_map("project-one")
     assert result == snapshot
-    assert len(result["relationships"]) == 1
+    assert result["relationships"] == []
     assert "distribution" not in json.dumps(result)
     snapshot["entities"].clear()
     assert len(maps.build_project_entity_map("project-one")["entities"]) == 2
@@ -64,7 +63,7 @@ def test_shared_map_rejects_details_and_authorization_fields(field):
         maps.publish_project_entity_map("project-one", snapshot)
 
 
-def test_hidden_authority_and_dangling_edges_are_rejected_without_replacing_view():
+def test_hidden_authority_and_visual_edges_are_rejected_without_replacing_view():
     snapshot = view()
     maps.publish_project_entity_map("project-one", snapshot)
     bad = copy.deepcopy(snapshot)
@@ -72,8 +71,9 @@ def test_hidden_authority_and_dangling_edges_are_rejected_without_replacing_view
     with pytest.raises(ValueError, match="pointer_invalid"):
         maps.publish_project_entity_map("project-one", bad)
     bad = copy.deepcopy(snapshot)
-    bad["relationships"][0]["target"] = "not-displayed"
-    with pytest.raises(ValueError, match="relationship_invalid"):
+    bad["relationships"] = [{"id": "edge", "source": "rocket", "target": "electron",
+                              "authority": "thinkgraph", "label": "OPERATES", "probability": 0.9}]
+    with pytest.raises(ValueError, match="relationships_must_be_empty"):
         maps.publish_project_entity_map("project-one", bad)
     assert maps.build_project_entity_map("project-one")["entities"] == snapshot["entities"]
 

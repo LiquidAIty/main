@@ -50,22 +50,22 @@ const EXPECTED_PROMPT_CONTRACTS = [
     asset: 'main.md',
     templateId: 'prompt_main_chat',
     cardId: 'card_main_chat',
-    bytes: 8229,
-    sha256: '2a0602d7d4a5a511c16b82e2c801545e639abc698c36006675f396971c0fae2f',
+    bytes: 8679,
+    sha256: '6645d23e30d05d1cd4e230d9d003d55d534274c6e1be93467b274630fbddc19a',
   },
   {
     asset: 'builder.md',
     templateId: 'prompt_builder',
     cardId: 'builder',
-    bytes: 2547,
-    sha256: '12ca4e9b0933cc4f5bbd90d4e2a1dbacaea11b24c9353838aa877c321bc9da1c',
+    bytes: 3080,
+    sha256: '067c6bf1be3ade1dc498497316c5de1043e7205baa7a0569acf5c58993d24f20',
   },
   {
     asset: 'thinkgraph.md',
     templateId: 'prompt_thinkgraph',
     cardId: 'card_thinkgraph',
-    bytes: 5686,
-    sha256: 'fcae9857f89f56f28ab8a56a9541153662fe7f57a64fe28a574c25ce97ae0835',
+    bytes: 7238,
+    sha256: '5c589386f60fa4c6d88c46a3aa12cc7a406700599796b1f2e9069ba2fe518fcb',
   },
   {
     asset: 'team.md',
@@ -78,8 +78,8 @@ const EXPECTED_PROMPT_CONTRACTS = [
     asset: 'knowgraph.md',
     templateId: 'prompt_knowgraph',
     cardId: 'card_knowgraph',
-    bytes: 7188,
-    sha256: '62c14ba7ad82ebe988a976bdfa0af1f96352bc2b860c8a4592d1c343b13d4c59',
+    bytes: 14719,
+    sha256: 'a38adf49fddb168a0c6b265f50be138769b9628ed6ef33ce40c9dc1731f924c4',
   },
 ] as const;
 
@@ -159,13 +159,17 @@ describe('backend-owned default Project deck', () => {
       tools: [
         'canvas.inspect',
         'engraphis_recall_context',
+        'engraphis_get_memory',
+        'graphiti.get_know',
+        'graphiti.get_entity_knows',
+        'graphiti.search_knows',
         'graphiti.search_nodes',
         'graphiti.search_memory_facts',
         'worldview.set_capability',
       ],
     });
     expect(byId.get('card_main_chat')?.prompt).toContain(
-      'Project Entity/Relationship map as the current shape',
+      'Project Entity identity map as the current directory',
     );
     expect(byId.get('card_main_chat')?.prompt).toContain(
       'existing Engraphis or Graphiti readers',
@@ -201,6 +205,16 @@ describe('backend-owned default Project deck', () => {
         'card.create',
         'card.update_configuration',
         'engraphis_recall_context',
+        'engraphis_get_memory',
+        'engraphis_retire',
+        'engraphis_retire_relationship',
+        'graphiti.get_know',
+        'graphiti.get_entity_knows',
+        'graphiti.search_knows',
+        'graphiti.remove_know',
+        'graphiti.delete_entity_edge',
+        'graphiti.delete_episode',
+        'graphiti.clear_graph',
         'graphiti.search_nodes',
         'graphiti.search_memory_facts',
         'cbm.search_graph',
@@ -216,12 +230,15 @@ describe('backend-owned default Project deck', () => {
     expect(byId.get('card_thinkgraph')?.runtimeOptions?.tools).toEqual([
       'engraphis_recall_context',
       'engraphis_get_memory',
-      'engraphis_remember_entities',
+      'engraphis_add_thinks',
+      'engraphis_correct',
+      'engraphis_retire',
+      'engraphis_retire_relationship',
       'engraphis_discover_actions',
       'engraphis_execute_read',
     ]);
     expect(byId.get('card_thinkgraph')?.prompt).toContain(
-      'OUTPUT_SCHEMA plus EXTRACTION_PROMPT means automatic completed-pair extraction',
+      'A completed Main exchange with a source reference is input to process using engraphis_add_thinks',
     );
     expect(byId.get('card_thinkgraph')?.prompt).toContain(
       'An explicit summary is not a new Think',
@@ -233,7 +250,7 @@ describe('backend-owned default Project deck', () => {
       'never more than one Think for the same Entity in that turn',
     );
     expect(byId.get('card_thinkgraph')?.prompt).toContain(
-      'Put one simple, concise, self-contained paragraph in think.summary',
+      'Each tool item has entity_name and a concise, self-contained content paragraph',
     );
     expect(byId.get('card_thinkgraph')?.prompt).toContain(
       'For automatic intake, recover and steelman only the completed User/Main pair',
@@ -287,10 +304,10 @@ describe('backend-owned default Project deck', () => {
       'knowgraph', 'grounded-citations',
     ]);
     expect(byId.get('card_knowgraph')?.prompt).toContain(
-      'One Know is one first-class durable Graphiti object',
+      'One Know is one first-class durable Graphiti Know',
     );
     expect(byId.get('card_knowgraph')?.prompt).toContain(
-      'Do not create another team, board, scheduler, worker pool, or delegation path',
+      'Do not create another team, board, scheduler, worker pool, or delegation runtime',
     );
     expect(byId.get('card_knowgraph')?.prompt).toContain(
       'preserve the returned final or resolved URL exactly',
@@ -299,6 +316,10 @@ describe('backend-owned default Project deck', () => {
       'from hermes_constants import get_hermes_home',
     );
     expect(byId.get('card_knowgraph')?.prompt).not.toContain('hermes_cli.__file__');
+    expect(byId.get('card_knowgraph')?.prompt).toContain('For web-sourced findings');
+    expect(byId.get('card_knowgraph')?.prompt).toContain('graphiti.add_know documentPassageId path instead of the web-file citation procedure');
+    expect(byId.get('card_knowgraph')?.prompt).toContain('verify the exact quote and source match');
+    expect(byId.get('card_knowgraph')?.prompt).toContain('does not waive web-source verification or grant Research graph-write authority');
     expect(byId.get('card_knowgraph')?.prompt).toContain(
       'When retrieval does not return a usable final URL and matching passage, do not persist that finding',
     );

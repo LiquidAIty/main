@@ -34,12 +34,12 @@ function projection(): GraphProjectionV1 {
 }
 
 describe('CodeGraph projection', () => {
-  it('retains source memberships internally but renders only selected files, once', () => {
+  it('retains selected Features and each selected File once without mutating source memberships', () => {
     const source = validateCodeGraphProjection(projection(), 'project-1');
     const before = JSON.stringify(source);
     const view = codeGraphCategoryProjection(source, ['feature:a', 'feature:b']);
-    expect(view.nodes.map(node => node.id)).toEqual(['file:shared']);
-    expect(view.nodes[0].properties?.features).toEqual(['A', 'B']);
+    expect(view.nodes.map(node => node.id)).toEqual(['feature:a', 'feature:b', 'file:shared']);
+    expect(view.nodes.find(node => node.id === 'file:shared')?.properties?.features).toEqual(['A', 'B']);
     expect(view.edges).toEqual([]);
     expect(codeGraphCategoryProjection(source, []).nodes).toEqual([]);
     expect(codeGraphCategoryProjection(source, ['missing']).nodes).toEqual([]);
@@ -56,7 +56,7 @@ describe('CodeGraph projection', () => {
       { id: 'usage', source: 'file:shared', target: 'symbol', predicate: 'USAGE', properties },
     );
     const view = codeGraphCategoryProjection(source, ['feature:a']);
-    expect(view.nodes.map(node => node.id)).toEqual(['file:shared']);
+    expect(view.nodes.map(node => node.id)).toEqual(['feature:a', 'file:shared']);
     expect(view.edges).toEqual([]);
     source.nodes[3].properties!.features = ['A'];
     expect(codeGraphCategoryProjection(source, ['feature:a']).edges.map(edge => edge.id))
@@ -114,7 +114,8 @@ describe('CodeGraph projection', () => {
         properties: { structuralAuthority: 'cbm' } });
     }
     const view = codeGraphCategoryProjection(source, ['feature:a']);
-    expect(view.nodes).toHaveLength(1101);
+    expect(view.nodes).toHaveLength(1102);
+    expect(view.nodes.filter(node => node.properties?.recordKind === 'file')).toHaveLength(1101);
     expect(view.edges).toHaveLength(1100);
   });
 

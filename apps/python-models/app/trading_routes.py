@@ -9,7 +9,7 @@ from app.python_models.trading_broker_observation import lumibot_readiness
 from app.python_models.trading_contract import TradingBoundaryError
 from app.python_models.trading_jobs import intervene_trade_job, read_trading_state
 from app.python_models.trading_forecast import TradingForecastError, forecast_market_bars, read_forecast_history
-from app.python_models.trading_forecast_store import read_forecasts, compare_forecast
+from app.python_models.trading_forecast_store import read_forecasts, compare_forecast, retain_comparison
 from pydantic import BaseModel, ConfigDict
 
 router = APIRouter()
@@ -53,6 +53,22 @@ def trading_forecasts(projectId: str, deckId: str, cardId: str, forecastId: str 
                 raise TradingBoundaryError("trading_forecast_id_required")
             return compare_forecast(projectId, deckId, cardId, forecastId)
         return read_forecasts(projectId, deckId, cardId, forecastId)
+    except (TradingBoundaryError, TradingForecastError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+class ForecastComparisonRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    projectId: str
+    deckId: str
+    cardId: str
+    forecastId: str
+
+
+@router.post('/trading/forecasts/compare')
+def trading_compare_forecast(payload: ForecastComparisonRequest):
+    try:
+        return retain_comparison(payload.projectId, payload.deckId, payload.cardId, payload.forecastId)
     except (TradingBoundaryError, TradingForecastError) as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 

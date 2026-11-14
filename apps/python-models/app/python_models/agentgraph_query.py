@@ -31,6 +31,9 @@ def execute_fixed_agentgraph_query(
     for row in cursor.fetchall():
         converted: dict[str, Any] = {}
         for key, value in dict(row).items():
+            if value is None:
+                converted[key] = None
+                continue
             raw = str(value)
             try:
                 converted[key] = json.loads(raw)

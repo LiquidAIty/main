@@ -109,7 +109,7 @@ const composeThinkKnowPresentation = (
 };
 
 describe('knowledge graph projection composition', () => {
-  it('publishes every displayed edge with only its top Jev choice and respects all-off', () => {
+  it('publishes Entity identities without visual relationship evidence and respects all-off', () => {
     const think = { ...empty('thinkgraph'), nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
       edges: [{ id: 'e', source: 'a', target: 'b', predicate: 'USES', properties: {
         jev: { winner: 'USES', distribution: { USES: 0.8, REQUIRES: 0.2 } },
@@ -120,8 +120,8 @@ describe('knowledge graph projection composition', () => {
       { thinkgraph: true, knowgraph: false, codegraph: false });
     const map = displayedEntityMap(presentation);
     expect(map.entities).toHaveLength(2);
-    expect(map.relationships).toHaveLength(1);
-    expect(map.relationships[0]).toMatchObject({ label: 'USES', probability: 0.8 });
+    expect(map.relationships).toEqual([]);
+    expect(JSON.stringify(map)).not.toContain('USES');
     expect(JSON.stringify(map)).not.toContain('distribution');
     expect(JSON.stringify(map)).not.toContain('Not map content');
     const off = displayedEntityMap(composeVisibleGraphLayers(think, empty('knowgraph'), code,
@@ -323,7 +323,7 @@ describe('knowledge graph projection composition', () => {
       .toHaveLength(1);
   });
 
-  it('keeps files outside a matching knowledge Entity and supplies only layout association', () => {
+  it('associates Features in the overview and opens Files only on explicit Feature expansion', () => {
     const current = currentProjections(
       {
         ...empty('thinkgraph'),
@@ -353,22 +353,29 @@ describe('knowledge graph projection composition', () => {
       { ...DEFAULT_GRAPH_LAYER_VISIBILITY },
     );
     expect(defaultView.projection.nodes.map(node => node.label)).toEqual(['Shared']);
-    expect(defaultView.codeNodeVariants).toEqual(new Map());
+    expect(defaultView.codeNodeVariants?.get('node-name:Shared')?.id).toBe('feature:shared');
+    expect(defaultView.projection.nodes[0].material_code_present).toBe(true);
+
+    const codeOff = composeVisibleGraphLayers(current.thinkgraph, current.knowgraph, code,
+      { ...DEFAULT_GRAPH_LAYER_VISIBILITY, codegraph: false });
+    expect(codeOff.projection.nodes.map(node => node.label)).toEqual(['Shared']);
+    expect(codeOff.codeNodeVariants).toEqual(new Map());
+    expect(codeOff.projection.nodes[0].material_code_present).toBe(false);
 
     const withCode = composeVisibleGraphLayers(
       current.thinkgraph,
       current.knowgraph,
       code,
       { ...DEFAULT_GRAPH_LAYER_VISIBILITY, codegraph: true },
+      'feature:shared',
     );
     const codeVisualId = withCode.visualNodeIdByCodeProviderMember?.get('file:shared');
     expect(codeVisualId).toBe('codegraph:file%3Ashared');
     expect(withCode.visualNodeIdByCodeProviderMember?.has('feature:shared')).toBe(false);
     expect(withCode.projection.nodes.map(node => [node.id, node.label])).toEqual([
-      ['codegraph:file%3Ashared', 'shared.ts'], ['node-name:Shared', 'Shared'],
+      ['codegraph:file%3Ashared', 'shared.ts'],
     ]);
-    expect(withCode.projection.nodes[0].properties?.categoryTargets).toEqual({ Shared: 'node-name:Shared' });
-    expect(withCode.projection.nodes[1].material_code_present).toBe(true);
+    expect(withCode.projection.nodes[0].properties?.filePath).toBe('client/shared.ts');
     expect(withCode.codeNodeVariants?.has('node-name:Shared')).toBe(false);
     expect(withCode.projection.edges).toEqual([]);
     expect(withCode.nodeVariants.get('node-name:Shared')?.map(item => item.authority)).toEqual(['thinkgraph', 'knowgraph']);

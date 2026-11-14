@@ -179,7 +179,7 @@ async def _entity_know_provider_arguments(
         if not isinstance(quote, str) or not quote.strip() or quote not in passage["text"]:
             raise ValueError("know_evidence_must_be_an_exact_passage_excerpt")
         source = document.get("source_url") or document["source_reference"]
-        if raw_citation.get("url") != source:
+        if raw_citation.get("url") != source or raw_citation.get("resolvedUrl") not in (None, source):
             raise ValueError("know_document_citation_url_mismatch")
         locator = (str(raw_citation.get("locator") or "").strip() + "; " if raw_citation.get("locator") else "") + (
             f"Document {document['document_id']}; version {document['document_version']}; "
@@ -190,6 +190,8 @@ async def _entity_know_provider_arguments(
             "documentTitle": document["source_name"], "contentFingerprint": document["document_checksum"],
             "retrievedAt": document["retrieval_date"],
             **({"publishedAt": document["publication_date"]} if document.get("publication_date") else {})}
+        if not document.get("publication_date"):
+            provider_arguments["citation"].pop("publishedAt", None)
     return provider_arguments
 
 
@@ -240,6 +242,12 @@ def namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
                 "type": "string", "minLength": 1, "maxLength": 256,
                 "description": "Optional exact chunk_id from this Project's documents.search/get_passage. Citation evidence must be an exact excerpt and citation.url must match the retained source_url (or source_reference for an upload). The existing writer verifies that passage and preserves its document version/page/offset provenance. You still decide whether the observation is supported; retrieval alone does not create a Know.",
             }
+        if provider == "graphiti" and provider_tool_name == "search_knows":
+            payload["description"] = (
+                "Search Project Knows using Graphiti candidates and the configured cross encoder. "
+                "Check retrieval.status: a degraded result preserves candidate ordering and citations "
+                "but is explicitly not reranked. Missing or invalid scores never become invented relevance scores."
+            )
         if provider == "graphiti" and provider_tool_name == "get_episodes":
             schema = copy.deepcopy(payload.get("inputSchema") or {})
             properties = schema.setdefault("properties", {})
@@ -507,7 +515,15 @@ async def call_graphiti_operation(name: str, arguments: dict[str, Any]) -> Any:
 
 
 def _normalize_graphiti_result(result: Any) -> Any:
-    return _normalize_provider_tool_result(result)
+    normalized = _normalize_provider_tool_result(result)
+    if isinstance(normalized, CallToolResult) and not normalized.is_error:
+        structured = normalized.structured_content
+        payload = structured.get("result", structured) if isinstance(structured, dict) else None
+        # Graphiti's typed ErrorResponse is returned as data by its MCP server.
+        # Preserve that error and its content; do not advertise it as tool success.
+        if isinstance(payload, dict) and set(payload) == {"error"} and isinstance(payload["error"], str):
+            return normalized.model_copy(update={"is_error": True})
+    return normalized
 
 
 def _bounded_graphiti_episodes(

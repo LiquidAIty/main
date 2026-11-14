@@ -1,6 +1,6 @@
 /**
  * Entity: Application Startup
- * Relationship: This file applies the required backend schema ledger before opening the application listener and keeps startup closed when migration integrity or PostgreSQL readiness fails.
+ * Relationship: Applies the existing required schema ledger and independently attempts optional shared-record storage without making that optional capability a startup prerequisite.
  */
 
 import { createHash } from 'node:crypto';
@@ -48,6 +48,10 @@ const REQUIRED_MIGRATIONS = [
   '063_trading_hermes_evidence.sql',
   '064_trading_proposal_evidence.sql',
 ] as const;
+const OPTIONAL_MIGRATIONS: readonly string[] = [
+  '065_optional_agentgraph_records.sql',
+  '066_optional_forecast_comparisons.sql',
+];
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;
 const POSTGRES_RECOVERY_RETRY_LIMIT = 18;
@@ -58,6 +62,7 @@ export type AppliedBackendMigration = {
   filename: string;
   checksum: string;
   applied: boolean;
+  unavailable?: boolean;
 };
 
 export type BackendMigrationOptions = {
@@ -105,35 +110,42 @@ export async function applyBackendMigrations(
       )
     `);
 
-    for (const filename of REQUIRED_MIGRATIONS) {
-      const source = await readMigration(filename);
-      const checksum = migrationChecksum(source);
-      const existing = await client.query(
-        'SELECT checksum_sha256 FROM ag_catalog.backend_schema_migrations WHERE filename=$1',
-        [filename],
-      );
-      if (existing.rows.length > 0) {
-        if (String(existing.rows[0]?.checksum_sha256 || '') !== checksum) {
-          throw new Error(`backend_migration_checksum_mismatch:${filename}`);
-        }
-        applied.push({ filename, checksum, applied: false });
-        continue;
-      }
-
-      await client.query('BEGIN');
+    for (const filename of [...REQUIRED_MIGRATIONS, ...OPTIONAL_MIGRATIONS]) {
+      let checksum = '';
       try {
-        await client.query(migrationBody(filename, source));
-        await client.query(
-          'INSERT INTO ag_catalog.backend_schema_migrations (filename, checksum_sha256) VALUES ($1,$2)',
-          [filename, checksum],
+        const source = await readMigration(filename);
+        checksum = migrationChecksum(source);
+        const existing = await client.query(
+          'SELECT checksum_sha256 FROM ag_catalog.backend_schema_migrations WHERE filename=$1',
+          [filename],
         );
-        await client.query('COMMIT');
+        if (existing.rows.length > 0) {
+          if (String(existing.rows[0]?.checksum_sha256 || '') !== checksum) {
+            throw new Error(`backend_migration_checksum_mismatch:${filename}`);
+          }
+          applied.push({ filename, checksum, applied: false });
+          continue;
+        }
+
+        await client.query('BEGIN');
+        try {
+          await client.query(migrationBody(filename, source));
+          await client.query(
+            'INSERT INTO ag_catalog.backend_schema_migrations (filename, checksum_sha256) VALUES ($1,$2)',
+            [filename, checksum],
+          );
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => undefined);
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`backend_migration_failed:${filename}:${message}`, { cause: error });
+        }
+        applied.push({ filename, checksum, applied: true });
       } catch (error) {
-        await client.query('ROLLBACK').catch(() => undefined);
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`backend_migration_failed:${filename}:${message}`, { cause: error });
+        if (!OPTIONAL_MIGRATIONS.includes(filename)) throw error;
+        console.warn(`[BOOT] Optional storage unavailable: ${filename}; ordinary application startup continues.`);
+        applied.push({ filename, checksum, applied: false, unavailable: true });
       }
-      applied.push({ filename, checksum, applied: true });
     }
     return applied;
   } finally {

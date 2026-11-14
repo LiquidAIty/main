@@ -1,6 +1,6 @@
 /**
  * Entity: Trading
- * Relationship: Renders autosaving Trading risk, lifecycle, timeframe, strategy, and connection controls while keeping malformed strategy JSON local until valid.
+ * Relationship: Renders autosaving Trading configuration with explicit unenforced/advisory labels while keeping malformed strategy JSON local until valid.
  */
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
@@ -36,13 +36,13 @@ type SliderSpec = {
 const RISK_SLIDERS: SliderSpec[] = [
   { field: 'paperBudgetUsd', label: 'Budget', min: 0, max: 1_000_000, step: 5_000, suffix: ' USD' },
   { field: 'allocationPerJobPercent', label: 'Allocation', min: 0, max: 100, step: 1, suffix: '%' },
-  { field: 'maxConcurrentJobs', label: 'Concurrent trades', min: 1, max: 20, step: 1 },
-  { field: 'maxOpenPositions', label: 'Positions', min: 0, max: 20, step: 1 },
+  { field: 'maxConcurrentJobs', label: 'Concurrent monitored jobs', min: 1, max: 20, step: 1 },
+  { field: 'maxOpenPositions', label: 'Positions · advisory, not enforced', min: 0, max: 20, step: 1 },
   { field: 'maxPlanLossPercent', label: 'Maximum plan loss', min: 0, max: 20, step: .25, suffix: '%' },
-  { field: 'maxDailyLossPercent', label: 'Maximum daily loss', min: 0, max: 20, step: .25, suffix: '%' },
-  { field: 'maxPortfolioDrawdownPercent', label: 'Maximum drawdown', min: 0, max: 50, step: .25, suffix: '%' },
-  { field: 'defaultStopLossPercent', label: 'Default stop loss', min: 0, max: 25, step: .25, suffix: '%' },
-  { field: 'minimumConfidencePercent', label: 'Minimum ENTER confidence', min: 0, max: 100, step: 1, suffix: '%' },
+  { field: 'maxDailyLossPercent', label: 'Maximum daily loss · advisory, not enforced', min: 0, max: 20, step: .25, suffix: '%' },
+  { field: 'maxPortfolioDrawdownPercent', label: 'Maximum drawdown · advisory, not enforced', min: 0, max: 50, step: .25, suffix: '%' },
+  { field: 'defaultStopLossPercent', label: 'Default stop loss · advisory, not enforced', min: 0, max: 25, step: .25, suffix: '%' },
+  { field: 'minimumConfidencePercent', label: 'Minimum ENTER confidence · advisory, not enforced', min: 0, max: 100, step: 1, suffix: '%' },
   { field: 'minimumRiskReward', label: 'Minimum risk / reward', min: 0, max: 10, step: .25, suffix: 'x' },
 ];
 
@@ -50,7 +50,7 @@ const LIFECYCLE_SLIDERS: SliderSpec[] = [
   { field: 'evaluationCadenceSeconds', label: 'Evaluation interval', min: 15, max: 3600, step: 15, suffix: ' sec' },
   { field: 'heartbeatSeconds', label: 'Heartbeat', min: 15, max: 3600, step: 15, suffix: ' sec' },
   { field: 'failSafeCooldownMinutes', label: 'Fail-safe cooldown', min: 1, max: 1440, step: 1, suffix: ' min' },
-  { field: 'staleDataSeconds', label: 'Stale-data threshold', min: 15, max: 3600, step: 15, suffix: ' sec' },
+  { field: 'staleDataSeconds', label: 'Stale-data threshold · advisory, not enforced', min: 15, max: 3600, step: 15, suffix: ' sec' },
 ];
 
 const cardStyle: CSSProperties = {
@@ -139,6 +139,7 @@ export default function TradingUiInspectorPanel({ configuration, onSave }: {
 
     {tab === 'risk' ? renderSliders(RISK_SLIDERS) : null}
     {tab === 'lifecycle' ? <div style={{ display: 'grid', gap: 9 }}>
+      <p style={{ color: MUTED, fontSize: 10.5, margin: 0 }}>Saved configuration only; no approved automated Trader lifecycle is running. Cadence, heartbeat and cooldown are not active controls.</p>
       {renderSliders(LIFECYCLE_SLIDERS)}
       <label style={cardStyle}><span style={{ color: INK, fontSize: 10.5 }}>Market session</span>
         <select value={draft.trading.marketSession}

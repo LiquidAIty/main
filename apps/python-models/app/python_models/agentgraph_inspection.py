@@ -1,6 +1,6 @@
 """Read-only saved-deck and AGE AgentGraph inspection."""
 # Entity: AgentGraph
-# Relationship: This file reads bounded Project-scoped Card, relationship, Run, assignment, lineage, and artifact observations from PostgreSQL and AGE without inventing missing fields.
+# Relationship: Reads bounded Project-scoped topology, Run telemetry and publication provenance from existing AGE without exposing record content or inventing execution history.
 # Entity: Card Topology
 # Relationship: This file projects the current saved Card roster and orange or blue relationship records into the AgentGraph inspector response.
 # Entity: Run Ledger
@@ -235,6 +235,19 @@ def _saved_deck_inspection_projection(
 
 
 
+def _record_references(cursor, *, project_id: str, deck_id: str, card_id: str, limit: int):
+    """Metadata only: record bodies still require the separate saved read grant."""
+    return agentgraph_query.execute_fixed_agentgraph_query(cursor, '''
+        MATCH (author:Card {projectId:$projectId, deckId:$deckId})-[edge]->(record)
+        WHERE type(edge)='AUTHORED' AND record.projectId=$projectId AND record.deckId=$deckId
+          AND record.recordId IS NOT NULL AND ($cardId='' OR author.cardId=$cardId)
+        RETURN record.recordId AS id,record.kind AS kind,author.cardId AS author,
+               record.createdAt AS created,record.eventAt AS event
+        ORDER BY record.createdAt DESC,record.recordId LIMIT $limit''',
+        {'projectId': project_id, 'deckId': deck_id, 'cardId': card_id, 'limit': limit},
+        'id agtype,kind agtype,author agtype,created agtype,event agtype')
+
+
 def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
     """Read bounded current Card authority and identity-only AGE telemetry."""
     scope = _validated_inspection_scope(payload)
@@ -254,8 +267,12 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                 cursor, runs, project_id=project_id, deck_id=deck_id,
                 owner_scope=owner_scope, edge_limit=scope["edgeLimit"],
             )
-    return _saved_deck_inspection_projection(
+            records = _record_references(cursor, project_id=project_id, deck_id=deck_id,
+                card_id=scope["cardId"], limit=scope["limit"]) if scope["projectWide"] else []
+    result = _saved_deck_inspection_projection(
         loaded=loaded, project_id=project_id, deck_id=deck_id,
         project_wide=scope["projectWide"], conversation_id=scope["conversationId"],
         card_id=scope["cardId"], run_id=scope["runId"], runs=runs,
     )
+    result["recordReferences"] = records
+    return result

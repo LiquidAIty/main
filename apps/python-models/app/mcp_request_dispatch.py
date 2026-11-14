@@ -177,7 +177,8 @@ async def dispatch_tool(
     if "_sourceExecution" in dispatcher_context:
         execution = (metadata or {}).get("hermes.execution")
         fields = {"profile", "sessionId", "turnId", "toolCallId"}
-        if (
+        missing_optional = execution is None and not definition.requires_execution_reference
+        if not missing_optional and (
             context is None or not principal or principal.get("kind") != "card-runtime"
             or not isinstance(execution, dict) or set(execution) != fields
             or any(not isinstance(execution.get(field), str)
@@ -189,12 +190,12 @@ async def dispatch_tool(
                 "hermes_execution_reference_required", failure_code="hermes_execution_reference_required",
                 category="INVALID_ARGUMENT", dependency="tool-runtime",
             )
-        if execution["profile"] != principal.get("profile"):
+        if not missing_optional and execution["profile"] != principal.get("profile"):
             return _tool_error_result(
                 "hermes_execution_profile_mismatch", failure_code="hermes_execution_profile_mismatch",
                 category="AUTHORIZATION", dependency="tool-runtime",
             )
-        args["_sourceExecution"] = {"runtime": "hermes", **execution}
+        args["_sourceExecution"] = None if missing_optional else {"runtime": "hermes", **execution}
     if context is not None:
         try:
             for field in ("projectId", "deckId", "conversationId"):

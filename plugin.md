@@ -201,9 +201,10 @@ child is not an agent runtime, TUI, Gateway, or semantic router.
 
 ## Shared navigation context
 
-The graph navigation map is one small in-process JSON snapshot of what the user can see: enabled
-Think/Know/Code layers, visible nodes and relationships, provider pointers, and at most one open node
-with bounded attached detail.
+The graph navigation map is one small in-process JSON snapshot of visible Entity identities: enabled
+Think/Know/Code layers, provider pointers, display weights, and at most one open node with bounded
+attached detail. Its stable `relationships` field is empty. Visual graph edges, Jev labels and
+probabilities remain on the graph surface; existing provider readers supply deeper relationships.
 
 React publishes it through the existing Project-authorized view endpoint. `graph_context.py` reads
 the already-displayed map once at turn start for Main, Builder, ThinkGraph, and KnowGraph. Only Main

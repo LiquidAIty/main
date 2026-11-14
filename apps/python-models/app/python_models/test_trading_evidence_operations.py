@@ -56,6 +56,41 @@ def test_ungranted_or_no_execution_write_never_reaches_proposal_writer(dispatch)
     dispatch[1].assert_not_called()
 
 
+def test_sdk_exact_forecast_read_needs_no_assessment_or_execution_reference(dispatch, monkeypatch):
+    reader = Mock(return_value={'receipts': []})
+    monkeypatch.setattr(records, 'read_evidence', reader)
+    forecast_id = '00000000-0000-0000-0000-000000000001'
+    result = call('trading.read_evidence', {'forecastId': forecast_id})
+    assert result['isError'] is False
+    assert reader.call_args.kwargs['forecast_id'] == forecast_id
+    assert reader.call_args.kwargs['assessment_id'] is None
+    assert reader.call_args.kwargs['card_id'] == 'designer-card'
+
+
+def test_completed_backtest_is_not_discarded_when_optional_retention_fails(monkeypatch):
+    from contextlib import nullcontext
+    import psycopg
+    from app.python_models import trading_backtest as backtest
+    cursor = Mock()
+    cursor.fetchone.side_effect = [{'current_revision_id': 'revision', 'runtime_profile': 'quant'}, None]
+    connection = SimpleNamespace(cursor=lambda **kwargs: nullcontext(cursor))
+    monkeypatch.setattr(backtest, 'connect_postgres', lambda **kwargs: nullcontext(connection))
+    result = {'kind': 'historical_simulation_only', 'sources': [], 'inputSnapshotSha256': 'fixture',
+              'dataCutoffExclusive': '2026-11-01', 'brokerOrdersSubmitted': False, '_inputSnapshot': []}
+    monkeypatch.setattr(backtest, '_run', lambda **kwargs: dict(result))
+    retain = Mock(side_effect=psycopg.OperationalError('isolated retention failure'))
+    monkeypatch.setattr(backtest, '_retain_backtest', retain)
+    execution = {'runtime': 'hermes', 'profile': 'quant', 'sessionId': 's', 'turnId': 't', 'toolCallId': 'c'}
+    returned = backtest._run_and_retain('project', 'deck', 'quant', execution, 'buy_and_hold',
+        ['RDW'], '2026-10-01', '2026-11-01', 10000, 0, 0)
+    assert returned['kind'] == 'historical_simulation_only'
+    assert returned['brokerOrdersSubmitted'] is False
+    assert returned['persistence']['status'] == 'unconfirmed'
+    assert 'backtestId' not in returned
+    assert returned['persistence']['reference'] == retain.call_args.args[-1]
+    assert returned['sourceExecution'] == execution
+
+
 def test_catalog_schemas_resolve_nested_proposal_terms_and_never_offer_order_tools():
     definitions = trading_tool_operation_definitions()
     for definition in definitions:

@@ -1,14 +1,15 @@
 """Trading-owned immutable forecasts and explicitly requested outcome comparisons."""
 # Entity: Trading
-# Relationship: Retains exact Card-scoped model predictions and input snapshots in Trading PostgreSQL, and compares later real bars without overwriting predictions or writing graph knowledge.
+# Relationship: Retains exact Card-scoped predictions and separately appended actual-bar comparisons in existing PostgreSQL without overwriting forecasts, blocking calculations on optional retention, or writing graph knowledge.
 
 from __future__ import annotations
 
 from dataclasses import asdict
 import json
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import psycopg
 from psycopg.rows import dict_row
 from app.python_models.postgres import connect_postgres
 from app.python_models.trading_contract import TradingBoundaryError
@@ -71,10 +72,48 @@ def read_forecasts(project_id: str, deck_id: str, card_id: str, forecast_id: str
     if forecast_id:
         if not payloads:
             raise TradingBoundaryError("trading_forecast_not_found")
-        return payloads[0]
+        result = dict(payloads[0])
+        result['comparisonHistory'] = read_comparisons(project_id, deck_id, card_id, forecast_id)
+        return result
     return {"forecasts": [{key: payload.get(key) for key in
                           ("forecastId", "generatedAt", "marketData", "cutoff", "modelRef", "status")}
                          for payload in payloads]}
+
+
+def read_comparisons(project_id: str, deck_id: str, card_id: str, forecast_id: str) -> dict[str, Any]:
+    try:
+        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute('''SELECT c.comparison_id,c.created_at,c.payload
+                FROM ag_catalog.trading_forecast_comparisons c
+                JOIN ag_catalog.trading_forecasts f ON f.forecast_id=c.forecast_id
+                WHERE f.project_id=%s AND f.deck_id=%s AND f.card_id=%s AND f.forecast_id=%s
+                ORDER BY c.created_at DESC,c.comparison_id DESC LIMIT 20''',
+                (project_id, deck_id, card_id, forecast_id))
+            return {'status': 'available', 'comparisons': [dict(row['payload'],
+                comparisonId=str(row['comparison_id']), savedAt=row['created_at'].isoformat())
+                for row in cursor.fetchall()]}
+    except psycopg.Error:
+        return {'status': 'unavailable', 'comparisons': [],
+                'reason': 'Optional comparison history could not be read; original forecast is unchanged.'}
+
+
+def retain_comparison(project_id: str, deck_id: str, card_id: str, forecast_id: str) -> dict[str, Any]:
+    result = compare_forecast(project_id, deck_id, card_id, forecast_id)
+    comparison_id = str(uuid4())
+    try:
+        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute('''INSERT INTO ag_catalog.trading_forecast_comparisons
+                (comparison_id,forecast_id,payload)
+                SELECT %s,f.forecast_id,%s::jsonb FROM ag_catalog.trading_forecasts f
+                WHERE f.project_id=%s AND f.deck_id=%s AND f.card_id=%s AND f.forecast_id=%s
+                RETURNING comparison_id''',
+                (comparison_id, json.dumps(result, allow_nan=False), project_id, deck_id, card_id, forecast_id))
+            if not cursor.fetchone():
+                raise TradingBoundaryError('trading_forecast_not_found')
+    except psycopg.Error:
+        return {**result, 'persistence': {'status': 'unconfirmed', 'reference': comparison_id,
+                'reason': 'Comparison completed; its optional save was not confirmed. Original forecast is unchanged.'}}
+    return {**result, 'comparisonId': comparison_id, 'persistence': {'status': 'saved'}}
 
 
 def compare_forecast(project_id: str, deck_id: str, card_id: str, forecast_id: str) -> dict[str, Any]:
@@ -87,14 +126,17 @@ def compare_forecast(project_id: str, deck_id: str, card_id: str, forecast_id: s
     data = forecast["marketData"]
     first, last = _timestamp(points[0]["timestamp"]), _timestamp(points[-1]["timestamp"])
     now = _timestamp(datetime.now(timezone.utc).isoformat())
+    provenance = {'forecastId': forecast_id, 'evaluatedAt': now.isoformat(),
+                  'evaluationKind': 'retrospective_observation', 'producer': 'application_forecast_comparison',
+                  'forecastGeneratedAt': forecast.get('generatedAt'), 'sourceCutoff': forecast.get('cutoff')}
     if first > now:
-        return {"forecastId": forecast_id, "status": "pending", "actual": [], "metrics": None,
+        return {**provenance, "status": "pending", "actual": [], "metrics": None,
                 "diagnostics": "Forecast target bars have not occurred yet."}
     bars = get_historical_bars(AlpacaInstrumentRef(symbol=data["symbol"]), data["timeframe"],
                                start=first.isoformat(), end=min(now, last + pd.Timedelta(days=1)).isoformat(),
                                limit=1000, feed=data["feed"])
     if bars.status != "available":
-        return {"status": bars.status, "actual": [], "metrics": None, "diagnostics": bars.diagnostics}
+        return {**provenance, "status": bars.status, "actual": [], "metrics": None, "diagnostics": bars.diagnostics}
     windows = dict(_bar_windows(first, last, data["timeframe"]))
     actual = { _timestamp(bar.timestamp): asdict(bar) for bar in bars.bars
                if _valid_bar(asdict(bar)) and _timestamp(bar.timestamp) in windows
@@ -115,7 +157,7 @@ def compare_forecast(project_id: str, deck_id: str, card_id: str, forecast_id: s
             "terminalDirectionCorrect": (sign(points[-1]["close"] - baseline) == sign(actual[last]["close"] - baseline))
                 if points[-1].get("valid") and last in actual else None,
         }
-    return {"forecastId": forecast_id, "status": "complete" if len(matched) == len(points) else "partial",
+    return {**provenance, "status": "complete" if len(matched) == len(points) else "partial",
             "actual": [actual[_timestamp(point["timestamp"])] for point in points if _timestamp(point["timestamp"]) in actual],
-            "metrics": metrics, "fetchedAt": bars.fetchedAt,
+            "metrics": metrics, "fetchedAt": bars.fetchedAt, 'marketData': data,
             "diagnostics": "Retrospective forecast comparison, not a backtest or calibrated interval. Invalid predictions excluded from metrics."}

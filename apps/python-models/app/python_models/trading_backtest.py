@@ -1,6 +1,6 @@
 """Bounded use of installed LumiBot strategies, with historical simulation only."""
 # Entity: Trading
-# Relationship: Lets saved Cards inspect and backtest upstream LumiBot bots against validated historical bars, retaining completed evidence in the existing Trading receipt table without broker execution or a scheduler.
+# Relationship: Runs bounded upstream LumiBot simulations under saved Card authority and reports optional retention separately without broker execution or a scheduler.
 from __future__ import annotations
 
 import asyncio
@@ -17,6 +17,7 @@ from time import perf_counter
 from zoneinfo import ZoneInfo
 from uuid import UUID, uuid4
 
+import psycopg
 from psycopg.rows import dict_row
 
 from app.application_tool_error import ApplicationToolError
@@ -205,12 +206,15 @@ def _run_and_retain(project_id, deck_id, card_id, execution, bot, symbols, start
             raise ApplicationToolError('backtest_card_grant_required')
         execution = _execution_reference(execution, card['runtime_profile'])
         key = hashlib.sha256(json.dumps(execution, sort_keys=True).encode()).hexdigest()
-        cursor.execute(
-            """SELECT * FROM ag_catalog.trading_lifecycle_runs
-               WHERE project_id=%s AND deck_id=%s AND card_id=%s AND idempotency_key=%s""",
-            (project_id, deck_id, card_id, key),
-        )
-        existing = cursor.fetchone()
+        try:
+            cursor.execute(
+                """SELECT * FROM ag_catalog.trading_lifecycle_runs
+                   WHERE project_id=%s AND deck_id=%s AND card_id=%s AND idempotency_key=%s""",
+                (project_id, deck_id, card_id, key),
+            )
+            existing = cursor.fetchone()
+        except psycopg.Error:
+            existing = None
         if existing:
             if existing['snapshot']['request'] != request:
                 raise ApplicationToolError('backtest_execution_reference_conflict')
@@ -220,6 +224,18 @@ def _run_and_retain(project_id, deck_id, card_id, execution, bot, symbols, start
     snapshot = {'request': request, 'result': result, 'inputSnapshot': inputs}
     provenance = {'sources': result['sources'], 'inputSnapshotSha256': result['inputSnapshotSha256'],
                   'dataCutoffExclusive': result['dataCutoffExclusive']}
+    record_id = str(uuid4())
+    try:
+        return _retain_backtest(project_id, deck_id, card_id, card, execution, key, names,
+                                request, result, snapshot, provenance, record_id)
+    except psycopg.Error:
+        return {**result, 'producerCardId': card_id, 'cardRevisionId': str(card['current_revision_id']),
+                'sourceExecution': execution, 'persistence': {'status': 'unconfirmed', 'reference': record_id,
+                    'reason': 'Simulation completed; PostgreSQL retention was not confirmed. No broker execution is implied.'}}
+
+
+def _retain_backtest(project_id, deck_id, card_id, card, execution, key, names,
+                     request, result, snapshot, provenance, record_id):
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """INSERT INTO ag_catalog.trading_lifecycle_runs
@@ -227,7 +243,7 @@ def _run_and_retain(project_id, deck_id, card_id, execution, bot, symbols, start
                 mode, status, symbols, source_execution, data_provenance, snapshot, started_at, finished_at)
                VALUES (%s,%s,%s,%s,%s,%s,'local_backtest','completed',%s::jsonb,%s::jsonb,%s::jsonb,%s::jsonb,%s,%s)
                ON CONFLICT (project_id, deck_id, card_id, idempotency_key) DO NOTHING RETURNING *""",
-            (str(uuid4()), project_id, deck_id, card_id, card['current_revision_id'], key,
+            (record_id, project_id, deck_id, card_id, card['current_revision_id'], key,
              json.dumps(names), json.dumps(execution), json.dumps(provenance, allow_nan=False),
              json.dumps(snapshot, allow_nan=False), result['startedAt'], result['completedAt']),
         )

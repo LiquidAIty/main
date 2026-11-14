@@ -254,6 +254,7 @@ describe('KnowGraph route contracts', () => {
 
   it('loads CodeGraph on demand, accumulates file connections, and reads source explicitly', async () => {
     const codeBodies: Record<string, unknown>[] = [];
+    const categoryBodies: Record<string, unknown>[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith('/api/thinkgraph/projection?')) {
@@ -261,6 +262,11 @@ describe('KnowGraph route contracts', () => {
       }
       if (url.startsWith('/api/knowgraph/graph?')) {
         return new Response(JSON.stringify({ nodes: [], relationships: [] }), { status: 200 });
+      }
+      if (url === '/api/thinkgraph/code-categories') {
+        categoryBodies.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>);
+        return new Response(JSON.stringify({ ok: true, active: true, visible: true,
+          selectionId: 'selection-one', revision: 1, selectedIds: [], categories: [], selectedFiles: [] }), { status: 200 });
       }
       if (url === '/api/codegraph/read') {
         const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>;
@@ -325,10 +331,13 @@ describe('KnowGraph route contracts', () => {
     }));
     await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
     expect(codeBodies).toEqual([]);
+    expect(categoryBodies).toEqual([]);
 
     await act(async () => { await result.current.loadCodeGraph(); });
     expect(result.current.codeGraph.status).toBe('ready');
     expect(codeBodies).toEqual([{ projectId: 'project-one', mode: 'projection' }]);
+    expect(categoryBodies).toHaveLength(1);
+    expect(categoryBodies[0]).toMatchObject({ projectId: 'project-one', categories: [] });
 
     await act(async () => { await result.current.readCodeGraphFiles(['client/one.ts']); });
     expect(result.current.codeGraph.projection.nodes.map(node => node.id))

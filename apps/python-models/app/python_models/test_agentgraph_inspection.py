@@ -17,6 +17,18 @@ from app.python_models import (
     saved_cards,
 )
 
+
+def test_age_sql_null_stays_unknown_not_a_literal_timestamp():
+    class Cursor:
+        def execute(self, *_args):
+            pass
+
+        def fetchall(self):
+            return [{"event": None, "literal": '"None"', "number": '3'}]
+
+    assert agentgraph_query.execute_fixed_agentgraph_query(Cursor(), 'RETURN null', {}, 'event agtype') == [
+        {"event": None, "literal": 'None', "number": 3}]
+
 def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

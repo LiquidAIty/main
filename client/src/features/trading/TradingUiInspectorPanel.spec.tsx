@@ -13,6 +13,19 @@ import { DEFAULT_TRADING_CONFIGURATION, type TradingConfiguration } from './trad
 
 afterEach(cleanup);
 
+it('distinguishes advisory settings from monitored-job admission and an unavailable lifecycle', () => {
+  const save = vi.fn();
+  render(<TradingUiInspectorPanel configuration={DEFAULT_TRADING_CONFIGURATION} onSave={save} />);
+  expect(screen.getByRole('slider', { name: 'Concurrent monitored jobs' })).toBeTruthy();
+  for (const label of ['Positions', 'Maximum daily loss', 'Maximum drawdown', 'Default stop loss', 'Minimum ENTER confidence']) {
+    expect(screen.getByRole('slider', { name: `${label} · advisory, not enforced` })).toBeTruthy();
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'lifecycle' }));
+  expect(screen.getByText(/no approved automated Trader lifecycle is running/)).toBeTruthy();
+  expect(screen.getByRole('slider', { name: 'Stale-data threshold · advisory, not enforced' })).toBeTruthy();
+  expect(save).not.toHaveBeenCalled();
+});
+
 it('persists setting edits without Save and preserves invalid strategy text until corrected', () => {
   const changed = vi.fn();
   function Settings() {

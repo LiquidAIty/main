@@ -1,5 +1,5 @@
 # Entity: Project Knowledge Graph
-# Relationship: Reads the displayed Entity/relationship map once per turn and adds it only to outgoing model requests, with open-node detail for Main only.
+# Relationship: Reads the displayed Entity identity map once per turn and adds it only to outgoing model requests, with open-node detail for Main only.
 # Entity: Hermes Plugin
 # Relationship: Preserves ordinary Hermes compaction and gives ThinkGraph only its current turn and tool results, plus request-only graph selection.
 """Current graph context; ThinkGraph extraction does not replay prior turns."""

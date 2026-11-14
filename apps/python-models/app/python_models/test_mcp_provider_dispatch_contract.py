@@ -32,6 +32,35 @@ from app import (
 )
 from app.python_models.test_mcp_contract_support import clear_live_provider_operations
 from app.python_models.tool_catalog import code_owned_tool_projection
+
+
+@pytest.mark.parametrize("provider_envelope", ["result", "direct"])
+def test_graphiti_declared_error_is_a_failed_tool_result(provider_envelope):
+    error = {"error": "Error searching Knows: provider returned no log-probability scores"}
+    structured = {"result": error} if provider_envelope == "result" else error
+    result = CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(error))],
+        structuredContent=structured,
+        isError=False,
+    )
+
+    normalized = mcp_provider_operations._normalize_graphiti_result(result)
+
+    assert normalized.is_error is True
+    assert normalized.structured_content == structured
+    assert normalized.content == result.content
+    assert result.is_error is False
+
+
+def test_graphiti_success_and_existing_protocol_errors_are_preserved():
+    for result in (
+        CallToolResult(content=[TextContent(type="text", text="Error handling is described in this source")],
+                       structuredContent={"result": {"knows": [], "message": "No matching Knows"}}),
+        CallToolResult(content=[TextContent(type="text", text="provider unavailable")], isError=True),
+    ):
+        assert mcp_provider_operations._normalize_graphiti_result(result) is result
+
+
 def test_saved_card_tools_share_one_authenticated_mcp_projection(monkeypatch):
     import asyncio
 
@@ -847,14 +876,32 @@ def test_saved_cards_use_the_existing_graphiti_tool_contract(monkeypatch, operat
     from unittest.mock import AsyncMock
     result = CallToolResult(content=[TextContent(type="text", text="provider result")], isError=False)
     provider = AsyncMock(return_value=result)
+    from graphiti_core.knows import KnowNode
+    candidate = SimpleNamespace(uuid="know-one", content="Exact evidence")
+    candidates = AsyncMock(return_value=[candidate])
+    rank = AsyncMock(return_value=[("Exact evidence", 0.9)])
+    monkeypatch.setattr(KnowNode, "search", candidates)
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE", SimpleNamespace(
-        mcp=SimpleNamespace(call_tool=provider)))
+        mcp=SimpleNamespace(call_tool=provider),
+        graphiti_client=SimpleNamespace(driver=object(), cross_encoder=SimpleNamespace(rank=rank)),
+        _know_result=lambda know: {"uuid": know.uuid, "content": know.content}))
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: None)
     monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: {
         "kind": "card-runtime", "profile": profile, "projectId": "project-one"})
-    arguments = {"group_id": "liquidaity-project-one", "uuid": "know-one"}
-    assert asyncio.run(mcp_graphiti_provider.call_graphiti_tool(operation, arguments)) is result
-    provider.assert_awaited_once_with(operation, arguments)
-    assert arguments == {"group_id": "liquidaity-project-one", "uuid": "know-one"}
+    arguments = {"group_id": "liquidaity-project-one",
+                 **({"uuid": "know-one"} if operation == "get_know" else {"query": "evidence"})}
+    before = dict(arguments)
+    actual = asyncio.run(mcp_graphiti_provider.call_graphiti_tool(operation, arguments))
+    if operation == "get_know":
+        assert actual is result
+        provider.assert_awaited_once_with(operation, arguments)
+        candidates.assert_not_awaited()
+    else:
+        assert actual.structured_content["result"]["knows"] == [{"uuid": "know-one", "content": "Exact evidence"}]
+        assert candidates.await_args.kwargs == {"group_id": "liquidaity-project-one", "limit": 20}
+        rank.assert_awaited_once_with("evidence", ["Exact evidence"])
+        provider.assert_not_awaited()
+    assert arguments == before
 
 
 def test_entity_read_exposes_exact_think_research_without_creating_a_know_owner(monkeypatch):

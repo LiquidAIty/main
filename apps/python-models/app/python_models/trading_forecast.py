@@ -1,6 +1,6 @@
 """Kronos forecasts: model output, never broker orders or sourced Knows."""
 # Entity: Trading
-# Relationship: Fetches completed Alpaca history and retains pinned Kronos samples plus an optional same-input GARCH variance comparison through the existing Trading owner.
+# Relationship: Fetches completed Alpaca history and returns pinned Kronos samples plus optional same-input GARCH comparison, reporting retention separately so storage failure does not discard completed calculations.
 
 from __future__ import annotations
 
@@ -325,6 +325,17 @@ async def forecast_market_bars(symbol: str, timeframe: str, start: str | None = 
         result["volatilityComparison"] = await asyncio.to_thread(
             volatility_comparison, result["history"], horizon, timeframe)
     if result["points"]:
-        result["forecastId"] = str(uuid4())
-        await asyncio.to_thread(save_forecast, projectId, deckId, _callerCardId, result, str(card["current_revision_id"]))
+        import psycopg
+        forecast_id = str(uuid4())
+        try:
+            await asyncio.to_thread(save_forecast, projectId, deckId, _callerCardId,
+                                   {**result, "forecastId": forecast_id}, str(card["current_revision_id"]))
+        except psycopg.Error:
+            # The calculation already completed under the saved Card's authority.
+            # A lost commit acknowledgement is not proof that no row exists.
+            result["persistence"] = {"status": "unconfirmed", "reference": forecast_id,
+                "reason": "Forecast calculation completed; PostgreSQL retention was not confirmed. Do not claim this result is saved."}
+        else:
+            result["forecastId"] = forecast_id
+            result["persistence"] = {"status": "saved"}
     return result

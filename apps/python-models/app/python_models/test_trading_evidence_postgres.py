@@ -116,6 +116,35 @@ def test_optional_decision_read_needs_no_proposal_or_journal(company):
                 connection.execute(f"DELETE FROM ag_catalog.{table}")
 
 
+def test_exact_forecast_read_preserves_other_producer_without_an_assessment_gate(company, monkeypatch):
+    from app.python_models import trading_forecast_store
+    monkeypatch.setattr(trading_forecast_store, 'connect_postgres', company[3])
+    forecast_id = str(uuid4())
+    payload = {'forecastId': forecast_id, 'status': 'invalid_prediction',
+               'points': [{'valid': False}], 'volatilityComparison': {'status': 'available'}}
+    with psycopg.connect(**company[1], autocommit=True) as owner:
+        producer_revision = str(owner.execute("SELECT current_revision_id FROM ag_catalog.agent_cards WHERE project_id=%s AND deck_id='deck' AND card_id='quant'",
+            (company[0]['project_id'],)).fetchone()[0])
+        owner.execute('''INSERT INTO ag_catalog.trading_forecasts
+            (forecast_id,project_id,deck_id,card_id,card_revision_id,payload)
+            VALUES (%s,%s,'deck','quant',%s,%s::jsonb)''',
+            (forecast_id, company[0]['project_id'], producer_revision, json.dumps(payload)))
+    result = records.read_evidence(**reader(company), forecast_id=forecast_id)
+    item = result['receipts'][0]
+    assert {key: item[key] for key in ('kind', 'producer_card_id', 'card_revision_id', 'receipt')} == {
+        'kind': 'FORECAST', 'producer_card_id': 'quant', 'card_revision_id': producer_revision, 'receipt': payload}
+    assert item['comparisonHistory']['status'] == 'unavailable'  # Optional table absent in this older fixture.
+    with psycopg.connect(**company[1], autocommit=True) as owner:
+        assert owner.execute('SELECT count(*) FROM ag_catalog.trading_assessments WHERE project_id=%s',
+                             (company[0]['project_id'],)).fetchone()[0] == 0
+        foreign, revision = str(uuid4()), str(uuid4())
+        owner.execute("INSERT INTO ag_catalog.agent_card_revisions VALUES (%s,'hermes','delegate','other-quant','{}',true)", (revision,))
+        owner.execute("INSERT INTO ag_catalog.agent_cards VALUES (%s,'deck','quant',%s)", (foreign, revision))
+        owner.execute('UPDATE ag_catalog.trading_forecasts SET project_id=%s WHERE forecast_id=%s', (foreign, forecast_id))
+    with pytest.raises(TradingBoundaryError, match='reference_not_found:forecastId'):
+        records.read_evidence(**reader(company), forecast_id=forecast_id)
+
+
 def test_retired_producer_history_remains_readable_but_new_write_stops(company):
     a, b = pair(company)
     with psycopg.connect(**company[1], autocommit=True) as owner:

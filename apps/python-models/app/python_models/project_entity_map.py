@@ -1,6 +1,6 @@
 """Transient navigation context for the Project's existing graph viewport."""
 # Entity: Project Knowledge Graph
-# Relationship: Keeps the current displayed Entity/relationship map and optional open-node detail available without writing conversation or graph records.
+# Relationship: Keeps the displayed Entity identity map and optional open-node detail available without copying visual relationships or writing conversation or graph records.
 
 from __future__ import annotations
 
@@ -38,6 +38,8 @@ def _validated_map(project: str, snapshot: dict[str, Any]) -> dict[str, Any]:
     entities, relationships = snapshot["entities"], snapshot["relationships"]
     if not isinstance(entities, list) or not isinstance(relationships, list):
         raise GraphReadError("project_entity_map_records_invalid")
+    if relationships:
+        raise GraphReadError("project_entity_map_relationships_must_be_empty")
     ids: set[str] = set()
     for entity in entities:
         if not isinstance(entity, dict) or not set(entity) <= {"id", "name", "providers", "filePath", "files", "categories", "weight"}:
@@ -57,18 +59,6 @@ def _validated_map(project: str, snapshot: dict[str, Any]) -> dict[str, Any]:
                     or sources.get(pointer["authority"]) is not True \
                     or not isinstance(pointer["id"], str) or not pointer["id"]:
                 raise GraphReadError("project_entity_map_pointer_invalid")
-    edge_ids: set[str] = set()
-    for edge in relationships:
-        if not isinstance(edge, dict) or not set(edge) <= {"id", "source", "target", "authority", "label", "probability"} \
-                or not isinstance(edge.get("id"), str) or not edge["id"] or edge["id"] in edge_ids \
-                or edge.get("source") not in ids or edge.get("target") not in ids \
-                or sources.get(edge.get("authority")) is not True \
-                or not isinstance(edge.get("label"), str) or not edge["label"]:
-            raise GraphReadError("project_entity_map_relationship_invalid")
-        edge_ids.add(edge["id"])
-        if "probability" in edge and (type(edge["probability"]) not in (int, float)
-                                     or not 0 <= edge["probability"] <= 1):
-            raise GraphReadError("project_entity_map_probability_invalid")
     encoded = canonical_json(snapshot).encode("utf-8")
     if len(encoded) > 1_000_000:
         raise GraphReadError("project_entity_map_input_limit_exceeded")
@@ -87,9 +77,6 @@ def _without_code(snapshot: dict[str, Any], detail: Any, visible: bool = False) 
             entity.pop(field, None)
         entities.append(entity)
     snapshot['entities'] = entities
-    ids = {entity['id'] for entity in entities}
-    snapshot['relationships'] = [edge for edge in snapshot['relationships']
-                                 if edge['authority'] != 'codegraph' and edge['source'] in ids and edge['target'] in ids]
     return snapshot, None if detail and detail.get('authority') == 'codegraph' else detail
 
 

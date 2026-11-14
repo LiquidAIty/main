@@ -66,6 +66,24 @@ export function createTradingRouter(deps: Dependencies = {
     }
   });
 
+  router.post('/forecasts/compare', async (req, res) => {
+    try {
+      const projectId = requiredText(req.body?.projectId, 'project_id_required');
+      if (!await requireOwnedProject(req, res, projectId)) return undefined;
+      const body = { projectId,
+        deckId: requiredText(req.body?.deckId, 'deck_id_required'),
+        cardId: requiredText(req.body?.cardId, 'card_id_required'),
+        forecastId: requiredText(req.body?.forecastId, 'forecast_id_required'),
+      };
+      return res.json(await deps.requestRails('/trading/forecasts/compare', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      }));
+    } catch (error) {
+      return res.status(error instanceof PythonRailsHttpError ? error.status : inputStatus(error))
+        .json({ ok: false, error: error instanceof Error ? error.message : 'trading_forecast_compare_failed' });
+    }
+  });
+
   router.get('/forecasts', async (req, res) => {
     try {
       const projectId = requiredText(req.query.projectId, 'project_id_required');

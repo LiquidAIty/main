@@ -36,9 +36,14 @@ class OperationDefinition:
     grant_profiles: frozenset[str] = frozenset()
     server_injected_arguments: frozenset[str] = frozenset()
     dispatcher_context_arguments: frozenset[str] = frozenset()
+    requires_execution_reference: bool = True
     dispatcher_owner: str = ""
 
     def __post_init__(self) -> None:
+        if type(self.requires_execution_reference) is not bool or (
+            not self.requires_execution_reference and "_sourceExecution" not in self.dispatcher_context_arguments
+        ):
+            raise RuntimeError(f"operation_execution_reference_policy_invalid:{self.canonical_id}")
         if not self.canonical_id.strip():
             raise RuntimeError("operation_id_empty")
         provider_external = (

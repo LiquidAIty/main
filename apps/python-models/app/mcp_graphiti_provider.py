@@ -1,6 +1,6 @@
 """Process-owned Graphiti MCP provider lifecycle for the LiquidAIty MCP host."""
 # Entity: KnowGraph
-# Relationship: This file owns Graphiti provider discovery, lazy Neo4j and model-service initialization, tool dispatch, and shutdown for KnowGraph.
+# Relationship: Owns Graphiti discovery, lazy initialization, scoped dispatch, citation-preserving ranked/degraded Know retrieval, and shutdown.
 # Entity: MCP Host
 # Relationship: This file exposes Graphiti's tool catalog and calls through the application MCP host lifecycle.
 # Entity: Tool Catalog
@@ -14,6 +14,7 @@ import asyncio
 import copy
 import inspect
 import json
+import math
 import os
 from importlib import metadata as importlib_metadata
 from typing import Any
@@ -237,6 +238,8 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
     graphiti_module_ref = _GRAPHITI_MODULE
     if graphiti_module_ref is None:
         raise RuntimeError("graphiti_not_initialized")
+    if name == "search_knows":
+        return await _search_knows(graphiti_module_ref, arguments)
     if name == "get_entity_knows":
         from app import mcp_auth
         from graphiti_core.nodes import EntityNode
@@ -359,6 +362,55 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
             structuredContent={"result": payload}, isError=payload["status"] != "completed",
         )
     return await graphiti_module_ref.mcp.call_tool(name, dict(arguments))
+
+
+async def _search_knows(provider: Any, arguments: dict[str, Any]) -> CallToolResult:
+    """Keep Graphiti candidates intact when its optional reranker is unavailable."""
+    from app import mcp_auth
+    from graphiti_core.knows import KnowNode
+    from openai import APITimeoutError
+
+    context = mcp_auth.authenticated_project_context() or mcp_auth.internal_mcp_principal() or {}
+    project = str(context.get("projectId") or "")
+    group = arguments.get("group_id")
+    if not project or group != f"liquidaity-{project}":
+        raise PermissionError("know_project_scope_mismatch")
+    limit = arguments.get("max_knows", 10)
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("Know search limit must be between 1 and 100")
+    client = provider.graphiti_client
+    candidates = await KnowNode.search(client.driver, arguments["query"], group_id=group, limit=2 * limit)
+    passages = list(dict.fromkeys(know.content for know in candidates))
+    selected = candidates
+    retrieval: dict[str, Any] = {"candidateCount": len(candidates), "reranked": False,
+                                 "ordering": "candidate", "status": "empty" if not candidates else "degraded"}
+    if passages:
+        try:
+            ranked = await client.cross_encoder.rank(arguments["query"], passages)
+            if not isinstance(ranked, list) or len(ranked) != len(passages):
+                raise ValueError("reranker_score_count_mismatch")
+            scores = {}
+            for item in ranked:
+                if (not isinstance(item, (list, tuple)) or len(item) != 2
+                        or not isinstance(item[0], str) or item[0] not in passages or item[0] in scores
+                        or type(item[1]) not in (int, float) or not math.isfinite(item[1])):
+                    raise ValueError("reranker_score_identity_invalid")
+                scores[item[0]] = item[1]
+            # Stable sort preserves original candidate order for equal scores and
+            # retains distinct Know identities even when their passage text matches.
+            selected = sorted(candidates, key=lambda know: scores[know.content], reverse=True)
+            retrieval.update(status="ranked", reranked=True, ordering="cross_encoder")
+        except Exception as error:
+            retrieval.update(
+                reason="reranker_timeout" if isinstance(error, (TimeoutError, APITimeoutError)) else
+                       "reranker_invalid_scores" if isinstance(error, ValueError) else "reranker_unavailable",
+                limitation="Reranking did not complete with valid scores. Results retain the source candidate order; no reranker scores are claimed.",
+            )
+    payload = {"message": f"Found {min(len(selected), limit)} Knows" +
+                          (" (not reranked)" if retrieval["status"] == "degraded" else ""),
+               "knows": [provider._know_result(know) for know in selected[:limit]], "retrieval": retrieval}
+    return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
+                          structuredContent={"result": payload})
 
 
 async def research_result_knows(project: str, think_id: str, version: int):

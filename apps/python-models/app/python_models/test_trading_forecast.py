@@ -91,6 +91,34 @@ def test_sample_summary_uses_exact_paths_and_excludes_invalid_whole_paths():
     assert paths[-1]["points"][0]["close"] == 5000.  # Kept, not corrected or discarded.
 
 
+def test_completed_forecast_survives_optional_retention_failure_without_claiming_saved(monkeypatch):
+    import asyncio
+    import psycopg
+    from unittest.mock import Mock
+    from app.python_models import trading_forecast_store
+    from app.python_models.trading_contract import TradingBoundaryError
+
+    calculated = {'status': 'available', 'history': [], 'points': [{'close': 100.}], 'warnings': []}
+    monkeypatch.setattr(trading_forecast_store, 'require_forecast_card', lambda *_: {'current_revision_id': 'revision'})
+    monkeypatch.setattr(forecast, '_forecast_market_bars', lambda *args, **kwargs: dict(calculated))
+    save = Mock(side_effect=psycopg.OperationalError('commit acknowledgement unavailable'))
+    monkeypatch.setattr(trading_forecast_store, 'save_forecast', save)
+
+    def run():
+        return asyncio.run(forecast.forecast_market_bars('RDW', '1Day', projectId='project', deckId='deck', _callerCardId='quant'))
+
+    result = run()
+    assert result['points'] == calculated['points'] and result['status'] == 'available'
+    assert 'forecastId' not in result
+    assert result['persistence']['status'] == 'unconfirmed'
+    assert result['persistence']['reference'] == save.call_args.args[3]['forecastId']
+    save.side_effect = None
+    assert run()['persistence']['status'] == 'saved'
+    save.side_effect = TradingBoundaryError('forecast_saved_card_grant_required')
+    with pytest.raises(TradingBoundaryError, match='grant_required'):
+        run()  # Genuine authorization refusal is not a logging failure.
+
+
 def test_raw_path_serialization_retains_amount_and_invalidity_without_clamping():
     import json
     import pandas as pd
